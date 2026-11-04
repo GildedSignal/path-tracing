@@ -74,7 +74,7 @@ It runs in the bot's client only. It is the judge that the Rust movement law (jo
 - Keep `Bot.java`'s existing behaviour. Only add the replay, recording and dump commands, and make the follow loop stand down while a replay runs.
 - Match the existing code style: comment density, names, idioms.
 - You cannot run the game here: the rig is outside this worktree. Compile with `.\bot\build.ps1` (Windows PowerShell) and make it pass with no warnings you introduced. The integrator runs everything live.
-- Commit your work on this branch as you go, with clear messages and the trailer `Built-by: gpt-6.1-sol`.
+- Do not commit: the sandbox cannot write the repo's git metadata. Leave every change in the worktree; the integrator commits it.
 
 ## Done means
 

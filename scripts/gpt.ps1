@@ -30,6 +30,8 @@ $env:PATHTRACING_ROOT = $Rig
 $env:PATHTRACING_DEPS = 'D:\path-tracing-deps\data'
 $env:RUSTUP_HOME = 'D:\rust\rustup'; $env:CARGO_HOME = 'D:\rust\cargo'
 $roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target']"
+# A writable root must already exist; the sandbox cannot create it.
+New-Item -ItemType Directory -Force 'D:\path-tracing-target' | Out-Null
 $codexArgs = if ($Resume) { @('exec', 'resume', $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space.
 $quoted = $codexArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }

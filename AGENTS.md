@@ -32,7 +32,7 @@ No Fable (Julien, 4 November).
 
 - **How many at once.** One Claude sub-agent, plus up to two GPT jobs (only one while an Astra job runs), in dependency order, never on the same files (Julien, 4 November).
   - A stopped agent resumes: SendMessage for Claude, `codex exec resume` for GPT.
-  - Builders commit as they go.
+  - Claude builders commit as they go. GPT builders can't write git metadata from their sandbox, so they leave changes in their worktree and the integrator commits them with `Built-by:`.
 - **Prompts.** Each prompt starts with PRINCIPLES' "goal" and "philosophy" sections, verbatim, followed by its job file `jobs/<id>/prompt.md`. The job file gives the inputs, the output, the frozen gate and what the job must not touch.
 - **Worktrees.** Builders work on `wt/<id>` branches in worktrees on D:, and the integrator merges into `main` after the gate passes.
   - `PATHTRACING_ROOT` points every worktree at the one rig.

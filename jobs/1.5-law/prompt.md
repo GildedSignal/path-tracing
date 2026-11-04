@@ -19,6 +19,18 @@ The sandbox cannot read `%LOCALAPPDATA%`, so use the staged copy, which has the 
 
 `RUSTUP_HOME` and `CARGO_HOME` are set to `D:\rust\rustup` and `D:\rust\cargo`, and `D:\path-tracing-target` is writable for the cargo target dir. If anything is still denied, say exactly which path.
 
+## Answers to the second run's questions
+
+- **Braking:** the test measures; it doesn't pass or fail on a single protocol. Report the ticks until the `aiStep` threshold zeroes the velocity after steady walking and after steady sprinting, on stone and on ice, for "release only" and for "reverse for k ticks, then release", with k from 1 to 6. Name the fastest protocol. Your probe (hold reverse goes negative on tick 2; reverse once and release stops on tick 5; release only stops on tick 8) is the right shape.
+- **No network in the sandbox:** use no crates at all, dev-dependencies included. Parse the recorder's JSON lines by hand. The format is fixed and flat (job 1.2, section A.3).
+- **Don't commit:** the sandbox can't write the repo's git metadata. Leave every change in the worktree; the integrator commits it with `Built-by: gpt-6.1-sol`.
+
+## Answers to the third run's question, and how to proceed
+
+- **Option-dependent `LocalPlayer` behaviour is out of scope.** The bot's client runs with `autoJump:false`, `toggleSprint:false`, `toggleCrouch:false` and `sprintWindow:0` (set by `scripts/setup.ps1`), so every movement in a recording comes from an explicit input. Port the law as it runs with those options; treat sprinting as on exactly while the sprint input is held, as `LocalPlayer` does with them.
+- **Your braking table is accepted.** Keep it in `engine/README.md` and as the braking test.
+- **Don't stop again for scope.** Take the most literal reading of this spec, write each assumption down in your final message, and keep porting. Stop only for something that blocks the build.
+
 ## What to build
 
 A Cargo workspace at `engine/`, holding one library crate, `engine/law`.
@@ -27,7 +39,7 @@ A Cargo workspace at `engine/`, holding one library crate, `engine/law`.
 
 - Stable Rust, GNU toolchain (already installed, under `D:\rust`).
 - No nightly features.
-- No dependencies, except `serde` and `serde_json` as dev-dependencies for the replay tests.
+- No dependencies at all.
 - `engine/.cargo/config.toml` sets `[build] target-dir = "D:/path-tracing-target"`, because C: is nearly full.
 
 ### What it simulates
@@ -85,7 +97,7 @@ One player tick, ported from the bytecode in the same order of operations.
 
 - Touch only `engine/` (and `lab/fixtures/` only to add a README describing the fixture format). Don't touch `bot/`, `scripts/` or `docs/`.
 - Comments: say where each function comes from (`LivingEntity.travelInAir`), and nothing more.
-- Commit as you go on this branch, with the trailer `Built-by: gpt-6.1-sol`.
+- Do not commit (see the answers above).
 
 ## Done means
 
