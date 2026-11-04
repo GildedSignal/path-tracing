@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "pathtracing.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["ClientPacketListenerMixin", "BlockBehaviourAccess"],
+  "injectors": { "defaultRequire": 1 }
+}

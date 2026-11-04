@@ -40,13 +40,30 @@ final class Bot {
             if (m.matches() && m.group(1).equals(PathTracingMod.OWNER)) command(m.group(2));
         });
         ClientTickEvents.START_CLIENT_TICK.register(Bot::tick);
+        Recorder.register();
     }
 
     private static void command(String text) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         String[] w = text.trim().split("\\s+");
+        if (Recorder.replaying() && !w[0].equals("stop") && !w[0].equals("rec")) {
+            reply(mc, "Replay is running. Use stop to cancel it.");
+            return;
+        }
         switch (w[0]) {
+            case "replay", "rec", "dump" -> {
+                try {
+                    if (w[0].equals("replay") && w.length == 2) Recorder.replay(mc, w[1]);
+                    else if (w[0].equals("rec") && w.length == 3 && w[1].equals("start")) Recorder.record(mc, w[2]);
+                    else if (w[0].equals("rec") && w.length == 2 && w[1].equals("stop")) Recorder.stop(mc);
+                    else if (w[0].equals("dump") && w.length == 2 && w[1].equals("blocks")) {
+                        reply(mc, "Dumped " + BlockDumper.dump(mc) + " block states.");
+                    } else reply(mc, "Usage: replay <name>, rec start <name>, rec stop, dump blocks");
+                } catch (java.io.IOException | RuntimeException e) {
+                    reply(mc, "Recorder/dumper: " + e.getMessage());
+                }
+            }
             case "goto" -> {
                 try {
                     goTo(mc, new BlockPos(Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])));
@@ -58,7 +75,10 @@ final class Bot {
                 .filter(p -> p.getName().getString().equals(PathTracingMod.OWNER))
                 .findFirst()
                 .ifPresentOrElse(p -> goTo(mc, p.blockPosition()), () -> reply(mc, "I can't see you."));
-            case "stop" -> stop(mc, "Stopped.");
+            case "stop" -> {
+                if (Recorder.replaying()) Recorder.stop(mc);
+                stop(mc, "Stopped.");
+            }
             default -> { }
         }
     }
@@ -82,6 +102,7 @@ final class Bot {
     private static void tick(Minecraft mc) {
         // Creative players double-tap jump into flight; the bot has to walk like everyone else.
         if (survivalIn >= 0 && survivalIn-- == 0 && mc.getConnection() != null) mc.getConnection().sendCommand("gamemode survival");
+        if (Recorder.replaying()) return;
         if (path.isEmpty()) return;
         var player = mc.player;
         if (player == null) {
@@ -130,7 +151,7 @@ final class Bot {
         mc.options.keyJump.setDown(jump);
     }
 
-    private static void reply(Minecraft mc, String text) {
+    static void reply(Minecraft mc, String text) {
         if (mc.getConnection() != null) mc.getConnection().sendCommand("msg " + PathTracingMod.OWNER + " " + text);
     }
 
