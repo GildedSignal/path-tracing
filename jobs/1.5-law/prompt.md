@@ -11,6 +11,14 @@ You are the builder for a well-formed task. Design choices are not yours. If the
   - `javap` is in `%LOCALAPPDATA%\ImmersiveMinecraft\data\java\java-runtime-epsilon\bin`.
 - **Reading guide only:** Azalea's `azalea-physics` (https://github.com/azalea-rs/azalea, MIT) mirrors vanilla's shape, merger and sweep structure. It is *not* exact: it lacks the friction and drag modifiers, it applies `0.216/f³` on every block (the jar applies it only when friction > 0.6), and it leaves speed factors, stuck factors, exhaustion and fall damage as TODOs. If you copy any of its code, keep its MIT notice in that file and verify every line against the jar.
 
+## Answer to the first run's question
+
+The sandbox cannot read `%LOCALAPPDATA%`, so use the staged copy, which has the same layout:
+- the jar: `D:\path-tracing-deps\data\libraries\com\mojang\minecraft\26.2\minecraft-26.2-client.jar`;
+- `javap`: `D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\javap.exe`.
+
+`RUSTUP_HOME` and `CARGO_HOME` are set to `D:\rust\rustup` and `D:\rust\cargo`, and `D:\path-tracing-target` is writable for the cargo target dir. If anything is still denied, say exactly which path.
+
 ## What to build
 
 A Cargo workspace at `engine/`, holding one library crate, `engine/law`.

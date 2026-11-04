@@ -63,6 +63,11 @@ It runs in the bot's client only. It is the judge that the Rust movement law (jo
 4. **Offsets.** For blocks with a position-dependent offset (`state.hasOffsetFunction()`, for example bamboo and pointed dripstone), add the offset at 8 fixed positions, and the method needed to reproduce it.
 5. **Drops are not needed.** The bot never breaks blocks.
 
+## Answers to the first run's questions
+
+- **"Settled" before tick 0:** the position is bit-identical on 5 consecutive ticks, `onGround` is true, and the horizontal velocity is exactly zero. On the ground the vertical velocity keeps a small constant from gravity, so it is not required to be zero.
+- **Build dependencies:** the sandbox cannot read `%LOCALAPPDATA%`, so a copy with the same layout is staged at `D:\path-tracing-deps\data`. The runner sets `PATHTRACING_DEPS` to it, so `scripts/common.ps1` and `bot/build.ps1` use it unchanged, and `javap` is at `D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\javap.exe`. If anything is still denied, say exactly which path.
+
 ## Constraints
 
 - Do not touch `Pointer.java`, the planner, or the scripts other than `server-state.ps1` and `bot/build.ps1`.

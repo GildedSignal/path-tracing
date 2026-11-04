@@ -5,7 +5,8 @@ $Root        = Split-Path -Parent $PSScriptRoot
 # The rig (server\ and clients\, not in git). PATHTRACING_ROOT lets a builder's worktree use the one rig
 # while building its own code from $Root.
 $Rig         = if ($env:PATHTRACING_ROOT) { $env:PATHTRACING_ROOT } else { $Root }
-$PrismData   = Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data'
+# PATHTRACING_DEPS points sandboxed GPT jobs at a staged copy of what builds need (scripts\stage-deps.ps1).
+$PrismData   = if ($env:PATHTRACING_DEPS) { $env:PATHTRACING_DEPS } else { Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data' }
 $Jdk         = Join-Path $PrismData 'java\java-runtime-epsilon\bin'
 $Libraries   = Join-Path $PrismData 'libraries'
 $Assets      = Join-Path $PrismData 'assets'

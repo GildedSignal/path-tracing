@@ -25,7 +25,12 @@ $full = Join-Path $dir 'full-prompt.md'
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$job", $utf8)
 
 $env:PATHTRACING_ROOT = $Rig
-$codexArgs = if ($Resume) { @('exec', 'resume', $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
+# The sandbox cannot read %LOCALAPPDATA%: builds use the staged copy (scripts\stage-deps.ps1), and the
+# staged copy, the Rust homes and the shared cargo target dir are opened to the job.
+$env:PATHTRACING_DEPS = 'D:\path-tracing-deps\data'
+$env:RUSTUP_HOME = 'D:\rust\rustup'; $env:CARGO_HOME = 'D:\rust\cargo'
+$roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target']"
+$codexArgs = if ($Resume) { @('exec', 'resume', $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space.
 $quoted = $codexArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 $p = Start-Process $codex.FullName -ArgumentList $quoted -NoNewWindow -Wait -PassThru `
