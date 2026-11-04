@@ -24,11 +24,11 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Relaunching:** run `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. Answers to a job's questions go into its `prompt.md` under "Answers…".
 - **After 1.2b:**
   1. a fresh Sonnet judge;
-  2. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
-  3. a live run of the 1.2 gate (`lab/gates/`);
-  4. recording the L0 fixtures for 1.5;
-  5. the merges.
-- **Waiting on Julien:** may the bot also accept console commands over RCON for gates, or must his client be logged in?
+  2. **console commands** (Julien said yes, S16): job `1.2c`, GPT Sol on `wt/recorder` once 1.2b ends (1.2b edits `Bot.java`), judged with the 1.2b fixes. The integrator writes the spec, not the code. The facts for the spec: a `/msg PathBot …` over RCON arrives as disguised chat: the CHAT event with `sender` and `signed` both null, text `Rcon whispers to you: …` (`Server` from the console's stdin; `RconConsoleSource.RCON = "Rcon"`, checked with javap). Accept `WHISPER` matches from `Rcon` or `Server` only when `sender == null`; player chat always carries a sender. Replies then go to the server log, so the gate scripts read results from the files, not from chat;
+  3. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
+  4. a live run of the 1.2 gate (`lab/gates/`), driven over RCON;
+  5. recording the L0 fixtures for 1.5;
+  6. the merges.
 
 ## In flight
 
@@ -36,7 +36,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 |---|---|---|---|
 | Register completeness check | Haiku | done: 2 rows added (X1 "gather resources on think", S10) | — |
 | Red-team of representation.md | Opus, fresh context | done: corrections approved (S14) and folded in | — |
-| 1.2 Recorder and dumper | GPT gpt-6.1-sol, `D:\path-tracing-wt\recorder` on `wt/recorder` | built (ce09c2e). The Sonnet judge passed its exactness and flagged 12 fixes, now job `jobs/1.2b-recorder-fixes/` (running) | after 1.2b: a live run of the frozen gate in the rig, then the merge. **Needs Julien:** the bot only takes his whispers, so either his client is logged in during gates, or the bot also accepts console commands over RCON |
+| 1.2 Recorder and dumper | GPT gpt-6.1-sol, `D:\path-tracing-wt\recorder` on `wt/recorder` | built (ce09c2e). The Sonnet judge passed its exactness and flagged 12 fixes, now job `jobs/1.2b-recorder-fixes/` (running) | after 1.2b: console commands over RCON (approved, S16), a live run of the frozen gate in the rig, then the merge |
 | 1.5 Movement law in Rust | GPT gpt-6.1-sol, worktree `D:\path-tracing-wt\law` on `wt/law`, job `jobs/1.5-law/` | `wt/law`, `jobs/1.5-law/last.md` | queued for 22:37 beside 1.2. Its L0 gate waits for 1.2's recorder and the fixtures |
 | 1.4 Prior art | Sonnet, read-only | **done; decided: port from the bytecode, with Azalea as a reading guide** | Azalea (MIT, targets 26.2) mirrors vanilla's shape, merger and sweep code, but has gaps inside the bit-exact class: no friction or drag modifiers, 0.216/f³ applied to every block (the jar applies it only when f > 0.6), soul sand, honey and stuck factors still TODO, no exhaustion, no tick-by-tick test. Pumpkin (GPL) doesn't simulate players. Parkour Calculator (GPL) runs the game's own entity. Baritone has a 26.2 build (v1.19.0, LGPL), so Phase 12 can run |
 | 1.0 Toolchain | integrator | **done:** rustc and cargo 1.99.1, stable-x86_64-pc-windows-gnu; `RUSTUP_HOME` and `CARGO_HOME` under `D:\rust`; a hello-world builds | — |

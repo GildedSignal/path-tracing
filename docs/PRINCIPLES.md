@@ -150,6 +150,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | the bucket's water must not destroy things, create sources or modify anything once removed, "same principle as earlier" | S14 | **Adopted:** a tool use is legal only if the world is identical once it is undone (representation.md, claim 6) |
 | test harder things by recording him going from A to B, "for grounding in T not in method" | S14 | **Adopted:** the human baseline on every rung ([ladder.md](ladder.md)) |
 | the red-team's corrections to the representation "seem sensible so approaved" | S14 | **Followed:** folded into representation.md |
+| the bot may also take commands from the server console over RCON: "sure no problem" | S16 | **Adopted:** queued after job 1.2b; gates can run with his client out of the game |
 | pricing consumables: "i'm unsure here honnestly", a matter of amortization and resource management without knowing the income, while nothing is gathered or regenerated | S13 | **Open.** Proposal: spending a consumable needs a budget he gives per command (zero by default); health and food regenerate, so they are feasibility constraints, not tokens |
 
 ## Contradictions (kept side by side)
