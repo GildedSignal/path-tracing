@@ -9,6 +9,11 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
   - LB is the light cone's lower bound for the trip. It is admissible: no run may ever beat it.
   - UB is the best T found by an independent offline search over raw tick controls, never over the planner's own moves.
   - Each rung reports the distribution of T / UB and of the bracket width UB / LB.
+- **Human baseline:** Julien runs the same A to B himself, and the time he takes is recorded "for grounding in T not in method" (S14).
+  - Only his time is used, never his path.
+  - He runs it in survival with the same toolkit as the bot, without modifying the world.
+  - His T is a real upper bound: a route that fast exists. Every rung reports the bot's T / his T next to T / UB.
+  - For the harder rungs this is the ground truth that the offline search can't reach.
 - **Latency:** ticks from the whisper's arrival at the bot's client to its first applied control. The p99 must be ≤ 1.
 - **Failures:** failed edges, server corrections, restoration misses and irreversible losses. Each must be zero.
 - **Scale:** planning cost against trip length, in work units and in wall time.
@@ -32,9 +37,9 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 | R3 | 2 | Gaps of 1 to 4 blocks, step-ups, drops up to the 3-block safe fall. Damaging drops are barriers until tokens exist | to freeze before Phase 2 runs |
 | R-retarget | 2 | A new goal at a random tick mid-trip. T counts from the new command; momentum carries over | to freeze before Phase 2 runs |
 | R-scale | 2 | Trips of 10, 10², 10³ and 10⁴ blocks along a fixture corridor of default terrain. Frozen with Phase 2 and red until Phase 4 bends it | to freeze before Phase 2 runs |
-| R4 | 3 | Walls against detours with a pickaxe; stone without Silk Touch as a barrier | when Phase 3 starts |
-| R5 | 3 | Gaps and climbs with blocks; undo reachability | when Phase 3 starts |
-| R6 | 5 | The bucket: falls, climbs, the Nether | when Phase 5 starts |
+| R4 | 3 | Movement in a world left unmodified: sneak edges, ladders and vines, water, slime, crawling under existing trapdoors. Pass includes every block state unchanged after the trip | when Phase 3 starts |
+| R5 | 3 | Courses Julien designs and runs himself, judged against his time | when Phase 3 starts |
+| R6 | 5 | The bucket where its water leaves no trace: falls, climbs; the Nether (no water) | when Phase 5 starts |
 | R7 | 6 | Momentum ground: ice tunnels, slime, soul sand, honey | when Phase 6 starts |
 | R8 | 7 | Tokens: pearls, food, health, durability | when Phase 7 starts |
 | R9 | 8 | The moving world: fluids, falling blocks, mobs, redstone | when Phase 8 starts |

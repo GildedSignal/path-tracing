@@ -20,7 +20,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 | Job | Who, where | Lands | Next action |
 |---|---|---|---|
 | Register completeness check | Haiku | done: 2 rows added (X1 "gather resources on think", S10) | — |
-| Red-team of representation.md | Opus, fresh context | proposals, below | Julien decides |
+| Red-team of representation.md | Opus, fresh context | done: corrections approved (S14) and folded in | — |
 | 1.0 Toolchain | integrator | **done:** rustc and cargo 1.99.1, stable-x86_64-pc-windows-gnu; `RUSTUP_HOME` and `CARGO_HOME` under `D:\rust`; a hello-world builds | — |
 | 1.1 Lab hygiene | integrator | **done:** vanilla judge (Lithium and C2ME only in Julien's client); `$Rig` from `PATHTRACING_ROOT`; `Enter-Rig`/`Exit-Rig` lock in `scripts/common.ps1`. **Left:** the lab server on D: (port 25566, RCON 25576) with pre-generated fixture worlds, and `/tick rate` in the gate runner | next integrator step, then the 1.2 job file |
 
@@ -76,37 +76,14 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 
 ## Proposals awaiting Julien
 
-These come from the Opus red-team of [representation.md](representation.md) (4 November). The draft stands, challenged, until these are settled.
+**Open:** the price of consumables (S13, unsure). Until he decides, a command grants a budget, zero by default; health and food are feasibility constraints.
 
-**His answers (S13, 4 November):**
-- **Getting around never modifies the world.** A swarm of bots editing as they pass would deform a world built by players, down to redstone state and a trapdoor moved to crawl. This replaces decision 1 below. Phase 3 (edits as conjugates) becomes movement through the unmodified world, with tools only where they leave no trace.
-- **Braking:** pressing against the motion stops faster than coasting's 32 ticks, so braking is part of the law and of every local solve.
-- **A lost block:** a block lost to the void is a spent token. Catching it back costs time and positioning.
-- **Consumables:** he is unsure.
-- **Open, for him:**
-  - Does a tool use that leaves no trace count as modifying the world? For example, a water bucket placed and taken back before the water flows anywhere.
-  - Consumable proposal: zero by default, with a budget he grants per command.
-
-**Earlier decisions only he could make (now answered above):**
-1. **His void bridge (S6) against "identical block" (S12).**
-   - A block placed under the feet over the void drops into the void when it is broken back.
-   - Stone drops cobblestone, grass drops dirt, gravel sometimes drops flint.
-   - Placed leaves become persistent, so they never match the originals, even with Silk Touch.
-   - Pillars taller than the 4.5-block reach can't be removed from the top.
-
-   Strict identity makes most edits barriers in default worlds.
-2. **Consumables in the scoreboard.** As written, a pearl that saves one tick is always worth throwing. Should pearls, food and durability carry a price in ticks? (Proposal: health and food become feasibility constraints, not tokens.) One more thing to weigh: a pearl spawns an endermite 5% of the time when the difficulty isn't peaceful, which is an irreversible change to the world.
-
-**Corrections to the draft (fold in once he has read them):**
-- **Claim 2 wrongly hid tool use.** Placing is "just a movement", so tool use is an ordinary priced edge. Each edit must close inside its own edge (open, cross, close), so that border states never carry open edits.
-- **Claim 4 was wrong: speed matters on ordinary ground too.** Sprint-jumping (7.1 m/s) is the fastest gait on stone, and air drag is 0.91, so speed takes about 32 ticks to fade. Speed belongs in the state wherever sprint-jumping wins, which is nearly everywhere.
-- **Claim 5 missed exact merge points.** `aiStep` zeroes velocity below its thresholds (about 8 ticks after the bot stops on stone), collisions clamp the position to the face, and landing snaps the height. States merge exactly at stops, contacts and landings; widths are needed only in between.
-- **Claim 1: crawling is not a land mode.** It needs a trapdoor or water, so it is a toolkit entry. The body folding is the exact inflation of the collision boxes for each pose, because the bot can stand with 0.3 blocks overhanging an edge.
-- **"Which math":** drop the group, commutator and Lie-bracket language. The moves are partial maps that don't commute, and T is min-plus over sequences of them: a weighted shortest path (principle 6).
-- **Claim 8:** share tables at sub-chunk cells and key them by toolkit class, not by counts. Hashlife pays little on default terrain.
-- **Claim 9: the lower bound must be computed per toolkit.** Ice boats, pearls thrown while moving and the Nether's ×8 each beat the current cone. Portals wait 80 ticks, and generating a new destination portal is an edit that can't be restored.
-- **Claim 11: the target is a goal-rooted time-to-go field** over the tables, with greedy descent: his straight line and his mug, rather than A* over an exploding state.
-- **Name the real noise before gating on it:** tick misalignment, server RNG, block-update latency. Keep R1–R3 short enough that their upper bound is exact.
+**Settled on 4 November (S13, S14):**
+- **Getting around never modifies the world.** A tool use is legal only if the world is identical once it is undone: the bucket's water destroys nothing, creates no source and leaves nothing behind.
+- **Braking** is part of the law.
+- **A block lost to the void** is a spent token.
+- **The red-team's corrections** are folded into [representation.md](representation.md) (approved).
+- **His own A to B runs** are the human baseline in [ladder.md](ladder.md).
 
 ## Traps
 

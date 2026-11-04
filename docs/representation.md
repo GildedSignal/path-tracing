@@ -1,86 +1,117 @@
 # The representation (draft)
 
-**Challenged on 4 November:** a red-team found errors in claims 1, 2, 4, 5, 8, 9 and 11 and in "Which math". They are listed in [HANDOFF.md](HANDOFF.md) under "Proposals awaiting Julien" and are folded in once he has read them.
+This file describes how the bot sees the world so that the search becomes trivial (principle 3). Each claim names the test that would kill it, and a claim becomes law only once its rung passes. A fix bolted onto a claim means the claim is wrong (ES principle 19).
 
-This file covers how the bot sees the world so that the search becomes trivial (principle 3). Each claim names the test that would kill it, and a claim becomes law only once its rung passes. A fix bolted onto a claim means the claim is wrong (ES principle 19).
+The red-team's corrections were folded in on 4 November with Julien's approval (S14), together with his rule that getting around never modifies the world (S13, S14).
 
-## The core
+## The target
 
-1. **The bot is a point.** The body is folded into the terrain, as in configuration space ("compact the space so that the player is one block tall", X4).
-   - A place exists only where the body fits: standing needs 1.8 blocks of clearance, sneaking 1.5, crawling 0.6.
-   - So a one-high hole is not in the space at all for a standing bot. For a crawling bot it is, at crawling speed.
-   - The world becomes sheets of places the bot can be, joined by arcs (jumps, falls, throws). True 3D is needed only in water and in elytra flight.
-   - *Killed if:* a fixture with 1.5-high and 1-high openings shows the planner missing a passage that exists and pays, or using one that doesn't exist.
-2. **The toolkit is the metric** (principle 4). For a toolkit K, each place has a crossing time in each direction, with speed classes where they matter. A tool rewrites a whole class of places at once:
-   - a pickaxe rewrites every stone;
-   - a block rewrites every gap within reach;
-   - a bucket rewrites every vertical drop or climb.
+Make the search trivial:
+- a time-to-go field rooted at the goal, built over the tables;
+- the bot descends it greedily, which is his straight line and his clay mug (principle 7);
+- no open-ended search over an exploding state.
 
-   Using a tool belongs to the local move, which is execution. It never appears in the search.
-   - *Killed if:* adding a capability needs new search or geometry code. The universal gate says each capability must enter as law and toolkit data only.
-3. **The route is the geodesic.** T is the minimum, over all paths, of the summed ticks: min-plus composition.
-   - T only grows, so there are no negative cycles, and A* (with integer tick buckets) is valid on the full state.
-   - The triangle inequality fails on positions alone, because stopping kills momentum. It holds on the full state.
-   - *Killed if:* T on rungs R1–R3 falls outside the bracket's width, or the lower bound is ever beaten by a real run, which would mean it was not admissible.
-4. **Speed is part of the state only where it matters.** Each tick, speed keeps a fraction friction × 0.91 of its past, so 95% of it is gone after about 5 ticks on stone and about 26 on ice. Speed therefore enters the state only:
-   - where it is remembered: low-friction ground;
-   - where it is required: take-offs and long jumps.
+Everything below exists to make that field cheap to build, cheap to repair and exact where decisions depend on it.
 
-   Facing is free, because the bot turns within a single tick.
-   - *Killed if:* an ice rung where routes depend on entry speed shows ice routes taken when they don't pay, or missed when they do.
-5. **Equivalence is within a certified width, not in bits.** Bit-identical states almost never recur: a velocity difference takes about 60 ticks on stone to fall below one unit in the last place.
-   - Two states merge when they reach the same future within the width the executor can correct.
-   - Translations and the grid's 8 symmetries hold only within that width.
-   - Every memo hit is verified by exact replay.
-   - *Killed if:* a replayed memo hit diverges beyond its width.
-6. **Edits are conjugates: A·B·A⁻¹** (open, cross, close), which leaves the world and the toolkit as they were (principle 20).
-   - The undo must be reachable from wherever the move leaves the bot. A bucket's undo travels with the bot. A wall's hole is just behind it. A pillar's undo stays below, so restoring it costs the trip back down.
-   - Restoring means the identical block and block state, orientation included (S12). Without Silk Touch in the toolkit, any block whose drop differs is a barrier: stone, glass, ice, grass, ores, leaves.
-   - Irreversible side effects are barriers too: sand falling, attachments popping off, drops scattering.
-   - *Killed if:* after any R4 or R5 trip, a block state differs or the inventory is short.
-7. **Consumables are tokens.** Pearls, food, health and durability are spent, so they shrink the space rather than reshape it.
-   - The search carries their counts as Pareto labels, the way EV routing carries battery level.
-   - Exchange rates come from the game itself. A pearl costs 5 damage, which takes 7.5 food points to heal, about 300 m of sprinting. Sprinting stops at food 6.
-   - *Killed if:* the R8 rungs show a pearl or a drop that taking damage spent when it does not save T.
-8. **The hierarchy is min-plus tables** (FMM in the tropical semiring, principles 17 and 22).
-   - Each region keeps a table of times between its border states, per toolkit, in the style of Customizable Route Planning.
-   - Identical regions share one table, as in Hashlife.
-   - One changed block re-solves its cell and the tables above it.
-   - A toolkit change re-checks the tables that depend on it, so improvements are caught as well as breaks.
-   - *Killed if:* the border-state probe (Phase 2.0) shows the number of border states per chunk exploding once speed classes are included, or the scale rung stays red after Phase 4.
-9. **The light cone sets both what to shape and where plans can break.**
-   - What to shape: where the bot can be before a deadline.
-   - Where plans can break: where Julien or the world can change things before the bot gets there.
-   - Its speed limit depends on terrain and toolkit: 7.1 m/s sprint-jumping, 19.3 in an ice tunnel, 78 falling, about 17.6 by pearl.
-   - *Killed if:* any measured T is below the cone's lower bound.
-10. **Edge width is "when we can make mistakes"** (principles 15 and 16).
-    - Every edge records how far execution may miss and still land in the same future.
-    - Narrow edges cost more once real jitter is priced in.
-    - Irreversible losses are barriers.
-    - *Killed if:* under real jitter (Phase 9), a certified edge fails within its width.
-11. **Coordinates are chosen per regime; the system is unchanged** (principle 14). Surface coordinates on the sheets, arc parameters in flight, volumes in water and in elytra flight.
-    - *Killed if:* any coordinate choice fails to reproduce the law within its width.
-12. **The Nether is a second sheet** where each block counts for 8, joined to ours at portals.
-    - *Killed if:* the R10 rung finds a Nether route that the planner misprices.
+## The claims
+
+1. **The bot is a point.** Its body is folded into the terrain.
+   - **How:** each pose's collision box (0.6 × height × 0.6) inflates the world's collision boxes exactly.
+     - Standing: 1.8 blocks tall.
+     - Sneaking: 1.5 blocks.
+     - Crawling: 0.6 blocks.
+   - **Places:** a place is wherever the box fits, including standing 0.3 blocks out over an edge.
+   - **Crawling:** this is not a mode the bot can choose on land. It needs a trapdoor or water that is already there, so it is a toolkit entry.
+   - **The world:** sheets of places, joined by arcs (jumps, falls, throws). Full 3D is needed only in water and in elytra flight.
+   - *Killed if:* a fixture with 1.5-high, 1-high and edge-overhang places shows the planner using a place the body doesn't fit, or missing one it does.
+
+2. **The toolkit is part of the metric, and tool use is a priced edge.**
+   - **Tool use:** placing or using an item is "just a movement" (X5): an ordinary edge with its own cost in ticks.
+   - **Closure:** every tool use closes inside its own edge, so states on a border never carry an open edit.
+   - **Toolkit:** what the bot carries decides which edges exist: water where a bucket can be used, a boat on ice.
+   - *Killed if:* adding a capability needs new search or geometry code. The universal gate allows only new law and toolkit data.
+
+3. **The route is the geodesic.** T is the minimum, over sequences of moves, of their summed ticks (min-plus).
+   - Moves are partial maps on (state, world) that don't commute.
+   - T only grows, so there are no negative cycles.
+   - On positions alone the triangle inequality fails, because momentum matters. On the full state it holds.
+   - *Killed if:* on R1–R3, T falls outside the bracket, or a run ever beats the lower bound.
+
+4. **Speed is part of the state almost everywhere.**
+   - **Fastest gait:** sprint-jumping (7.1 m/s) is the fastest gait even on stone.
+   - **Coasting:** in the air the drag is 0.91, so speed builds over several jumps and coasting takes about 32 ticks to lose 95% of it.
+   - **Braking:** pressing against the motion stops much sooner (S13). It is part of every local solve.
+   - **Corners:** speed bleeds at corners, and each costs its own ticks.
+   - **Facing:** the bot can turn in one tick, so facing costs nothing.
+   - *Killed if:* courses with corners and runways show routes that ignore entry speed beating the planner's.
+
+5. **States merge exactly at canonical points, and within a certified width between them.**
+   - **Exact merges:**
+     - `aiStep` zeroes horizontal velocity once its square falls below 9 × 10⁻⁶ (about 8 ticks after stopping on stone), and each vertical component below 0.003.
+     - Collisions clamp the position to the face hit.
+     - Landing snaps the height.
+     - So bit-identical states recur at every stop, contact and landing.
+   - **Between them:** states merge within the width the executor can correct.
+   - **Memo:** every memo hit is verified by exact replay.
+   - *Killed if:* a replayed memo hit diverges beyond its width, or two canonical states that should merge differ.
+
+6. **Getting around never modifies the world** (principle 20; S13, S14).
+   - **The rule:** a tool use is legal only if the world is identical once it is undone. A bucket's water must destroy nothing, create no source and change nothing once it is taken back. A trapdoor is never moved, even to crawl.
+   - **No breaking:** nothing is broken or placed to get around, because "there's many ways to move in minecraft".
+   - **Each use is checked:** the legality check runs against the law (flow, neighbours, what the water reaches before it is removed), never assumed.
+   - *Killed if:* after any trip, one block state anywhere differs (including redstone state, fluids and trapdoors), or the inventory is short.
+
+7. **Consumables need a budget; health and food are constraints.**
+   - **Consumables:** pearls and durability are spent, and nothing is gathered or regenerated yet. Their price is open (S13). Until he decides, the bot spends only what a command grants, which is zero by default.
+   - **Health and food:** these regenerate, so they bound which routes are feasible rather than being spent.
+     - Sprinting stops at food 6.
+     - A fall of 23 blocks does 20 damage, enough to kill from full health.
+   - **Side effects:** a pearl can spawn an endermite (5%, except on peaceful), which modifies the world, so pearls also fall under claim 6.
+   - *Killed if:* on the R8 rungs, a consumable is spent beyond its budget, or a route ends below a health or food constraint.
+
+8. **The hierarchy is min-plus tables at sub-chunk cells.**
+   - **Tables:** each cell keeps the times between its border states (CRP-style), keyed by toolkit class, not by item counts.
+   - **Sharing:** identical cells share one table. On default terrain that pays at sub-chunk scale, not at chunk scale.
+   - **Repair:** one changed block (changed by someone else, since the bot never edits) re-solves its cell and the tables above it. A toolkit change re-checks the tables that depend on it, so improvements are found as well as breaks.
+   - *Killed if:* the border-state probe (Phase 2.0) shows the number of border states per cell exploding once speed is included, or the scale rung stays red after Phase 4.
+
+9. **The light cone is computed per toolkit.**
+   - **The bound:** the cone's speed limit is the fastest motion the toolkit allows:
+     - 7.1 m/s sprint-jumping;
+     - 19.3 m/s in an ice tunnel;
+     - ice boats, since a boat reads the friction of the block under it;
+     - pearls thrown while moving, which inherit the thrower's velocity;
+     - falling at 78 m/s, within the health constraint;
+     - the Nether at ×8.
+   - **Its two jobs:** the cone bounds what to shape (where the bot can be before a deadline) and where plans can break (where Julien or the world can change things first).
+   - *Killed if:* any measured T, the bot's or Julien's (see [ladder.md](ladder.md)), beats the cone's lower bound for that toolkit.
+
+10. **Edge width measures when mistakes are allowed.**
+    - **The width:** every edge records how far execution may miss and still land in the same future.
+    - **Noise first:** the real noise is named and measured before any gate relies on it: tick misalignment between client and server, the server's RNG, block-update latency.
+    - **Pricing:** narrow edges cost more once that noise is priced in.
+    - *Killed if:* under the measured noise, a certified edge fails within its width.
+
+11. **Coordinates are chosen per regime; the system is unchanged** (principle 14).
+    - Surface coordinates on the sheets, arc parameters in flight, volumes in water and in elytra flight.
+    - Each choice must reproduce the law within its width. This claim can only fail once a coordinate choice other than Cartesian exists.
+
+12. **The Nether is reached only through portals that already exist.**
+    - It is a 3D cave with horizontal distances divided by 8.
+    - Portals wait 80 ticks.
+    - Generating a new destination portal modifies the world, so it is ruled out.
+    - *Killed if:* the R10 rung misprices a route through an existing portal.
 
 ## The four questions (X3)
 
-- **Breaking a wall instead of going around it:** with a pickaxe, a breakable wall is a slow material. Its cost is breaking, crossing and rebuilding with the identical block. The route goes through it whenever going around costs more, the same way light goes through glass. Nothing has to decide.
-- **One-high holes:** for a standing bot they are not in the space at all. For a crawling bot they are, at crawling speed.
-- **When a bucket is excellent:** the bucket rewrites the vertical metric.
-  - A 100-block cliff becomes about a 3-second road: 61 ticks of falling, plus placing and picking up the water.
-  - Walls become climbable through water.
-  - The bucket's value at a given spot is T without it minus T with it.
-- **When it must sprint for a jump:** the far side of a long gap connects only to states that are already fast. So the route has to pass through a run-up, and backs off for more runway when there isn't enough.
-
-## Which math (X4)
-
-His "certain type of math" is the word metric over moves: the distance between two places is the shortest word in the moves, weighted by ticks. So a tool is a new generator, and a new generator reshapes the space itself (his bike, X5).
-
-- **Edits are conjugates.** Each one is a conjugate A·B·A⁻¹, which is how cubers build their algorithms.
-- **Combined moves are commutators.** A move that no single tool can make comes from alternating two of them. Climbing with the bucket and pillaring work this way, the same way parallel parking produces sideways motion.
+- **Breaking a wall versus going around:** the bot never breaks it. A wall leaves only the ways through that already exist: around it, over it, through an opening, or a bucket climb that leaves no trace.
+- **One-high holes:**
+  - For a standing or sneaking bot, they don't exist in the space.
+  - With an existing trapdoor or water to enter the crawling pose, they exist at crawling speed.
+- **When a bucket is excellent:** it is excellent wherever its water, placed and taken back, leaves no trace, and the fall or climb it allows saves T. A 100-block cliff becomes about a 3-second road: 61 ticks of falling, plus the time to place and take back the water. The bucket's value at a spot is T without it minus T with it.
+- **When it must sprint for a jump:** the far side of a long gap connects only to states that are already fast. So the route passes through a run-up, and backs off for more runway if it needs it.
 
 ## Still open
 
-- **Orientation on placement:** restoring stairs, logs and anything else oriented depends on how the bot faces when it places them.
 - **Compactness:** whether border states stay compact once speed is included. The probe decides, before the geometry is designed.
+- **Consumable prices:** Julien's call (S13).
