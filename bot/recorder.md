@@ -3,16 +3,20 @@
 Run these whispers from the owner (Brain_Forge by default):
 
 ```text
-/msg PathBot replay <name>
+/msg PathBot replay <name> [out]
 /msg PathBot rec start <name>
 /msg PathBot rec stop
 /msg PathBot dump blocks
 ```
 
-Names contain only letters, digits, `_` and `-`. Outputs replace an existing file of the same name.
+Names contain only letters, digits, `_` and `-`. Replay reads input `name` and writes recording `out`
+(default: `name`). Replay and manual recording refuse an existing final or temporary output, naming
+the file in the reply. Choose another output name or move the old file before starting again.
 Only the bot role registers the recorder. Replay owns all seven movement keys, rejects other movement
 commands and suspends the follow loop. `rec stop` cancels a replay too; `stop` also clears the existing
-follow path. A suspended path resumes after replay completion or `rec stop`.
+follow path. Starting a replay clears the old follow path, so it cannot resume afterwards.
+Both replay and recording require `toggleSprint`, `toggleCrouch` and `autoJump` off, and
+`sprintWindow` zero; otherwise the command refuses and reports those values.
 
 ## Inputs
 
@@ -30,21 +34,35 @@ Every subsequent line has consecutive `t` starting at zero and all of these fiel
 
 Replay sends the specified teleport, waits for its position packet and five consecutive END ticks at
 the exact start coordinates, on ground with zero horizontal velocity, then starts input tick zero.
-Vertical velocity is left to vanilla. A start that cannot settle waits until cancelled.
+Vertical velocity is left to vanilla. A start that has not settled by the 200th END client tick
+after sending `tp` aborts with a reply. Teleport coordinates and angles use plain decimal notation;
+angles are first rounded to their actual float values.
 
 ## Recordings
 
-`<gameDir>/pathtracing/recordings/<name>.jsonl` is UTF-8 JSONL with LF endings and no clock fields or
-header. Replay opens this output automatically and closes it after the last input tick. Manual
-recording samples after the follower's START callback and writes at END, without driving the keys.
-Each row has:
+`<gameDir>/pathtracing/recordings/<out or name>.jsonl` is UTF-8 JSONL with LF endings and no clock
+fields. Its first line records the required input settings:
 
-- `t` and `inputs` (the seven key booleans, `yaw`, `pitch`);
+```json
+{"toggleSprint":false,"toggleCrouch":false,"autoJump":false,"sprintWindow":0,"type":"recording"}
+```
+
+Output is written to `.jsonl.tmp` and renamed only after a successful close at replay completion
+or an explicit `rec stop` / replay `stop` (including early cancellation). A disconnect, missing
+player/world, write failure, settling timeout or tickCount gap aborts and retains only the temporary
+output. Existing final recordings are never replaced. Replay opens this output automatically. Manual
+recording samples after the follower's START callback and writes at END, without driving the keys.
+Each tick row has:
+
+- `t`, the player's absolute `tickCount`, and `inputs` (the seven key booleans, `yaw`, `pitch`);
 - `position` and `velocity`, each with `x`, `y`, `z`;
 - `yRot`, `xRot`, `onGround`, `horizontalCollision`, `verticalCollision`, `isSprinting`,
   `isShiftKeyDown`, `pose`, `fallDistance`, `isInWater`, `onClimbable`;
 - client `health`, `foodLevel`, `saturationLevel`;
 - optional `anomaly`: an array of packets, in handler order, preserving multiple anomalies per tick.
+
+After the first row, `tickCount` must advance by exactly one per row. An offending row is retained
+in the temporary output and the run aborts, replying with `t` and the previous/current tickCount.
 
 Every double has a sibling `<field>Bits` with sixteen lowercase hex digits. Floats (input angles,
 rotations, health and saturation) use eight. `fallDistance` is a double in 26.2. Raw bits are unsigned
@@ -52,12 +70,21 @@ hex strings without `0x`. The decimal fields remain JSON numbers.
 
 Position anomalies include `type`, teleport `id`, `position`, `velocity`, `yRot`, `xRot` and sorted
 `relatives`. Motion anomalies include `type`, entity `id` and `velocity`. Packet numbers use the
-same bit fields. Packets handled between ticks are included in the next END row; replay's initial
+same bit fields. Rotation anomalies include `type`, `yRot`, `xRot`, `relativeY`, `relativeX`.
+Explosion anomalies include `type`, `center`, `playerKnockback`, and are emitted only when the
+packet carries knockback for this client player. Rotation packets also target this client player;
+entity-motion packets are filtered by the bot's id. Packets handled between ticks are included in the next END row; replay's initial
 teleport and settling phase precede recorded tick zero.
 
 ## Blocks
 
-`<gameDir>/pathtracing/dumps/blocks.jsonl` has one JSON object per registry block state. Each contains
+`dump blocks` refuses during either a recording or a replay (including settling). It writes
+`<gameDir>/pathtracing/dumps/blocks.jsonl.tmp`, then atomically replaces `blocks.jsonl` only on
+success. Failure leaves the previous final dump intact and retains the temporary output.
+
+The first line has `type: "dump"`, `mainHand` and `offHand`, each an object with the namespaced
+`item` id and stack `count` from the bot before sampling. The following lines have one JSON object
+per registry block state. Each contains
 `block` (namespaced id), `properties` (string values), `friction`, `speedFactor`, `jumpFactor`,
 `defaultDestroyTime`, `requiresCorrectToolForDrops`, sorted `tags`, `isCollisionShapeFullBlock`
 and `collisionShapes`. Numeric float properties also have eight-digit bit fields.
@@ -65,15 +92,50 @@ and `collisionShapes`. Numeric float properties also have eight-digit bit fields
 Each `collisionShapes` entry has `contexts` and `aabbs`. Contexts giving identical AABB lists share
 one entry. Every AABB has `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` and sixteen-digit bit fields.
 The getter contains the tested state at the origin and air elsewhere, with no block entity.
-Contexts are `empty`, `above` (feet at 0.5,1,0.5), `below` (0.5,-2,0.5) and `sneakingAbove`.
+Contexts are `empty`, `above` (feet at 0.5,1,0.5), `below` (0.5,-2,0.5), `sneakingAbove`, and
+`holdingScaffolding` (standing above with one scaffolding item in the main hand).
 Entity contexts use the bot's current equipment, zero fall distance and standing/crouching pose.
-The input, pose, position, bounds and fall distance are restored before returning to the game.
+The scaffolding context uses `CollisionContext.of(player)`. The original main-hand stack, input,
+pose, position, bounds and fall distance are restored in `finally` before returning to the game.
+
+The final line has `type: "summary"`, `writtenCount` (state rows actually written) and
+`registryCount` (a separate sum of possible-state counts across the block registry). A mismatch
+fails the dump. Both counts appear in the reply. Header and summary are not state rows; total
+physical lines are `writtenCount + 2`.
 
 States with offsets also have `offset`: `method`, `type` (`XZ` or `XYZ`), maximum offsets, Java
 expressions for the seed and components, and eight fixed `samples` containing `pos` and `offset`.
 Expressions preserve Java int/long overflow, signed shifts and float-to-double conversions.
 Each emitted generator is checked against all its samples. Shapes already include the offset at
 the origin; subtract that offset before applying the offset at another position.
+
+## Gate helpers
+
+All four helpers in `lab/gates/` use Windows PowerShell 5.1, contain only ASCII, and take the rig
+lock from `scripts/common.ps1`. Offline checks accept literal paths (including a retained `.tmp`).
+
+```powershell
+.\lab\gates\new-inputs.ps1 -Name random400 -Ticks 400 -Seed 7 -Start '0.5,-60,0.5,0,0'
+.\lab\gates\compare-recordings.ps1 <a.jsonl> <b.jsonl>
+.\lab\gates\check-recording.ps1 <recording.jsonl>
+.\lab\gates\check-dump.ps1 <blocks.jsonl>
+```
+
+`new-inputs` writes `$Rig\clients\bot\pathtracing\inputs\<Name>.jsonl`. A seeded `System.Random`
+selects independent pressed/released runs of 1-20 ticks for each key (the final run can be shorter),
+and nonzero integer yaw steps from -90 through 90 degrees every 1-20 ticks. Pitch remains the
+start pitch. The same arguments on Windows PowerShell 5.1 produce the same bytes; an existing input
+file is replaced. No game commands are sent by these helpers.
+
+`compare-recordings` compares the header's four settings and recursively compares every `*Bits`
+field, including inputs and anomalies. It reports the first differing `t` and field, or `identical`;
+different lengths, invalid tick stamps, missing headers and malformed raw fields fail. It does not
+compare decimal values, boolean state flags or absolute tickCount (which differs between runs).
+`check-recording` reports every anomaly line, nonconsecutive `t`, and missing/invalid or
+nonconsecutive tickCount. `check-dump` checks state-row count against both summary counts and checks
+every state of ice (friction 0.98), blue ice (0.989), slime (0.8), soul sand (speed 0.4), and honey
+(speed 0.4, jump 0.5), comparing as Mojang floats. Both checkers reject empty/malformed files or
+missing metadata. All checks exit nonzero on a failure.
 
 ## Server endpoints
 

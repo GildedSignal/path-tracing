@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -14,8 +15,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -33,20 +37,30 @@ final class BlockDumper {
         new BlockPos(-1, -1, -1), new BlockPos(16, 64, 16), new BlockPos(-17, -64, 31),
         new BlockPos(30000000, 255, -30000000)
     };
-    private static final String[] CONTEXTS = {"empty", "above", "below", "sneakingAbove"};
+    private static final String[] CONTEXTS = {"empty", "above", "below", "sneakingAbove", "holdingScaffolding"};
 
-    static int dump(Minecraft mc) throws IOException {
-        if (Recorder.replaying()) throw new IllegalStateException("A replay is running.");
+    static String dump(Minecraft mc) throws IOException {
+        if (Recorder.active()) throw new IllegalStateException("A recording or replay is running; cannot dump blocks.");
         var player = mc.player;
         Vec3 position = player.position();
         AABB bounds = player.getBoundingBox();
         Pose pose = player.getPose();
         Input input = player.input.keyPresses;
         double fallDistance = player.fallDistance;
+        ItemStack mainHand = player.getMainHandItem();
         Path path = Recorder.file(mc, "dumps", "blocks");
         Files.createDirectories(path.getParent());
+        Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+        int registryCount = 0;
+        for (var block : BuiltInRegistries.BLOCK) registryCount += block.getStateDefinition().getPossibleStates().size();
         int count = 0;
-        try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+        try (BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8)) {
+            JsonObject header = new JsonObject();
+            header.addProperty("type", "dump");
+            header.add("mainHand", item(mainHand));
+            header.add("offHand", item(player.getOffhandItem()));
+            writer.write(header.toString());
+            writer.write('\n');
             for (var block : BuiltInRegistries.BLOCK) {
                 for (BlockState state : block.getStateDefinition().getPossibleStates()) {
                     BlockGetter getter = new StateGetter(state);
@@ -69,6 +83,7 @@ final class BlockDumper {
                     List<JsonArray> distinct = new ArrayList<>();
                     List<JsonArray> names = new ArrayList<>();
                     for (int i = 0; i < CONTEXTS.length; i++) {
+                        player.setItemInHand(InteractionHand.MAIN_HAND, i == 4 ? new ItemStack(Items.SCAFFOLDING) : mainHand);
                         CollisionContext context;
                         if (i == 0) context = CollisionContext.empty();
                         else {
@@ -100,14 +115,32 @@ final class BlockDumper {
                     count++;
                 }
             }
+            JsonObject summary = new JsonObject();
+            summary.addProperty("type", "summary");
+            summary.addProperty("writtenCount", count);
+            summary.addProperty("registryCount", registryCount);
+            writer.write(summary.toString());
+            writer.write('\n');
+            if (count != registryCount) {
+                throw new IllegalStateException("Dump count mismatch: written " + count + ", registry " + registryCount + ".");
+            }
         } finally {
+            player.setItemInHand(InteractionHand.MAIN_HAND, mainHand);
             player.input.keyPresses = input;
             player.setPose(pose);
             player.fallDistance = fallDistance;
             player.setPos(position);
             player.setBoundingBox(bounds);
         }
-        return count;
+        Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        return "Dumped " + count + " block states; independent registry count " + registryCount + ".";
+    }
+
+    private static JsonObject item(ItemStack stack) {
+        JsonObject out = new JsonObject();
+        out.addProperty("item", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+        out.addProperty("count", stack.getCount());
+        return out;
     }
 
     private static JsonArray boxes(List<AABB> boxes) {

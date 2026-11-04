@@ -54,12 +54,13 @@ final class Bot {
         switch (w[0]) {
             case "replay", "rec", "dump" -> {
                 try {
-                    if (w[0].equals("replay") && w.length == 2) Recorder.replay(mc, w[1]);
-                    else if (w[0].equals("rec") && w.length == 3 && w[1].equals("start")) Recorder.record(mc, w[2]);
+                    if (w[0].equals("replay") && (w.length == 2 || w.length == 3)) {
+                        Recorder.replay(mc, w[1], w.length == 3 ? w[2] : w[1]);
+                    } else if (w[0].equals("rec") && w.length == 3 && w[1].equals("start")) Recorder.record(mc, w[2]);
                     else if (w[0].equals("rec") && w.length == 2 && w[1].equals("stop")) Recorder.stop(mc);
                     else if (w[0].equals("dump") && w.length == 2 && w[1].equals("blocks")) {
-                        reply(mc, "Dumped " + BlockDumper.dump(mc) + " block states.");
-                    } else reply(mc, "Usage: replay <name>, rec start <name>, rec stop, dump blocks");
+                        reply(mc, BlockDumper.dump(mc));
+                    } else reply(mc, "Usage: replay <name> [out], rec start <name>, rec stop, dump blocks");
                 } catch (java.io.IOException | RuntimeException e) {
                     reply(mc, "Recorder/dumper: " + e.getMessage());
                 }
@@ -144,6 +145,10 @@ final class Bot {
         path = List.of();
         keys(mc, false, false);
         reply(mc, why);
+    }
+
+    static void clearFollowPath() {
+        path = List.of();
     }
 
     private static void keys(Minecraft mc, boolean forward, boolean jump) {

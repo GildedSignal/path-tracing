@@ -1,7 +1,9 @@
 package pathtracing.mixin;
 
 import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -20,5 +22,15 @@ abstract class ClientPacketListenerMixin {
     @Inject(method = "handleSetEntityMotion", at = @At("RETURN"))
     private void pathtracing$motion(ClientboundSetEntityMotionPacket packet, CallbackInfo ci) {
         Recorder.motionPacket(packet);
+    }
+
+    @Inject(method = "handleRotatePlayer", at = @At("RETURN"))
+    private void pathtracing$rotation(ClientboundPlayerRotationPacket packet, CallbackInfo ci) {
+        Recorder.rotationPacket(packet);
+    }
+
+    @Inject(method = "handleExplosion", at = @At("RETURN"))
+    private void pathtracing$explosion(ClientboundExplodePacket packet, CallbackInfo ci) {
+        Recorder.explosionPacket(packet);
     }
 }
