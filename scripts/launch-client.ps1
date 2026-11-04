@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 
 $name    = if ($Role -eq 'bot') { $BotName } else { $PlayerName }
-$gameDir = Join-Path $Root "clients\$Role"
+$gameDir = Join-Path $Rig "clients\$Role"
 if (-not (Test-Path "$gameDir\mods")) { throw "Client '$Role' is not set up yet: run scripts\setup.ps1 first." }
 
 $mcMeta = Get-Content "$Meta\net.minecraft\$McVersion.json" -Raw | ConvertFrom-Json

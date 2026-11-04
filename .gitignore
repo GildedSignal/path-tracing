@@ -3,3 +3,4 @@ server/
 clients/
 bot/build/
 bot/lib/
+rig.lock

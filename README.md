@@ -4,6 +4,11 @@ A local Minecraft 26.2 setup for building a pathfinding algorithm from first pri
 window, and **PathBot** plays as a second player in another window on your second monitor. Both join a vanilla
 superflat server on this computer.
 
+**Design:**
+- start with [docs/PRINCIPLES.md](docs/PRINCIPLES.md) for the goal and the philosophy;
+- then [docs/HANDOFF.md](docs/HANDOFF.md) for the state and the plan;
+- then [AGENTS.md](AGENTS.md) for how the work is done.
+
 ## Run
 
 ```powershell

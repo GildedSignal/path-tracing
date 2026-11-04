@@ -2,6 +2,9 @@
 # downloaded (Java 25, Minecraft 26.2, Fabric Loader 0.19.5, assets); nothing in that launcher is changed.
 
 $Root        = Split-Path -Parent $PSScriptRoot
+# The rig (server\ and clients\, not in git). PATHTRACING_ROOT lets a builder's worktree use the one rig
+# while building its own code from $Root.
+$Rig         = if ($env:PATHTRACING_ROOT) { $env:PATHTRACING_ROOT } else { $Root }
 $PrismData   = Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data'
 $Jdk         = Join-Path $PrismData 'java\java-runtime-epsilon\bin'
 $Libraries   = Join-Path $PrismData 'libraries'
@@ -20,17 +23,19 @@ $RconPort    = 25575
 $PlayerName  = 'Brain_Forge'
 $BotName     = 'PathBot'
 
-# Performance mods copied from the Immersive pack (exact jars you already run). Client gets all of them,
-# the server only the ones that do game-logic/chunk/network work.
+# Performance mods copied from the Immersive pack (exact jars you already run). Both clients get these;
+# none of them changes game logic.
 $ClientPerfMods = @(
   'fabric-api-*', 'sodium-fabric-*', 'sodium-extra-fabric-*', 'reeses-sodium-options-*',
-  'lithium-fabric-*', 'c2me-fabric-*', 'ferritecore-*', 'ImmediatelyFast-*', 'entityculling-*',
+  'ferritecore-*', 'ImmediatelyFast-*', 'entityculling-*',
   'moreculling-*', 'cloth-config-*', 'BadOptimizations-*', 'krypton-*', 'ScalableLux-*',
   'fast-ip-ping-*', 'rsls-*', 'modmenu-*'
 )
-# Dynamic FPS throttles unfocused windows, which is exactly what the bot window always is.
-$PlayerOnlyMods = @('dynamic-fps-*')
-$ServerPerfMods = @('lithium-fabric-*', 'c2me-fabric-*', 'ferritecore-*', 'krypton-*', 'ScalableLux-*')
+# Your client only. Dynamic FPS throttles unfocused windows, which is exactly what the bot window always is.
+# Lithium and C2ME rewrite game logic (Lithium patches collisions), so the bot's client and the server,
+# which are the judge of the law, run Mojang's code without them (docs/engine.md).
+$PlayerOnlyMods = @('dynamic-fps-*', 'lithium-fabric-*', 'c2me-fabric-*')
+$ServerPerfMods = @('ferritecore-*', 'krypton-*', 'ScalableLux-*')
 $PerfConfigs = @(
   'sodium-options.json', 'sodium-extra-options.json', 'lithium.properties', 'c2me.toml',
   'immediatelyfast.json', 'entityculling.json', 'moreculling.toml', 'badoptimizations.txt',
@@ -92,6 +97,18 @@ function Get-GameClasspath {
   $classpath.Add((Join-Path $Libraries "com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar"))
   $classpath.ToArray()
 }
+
+# One job drives the rig at a time (gates, recordings). The lock names its holder; a stale lock is
+# reclaimed only when its process is gone.
+function Enter-Rig([string]$Holder) {
+  $lock = Join-Path $Rig 'rig.lock'
+  if (Test-Path $lock) {
+    $owner = Get-Content $lock -Raw | ConvertFrom-Json
+    if (Get-Process -Id $owner.pid -ErrorAction SilentlyContinue) { throw "Rig is held by $($owner.holder) (pid $($owner.pid))" }
+  }
+  @{ holder = $Holder; pid = $PID; since = (Get-Date).ToString('s') } | ConvertTo-Json | Set-Content $lock -Encoding ASCII
+}
+function Exit-Rig { Remove-Item (Join-Path $Rig 'rig.lock') -ErrorAction SilentlyContinue }
 
 function Test-Port([string]$HostName, [int]$Port) {
   $c = New-Object Net.Sockets.TcpClient

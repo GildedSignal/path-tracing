@@ -1,0 +1,168 @@
+# The engine
+
+This file covers what the engine is for, the contract it keeps, and how Emergent Space's engine rules map onto it. It holds current truth only; history lives in git.
+
+## Why there is an engine
+
+"run minecraft literally but 100x faster to predict the future … we don't care about textures … and we don't care about what's outside the light cone." (S6) "i want to rewrite the engine to run faster because it'll be simpler and therefore can could explore it" (X6).
+
+The planner has to know what the bot's inputs will do, far faster than the game's 20 ticks a second, and exactly wherever a decision depends on it. That is all the engine is.
+
+A stripped player tick costs roughly 10⁻⁷ s on one core, so speed itself is not the bottleneck. Choosing what to simulate is.
+
+## The law
+
+- **The law is Mojang's 26.2 code** (the unobfuscated client jar). The engine is a Rust port of the parts the planner needs (his choice, S11).
+- **The judge is the game itself.** The bot's client runs Mojang's code with no game-logic mods: Lithium and C2ME are removed from it and from the server. The other performance mods stay, because they only render, cache or network.
+- **Arithmetic copies Java exactly.** That means Java's float and double semantics (strict IEEE), `Mth.sin` and `Mth.cos` (a 65,536-entry table), the same order of operations, and never a fused multiply-add.
+
+Exactness classes:
+
+| Class | What | Judged against |
+|---|---|---|
+| bit-exact | player movement and collision: position, velocity, on-ground, flags, tick by tick | the bot client's own simulation (recorder) |
+| server-exact | health, food, saturation, exhaustion, fall damage, breaking progress | the server (read over RCON) |
+| behaviour-exact | fluids, falling blocks, mobs, redstone | replays, at the resolution the decisions need |
+| advisory | floats on the GPU, learned estimates, forecasts | nothing: a wrong value may only cost speed, never change T |
+
+There is one known exception. Elytra flight (`LivingEntity.updateFallFlyingMovement`) calls `Math.cos` and `Math.sqrt`. `Math.cos` goes through HotSpot's own implementation, so the port must reproduce it bit for bit or give it a class of its own (Phase 11).
+
+## What it keeps and what it drops
+
+**Keeps:**
+- the bot's motion and collisions;
+- block shapes and properties;
+- the effects of items that change motion or the world;
+- fluids, entities and circuits inside the light cone.
+
+**Drops:**
+- rendering, sound and textures;
+- networking, except the bridge to the bot;
+- anything outside the light cone.
+
+## How it computes: a causal chain
+
+The rules come from ES's engine ("compute only surprises"), mapped onto Minecraft:
+
+| ES | Here |
+|---|---|
+| certificate | an edge of the geometry or an entry in a portal table: "this crossing takes k ticks from these entry states, within width w", valid until a dependency changes |
+| dependencies | the block footprint the claim read, plus the toolkit it assumed |
+| event | a contact (landing, wall, ceiling), an edit (a block placed or broken, by anyone), a command (a new goal), a toolkit change |
+| slack | the ticks until the bot's light cone reaches the certificate, minus the work to repair it. Least slack is renewed first |
+| unit | one pure, bounded job (a local solve, a table refresh, a replay): same inputs, same bits; it can run anywhere, early, twice, or be thrown away |
+| one rule at every scale | cells and regions expose one interface: border states, tables, next expiry, deadline |
+| error types | bounded error is allowed; a random walk only with a correction that bounds it (re-anchoring on the observed state); secular drift is forbidden; chaotic divergence is physics, judged by statistics |
+| correctness independent of allocation | the same plan and the same T whatever the thread count, GPU on or off, budget or schedule. Budgets are counted in work units, never wall-clock time, so every run replays |
+| value of computation | shape only where it can change a decision; idle time computes ahead and recompresses |
+| the player is the only wildcard | here: Julien (his commands and edits), anything that chooses (mobs), and the bot's own execution noise. Their light cones bound where certificates can break |
+
+## Local repair
+
+"I don't want to have to recompute a whole region because one block changed" (X2):
+- A block change notifies the certificates whose footprint contains that block. Each one is renewed or dropped.
+- A table above it is refreshed only where one of its portal times actually moved.
+- Improvements travel the same way. A new tool or a newly opened gap can lower a table entry away from the current route, so dependents of the toolkit are re-checked when it changes. "an old route can remain valid while becoming poor" is the case this covers (X2).
+
+## Error bars with feedback
+
+"it's also ok if we're not perfect … error bars in their head and update based on feedback" (X2):
+- Each move is certified with a width: how far the entry state may be off and still reach the same future.
+- The executor re-anchors on the observed state every tick.
+- The planner re-solves locally only when the bot leaves its tube.
+- Narrow moves are where precision is spent; wide ones are never refined.
+
+## Continuous where it helps
+
+Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine may jump from event to event. Every certificate it issues is still checked against the ticked law.
+
+## The contract
+
+**Inputs:**
+- the world: region files for static worlds, the block updates the bot's client streams, and later a read-only server observer;
+- the bot's observed state each tick;
+- the toolkit;
+- goals.
+
+**Outputs:**
+- tick-stamped controls (move, strafe, jump, sneak, sprint, yaw, pitch, hotbar, use, attack), each with the certified tube it relies on;
+- the predicted T.
+
+**Guarantees:**
+- deterministic: the same inputs give the same plan;
+- anytime: a first plan within one tick of the goal arriving, refined while the bot moves;
+- the exactness classes above;
+- the planner never runs on the game's thread.
+
+## The machine
+
+**Hardware:** Windows 11; Ryzen 7 7800X3D (8 cores, 16 threads); 31 GB of RAM; Radeon RX 7900 XTX.
+
+**Compute split:**
+- The float law runs on the CPU threads.
+- The GPU runs through Vulkan. It takes integer min-plus over ticks (exact and associative, so it is safe there) and bitboard light cones.
+- Float work on the GPU is advisory.
+
+**Toolchain:** Rust through rustup with the GNU toolchain. There is no C++ toolset or Windows SDK on this machine. The toolchain and build output live on D:, because C: has about 10 GB free.
+
+## Facts verified so far
+
+All of these come from 26.2. To regenerate them, run `javap -cp <client jar> -c -p -constants <class>`, where the client jar is `%LOCALAPPDATA%\ImmersiveMinecraft\data\libraries\com\mojang\minecraft\26.2\minecraft-26.2-client.jar`.
+
+**`LivingEntity.travelInAir`:**
+- The ground friction f is the block's friction when on the ground, and 1 in the air, adjusted by `FRICTION_MODIFIER` (`clamp(1 − (1 − friction) · m)`, with m = 1 by default).
+- Acceleration is `speed · 0.21600002 / f³` only when f > 0.6; otherwise it is `speed`.
+- Horizontal drag is f × 0.91, adjusted by `AIR_DRAG_MODIFIER`. Vertical velocity is updated as (vy − gravity) × 0.98.
+
+**`jumpFromGround`:**
+- vy = max(`JUMP_STRENGTH` × block jump factor + jump boost, vy).
+- Sprinting adds 0.2 along the yaw, through the sine table.
+
+**`Player.getFlyingSpeed`** (acceleration in the air): 0.02, or 0.025999999 when sprinting.
+
+**`aiStep`:**
+- Horizontal velocity is zeroed when its square is below 9 × 10⁻⁶.
+- Each vertical component is zeroed when below 0.003.
+
+**Attributes:**
+- movement speed 0.1 (the player's base), × 1.3 when sprinting (`ADD_MULTIPLIED_TOTAL` 0.3);
+- jump strength 0.42; gravity 0.08; step height 0.6;
+- safe fall distance 3; block interaction range 4.5; sneaking speed 0.3.
+
+**Fall damage** = floor(fall power × the fall-damage multiplier attribute). Hay takes it to 0.2× and a bed to 0.5× (their `fallOn` overrides).
+
+**`FoodConstants`:**
+- Sprinting needs food above 6.
+- Exhaustion: sprinting 0.1 per metre, a jump 0.05, a sprint-jump 0.2, each healed health point 6. Four exhaustion cost one food point.
+- Regeneration: one health point every 80 ticks at food ≥ 18, or every 10 ticks when saturated.
+
+**Blocks whose movement data differs:**
+- ice, packed ice and frosted ice: friction 0.98;
+- blue ice: friction 0.989;
+- slime: friction 0.8;
+- soul sand: speed 0.4;
+- honey: speed 0.4, jump 0.5.
+
+Every other effect is a code hook. In `net.minecraft.world.level.block`, 25 classes override `entityInside`, 9 override `fallOn` and 7 override `stepOn`.
+
+**Ender pearl:**
+- thrown at 1.5 blocks per tick;
+- gravity 0.03; drag 0.99 per tick (0.8 in water);
+- 5 damage on landing, a 20-tick cooldown, and a random spread drawn from the server's RNG.
+
+**Derived by [Speeds.java](../lab/numbers/Speeds.java)** (run it with `java lab/numbers/Speeds.java`). All figures are steady speeds in m/s.
+
+Horizontal:
+- walking 4.317;
+- sprinting 5.612;
+- sprint-jumping 7.127, or 9.734 under a 2-block ceiling;
+- sprinting on ice 5.404, slower than on stone;
+- sprint-jumping on ice 9.241, or 19.345 under a ceiling (blue ice: 19.903).
+
+Vertical:
+- the ladder 2.352;
+- terminal fall speed 78.4.
+
+Falls and pearls:
+- A 23-block fall does 20 damage, enough to kill from full health.
+- A pearl flies about 52 blocks in 59 ticks.

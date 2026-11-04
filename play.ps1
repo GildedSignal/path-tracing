@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\scripts\common.ps1"
 
-if (-not (Test-Path "$Root\clients\bot\mods\pathtracing.jar")) { & "$Root\scripts\setup.ps1" }
+if (-not (Test-Path "$Rig\clients\bot\mods\pathtracing.jar")) { & "$Root\scripts\setup.ps1" }
 
 & "$Root\scripts\start-server.ps1"
 Write-Host 'Waiting for the server...'

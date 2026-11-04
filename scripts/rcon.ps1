@@ -4,7 +4,7 @@ param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Commands)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 
-$password = ((Get-Content "$Root\server\server.properties") -match '^rcon\.password=' -replace '^rcon\.password=', '')
+$password = ((Get-Content "$Rig\server\server.properties") -match '^rcon\.password=' -replace '^rcon\.password=', '')
 $client = [Net.Sockets.TcpClient]::new($ServerHost, $RconPort)
 $stream = $client.GetStream()
 $reader = [IO.BinaryReader]::new($stream)

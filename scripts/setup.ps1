@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 
 # --- Server ---------------------------------------------------------------------------------------
-$server = Join-Path $Root 'server'
+$server = Join-Path $Rig 'server'
 New-Item -ItemType Directory -Force $server | Out-Null
 $launcherJar = Join-Path $server 'fabric-server-launch.jar'
 if (-not (Test-Path $launcherJar)) {
@@ -72,7 +72,7 @@ if ((Test-Path "$server\eula.txt") -and -not (Test-Path "$server\world-initializ
 
 # --- Clients --------------------------------------------------------------------------------------
 foreach ($role in 'player', 'bot') {
-  $dir = Join-Path $Root "clients\$role"
+  $dir = Join-Path $Rig "clients\$role"
   New-Item -ItemType Directory -Force "$dir\config" | Out-Null
   Remove-Item "$dir\mods\*.jar" -ErrorAction SilentlyContinue
   Copy-Mods $ClientPerfMods "$dir\mods"
@@ -104,6 +104,6 @@ foreach ($role in 'player', 'bot') {
 
 # --- Bot mod --------------------------------------------------------------------------------------
 & "$Root\bot\build.ps1"
-foreach ($role in 'player', 'bot') { Copy-Item "$Root\bot\build\pathtracing.jar" "$Root\clients\$role\mods\" -Force }
+foreach ($role in 'player', 'bot') { Copy-Item "$Root\bot\build\pathtracing.jar" "$Rig\clients\$role\mods\" -Force }
 
 Write-Host "Setup done. Start everything with: .\play.ps1"
