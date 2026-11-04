@@ -42,7 +42,7 @@ This file holds the state of the build, what is in flight and what comes next. I
    - executor v0 (tick-stamped controls, local re-solve).
 
    Gate: R1–R3, re-targeting, and the scale rung (a baselined red until Phase 4).
-3. Edits as conjugates: pickaxe and blocks, identical-block restoration.
+3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). This replaces edits as conjugates (S13).
 4. Scale: the server observer, portal tables, Hashlife, local repair, light-cone scheduling.
 5. Verticals: the bucket.
 6. Momentum ground: ice, slime, soul sand, honey.
@@ -78,7 +78,16 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 
 These come from the Opus red-team of [representation.md](representation.md) (4 November). The draft stands, challenged, until these are settled.
 
-**Decisions only he can make:**
+**His answers (S13, 4 November):**
+- **Getting around never modifies the world.** A swarm of bots editing as they pass would deform a world built by players, down to redstone state and a trapdoor moved to crawl. This replaces decision 1 below. Phase 3 (edits as conjugates) becomes movement through the unmodified world, with tools only where they leave no trace.
+- **Braking:** pressing against the motion stops faster than coasting's 32 ticks, so braking is part of the law and of every local solve.
+- **A lost block:** a block lost to the void is a spent token. Catching it back costs time and positioning.
+- **Consumables:** he is unsure.
+- **Open, for him:**
+  - Does a tool use that leaves no trace count as modifying the world? For example, a water bucket placed and taken back before the water flows anywhere.
+  - Consumable proposal: zero by default, with a budget he grants per command.
+
+**Earlier decisions only he could make (now answered above):**
 1. **His void bridge (S6) against "identical block" (S12).**
    - A block placed under the feet over the void drops into the void when it is broken back.
    - Stone drops cobblestone, grass drops dirt, gravel sometimes drops flint.
