@@ -15,13 +15,29 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Waiting on Julien:** his approval of PRINCIPLES.md, which he owns. No builder starts before it.
 - **Meanwhile:** Phase 1.0 (the toolchain) and 1.1 (lab hygiene), done by the integrator.
 
+## Resuming after a compaction (4 November, about 23:00)
+
+- **Running in the background** (both GPT Sol slots):
+  - job 1.5, in `D:\path-tracing-wt\law`;
+  - job 1.2b, in `D:\path-tracing-wt\recorder`.
+- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`. GPT can't commit, so commit its changes on its branch with `Built-by: gpt-6.1-sol`.
+- **Relaunching:** run `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. Answers to a job's questions go into its `prompt.md` under "Answers…".
+- **After 1.2b:**
+  1. a fresh Sonnet judge;
+  2. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
+  3. a live run of the 1.2 gate (`lab/gates/`);
+  4. recording the L0 fixtures for 1.5;
+  5. the merges.
+- **Waiting on Julien:** may the bot also accept console commands over RCON for gates, or must his client be logged in?
+
 ## In flight
 
 | Job | Who, where | Lands | Next action |
 |---|---|---|---|
 | Register completeness check | Haiku | done: 2 rows added (X1 "gather resources on think", S10) | — |
 | Red-team of representation.md | Opus, fresh context | done: corrections approved (S14) and folded in | — |
-| 1.2 Recorder and dumper | GPT gpt-6.1-sol, worktree `D:\path-tracing-wt\recorder` on `wt/recorder`, job `jobs/1.2-recorder/` | `wt/recorder`, final message in `jobs/1.2-recorder/last.md` | first attempt hit GPT's usage limit at 22:22; queued to start at 22:37. Then a Sonnet judge, a live run in the rig, the merge |
+| 1.2 Recorder and dumper | GPT gpt-6.1-sol, `D:\path-tracing-wt\recorder` on `wt/recorder` | built (ce09c2e). The Sonnet judge passed its exactness and flagged 12 fixes, now job `jobs/1.2b-recorder-fixes/` (running) | after 1.2b: a live run of the frozen gate in the rig, then the merge. **Needs Julien:** the bot only takes his whispers, so either his client is logged in during gates, or the bot also accepts console commands over RCON |
+| 1.5 Movement law in Rust | GPT gpt-6.1-sol, worktree `D:\path-tracing-wt\law` on `wt/law`, job `jobs/1.5-law/` | `wt/law`, `jobs/1.5-law/last.md` | queued for 22:37 beside 1.2. Its L0 gate waits for 1.2's recorder and the fixtures |
 | 1.4 Prior art | Sonnet, read-only | **done; decided: port from the bytecode, with Azalea as a reading guide** | Azalea (MIT, targets 26.2) mirrors vanilla's shape, merger and sweep code, but has gaps inside the bit-exact class: no friction or drag modifiers, 0.216/f³ applied to every block (the jar applies it only when f > 0.6), soul sand, honey and stuck factors still TODO, no exhaustion, no tick-by-tick test. Pumpkin (GPL) doesn't simulate players. Parkour Calculator (GPL) runs the game's own entity. Baritone has a 26.2 build (v1.19.0, LGPL), so Phase 12 can run |
 | 1.0 Toolchain | integrator | **done:** rustc and cargo 1.99.1, stable-x86_64-pc-windows-gnu; `RUSTUP_HOME` and `CARGO_HOME` under `D:\rust`; a hello-world builds | — |
 | 1.1 Lab hygiene | integrator | **done:** vanilla judge (Lithium and C2ME only in Julien's client); `$Rig` from `PATHTRACING_ROOT`; `Enter-Rig`/`Exit-Rig` lock in `scripts/common.ps1`. **Left:** the lab server on D: (port 25566, RCON 25576) with pre-generated fixture worlds, and `/tick rate` in the gate runner | next integrator step, then the 1.2 job file |
@@ -93,6 +109,7 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 - **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he is driving the bot.
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
 - **No Fable:** Fable sub-agents fail on this account (usage credits).
+- **Codex sandbox:** it can't read `%LOCALAPPDATA%`. Builds use the copy that `scripts/stage-deps.ps1` puts in `D:\path-tracing-deps\data` (`PATHTRACING_DEPS`), and `gpt.ps1` opens that folder, `D:\rust` and `D:\path-tracing-target` to the job. Re-stage after a game or JDK update.
 - **Codex path:** the Codex CLI lives inside the Codex app, at `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`, and the hash folder changes with app updates.
 - **Server stdin:** commands piped into the server's stdin before the world has loaded fail (README).
 - **Planning thread:** planning on the client's main thread freezes the bot's window. The bridge moves it out.
