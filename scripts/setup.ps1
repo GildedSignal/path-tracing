@@ -90,6 +90,8 @@ foreach ($role in 'player', 'bot') {
     $set += @{
       fullscreen = 'false'; renderDistance = '10'; simulationDistance = '8'; maxFps = '60'
       pauseOnLostFocus = 'false'; inactivityFpsLimit = '"minimized"'; soundCategory_master = '0.0'
+      # Recordings hold explicit inputs only: no option may move the bot by itself (jobs/1.5-law).
+      autoJump = 'false'; toggleSprint = 'false'; toggleCrouch = 'false'; sprintWindow = '0'
     }
   }
   [string[]]$options = Get-Content $PackOptions -Encoding UTF8 | ForEach-Object {
