@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "pathtracing",
+  "version": "0.1.0",
+  "name": "Path tracing bot",
+  "description": "Player side: right-click with a stick to send PathBot a goal. Bot side: receives goals, plans, walks.",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["pathtracing.PathTracingMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "26.2",
+    "fabric-api": "*",
+    "java": ">=25"
+  }
+}
