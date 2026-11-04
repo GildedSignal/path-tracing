@@ -143,6 +143,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "identical block" | S12 | **Adopted:** restoration means the identical block and block state; without Silk Touch, blocks whose drop differs are barriers |
 | GPT as a sub-agent for well-formed tasks, Claude where taste is needed | S12 | **Followed:** AGENTS.md |
 | no Fable | S12 | **Followed:** AGENTS.md |
+| "gpt sub-agents can be two max at the same time indenpedently of you and one if astra is being used" | S15 | **Followed:** AGENTS.md |
 | speed fades faster than 32 ticks if you press the opposite key, like a brake | S13 | **Adopted:** the 32 ticks were coasting. Braking (input against the motion) is part of the law and of every local solve; the stopping time is measured in Phase 1 |
 | a block that falls into the void has a price: position yourself to catch it, place it where it can be caught, or lose it for good; the drop is random | S13 | **Adopted:** a lost block is a spent token; recovering it is a cost (time, position); its scatter comes from the server's RNG |
 | a swarm of bots editing as they pass would compound and deform a world built by players; redstone state, downstream effects, even a trapdoor moved to crawl; "Basically don't modify the world to get around there's many ways to move in minecraft." | S13 | **Adopted:** getting around never modifies the world. Supersedes "a wall is a two second delay" (X4) and the edit phases. Open: whether a tool use that leaves no trace (a water bucket placed and taken back) counts as a modification |
