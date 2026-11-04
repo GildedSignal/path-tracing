@@ -25,6 +25,12 @@ The sandbox cannot read `%LOCALAPPDATA%`, so use the staged copy, which has the 
 - **No network in the sandbox:** use no crates at all, dev-dependencies included. Parse the recorder's JSON lines by hand. The format is fixed and flat (job 1.2, section A.3).
 - **Don't commit:** the sandbox can't write the repo's git metadata. Leave every change in the worktree; the integrator commits it with `Built-by: gpt-6.1-sol`.
 
+## Answers to the third run's question, and how to proceed
+
+- **Option-dependent `LocalPlayer` behaviour is out of scope.** The bot's client runs with `autoJump:false`, `toggleSprint:false`, `toggleCrouch:false` and `sprintWindow:0` (set by `scripts/setup.ps1`), so every movement in a recording comes from an explicit input. Port the law as it runs with those options; treat sprinting as on exactly while the sprint input is held, as `LocalPlayer` does with them.
+- **Your braking table is accepted.** Keep it in `engine/README.md` and as the braking test.
+- **Don't stop again for scope.** Take the most literal reading of this spec, write each assumption down in your final message, and keep porting. Stop only for something that blocks the build.
+
 ## What to build
 
 A Cargo workspace at `engine/`, holding one library crate, `engine/law`.
