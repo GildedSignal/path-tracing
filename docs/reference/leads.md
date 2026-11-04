@@ -6,6 +6,9 @@ These are the public sources found during the 4 November discussions, kept apart
 
 - **Parkour Calculator:** simulates jumps with Minecraft's own movement code, and searches with OpenCL. https://github.com/Leg0shii/ParkourCalculatorMod
 - **Azalea:** a Rust bot framework with physics; it lists the mechanics it is missing. https://github.com/azalea-rs/azalea
+  - Read on 4 November: MIT licence, targets 26.2.
+  - Its `azalea-physics` collision shapes, mergers and sweeps follow vanilla's structure, which makes it the reading guide for job 1.5.
+  - It is not forked, because of gaps listed in the handoff.
 - **Pumpkin:** a Rust server, still prerelease. https://github.com/Pumpkin-MC/Pumpkin
 - **MCHPRS and its Redpiler:** compiles redstone, but resets on every block edit. https://github.com/MCHPR/MCHPRS/blob/master/docs/Redpiler.md
 - **Baritone's feature list:** mining, placing, ladders, bucket falls, jumping while placing. https://github.com/cabaletta/baritone/blob/1.21.4/FEATURES.md

@@ -21,6 +21,8 @@ This file holds the state of the build, what is in flight and what comes next. I
 |---|---|---|---|
 | Register completeness check | Haiku | done: 2 rows added (X1 "gather resources on think", S10) | — |
 | Red-team of representation.md | Opus, fresh context | done: corrections approved (S14) and folded in | — |
+| 1.2 Recorder and dumper | GPT gpt-6.1-sol, worktree `D:\path-tracing-wt\recorder` on `wt/recorder`, job `jobs/1.2-recorder/` | `wt/recorder`, final message in `jobs/1.2-recorder/last.md` | first attempt hit GPT's usage limit at 22:22; queued to start at 22:37. Then a Sonnet judge, a live run in the rig, the merge |
+| 1.4 Prior art | Sonnet, read-only | **done; decided: port from the bytecode, with Azalea as a reading guide** | Azalea (MIT, targets 26.2) mirrors vanilla's shape, merger and sweep code, but has gaps inside the bit-exact class: no friction or drag modifiers, 0.216/f³ applied to every block (the jar applies it only when f > 0.6), soul sand, honey and stuck factors still TODO, no exhaustion, no tick-by-tick test. Pumpkin (GPL) doesn't simulate players. Parkour Calculator (GPL) runs the game's own entity. Baritone has a 26.2 build (v1.19.0, LGPL), so Phase 12 can run |
 | 1.0 Toolchain | integrator | **done:** rustc and cargo 1.99.1, stable-x86_64-pc-windows-gnu; `RUSTUP_HOME` and `CARGO_HOME` under `D:\rust`; a hello-world builds | — |
 | 1.1 Lab hygiene | integrator | **done:** vanilla judge (Lithium and C2ME only in Julien's client); `$Rig` from `PATHTRACING_ROOT`; `Enter-Rig`/`Exit-Rig` lock in `scripts/common.ps1`. **Left:** the lab server on D: (port 25566, RCON 25576) with pre-generated fixture worlds, and `/tick rate` in the gate runner | next integrator step, then the 1.2 job file |
 
