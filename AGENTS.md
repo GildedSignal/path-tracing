@@ -25,6 +25,7 @@
 | Exact math | GPT gpt-6-astra, sparingly (it uses tokens fastest) | convergent algorithms that Sol stalls on |
 | Judge | Claude Sonnet 5.5 for GPT's work; GPT Sol for Claude's | the frozen gate, judged by the other family in a fresh context |
 | Runner | Claude Haiku 5.5 | summaries, completeness checks, ladder runs, digesting logs |
+| Lab | GLM 5.3 through omp, many at once, outside the slot limits | breakers, worst cases, jar questions, pre-freeze red-teams, probes: only results a machine can check ([lab/glm.md](lab/glm.md)) |
 
 No Fable (Julien, 4 November).
 

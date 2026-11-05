@@ -50,7 +50,7 @@ His ES philosophy ([PRINCIPLES](https://github.com/GildedSignal/emergent-space-e
 - 2 it's a game, so error type matters more than error size. Here "exact" means equal to Mojang's code: the bot's client is the oracle and judge, and the Rust port is the implementation;
 - 3 compute only surprises: a surprise is an event that breaks a certificate; what can be derived when looked at is derived then ([engine.md](engine.md));
 - 4 everything emerges: no central control and no catalogue of tricks or block categories;
-- 5 the player is the only wildcard, and light cones partition compute. Here the wildcards are Julien (his commands and edits) and, for now, whatever chooses (mobs) plus the bot's own execution noise ([engine.md](engine.md)). **Open:** his "even a zombie can be precomputed" (X2) may shrink that list;
+- 5 the player is the only wildcard, and light cones partition compute. Here the wildcards are Julien (his commands and edits) and the bot's own execution noise. Mobs are precomputed, as law (S20; [engine.md](engine.md));
 - 6 store the generator, not the generated: the recurrence and its parameters, shared, with arcs derived on demand ([engine.md](engine.md), "Continuous where it helps");
 - 7 spacetime: in the right frame, geodesics are trivial. Here the least-T route is not straight, because momentum is in the state; the frame is what makes the search trivial. **Multipoles are the mechanism** for far influence and causal regions (see the register's multipole row);
 - 9 a failed experiment kills the configuration, never the method;
@@ -81,7 +81,7 @@ His ES philosophy ([PRINCIPLES](https://github.com/GildedSignal/emergent-space-e
 - **16, "cheapest arithmetic":** the law's numbers are Mojang's floats and doubles, not ours to choose.
 - **28 (the view is an instrument), 29 (history, not a winner), 30 (what must be perfect: navigation, knowledge, dynamics):** about ES as a game. The goal here is T.
 
-**Kept side by side:** 8, "cathedral foundations, not an MVP", against "We're doing the spaceX loop here" (X4); see the contradictions table.
+**8, settled (S20):** cathedral foundations for the law and the representation, which everything rests on; the SpaceX loop for everything built on them.
 
 Integer arithmetic does carry over for time. T is a whole number of ticks, so composing times by min-plus over integers is exact and associative.
 
@@ -169,6 +169,10 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "i say pathtracing instead of pathfinding for reason i guess" | S18 | **Interpretation, not his words:** routes are rays of least time through a medium whose speed the toolkit sets, as in Fermat's principle. Johann Bernoulli solved the brachistochrone that way, as light refracting through layers. A field of times to one goal serves every bot heading there |
 | "Yes bring the ES testing method as proposed" | S19 | **Adopted:** [ladder.md](ladder.md), "How we test": climbing ladders, extreme and chaotic rungs, planted faults chosen by the red-team, many seeds, anomalies and run records |
 | check for one-liners that could be problematic, as "test like a Spartan" was | S19 | **Followed:** an audit by a Sonnet sub-agent against ES's sources (5 November) |
+| GLM 5.3 as a heavily used sub-agent through the OMP harness: "leverage good intelligence massively BUT without creating busy work, destroying things and taking your thinking away"; "autonomous to some degree"; the key entered "via a single click in a safe manner"; "Be very careful with no creating fake work" | S20 | **Adopted:** [AGENTS.md](../AGENTS.md), GLM; the key entry `scripts/set-glm-key.ps1`. Where it runs is his call (isolation) |
+| the time field "connects to principle of least action too no? i think that updates things and improve them then?" | S20 | **Answered** in chat on 5 November (Hamilton-Jacobi); the proposals it raised await him |
+| "cathedral for the law and the representation, which everything rests on, and the SpaceX loop for everything built on them." | S20 | **Followed:** settles ES 8 against X4 (contradictions table) |
+| "mobs are precomputed" | S20 | **Adopted:** mobs are law, not wildcards ([engine.md](engine.md)); their modelling is Phase 8 |
 | think a bit about many bots now, for "methods that scale and allow swarm behaviors and emergent properties for cheap" | S19 | **Answered** in chat on 5 November; nothing built |
 | push the elytra test early, "because it's just jumping between pillars and guiding it", "not too early either but remember how we test" | S18 | **Adopted:** R-brach runs right after the first flight, before Phase 3, as soon as the elytra law is ported; it enters as law data only |
 | pricing consumables: "i'm unsure here honnestly", a matter of amortization and resource management without knowing the income, while nothing is gathered or regenerated | S13 | **Open.** Proposal: spending a consumable needs a budget he gives per command (zero by default); health and food regenerate, so they are feasibility constraints, not tokens |
@@ -181,6 +185,6 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | Simulate or not | "run minecraft literally but 100x faster to predict the future" (S6) | "The best compute is no compute." (X2) |
 | Discrete or continuous | "it's blocks" (X2) | "we might even be better of to think of minecraft as continuous who knows" (X2) |
 | Build or think | "not build for now" (X1); "think first" (S8) | "plan for the whole build" (S10) |
-| Foundations or the loop | "build cathedral foundations, not an MVP" (ES 8) | "We're doing the spaceX loop here." (X4) |
+| Foundations or the loop | "build cathedral foundations, not an MVP" (ES 8) | "We're doing the spaceX loop here." (X4). **Settled (S20):** cathedral for the law and the representation, the loop for what is built on them |
 | Performance mods | "just keep the perf mods" (S1) | the approved plan: a vanilla judge for the bot's client and the server |
 | Editing to get around | "a wall is a two second delay not a wall" (X4); "using a water bucket above him, float, take it back, put it back higher" (X4) | "Basically don't modify the world to get around there's many ways to move in minecraft." (S13) |

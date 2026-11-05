@@ -57,7 +57,7 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 | value of computation | shape only where it can change a decision; idle time computes ahead and recompresses |
 | the simulation decides, heuristics schedule | a heuristic may reorder work, never remove a candidate. Pruning is deciding, so a candidate is removed only by proof: a bound from the light cone or the bracket, or dominance under the law. Learned estimates are advisory (above) |
 | ruin is excluded, not priced | an irreversible loss (death, an item lost for good, a world change) is a barrier from the first rung, never a cost in ticks. Tokens (Phase 7) price only what can be spent and replaced |
-| the player is the only wildcard | here: Julien (his commands and edits), anything that chooses (mobs), and the bot's own execution noise. Their light cones bound where certificates can break |
+| the player is the only wildcard | here: Julien (his commands and edits) and the bot's own execution noise. Their light cones bound where certificates can break. Mobs are precomputed as law (S20), in the behaviour-exact class; how their random choices enter is Phase 8's design |
 
 ## Local repair
 

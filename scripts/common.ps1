@@ -115,3 +115,11 @@ function Test-Port([string]$HostName, [int]$Port) {
   $c = New-Object Net.Sockets.TcpClient
   try { $c.ConnectAsync($HostName, $Port).Wait(300) -and $c.Connected } catch { $false } finally { $c.Dispose() }
 }
+
+# The Z.ai key for GLM, stored by scripts\set-glm-key.ps1 (DPAPI, this user only). Returns $null when none is stored.
+# Callers put it only into a child process's environment, and scrub it from anything they publish.
+function Get-GlmKey {
+  $file = Join-Path $env:LOCALAPPDATA 'path-tracing\zai-key.xml'
+  if (-not (Test-Path $file)) { return $null }
+  (Import-Clixml $file).GetNetworkCredential().Password
+}

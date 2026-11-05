@@ -81,9 +81,7 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 
 ## Proposals awaiting Julien
 
-**Open, from the one-liner audit (5 November):**
-- ES 8, "cathedral foundations, not an MVP", against X4's "spaceX loop": which governs here, or each where?
-- "even a zombie can be precomputed" (X2): are mobs a wildcard, or law to precompute?
+**Settled on 5 November (S20):** ES 8 (cathedral for the law and the representation, the SpaceX loop above them); mobs are precomputed.
 
 
 **Open:** the price of consumables (S13, unsure). Until he decides, a command grants a budget, zero by default; health and food are feasibility constraints.
