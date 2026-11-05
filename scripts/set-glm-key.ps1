@@ -6,7 +6,8 @@
 # with DPAPI, so only this Windows account on this machine can decrypt it, outside the repository. Nothing prints it.
 # scripts\common.ps1's Get-GlmKey decrypts it only to hand it to an omp process's environment.
 # GLM runs on GitHub's machines (S21), so the script also sets the repository's Actions secret ZAI_API_KEY.
-param([switch]$Check, [switch]$Remove)
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-glm-key.ps1 -Sync    copy the stored key to the Actions secret
+param([switch]$Check, [switch]$Remove, [switch]$Sync)
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:LOCALAPPDATA 'path-tracing'
 $file = Join-Path $dir 'zai-key.xml'
@@ -22,6 +23,10 @@ if ($Remove) {
   return
 }
 
+if ($Sync) {
+  if (-not (Test-Path $file)) { 'No GLM key is stored: run the script without -Sync first.'; return }
+  $cred = Import-Clixml $file
+} else {
 $cred = Get-Credential -UserName 'zai' -Message 'Paste your Z.ai API key into the password field, then press OK. It is stored encrypted for your Windows account only.'
 if (-not $cred -or $cred.Password.Length -eq 0) { 'Cancelled: nothing was stored.'; return }
 if ($cred.Password.Length -lt 20) { 'That looks too short to be an API key: nothing was stored.'; return }
@@ -35,6 +40,7 @@ foreach ($who in @("$env:USERDOMAIN\$env:USERNAME", 'NT AUTHORITY\SYSTEM')) {
 }
 Set-Acl -Path $file -AclObject $acl
 "Stored: the GLM key is saved, encrypted, for $env:USERNAME only."
+}
 
 # GLM runs on GitHub's machines (S21): the same key becomes the repository's Actions secret. gh encrypts it with the
 # repository's public key before it leaves this machine; it is passed through stdin, never on a command line.
