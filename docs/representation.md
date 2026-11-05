@@ -102,6 +102,18 @@ Everything below exists to make that field cheap to build, cheap to repair and e
     - Generating a new destination portal modifies the world, so it is ruled out.
     - *Killed if:* the R10 rung misprices a route through an existing portal.
 
+13. **The field is certified by local consistency** (least time, S20 to S23).
+    - **The check:** the field is right at a state s when T(s) = min over inputs u of [1 + T(next(s, u))], the Bellman equation, discrete Hamilton–Jacobi. Checking it reads one step ahead, so every state can be checked independently, on threads or the GPU, against the law.
+    - **Repair in both directions,** as LPA* and D* Lite do. A slower block (a wall, a builder's new block) raises T only for states whose optimal route passed through it: its shadow. A faster one (an opened gap, a new tool, a block removed) spreads outward from that spot like a new light source and can lower T for states whose routes never touched it ("an old route can remain valid while becoming poor", X2). Only states made inconsistent are repaired.
+    - **Where:** fields are kept where they are reused: goals shared by many bots, and a tube around each bot's route. A lone trip uses a forward search guided by the light cone.
+    - *Killed if:* after a random block change on a fixture, the repaired field differs from a field rebuilt from scratch, or the repair touches states outside the inconsistent set.
+
+14. **Ridges are where precision is spent.**
+    - **The ridge:** where two families of optimal routes meet (left of the pillar or right), the field has a crease. Near it, a tiny error flips the plan.
+    - **The executor** keeps the plan it holds near a ridge unless the other side is better by more than the noise (hysteresis), so the bot never dithers.
+    - **Precision:** certified widths narrow at ridges; that is where refinement is spent (ES 21). Swarms split there for free.
+    - *Killed if:* on a course built around a ridge, with the measured noise, the bot switches plans more than once, or loses more T than the gap between the two routes.
+
 ## The four questions (X3)
 
 - **Breaking a wall versus going around:** the bot never breaks it. A wall leaves only the ways through that already exist: around it, over it, through an opening, or a bucket climb that leaves no trace.
@@ -115,3 +127,4 @@ Everything below exists to make that field cheap to build, cheap to repair and e
 
 - **Compactness:** whether border states stay compact once speed is included. The probe decides, before the geometry is designed.
 - **Consumable prices:** Julien's call (S13).
+- **Goals for builders** (S23): a builder's goal is rarely a cell. It is any state from which the block it must place is in reach and in sight, which is a region rooted at the block. Raised in chat on 5 November; not yet decided.
