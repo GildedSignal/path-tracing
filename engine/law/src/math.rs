@@ -33,7 +33,7 @@ pub fn sqrt(value: f32) -> f32 {
 
 // Mth.equal
 pub fn equal(a: f64, b: f64) -> bool {
-    (b - a).abs() < 1.0e-5
+    (b - a).abs() < 1.0e-5f32 as f64
 }
 
 // LivingEntity.computeModifiedFriction

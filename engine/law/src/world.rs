@@ -22,12 +22,13 @@ pub struct Fluid {
     pub flow: Vec3
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Inside {
     #[default] None,
     Cobweb,
     PowderSnow,
-    Honey
+    Honey,
+    Unsupported(String)
 }
 
 #[derive(Clone, Debug)]
@@ -49,12 +50,15 @@ pub struct Block {
     pub inside: Inside,
     pub stuck_multiplier: Option<Vec3>,
     pub fall_on_multiplier: f32,
+    pub bed: bool,
+    pub suffocating: bool,
     pub bounce: f32,
     pub suppresses_bounce: bool,
     pub slime: bool,
     pub fence: bool,
     pub wall_or_gate: bool,
     pub resets_fall_distance: bool,
+    pub end_portal_or_gateway: bool,
     pub air: bool,
 }
 impl Default for Block {
@@ -78,12 +82,15 @@ impl Default for Block {
             inside: Inside::None,
             stuck_multiplier: None,
             fall_on_multiplier: 1.0,
+            bed: false,
+            suffocating: false,
             bounce: 0.0,
             suppresses_bounce: false,
             slime: false,
             fence: false,
             wall_or_gate: false,
             resets_fall_distance: false,
+            end_portal_or_gateway: false,
             air: true
         }
     }
@@ -100,7 +107,10 @@ impl Block {
 
     // Shapes.block
     pub fn full() -> Self {
-        Self::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)])
+        Self {
+            suffocating: true,
+            ..Self::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)])
+        }
     }
 }
 
@@ -124,6 +134,58 @@ impl CollisionContext {
 }
 pub trait World {
     fn block(&self, position: BlockPos) -> &Block;
+
+    // CollisionGetter.collidesWithSuffocatingBlock; BlockCollisions.computeNext
+    fn collides_with_suffocating_block(&self, bounds: Aabb, context: CollisionContext) -> bool {
+        let lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        for z in lo[2]-1..=hi[2]+1 {
+            for y in lo[1]-1..=hi[1]+1 {
+                for x in lo[0]-1..=hi[0]+1 {
+                    let p = [x, y, z];
+                    if !self.loaded(p) || !self.block(p).suffocating {
+                        continue;
+                    }
+                    let shape = self.collision_shape(p, context);
+                    let offset = Vec3::new(x as f64, y as f64, z as f64);
+                    let intersects = if shape.is_block() {
+                        bounds.intersects(Aabb { min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0)) })
+                    } else {
+                        shape.moved(offset).intersects(bounds)
+                    };
+                    if intersects {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    // BlockGetter.clip; ClipContext.Block.FALLDAMAGE_RESETTING; ClipContext.Fluid.WATER; VoxelShape.clip
+    fn fall_reset_clip(&self, from: Vec3, to: Vec3) -> bool {
+        let movement = to.minus(from);
+        if movement.length_sqr() < 1.0e-7 {
+            return false;
+        }
+        let inside_point = from.plus(movement.scale(0.001));
+        crate::blocks::traverse_blocks(from, to, |p| {
+            let block = self.block(p);
+            let height = if block.resets_fall_distance || block.end_portal_or_gateway {
+                1.0
+            } else if block.fluid.kind == FluidKind::Water {
+                block.fluid.height as f64
+            } else {
+                return false;
+            };
+            if height < 1.0e-7 {
+                return false;
+            }
+            let bounds = Aabb::new(p[0] as f64, p[1] as f64, p[2] as f64,
+                p[0] as f64+1.0, p[1] as f64+height, p[2] as f64+1.0);
+            bounds.contains(inside_point) || bounds.clip(from, to).is_some()
+        })
+    }
 
     // Level.hasChunkAt
     fn loaded(&self, _position: BlockPos) -> bool {

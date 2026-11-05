@@ -102,12 +102,27 @@ fn ladder_terminal_and_fall() {
     assert_eq!(calculate_fall_damage(&PlayerState::default(), 23.0, 1.0), 20);
 }
 
+fn braking_expectations(mode: &str) -> [[i32; 7]; 4] {
+    let mut result = [[0; 7]; 4];
+    for row in include_str!("data/braking.tsv").lines() {
+        let fields: Vec<_> = row.split_whitespace().collect();
+        if fields[0] != mode {
+            continue;
+        }
+        let friction = f32::from_bits(u32::from_str_radix(fields[1], 16).unwrap());
+        let sprint = fields[2] == "true";
+        let index = [(0.6f32, false), (0.6, true), (0.98, false), (0.98, true)]
+            .iter().position(|entry| *entry == (friction, sprint)).unwrap();
+        let k: usize = fields[3].parse().unwrap();
+        result[index][k] = fields[4].parse().unwrap();
+    }
+    assert!(result.iter().flatten().all(|ticks| *ticks > 0));
+    result
+}
+
 #[test]
-fn braking_recurrence() {
-    let expected=[[8, 5, 8, 10, 11, 12, 13], 
-    [8, 6, 8, 10, 11, 12, 13], 
-    [38, 36, 35, 33, 30, 25, 7], 
-    [40, 39, 38, 36, 35, 32, 27]];
+fn braking_recurrence_regression() {
+    let expected = braking_expectations("recurrence");
     for (row, (friction, sprint)) in [(0.6, false), (0.6, true), (0.98, false), (0.98, true)].into_iter().enumerate(){
         let w=floor(friction, false);
         let mut steady=player();
@@ -209,11 +224,8 @@ fn java_casts_and_table(){
 }
 
 #[test]
-fn braking_player_tick() {
-    let expected=[[8, 5, 8, 10, 11, 12, 13], 
-    [8, 5, 8, 10, 11, 12, 13], 
-    [38, 36, 35, 33, 30, 25, 7], 
-    [40, 39, 38, 36, 34, 31, 26]];
+fn braking_player_tick_regression() {
+    let expected = braking_expectations("player");
     for (index, (friction, sprint)) in [(0.6, false), (0.6, true), (0.98, false), (0.98, true)].into_iter().enumerate() {
         let world=floor(friction, false);
         let mut steady=player();
@@ -295,4 +307,98 @@ fn speed_refresh_follows_travel() {
     let acceleration=0.1f32*(0.21600002f32/(0.6f32*0.6f32*0.6f32));
     assert_eq!(state.position.z.to_bits(), (0.98f32 as f64*acceleration as f64).to_bits());
     assert_eq!(state.speed, ((0.1f32 as f64)*(1.0+0.3f32 as f64)) as f32);
+}
+
+#[test]
+fn sprint_latches_through_key_release_and_sneak() {
+    let world = floor(0.6, false);
+    for sneak in [false, true] {
+        let mut state = player();
+        tick(&mut state, &world, &Input { forward: true, sprint: true, ..Input::default() });
+        assert!(state.sprinting);
+        for _ in 0..3 {
+            tick(&mut state, &world, &Input { forward: true, sneak, ..Input::default() });
+            assert!(state.sprinting);
+        }
+        tick(&mut state, &world, &Input::default());
+        assert!(!state.sprinting);
+    }
+}
+
+#[test]
+fn shallow_water_prevents_sprinting() {
+    let mut world = floor(0.6, false);
+    world.fill([-2, 0, -2], [2, 0, 10], Block {
+        air: false,
+        fluid: Fluid { kind: FluidKind::Water, height: 0.4, ..Fluid::default() },
+        ..Block::default()
+    });
+    let mut state = player();
+    for _ in 0..3 {
+        tick(&mut state, &world, &Input { forward: true, sprint: true, ..Input::default() });
+        assert!(state.in_water && !state.underwater);
+        assert!(!state.sprinting);
+    }
+}
+
+#[test]
+fn bed_hay_and_honey_landings() {
+    for (material, bed, multiplier, expected) in [("bed", true, 1.0, 2), ("hay", false, 0.2, 1), ("honey", false, 0.2, 1)] {
+        let mut world = floor(0.6, false);
+        world.set([0, -1, 0], Block { bed, fall_on_multiplier: multiplier, ..Block::full() });
+        let mut state = PlayerState { fall_distance: 10.0, ..player() };
+        tick(&mut state, &world, &Input::default());
+        assert_eq!(20.0-state.health, expected as f32, "{material}");
+    }
+}
+
+#[test]
+fn four_corner_push_out_and_no_physics() {
+    let mut world = BoxWorld::default();
+    world.set([0, 0, 0], Block::full());
+    for no_physics in [false, true] {
+        let mut state = PlayerState {
+            position: Vec3::new(0.9, 0.0, 0.5), no_physics, ..PlayerState::default()
+        };
+        tick(&mut state, &world, &Input::default());
+        assert_eq!(state.position, Vec3::new(0.9, 0.0, if no_physics { 0.5 } else { 0.4 }));
+    }
+}
+
+#[test]
+#[should_panic(expected = "BlockState.entityInside: bubbleColumn")]
+fn unsupported_inside_hook_fails_explicitly() {
+    let mut world = BoxWorld::default();
+    world.set([0, 0, 0], Block {
+        air: false, inside: Inside::Unsupported("bubbleColumn".to_owned()), ..Block::default()
+    });
+    let mut state = PlayerState { position: Vec3::new(0.5, 0.0, 0.5), ..PlayerState::default() };
+    tick(&mut state, &world, &Input::default());
+}
+
+#[test]
+#[should_panic(expected = "FluidState.entityInside: LavaFluid")]
+fn lava_inside_hook_fails_explicitly() {
+    let mut world = BoxWorld::default();
+    world.set([0, 0, 0], Block {
+        air: false, fluid: Fluid { kind: FluidKind::Lava, height: 1.0, ..Fluid::default() }, ..Block::default()
+    });
+    let mut state = PlayerState { position: Vec3::new(0.5, 0.0, 0.5), ..PlayerState::default() };
+    tick(&mut state, &world, &Input::default());
+}
+
+#[test]
+fn fall_reset_end_portal_and_gateway() {
+    let mut world = BoxWorld::default();
+    world.set([0, 0, 0], Block { end_portal_or_gateway: true, air: false, ..Block::default() });
+    assert!(world.fall_reset_clip(Vec3::new(0.5, 2.0, 0.5), Vec3::new(0.5, -2.0, 0.5)));
+    assert!(world.fall_reset_clip(Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.5, -2.0, 0.5)));
+    assert!(!world.fall_reset_clip(Vec3::new(1.1, 2.0, 0.5), Vec3::new(1.1, -2.0, 0.5)));
+}
+#[test]
+fn suffocation_full_cube_keeps_sub_epsilon_overlap() {
+    let mut world = BoxWorld::default();
+    world.set([0, 0, 0], Block::full());
+    let bounds = Aabb::new(0.1, 1.0-5.0e-8, 0.1, 0.9, 2.0, 0.9);
+    assert!(world.collides_with_suffocating_block(bounds, CollisionContext::of(&player())));
 }

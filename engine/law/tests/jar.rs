@@ -39,3 +39,67 @@ fn jar_intersection_corpus() {
         assert_eq!(actual, expected, "jar block intersection case {line}");
     }
 }
+
+#[test]
+fn jar_epsilon_boundaries() {
+    for row in include_str!("data/epsilons.tsv").lines() {
+        let fields: Vec<_> = row.split_whitespace().collect();
+        let value = f64::from_bits(u64::from_str_radix(fields[0], 16).unwrap());
+        assert_eq!(law::math::equal(0.0, value), fields[1] == "true", "equal {value:?}");
+        let expected = u64::from_str_radix(fields[2], 16).unwrap();
+        assert_eq!(Vec3::new(value, 0.0, 0.0).normalize().x.to_bits(), expected, "normalize {value:?}");
+    }
+}
+
+#[test]
+fn jar_ray_traversal_and_clipping() {
+    use law::{Block, BoxWorld, Fluid, FluidKind, World};
+    for (line, row) in include_str!("data/rays.tsv").lines().enumerate() {
+        let (values, visits) = row.split_once('|').unwrap();
+        let fields: Vec<_> = values.split_whitespace().collect();
+        let coordinates: Vec<_> = fields[..6].iter().map(|v| f64::from_bits(u64::from_str_radix(v, 16).unwrap())).collect();
+        let from = Vec3::new(coordinates[0], coordinates[1], coordinates[2]);
+        let to = Vec3::new(coordinates[3], coordinates[4], coordinates[5]);
+        let target = [fields[6].parse().unwrap(), fields[7].parse().unwrap(), fields[8].parse().unwrap()];
+        let height = f32::from_bits(u32::from_str_radix(fields[9], 16).unwrap());
+        let expected: Vec<[i32; 3]> = visits.split(';').filter(|s| !s.is_empty()).map(|s| {
+            s.split(',').map(|v| v.parse().unwrap()).collect::<Vec<_>>().try_into().unwrap()
+        }).collect();
+        let mut actual = Vec::new();
+        law::blocks::traverse_blocks(from, to, |p| { actual.push(p); false });
+        assert_eq!(actual, expected, "jar ray visits {line}");
+        let mut world = BoxWorld::default();
+        world.set(target, Block {
+            air: false, fluid: Fluid { kind: FluidKind::Water, height, ..Fluid::default() }, ..Block::default()
+        });
+        assert_eq!(world.fall_reset_clip(from, to), fields[10] == "true", "jar ray hit {line}");
+    }
+}
+
+#[test]
+fn jar_landing_hooks() {
+    use law::{Block, BoxWorld, Input, PlayerState};
+    for row in include_str!("data/landings.tsv").lines() {
+        let fields: Vec<_> = row.split_whitespace().collect();
+        let distance: f64 = fields[1].parse().unwrap();
+        let effective_distance = f64::from_bits(u64::from_str_radix(fields[2], 16).unwrap());
+        let multiplier = f32::from_bits(u32::from_str_radix(fields[3], 16).unwrap());
+        let mut block = Block::full();
+        block.bed = fields[0] == "BedBlock";
+        block.fall_on_multiplier = if block.bed { 1.0 } else { 0.2 };
+        let mut world = BoxWorld::default();
+        world.fill([-1, -1, -1], [1, -1, 1], block);
+        let mut state = PlayerState {
+            on_ground: true,
+            fall_distance: distance,
+            velocity: Vec3::new(0.0, -0.08*0.98f32 as f64, 0.0),
+            health: 100.0,
+            ..PlayerState::default()
+        };
+        assert_eq!(effective_distance, if fields[0] == "BedBlock" { distance*0.5 } else { distance });
+        assert_eq!(multiplier, if fields[0] == "BedBlock" { 1.0 } else { 0.2 });
+        let expected: i32 = fields[4].parse::<i32>().unwrap().max(0);
+        law::tick(&mut state, &world, &Input::default());
+        assert_eq!(100.0-state.health, expected as f32, "{row}");
+    }
+}

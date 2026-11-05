@@ -86,7 +86,8 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "onClimbable" => on_climbable, "crouching" => crouching, "swimming" => swimming,
         "underwater" => underwater, "eyeInWater" => eye_in_water, "wasEyeInWater" => was_eye_in_water,
         "leatherBoots" => leather_boots, "wasInPowderSnow" => was_in_powder_snow,
-        "inPowderSnow" => in_powder_snow, "onGroundNoBlocks" => on_ground_no_blocks);
+        "inPowderSnow" => in_powder_snow, "onGroundNoBlocks" => on_ground_no_blocks,
+"noPhysics" => no_physics);
     floats!("yRot" => yaw, "xRot" => pitch, "health" => health, "saturationLevel" => saturation,
         "exhaustion" => exhaustion, "speed" => speed, "stepHeight" => step_height,
         "frictionModifier" => friction_modifier, "airDragModifier" => air_drag_modifier,
@@ -96,6 +97,7 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "movementSpeed" => movement_speed, "jumpStrength" => jump_strength, "gravity" => gravity,
         "safeFallDistance" => safe_fall_distance, "fallDamageMultiplier" => fall_damage_multiplier,
         "bounciness" => bounciness);
+    if object.get("remainingFireTicks").is_some() { state.remaining_fire_ticks = object.number("remainingFireTicks") as i32; }
     if object.get("noJumpDelay").is_some() { state.no_jump_delay = object.number("noJumpDelay") as i32; }
     if object.get("foodLevel").is_some() { state.food_level = object.number("foodLevel") as i32; }
     if object.get("foodTickTimer").is_some() { state.food_tick_timer = object.number("foodTickTimer") as u32; }
@@ -127,7 +129,8 @@ fn load_block(object: &Object<'_>) -> Block {
         "fallOnMultiplier" => fall_on_multiplier, "bounce" => bounce);
     flags!("climbable" => climbable, "scaffolding" => scaffolding, "slime" => slime,
         "fence" => fence, "wallOrGate" => wall_or_gate, "suppressesBounce" => suppresses_bounce,
-        "resetsFallDistance" => resets_fall_distance, "waterBlock" => water_block, "air" => air);
+        "resetsFallDistance" => resets_fall_distance, "waterBlock" => water_block, "air" => air,
+        "bed" => bed, "suffocating" => suffocating, "endPortalOrGateway" => end_portal_or_gateway);
     for (key, target) in [("aboveBoxes", &mut block.above_shape), ("belowBoxes", &mut block.below_shape),
         ("sneakBoxes", &mut block.sneak_shape), ("insideBoxes", &mut block.inside_shape)] {
         if let Some(value) = object.get(key) { *target = Some(VoxelShape::boxes(&boxes(value))); }
@@ -144,7 +147,7 @@ fn load_block(object: &Object<'_>) -> Block {
         block.inside = match object.string("inside") {
             "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow,
             "honey" => Inside::Honey, "none" => Inside::None,
-            value => panic!("unsupported inside hook {value}"),
+            value => Inside::Unsupported(value.to_owned()),
         };
     }
     if object.get("stuckMultiplier").is_some() {
@@ -212,6 +215,16 @@ fn assert_tick(state: &PlayerState, expected: &Object<'_>, tick: u64) {
         ("isShiftKeyDown", state.shift_key_down), ("isInWater", state.in_water), ("onClimbable", state.on_climbable)] {
         assert_eq!(actual, expected.boolean(key), "tick {tick} {key}");
     }
+    for (key, actual) in [("minorHorizontalCollision", state.minor_horizontal_collision),
+        ("verticalCollisionBelow", state.vertical_collision_below),
+        ("swimming", state.swimming), ("crouching", state.crouching)] {
+        if expected.get(key).is_some() {
+            assert_eq!(actual, expected.boolean(key), "tick {tick} {key}");
+        }
+    }
+    if expected.get("speed").is_some() || expected.get("speedBits").is_some() {
+        assert_eq!(state.speed.to_bits(), expected.f32("speed").to_bits(), "tick {tick} speed");
+    }
     assert_eq!(state.pose, pose(expected.string("pose")), "tick {tick} pose");
     assert_eq!(state.fall_distance.to_bits(), hex(expected.required("fallDistanceBits"), 16), "tick {tick} fall distance");
 }
@@ -242,6 +255,9 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
             let count = object.number("tickCount") as i64;
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
             previous_tick_count = Some(count);
+        }
+        if expected_tick == 0 {
+            state.sprinting = object.boolean("isSprinting");
         }
         let applied = input(&object.object("inputs"));
         let start = Instant::now();
@@ -379,4 +395,50 @@ fn replay_rejects_anomaly() {
     let recording = stationary_recording();
     let recording = format!("{},\"anomaly\":[{{\"type\":\"ClientboundPlayerPositionPacket\"}}]}}", &recording[..recording.len()-1]);
     replay_text(&recording, &world, &mut state);
+}
+#[test]
+fn replay_compares_optional_fields() {
+    let (world, mut state) = stationary_fixture();
+    let recording = stationary_recording();
+    let record = format!("{},\"minorHorizontalCollision\":false,\"verticalCollisionBelow\":true,\"speedBits\":\"3dcccccd\",\"swimming\":false,\"crouching\":false}}",
+        &recording[..recording.len()-1]);
+    replay_text(&record, &world, &mut state);
+    for (key, old, new) in [
+        ("minorHorizontalCollision", "false", "true"),
+        ("verticalCollisionBelow", "true", "false"),
+        ("speedBits", "\"3dcccccd\"", "\"3dcccccc\""),
+        ("swimming", "false", "true"),
+        ("crouching", "false", "true"),
+    ] {
+        let corrupt = record.replace(&format!("\"{key}\":{old}"), &format!("\"{key}\":{new}"));
+        let (world, mut state) = stationary_fixture();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replay_text(&corrupt, &world, &mut state);
+        }));
+        assert!(failure.is_err(), "{key} corruption was accepted");
+    }
+}
+
+#[test]
+fn replay_seeds_sprint_from_tick_zero() {
+    let (world, mut initial) = stationary_fixture();
+    let mut expected = initial.clone();
+    expected.sprinting = true;
+    tick(&mut expected, &world, &Input { forward: true, ..Input::default() });
+    let mut recording = stationary_recording().replace("\"forward\":false", "\"forward\":true")
+        .replace("\"isSprinting\":false", "\"isSprinting\":true");
+    for value in [expected.position.z, expected.velocity.z] {
+        recording = recording.replacen("\"z\":0,\"zBits\":\"0000000000000000\"",
+            &format!("\"z\":{value},\"zBits\":\"{:016x}\"", value.to_bits()), 1);
+    }
+    replay_text(&recording, &world, &mut initial);
+    assert!(initial.sprinting);
+}
+
+#[test]
+fn fixture_keeps_unsupported_hooks_explicit() {
+    for hook in ["bubbleColumn", "sweetBerryBush", "unmodeled"] {
+        let block = load_block(&Object::parse(&format!("{{\"boxes\":[],\"inside\":\"{hook}\"}}")));
+        assert_eq!(block.inside, Inside::Unsupported(hook.to_owned()));
+    }
 }

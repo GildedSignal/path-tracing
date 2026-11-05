@@ -12,6 +12,7 @@ Every subsequent line is a post-tick state. `t` starts at zero and is contiguous
 - `position` and `velocity` each contain x/y/z decimal fields and `xBits`, `yBits`, `zBits` strings of exactly 16 hexadecimal digits.
 - `yRotBits` and `xRotBits` are eight-digit float hex strings.
 - `onGround`, `horizontalCollision`, `verticalCollision`, `isSprinting`, `isShiftKeyDown`, `isInWater`, `onClimbable`, `pose` and 16-digit `fallDistanceBits` are compared.
+- Optional minorHorizontalCollision, verticalCollisionBelow, speed/speedBits, swimming and crouching are also compared.
 - Poses are `STANDING`, `CROUCHING` or `SWIMMING`.
 - Recorder `health`, `foodLevel` and `saturationLevel` remain client observations. Use a server snapshot for resource comparisons.
 
@@ -28,26 +29,26 @@ A minimal settled fixture follows. Its numeric values describe the vanilla stand
 {"kind":"region","min":[-10,-1,-10],"max":[10,-1,1000],"boxes":[[0,0,0,1,1,1]],"friction":0.6}
 ```
 
-Exactly one `player` line supplies the state **before recording tick zero**. It requires `position` and `velocity`. All other fields default to `PlayerState::default()`. Vector fields can include raw bits. Float/double scalar fields can include `<name>Bits`.
+Exactly one `player` line supplies the state **before recording tick zero**. It requires `position` and `velocity`. All other fields default to PlayerState::default(). The replay initializes the sprint latch from the recording tick-zero isSprinting before simulating that tick, following job 1.5b. Vector fields can include raw bits. Float/double scalar fields can include `<name>Bits`.
 
 Player metadata supports the recorder flag names and these hidden fields.
 
-- Boolean fields include `verticalCollisionBelow`, `minorHorizontalCollision`, `crouching`, `swimming`, `underwater`, `eyeInWater`, `wasEyeInWater`, `isInLava`, `leatherBoots`, `inPowderSnow`, `wasInPowderSnow` and `onGroundNoBlocks`.
+- Boolean fields include `verticalCollisionBelow`, `minorHorizontalCollision`, `crouching`, `swimming`, `underwater`, `eyeInWater`, `wasEyeInWater`, `isInLava`, `leatherBoots`, `inPowderSnow`, `wasInPowderSnow`, `onGroundNoBlocks` and noPhysics.
 - Float fields include `speed`, `stepHeight`, `frictionModifier`, `airDragModifier`, `waterMovementEfficiency`, `movementEfficiency`, `sneakingSpeed`, `health`, `saturationLevel` and `exhaustion`.
 - Double fields include `movementSpeed`, `jumpStrength`, `gravity`, `safeFallDistance`, `fallDamageMultiplier`, `bounciness`, `fallDistance`, `waterHeight` and `lavaHeight`.
-- Integers include `noJumpDelay`, `foodLevel` and `foodTickTimer`.
+- Integers include `noJumpDelay`, `foodLevel`, `foodTickTimer` and remainingFireTicks.
 - `mainSupportingBlock` is an optional integer triplet. `stuckSpeedMultiplier` is an optional vector. `inputs`, `yRot`, `xRot` and `pose` can also be supplied.
 
 `block` requires `at` and `boxes`. `region` requires `min`, `max` and `boxes`. Boxes have the form `[x0,y0,z0,x1,y1,z1]`. Empty boxes represent a non-solid block. Optional block properties follow.
 
 - Float properties include `friction`, `speedFactor`, `jumpFactor`, `fallOnMultiplier` and `bounce`.
-- Boolean properties include `climbable`, `scaffolding`, `slime`, `fence`, `wallOrGate`, `suppressesBounce`, `resetsFallDistance`, `waterBlock` and `air`.
+- Boolean properties include `climbable`, `scaffolding`, `slime`, `fence`, `wallOrGate`, `suppressesBounce`, `resetsFallDistance`, `waterBlock`, `air`, bed, suffocating and endPortalOrGateway.
 - `aboveBoxes`, `belowBoxes` and `sneakBoxes` supply context-dependent collision shapes. `insideBoxes` supplies the entity-inside shape, whose default is the full block independently of physical collision.
 - `fluid` is `water`, `lava` or `empty`, accompanied by `fluidHeight` and optional vector `flow`. Heights and currents are evaluated world data, supplied by the fixture.
-- `inside` is `none`, `cobweb`, `powderSnow` or `honey`. An optional `stuckMultiplier` vector provides a generic hook.
+- `inside` is `none`, `cobweb`, `powderSnow` or `honey`. Every other inside name, including bubbleColumn and sweetBerryBush, fails explicitly through unimplemented!. Supply unknown hooks explicitly. The none value asserts that the block has no inside hook. An optional stuckMultiplier vector provides a generic hook.
 - Optional `ladderFacing` and `openTrapdoorFacing` are matching direction identifiers. Equality is what matters for the trapdoor/ladder rule.
 
-Set `waterBlock` for actual water or bubble-column blocks. Waterlogged solids retain their own speed-factor rule. Supply vanilla material and landing properties explicitly, including slime friction/bounce, hay/bed/honey landing multipliers and honey speed/jump factors. `slime` supplies the slime landing-damage and step hooks. Powder-snow landing/collision/stuck hooks come from `inside`.
+Set `waterBlock` for actual water or bubble-column blocks. Waterlogged solids retain their own speed-factor rule. Supply vanilla material and landing properties explicitly, including slime friction/bounce, hay/honey landing multipliers and honey speed/jump factors. `slime` supplies the slime landing-damage and step hooks. Powder-snow landing/collision/stuck hooks come from `inside`. Beds use bed=true and fallOnMultiplier=1. Set suffocating from vanilla data for push-out queries. endPortalOrGateway enables the player fall-reset portal rule. Lava contact fails explicitly at the deferred fluid hook.
 
 An optional `world` line supplies `minY`, `difficulty` (the vanilla integer id), `naturalRegeneration`, `fastLava` and `unloadedChunks` as chunk-coordinate pairs. Their defaults are the `BoxWorld` defaults. Optional `collision` lines supply absolute extra collision boxes for entities or a world border.
 

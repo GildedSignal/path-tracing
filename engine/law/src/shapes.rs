@@ -49,7 +49,7 @@ impl Vec3 {
     // Vec3.normalize
     pub fn normalize(self) -> Self {
         let len = self.length_sqr().sqrt();
-        if len < 1.0e-5 {
+        if len < 1.0e-5f32 as f64 {
             Self::default()
         } else {
             Self::new(self.x / len, self.y / len, self.z / len)

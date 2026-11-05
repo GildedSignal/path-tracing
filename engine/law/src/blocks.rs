@@ -158,3 +158,59 @@ pub fn for_each_intersected(from: Vec3, to: Vec3, bounds: Aabb, mut visit: impl 
     }
     between_corners(block_pos(bounds.min), block_pos(bounds.max), movement, |p| !seen.insert(p) || visit(p, count+1))
 }
+
+// BlockGetter.traverseBlocks
+pub fn traverse_blocks(from: Vec3, to: Vec3, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
+    if from == to {
+        return false;
+    }
+    let start = from.plus(from.minus(to).scale(1.0e-7));
+    let end = to.plus(to.minus(from).scale(1.0e-7));
+    let movement = end.minus(start);
+    let mut cell = block_pos(start);
+    if visit(cell) {
+        return true;
+    }
+    let axes = [Axis::X, Axis::Y, Axis::Z];
+    let signs: [i32; 3] = std::array::from_fn(|a| {
+        let d = movement.get(axes[a]);
+        if d > 0.0 {
+            1
+        } else if d < 0.0 {
+            -1
+        } else {
+            0
+        }
+    });
+    let step: [f64; 3] = std::array::from_fn(|a| {
+        if signs[a] == 0 {
+            f64::MAX
+        } else {
+            signs[a] as f64/movement.get(axes[a])
+        }
+    });
+    let mut next: [f64; 3] = std::array::from_fn(|a| {
+        let coordinate = start.get(axes[a]);
+        let fraction = coordinate-math::lfloor(coordinate) as f64;
+        step[a] * if signs[a] > 0 { 1.0-fraction } else { fraction }
+    });
+    while next[0] <= 1.0 || next[1] <= 1.0 || next[2] <= 1.0 {
+        let axis = if next[0] < next[1] {
+            if next[0] < next[2] {
+                0
+            } else {
+                2
+            }
+        } else if next[1] < next[2] {
+            1
+        } else {
+            2
+        };
+        cell[axis] += signs[axis];
+        next[axis] += step[axis];
+        if visit(cell) {
+            return true;
+        }
+    }
+    false
+}

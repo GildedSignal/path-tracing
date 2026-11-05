@@ -16,6 +16,7 @@ use crate::{
     PlayerState,
     Pose,
     Vec3,
+    VoxelShape,
     World
 };
 
@@ -57,10 +58,14 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     (state.shift_key_down || !fits(state, world, Pose::Standing));
     state.shift_key_down = input.sneak;
     state.input = *input;
+    if !state.no_physics {
+        let offset = 0.6f32 as f64 * 0.35;
+        for (x, z) in [(-offset, offset), (-offset, -offset), (offset, -offset), (offset, offset)] {
+            move_towards_closest_space(state, world, state.position.x+x, state.position.z+z);
+        }
+    }
     let slowly = state.crouching || (state.pose == Pose::Swimming && !state.in_water);
-    state.sprinting = input.sprint && input.forward && !input.back && state.food_level > 6 &&
-    (!slowly || state.underwater) &&
-    (state.swimming || !state.horizontal_collision || state.minor_horizontal_collision);
+    update_sprinting(state, input, slowly);
     if state.in_water && input.sneak {
         state.velocity.y -= 0.04f32 as f64;
     }
@@ -107,6 +112,57 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     movement_exhaustion(state, state.position.minus(start));
     food_tick(state, world);
     state.t += 1;
+}
+
+// LocalPlayer.aiStep; LocalPlayer.canStartSprinting; LocalPlayer.shouldStopRunSprinting; LocalPlayer.shouldStopSwimSprinting
+fn update_sprinting(state: &mut PlayerState, input: &Input, slowly: bool) {
+    let forward = input.forward && !input.back;
+    let possible = state.food_level > 6 && (state.flying || !state.in_water || state.underwater);
+    if !state.sprinting && forward && possible && (!slowly || state.underwater) && input.sprint {
+        state.sprinting = true;
+    }
+    if state.sprinting {
+        let stop = if state.swimming {
+            state.food_level <= 6 || !state.in_water || (!forward && !state.on_ground && !input.sneak)
+        } else {
+            !possible || !forward || (state.horizontal_collision && !state.minor_horizontal_collision)
+        };
+        if stop {
+            state.sprinting = false;
+        }
+    }
+}
+
+// LocalPlayer.suffocatesAt
+fn suffocates_at(state: &PlayerState, world: &impl World, p: BlockPos) -> bool {
+    let body = state.bounding_box();
+    let bounds = Aabb::new(p[0] as f64, body.min.y, p[2] as f64,
+        p[0] as f64+1.0, body.max.y, p[2] as f64+1.0).deflate(1.0e-7);
+    world.collides_with_suffocating_block(bounds, CollisionContext::of(state))
+}
+
+// LocalPlayer.moveTowardsClosestSpace
+fn move_towards_closest_space(state: &mut PlayerState, world: &impl World, x: f64, z: f64) {
+    let p = block_pos(Vec3::new(x, state.position.y, z));
+    if !suffocates_at(state, world, p) {
+        return;
+    }
+    let dx = x-p[0] as f64;
+    let dz = z-p[2] as f64;
+    let mut nearest = f64::MAX;
+    let mut direction = None;
+    for (axis, step, distance) in [(crate::Axis::X, -1, dx), (crate::Axis::X, 1, 1.0-dx),
+        (crate::Axis::Z, -1, dz), (crate::Axis::Z, 1, 1.0-dz)] {
+        let mut neighbor = p;
+        neighbor[axis as usize] += step;
+        if distance < nearest && !suffocates_at(state, world, neighbor) {
+            nearest = distance;
+            direction = Some((axis, step));
+        }
+    }
+    if let Some((axis, step)) = direction {
+        state.velocity = state.velocity.with(axis, 0.1*step as f64);
+    }
 }
 
 // KeyboardInput.tick; LocalPlayer.modifyInput; LocalPlayer.modifyInputSpeedForSquareMovement
@@ -530,6 +586,10 @@ fn supporting_block(state: &mut PlayerState, world: &impl World, moved: Vec3) {
 
 // Entity.move; Entity.restituteMovementAfterCollisions
 fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) {
+    if state.no_physics {
+        state.position = state.position.plus(wanted);
+        return;
+    }
     if state.stuck_speed_multiplier.length_sqr() > 1.0e-7 {
         wanted = wanted.multiply(state.stuck_speed_multiplier);
         state.stuck_speed_multiplier=Vec3::default();
@@ -636,7 +696,8 @@ fn check_fall_damage(state: &mut PlayerState, block: &Block, dy: f64) {
             } else {
                 block.fall_on_multiplier
             };
-            let damage=calculate_fall_damage(state, state.fall_distance, multiplier).max(0);
+            let distance = if block.bed { state.fall_distance*0.5 } else { state.fall_distance };
+            let damage=calculate_fall_damage(state, distance, multiplier).max(0);
             if damage>0 {
                 state.health=(state.health-damage as f32).max(0.0);
             }
@@ -740,53 +801,10 @@ fn contains_fluid(world: &impl World, b: Aabb) -> bool {
     false
 }
 
-// AABB.clip
-fn ray_box(from: Vec3, to: Vec3, b: Aabb) -> Option<f64> {
-    let d=to.minus(from);
-    let mut t0=0.0f64;
-    let mut t1=1.0f64;
-    for a in [crate::Axis::X, crate::Axis::Y, crate::Axis::Z] {
-        let v=d.get(a);
-        let p=from.get(a);
-        if v==0.0 {
-            if p<b.min.get(a) || p>b.max.get(a) {
-                return None;
-            }
-        } else {
-            let a0=(b.min.get(a)-p)/v;
-            let a1=(b.max.get(a)-p)/v;
-            t0=t0.max(a0.min(a1));
-            t1=t1.min(a0.max(a1));
-            if t1<t0 {
-                return None;
-            }
-        }
-    }
-    Some(t0)
-}
-
-// Entity.move; ClipContext.Block.FALLDAMAGE_RESETTING
+// Entity.move; BlockGetter.clip
 fn fall_reset_ray(state: &PlayerState, world: &impl World, movement: Vec3) -> bool {
-    let end=state.position.plus(movement.normalize().scale(movement.length_sqr().sqrt().min(8.0)));
-    let bounds=Aabb::new(state.position.x, state.position.y, state.position.z, end.x, end.y, end.z);
-    let lo=block_pos(bounds.min);
-    let hi=block_pos(bounds.max);
-    for x in lo[0]..=hi[0] {
-        for y in lo[1]..=hi[1] {
-            for z in lo[2]..=hi[2] {
-                let b=world.block([x, y, z]);
-                if (b.resets_fall_distance || b.fluid.kind==FluidKind::Water) && ray_box(state.position, end,
-                Aabb::new(x as f64, y as f64, z as f64, x as f64+1.0, y as f64+if b.fluid.kind==FluidKind::Water {
-                    b.fluid.height as f64
-                } else {
-                    1.0
-                }, z as f64+1.0)).is_some() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    let end = state.position.plus(movement.normalize().scale(movement.length_sqr().sqrt().min(8.0)));
+    world.fall_reset_clip(state.position, end)
 }
 
 // Entity.makeStuckInBlock; Player.makeStuckInBlock
@@ -797,6 +815,9 @@ fn stuck(state: &mut PlayerState, multiplier: Vec3) {
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks
 fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) {
+    if state.no_physics {
+        return;
+    }
     if state.on_ground {
         let block=world.block(on_pos(state, world, 0.2));
         if block.slime && state.velocity.y.abs()<0.1 && !state.shift_key_down {
@@ -845,11 +866,24 @@ visited: &mut std::collections::BTreeSet<BlockPos>, budget: i32) -> i32 {
         }
         let offset=Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
         let inside=block.inside_shape.as_ref().is_none_or(|shape| body.collided_along(movement, &shape.moved(offset)));
-        if inside && visited.insert(p) {
+        let fluid_inside = block.fluid.kind != FluidKind::Empty && body.collided_along(movement,
+            &VoxelShape::boxes(&[Aabb::new(offset.x, offset.y, offset.z,
+                offset.x+1.0, (p[1] as f32+block.fluid.height) as f64, offset.z+1.0)]));
+        if !(inside || fluid_inside) || !visited.insert(p) {
+            return true;
+        }
+        if inside {
             let cube=Aabb {
                 min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0))
             };
             inside_block(state, world, p, large||bounds.intersects(cube));
+        }
+        if fluid_inside {
+            match block.fluid.kind {
+                FluidKind::Water => state.remaining_fire_ticks = state.remaining_fire_ticks.min(0),
+                FluidKind::Lava => unimplemented!("FluidState.entityInside: LavaFluid CLEAR_FREEZE, LAVA_IGNITE and deferred lava damage"),
+                FluidKind::Empty => unreachable!(),
+            }
         }
         true
     });
@@ -862,7 +896,7 @@ fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _inter
     if let Some(multiplier)=block.stuck_multiplier {
         stuck(state, multiplier);
     }
-    match block.inside {
+    match &block.inside {
         Inside::None=>{
         },
         Inside::Cobweb=>stuck(state, Vec3::new(0.25, 0.05f32 as f64, 0.25)),
@@ -885,7 +919,8 @@ fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _inter
                 state.velocity.y=(-0.05-0.08)*0.98f32 as f64;
                 state.fall_distance=0.0;
             }
-        }
+        },
+        Inside::Unsupported(name) => unimplemented!("BlockState.entityInside: {name}"),
     }
 }
 
@@ -949,5 +984,87 @@ fn food_tick(state: &mut PlayerState, world: &impl World) {
         }
     } else {
         state.food_tick_timer=0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jar_sprint_latch_corpus() {
+        for row in include_str!("../tests/data/sprint.tsv").lines() {
+            let (bits, expected) = row.split_once(' ').unwrap();
+            let bits: u32 = bits.parse().unwrap();
+            let mut state = PlayerState {
+                sprinting: bits & 1 != 0,
+                food_level: if bits & 4 != 0 { 20 } else { 6 },
+                in_water: bits & 8 != 0,
+                underwater: bits & 16 != 0,
+                swimming: bits & 32 != 0,
+                on_ground: bits & 64 != 0,
+                horizontal_collision: bits & 256 != 0,
+                minor_horizontal_collision: bits & 512 != 0,
+                ..PlayerState::default()
+            };
+            let input = Input {
+                forward: bits & 2 != 0,
+                sneak: bits & 128 != 0,
+                sprint: bits & 2048 != 0,
+                ..Input::default()
+            };
+            update_sprinting(&mut state, &input, bits & 1024 != 0);
+            assert_eq!(state.sprinting, expected == "true", "jar sprint case {bits}");
+        }
+    }
+
+    #[test]
+    fn push_out_direction_order_and_suffocation() {
+        let mut world = crate::BoxWorld::default();
+        world.set([0, 0, 0], Block::full());
+        let mut state = PlayerState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            velocity: Vec3::new(0.7, 0.2, 0.8),
+            ..PlayerState::default()
+        };
+        move_towards_closest_space(&mut state, &world, 0.5, 0.5);
+        assert_eq!(state.velocity, Vec3::new(-0.1, 0.2, 0.8));
+        world.set([-1, 0, 0], Block::full());
+        move_towards_closest_space(&mut state, &world, 0.5, 0.5);
+        assert_eq!(state.velocity, Vec3::new(0.1, 0.2, 0.8));
+        world.set([0, 0, 0], Block { suffocating: false, ..Block::full() });
+        state.velocity = Vec3::default();
+        move_towards_closest_space(&mut state, &world, 0.5, 0.5);
+        assert_eq!(state.velocity, Vec3::default());
+    }
+
+    #[test]
+    fn fluid_only_intersection_is_visited_and_extinguishes() {
+        let mut world = crate::BoxWorld::default();
+        world.set([0, 0, 0], Block {
+            air: false,
+            inside_shape: Some(VoxelShape::default()),
+            fluid: crate::Fluid { kind: FluidKind::Water, height: 1.0, ..crate::Fluid::default() },
+            ..Block::default()
+        });
+        let mut state = PlayerState {
+            position: Vec3::new(0.5, 0.0, 0.5),
+            remaining_fire_ticks: 10,
+            ..PlayerState::default()
+        };
+        let mut visited = std::collections::BTreeSet::new();
+        let position = state.position;
+        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        assert!(visited.contains(&[0, 0, 0]));
+        assert_eq!(state.remaining_fire_ticks, 0);
+        state.remaining_fire_ticks = 10;
+        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        assert_eq!(state.remaining_fire_ticks, 10);
+        visited.clear();
+        world.set([0, 0, 0], Block {
+            air: false, inside_shape: Some(VoxelShape::default()), ..Block::default()
+        });
+        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        assert!(visited.is_empty());
     }
 }
