@@ -139,13 +139,16 @@ selects independent pressed/released runs of 1-20 ticks for each key (the final 
 and nonzero integer yaw steps from -90 through 90 degrees every 1-20 ticks. Pitch remains the
 start pitch. The same arguments on Windows PowerShell 5.1 produce the same bytes; an existing input
 file is replaced. The start line is built with invariant-culture round-trip (`R`) formatting for
-the three doubles and the two float-rounded angles.
+the three doubles and the two float-rounded angles. Every tick row uses the same `R` formatting
+for its float yaw and pitch, without passing them through `ConvertTo-Json`.
 
 `compare-recordings` compares the header's four settings and every tick-row field except absolute
 `tickCount`, including decimals, raw bits, inputs, on-ground and collision flags, pose, food values
 and anomalies. Fields are visited in sorted name order and arrays in index order. It reports the
 first differing tick and field, or `identical`, and compares the end trailers too. Different lengths,
-invalid tick stamps, missing headers/trailers and malformed raw fields fail.
+invalid tick stamps, missing headers/trailers and malformed raw fields fail. Both trailers must have
+boolean `complete:true`; an incomplete trailer fails and identifies its file, including both files
+when both are incomplete.
 `check-recording` reports every anomaly line, nonconsecutive `t`, and missing/invalid or
 nonconsecutive tickCount. It also rejects a missing trailer, a wrong trailer count or `complete:false`.
 `check-dump` checks state-row count against both summary counts and checks
@@ -159,13 +162,34 @@ Gates drive the bot while Julien's client is out of the game. `bot-command.ps1` 
 `msg PathBot <command>` through `scripts/rcon.ps1`. The bot accepts disguised CHAT whispers only
 when both sender and signature are null and the decorated sender name is exactly `Rcon` or `Server`.
 The console's stdin can send the same `msg PathBot <command>`. Owner command handling is preserved.
+An operator, or a command block or entity named `Rcon` or `Server`, can also command the bot through
+`/msg`. This is an accepted risk because those already require operator rights.
 
 Every reply is still whispered to the owner and also logged on one line with `[pathtracing] `.
 With `-WaitFor`, the helper opens `$Rig\clients\bot\logs\latest.log` at its end immediately before
 sending, then waits for a newly appended prefixed reply whose full log line matches the regex. It
-prints the full log line and exits 0, or exits nonzero on timeout (30 seconds by default). Without
-`-WaitFor` it sends the command and returns the RCON response. The gate driver holds the rig lock
-through sending and waiting.
+checks `-FailOn <regex>` first on each new prefixed line, then `-WaitFor`. A failure match prints the
+full line and exits 2 immediately. A success match prints the full line and exits 0. Timeout
+(30 seconds by default), transport errors and other helper errors print a diagnostic and exit 1.
+RCON responses are discarded, so stdout contains only the matched reply or an error diagnostic.
+Without `-WaitFor` it sends the command, discards the response and exits 0 without waiting.
+The gate driver holds the rig lock through sending and waiting.
+
+The default `-FailOn` covers every current failure reply from `Bot`, `Recorder`, `TickInput` and
+`BlockDumper`, plus `Refusing` for refusal replies. The patterns are case-sensitive .NET regexes.
+
+- `Replay is running.` rejects commands during replay.
+- `Usage` covers both recorder/dumper syntax and `goto` syntax errors.
+- `I can't see you.`, `No path to ` and `Stuck at ` cover movement failures.
+- `Recorder/dumper:` covers all synchronous recorder/dumper exceptions, including invalid names,
+  an active recording/replay, invalid hold settings, missing/unreadable inputs, malformed JSON,
+  missing/invalid start values, nonconsecutive input ticks, missing/invalid key booleans or angles,
+  empty replays, output/open/write errors, dump-count mismatches and unknown offset generators.
+- `already exists` also explicitly matches existing final or temporary outputs.
+- `Aborted` covers disconnects, unavailable player/world, settling timeouts, tickCount gaps and
+  recording-write failures, with the reason and temporary path in the reply.
+- `Recording finalization failed` covers trailer-write, close and final-rename failures.
+- `Refusing` matches refusal replies.
 
 ## Server endpoints
 

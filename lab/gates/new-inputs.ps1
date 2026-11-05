@@ -28,6 +28,7 @@ $keys = @('forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint')
 $remaining = @{}
 $held = @{}
 $yaw = [single]$origin[3]
+$pitch = [single]$origin[4]
 $yawRemaining = 0
 $writer = New-Object IO.StreamWriter($temporary, $false, (New-Object Text.UTF8Encoding($false)))
 try {
@@ -37,18 +38,18 @@ try {
     $origin[1].ToString('R', $culture)
     $origin[2].ToString('R', $culture)
     ([single]$origin[3]).ToString('R', $culture)
-    ([single]$origin[4]).ToString('R', $culture)
+    $pitch.ToString('R', $culture)
   )
   $writer.WriteLine('{"start":[' + ($startNumbers -join ',') + ']}')
   for ($t = 0; $t -lt $Ticks; $t++) {
-    $row = [ordered]@{ t = $t }
+    $row = @('"t":' + $t.ToString($culture))
     foreach ($key in $keys) {
       if (-not $remaining.ContainsKey($key) -or $remaining[$key] -eq 0) {
         # Alternate pressed/released runs; a pressed run is always 1 through 20 ticks.
         $held[$key] = if ($held.ContainsKey($key)) { -not $held[$key] } else { $random.Next(2) -eq 1 }
         $remaining[$key] = $random.Next(1, 21)
       }
-      $row[$key] = $held[$key]
+      $row += '"' + $key + '":' + $held[$key].ToString().ToLowerInvariant()
       $remaining[$key]--
     }
     if ($yawRemaining -eq 0) {
@@ -58,9 +59,9 @@ try {
       $yawRemaining = $random.Next(1, 21)
     }
     $yawRemaining--
-    $row.yaw = $yaw
-    $row.pitch = [single]$origin[4]
-    $writer.WriteLine(($row | ConvertTo-Json -Compress))
+    $row += '"yaw":' + $yaw.ToString('R', $culture)
+    $row += '"pitch":' + $pitch.ToString('R', $culture)
+    $writer.WriteLine('{' + ($row -join ',') + '}')
   }
 } finally { $writer.Dispose() }
 Move-Item -LiteralPath $temporary -Destination $path -Force

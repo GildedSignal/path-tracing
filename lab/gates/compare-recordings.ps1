@@ -69,6 +69,10 @@ try {
     $rowA = $lineA | ConvertFrom-Json
     $rowB = $lineB | ConvertFrom-Json
     if ($rowA.type -eq 'end' -or $rowB.type -eq 'end') {
+      $incomplete = @()
+      if ($rowA.type -eq 'end' -and ($rowA.complete -isnot [bool] -or -not $rowA.complete)) { $incomplete += $A }
+      if ($rowB.type -eq 'end' -and ($rowB.complete -isnot [bool] -or -not $rowB.complete)) { $incomplete += $B }
+      if ($incomplete.Count -gt 0) { throw "Incomplete recording(s): $($incomplete -join ', ')." }
       $difference = Find-Difference $rowA $rowB 'end'
       if ($null -ne $difference) { throw "First difference at tick ${tick}: $difference." }
       if ($null -eq $rowA.ticks -or $rowA.ticks -is [string] -or $rowA.ticks -ne $tick -or
