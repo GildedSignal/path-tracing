@@ -9,6 +9,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import pathtracing.planner.Planner;
 import pathtracing.planner.StraightLine;
 
@@ -17,6 +19,7 @@ import pathtracing.planner.StraightLine;
  * path, then walks it by holding the same movement keys a person would.
  */
 final class Bot {
+    private static final Logger LOGGER = LoggerFactory.getLogger("pathtracing");
     private static final Planner PLANNER = new StraightLine();
     private static final Pattern WHISPER = Pattern.compile("(\\S+) whispers to you: (.*)");
     private static final float TURN_PER_TICK = 30;
@@ -34,19 +37,41 @@ final class Bot {
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> survivalIn = 20);
         ClientReceiveMessageEvents.CHAT.register((message, signed, sender, type, time) -> {
             if (sender != null && signed != null && sender.name().equals(PathTracingMod.OWNER)) command(signed.signedContent());
+            if (sender == null && signed == null) {
+                Matcher m = WHISPER.matcher(message.getString());
+                if (m.matches() && (m.group(1).equals("Rcon") || m.group(1).equals("Server"))) command(m.group(2));
+            }
         });
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             Matcher m = WHISPER.matcher(message.getString());
             if (m.matches() && m.group(1).equals(PathTracingMod.OWNER)) command(m.group(2));
         });
         ClientTickEvents.START_CLIENT_TICK.register(Bot::tick);
+        Recorder.register();
     }
 
     private static void command(String text) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         String[] w = text.trim().split("\\s+");
+        if (Recorder.replaying() && !w[0].equals("stop") && !w[0].equals("rec")) {
+            reply(mc, "Replay is running. Use stop to cancel it.");
+            return;
+        }
         switch (w[0]) {
+            case "replay", "rec", "dump" -> {
+                try {
+                    if (w[0].equals("replay") && (w.length == 2 || w.length == 3)) {
+                        Recorder.replay(mc, w[1], w.length == 3 ? w[2] : w[1]);
+                    } else if (w[0].equals("rec") && w.length == 3 && w[1].equals("start")) Recorder.record(mc, w[2]);
+                    else if (w[0].equals("rec") && w.length == 2 && w[1].equals("stop")) Recorder.stop(mc);
+                    else if (w[0].equals("dump") && w.length == 2 && w[1].equals("blocks")) {
+                        reply(mc, BlockDumper.dump(mc));
+                    } else reply(mc, "Usage: replay <name> [out], rec start <name>, rec stop, dump blocks");
+                } catch (java.io.IOException | RuntimeException e) {
+                    reply(mc, "Recorder/dumper: " + e.getMessage());
+                }
+            }
             case "goto" -> {
                 try {
                     goTo(mc, new BlockPos(Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])));
@@ -58,7 +83,10 @@ final class Bot {
                 .filter(p -> p.getName().getString().equals(PathTracingMod.OWNER))
                 .findFirst()
                 .ifPresentOrElse(p -> goTo(mc, p.blockPosition()), () -> reply(mc, "I can't see you."));
-            case "stop" -> stop(mc, "Stopped.");
+            case "stop" -> {
+                if (Recorder.replaying()) Recorder.stop(mc);
+                stop(mc, "Stopped.");
+            }
             default -> { }
         }
     }
@@ -82,6 +110,7 @@ final class Bot {
     private static void tick(Minecraft mc) {
         // Creative players double-tap jump into flight; the bot has to walk like everyone else.
         if (survivalIn >= 0 && survivalIn-- == 0 && mc.getConnection() != null) mc.getConnection().sendCommand("gamemode survival");
+        if (Recorder.replaying()) return;
         if (path.isEmpty()) return;
         var player = mc.player;
         if (player == null) {
@@ -125,12 +154,17 @@ final class Bot {
         reply(mc, why);
     }
 
+    static void clearFollowPath() {
+        path = List.of();
+    }
+
     private static void keys(Minecraft mc, boolean forward, boolean jump) {
         mc.options.keyUp.setDown(forward);
         mc.options.keyJump.setDown(jump);
     }
 
-    private static void reply(Minecraft mc, String text) {
+    static void reply(Minecraft mc, String text) {
+        LOGGER.info("[pathtracing] {}", text.replace('\r', ' ').replace('\n', ' '));
         if (mc.getConnection() != null) mc.getConnection().sendCommand("msg " + PathTracingMod.OWNER + " " + text);
     }
 

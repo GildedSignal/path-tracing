@@ -5,6 +5,7 @@
   "name": "Path tracing bot",
   "description": "Player side: right-click with a stick to send PathBot a goal. Bot side: receives goals, plans, walks.",
   "environment": "client",
+  "mixins": ["pathtracing.mixins.json"],
   "entrypoints": {
     "client": ["pathtracing.PathTracingMod"]
   },

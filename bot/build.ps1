@@ -29,6 +29,7 @@ $argFile = Join-Path $build 'javac.args'
 if ($LASTEXITCODE) { throw 'javac failed' }
 
 Copy-Item "$PSScriptRoot\fabric.mod.json" "$build\classes\"
+Copy-Item "$PSScriptRoot\pathtracing.mixins.json" "$build\classes\"
 & "$Jdk\jar.exe" --create --file "$build\pathtracing.jar" -C "$build\classes" .
 if ($LASTEXITCODE) { throw 'jar failed' }
 Write-Host "Built $build\pathtracing.jar"
