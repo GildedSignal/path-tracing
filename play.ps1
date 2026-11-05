@@ -1,4 +1,6 @@
 # Starts the server, the bot's client (moved to your second monitor) and your client, both joining the server.
+#   -PlayerOnly   the server and your client, no bot
+param([switch]$PlayerOnly)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\scripts\common.ps1"
 
@@ -12,6 +14,11 @@ while (-not (Test-Port $ServerHost $ServerPort)) {
   Start-Sleep -Seconds 1
 }
 
+if ($PlayerOnly) {
+  $null = & "$Root\scripts\launch-client.ps1" -Role player
+  Write-Host 'Server and your client started. You can close this window.'
+  return
+}
 $bot = & "$Root\scripts\launch-client.ps1" -Role bot
 $null = & "$Root\scripts\launch-client.ps1" -Role player
 

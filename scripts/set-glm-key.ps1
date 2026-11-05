@@ -7,10 +7,31 @@
 # scripts\common.ps1's Get-GlmKey decrypts it only to hand it to an omp process's environment.
 # GLM runs on GitHub's machines (S21), so the script also sets the repository's Actions secret ZAI_API_KEY.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-glm-key.ps1 -Sync    copy the stored key to the Actions secret
-param([switch]$Check, [switch]$Remove, [switch]$Sync)
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\set-glm-key.ps1 -Test    ask Z.ai once whether the key works
+param([switch]$Check, [switch]$Remove, [switch]$Sync, [switch]$Test)
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:LOCALAPPDATA 'path-tracing'
 $file = Join-Path $dir 'zai-key.xml'
+
+if ($Test) {
+  # One request of at most one output token to the endpoint omp uses. Prints the outcome, never the key.
+  if (-not (Test-Path $file)) { 'No GLM key is stored.'; return }
+  $key = (Import-Clixml $file).GetNetworkCredential().Password
+  $body = '{"model":"glm-5.3","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
+  $headers = @{ 'x-api-key' = $key; 'anthropic-version' = '2023-06-01' }
+  try {
+    $null = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'https://api.z.ai/api/anthropic/v1/messages' -Headers $headers -ContentType 'application/json' -Body $body
+    'The key works: Z.ai answered a GLM-5.3 request.'
+  } catch {
+    $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 'no response' }
+    $detail = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { '' }
+    $code = [regex]::Match($detail, '"code"\s*:\s*"?(\d+)').Groups[1].Value
+    if ($code -eq '1113') { "Z.ai refused (HTTP $status, error 1113: no balance or resource package on this account)." }
+    elseif ($code) { "Z.ai refused (HTTP $status, error $code)." }
+    else { "Z.ai refused (HTTP $status)." }
+  }
+  return
+}
 
 if ($Check) {
   if (Test-Path $file) { "A GLM key is stored for $env:USERNAME (saved $((Get-Item $file).LastWriteTime))." } else { 'No GLM key is stored.' }
