@@ -2,7 +2,7 @@
 
 **Why.** Principle 26: everything should shorten the feedback loop. Live gates were meant to run under `/tick rate` so each stays under 60 seconds. But in the 26.2 client, `Minecraft.getTickTargetMillis(float)` returns `Math.max(base, level.tickRateManager().millisecondsPerTick())` while the tick rate runs normally (read with `javap -c -p` on `minecraft-26.2-client.jar`). The client follows a slower server, never a faster one. The player's movement is computed by the client, so under `/tick rate 100` the world runs 5× but the bot stays at 20 ticks per second.
 
-**Branch.** Cut from `main` after `wt/fixtures` is merged (the integrator creates the worktree). Do not commit; the integrator commits. Don't run the game; the integrator runs the live gate with the script you write.
+**Branch.** `wt/clock`, cut from `main` (which has the recorder and the tracks; `wt/fixtures` merges later). Do not commit; the queue runner commits. Don't run the game; the integrator runs the live gate with the script you write. If the worktree already has uncommitted changes from an interrupted run of this job, continue from them.
 
 ## Make exactly these changes
 
