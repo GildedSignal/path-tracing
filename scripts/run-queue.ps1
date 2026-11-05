@@ -8,8 +8,9 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 $queue = Join-Path $Root 'jobs\queue.txt'
 
-function Count-Gpt { @(Get-CimInstance Win32_Process -Filter "Name = 'codex.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -match '\bexec\b' }).Count }
+# One GPT job = one PowerShell running gpt.ps1 (codex itself may run as several processes).
+function Count-Gpt { @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -match 'gpt\.ps1' }).Count }
 
 foreach ($line in Get-Content $queue) {
   $line = $line.Trim()
