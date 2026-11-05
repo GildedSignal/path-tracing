@@ -42,7 +42,7 @@ There is one known exception. Elytra flight (`LivingEntity.updateFallFlyingMovem
 
 ## How it computes: a causal chain
 
-The rules come from ES's engine ("compute only surprises"), mapped onto Minecraft:
+The rules come from ES's engine ("compute only surprises"), mapped onto Minecraft. A surprise is an event that breaks a certificate. Cost follows surprises, never time or space: anything that can be derived when it is looked at (a cone bound, a steady speed, an arc) is derived then, not kept up to date.
 
 | ES | Here |
 |---|---|
@@ -55,6 +55,8 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 | error types | bounded error is allowed; a random walk only with a correction that bounds it (re-anchoring on the observed state); secular drift is forbidden; chaotic divergence is physics, judged by statistics |
 | correctness independent of allocation | the same plan and the same T whatever the thread count, GPU on or off, budget or schedule. Budgets are counted in work units, never wall-clock time, so every run replays |
 | value of computation | shape only where it can change a decision; idle time computes ahead and recompresses |
+| the simulation decides, heuristics schedule | a heuristic may reorder work, never remove a candidate. Pruning is deciding, so a candidate is removed only by proof: a bound from the light cone or the bracket, or dominance under the law. Learned estimates are advisory (above) |
+| ruin is excluded, not priced | an irreversible loss (death, an item lost for good, a world change) is a barrier from the first rung, never a cost in ticks. Tokens (Phase 7) price only what can be spent and replaced |
 | the player is the only wildcard | here: Julien (his commands and edits), anything that chooses (mobs), and the bot's own execution noise. Their light cones bound where certificates can break |
 
 ## Local repair
@@ -75,6 +77,8 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 ## Continuous where it helps
 
 Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine may jump from event to event. Every certificate it issues is still checked against the ticked law.
+
+**Store the generator, not the generated** (ES 6). What is stored is the recurrence and its parameters (friction, drag, jump power, a ladder's rectangle, the modifiers), keyed by those parameters and shared by every place and bot that uses them. Arcs and trajectories are derived when looked at, never stored tick by tick. Differences below `aiStep`'s thresholds (9×10⁻⁶ on h², 0.003 vertically) vanish in the law itself, so states that differ only there merge.
 
 ## The contract
 

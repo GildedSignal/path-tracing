@@ -38,8 +38,11 @@ No Fable (Julien, 4 November).
   - `PATHTRACING_ROOT` points every worktree at the one rig.
   - Gates take the rig lock.
 - **No new search code.** Capabilities enter as law and toolkit data only. Needing new search or geometry code means the representation is wrong: stop and re-derive it.
+- **No patches.** A special case, a tolerance, an epsilon, a retry or a per-block branch added to make a check pass is a fix, and a fix signals the wrong representation (ES 19). Stop, write the failure down, and re-derive it with the integrator.
+- **His repeated requests.** A request Julien makes twice becomes a tracked item in HANDOFF with an owner, never "after the prerequisites". This is how ES lost multipoles (its FMM post-mortem).
+- **Jobs that keep stopping.** A job that stops twice on its own failure goes back to the integrator for a new spec, not another relaunch.
 - **Julien's words.** His statements go into the register in PRINCIPLES.md, and models never reword them. For a new idea, think and talk with him first, and build when he says so.
-- **Pace.** No time estimates. Progress is gates passed and the scoreboard.
+- **Pace.** No time estimates. Progress is the scoreboard: T, cost and scale. A gate passed is a step, not progress; exactness can absorb any amount of work (ES's post-mortem), so the first flight comes as soon as L0 passes.
 - **Publishing.** Nothing is pushed to GitHub without Julien's say.
 
 ## Text has a cost

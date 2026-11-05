@@ -65,7 +65,7 @@ This file holds the state of the build, what is in flight and what comes next. I
    Gate: R1–R3, re-targeting, and the scale rung (a baselined red until Phase 4).
 2b. **The brachistochrone (S17, S18):** port the elytra law (GPT, judged against new L0 fixtures, including its `Math.cos` class), then rung R-brach. It enters as law data only. It is the method's first falsifier beyond the legs, run before scaling out.
 3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). This replaces edits as conjugates (S13).
-4. Scale: the server observer, portal tables, Hashlife, local repair, light-cone scheduling.
+4. Scale: the server observer, portal tables, **multipoles** (a tracked request, see below), Hashlife, local repair, light-cone scheduling.
 5. Verticals: the bucket.
 6. Momentum ground: ice, slime, soul sand, honey.
 7. Tokens: pearls, food, health, durability.
@@ -96,7 +96,18 @@ Every capability passes the universal gate: it enters as law and toolkit data, w
 
 Empty until the first flight. Each row will show the goal, the value now, and the gap in orders of magnitude.
 
+## Tracked requests (AGENTS.md: a request made twice gets an owner)
+
+| Request | Owner | Where it lands | State |
+|---|---|---|---|
+| Multipoles (FMM) for how T acts at a distance (S6; about ten times in ES, never built there) | Opus designer, at Phase 4's design | far influence as a compact summary with a stated remainder bound, beside the exact portal tables | not started; never deferred "until the prerequisites", and every rung reports cost against N from the first flight |
+
 ## Proposals awaiting Julien
+
+**Open, from the one-liner audit (5 November):**
+- ES 8, "cathedral foundations, not an MVP", against X4's "spaceX loop": which governs here, or each where?
+- "even a zombie can be precomputed" (X2): are mobs a wildcard, or law to precompute?
+
 
 **Open:** the price of consumables (S13, unsure). Until he decides, a command grants a budget, zero by default; health and food are feasibility constraints.
 

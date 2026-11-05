@@ -45,31 +45,43 @@ The scoreboard, adopted with the plan on 4 November, has three parts:
 
 His ES philosophy ([PRINCIPLES](https://github.com/GildedSignal/emergent-space-engine/blob/main/docs/PRINCIPLES.md)) applies here wherever it doesn't conflict with the above ("my thinking in planing ES is like that too", X6).
 
-**Carried over unchanged:**
-- 1 less is more;
-- 3 compute only surprises;
-- 5 the player is the only wildcard (here Julien, his commands and his edits) and light cones partition compute;
-- 6 store the generator;
-- 7 spacetime, where geodesics are straight lines;
+**Carried over** (numbers are ES PRINCIPLES numbers; the glosses are mine):
+- 1 less is more: delete before optimising; simplify, never dumb down;
+- 2 it's a game, so error type matters more than error size. Here "exact" means equal to Mojang's code: the bot's client is the oracle and judge, and the Rust port is the implementation;
+- 3 compute only surprises: a surprise is an event that breaks a certificate; what can be derived when looked at is derived then ([engine.md](engine.md));
+- 4 everything emerges: no central control and no catalogue of tricks or block categories;
+- 5 the player is the only wildcard, and light cones partition compute. Here the wildcards are Julien (his commands and edits) and, for now, whatever chooses (mobs) plus the bot's own execution noise ([engine.md](engine.md)). **Open:** his "even a zombie can be precomputed" (X2) may shrink that list;
+- 6 store the generator, not the generated: the recurrence and its parameters, shared, with arcs derived on demand ([engine.md](engine.md), "Continuous where it helps");
+- 7 spacetime: in the right frame, geodesics are trivial. Here the least-T route is not straight, because momentum is in the state; the frame is what makes the search trivial. **Multipoles are the mechanism** for far influence and causal regions (see the register's multipole row);
 - 9 a failed experiment kills the configuration, never the method;
 - 10 measure before claiming, test like a Spartan: climbing ladders, extreme and chaotic rungs, planted faults, anomalies as data ([ladder.md](ladder.md), "How we test");
 - 11 text has a cost;
-- 13 errors never compound;
-- 15 local laws;
+- 12 smoothness and the allocator: the p95 and p99 matter, not the average; the allocator that prevents heavy tails is the most important algorithm (first-move latency, hundreds of bots);
+- 13 errors never compound; types of errors, not just errors ([engine.md](engine.md));
+- 15 local laws: a cell's table depends only on its footprint and its border states, so cells can be solved anywhere, in any order, in parallel;
+- 17 every part of the machine, and the best part is no part: threads, the GPU for integer work, memory traffic, idle time computing ahead;
 - 18 the right question, then the representation;
-- 19 a fix signals the wrong representation;
+- 19 a fix signals the wrong representation: any special case, tolerance or retry added to pass a check ([AGENTS.md](../AGENTS.md), "No patches");
 - 20 behaviours over many seeds, no engineered outcome: a behaviour counts only if it emerges from the law, judged over many seeds (R-brach; [ladder.md](ladder.md), "How we test");
-- 22 the simulation decides, heuristics schedule;
-- 25 no sunk cost, avoid ruin;
+- 21 rough first, refine only where a certificate could break: narrow moves get precision, wide ones never do;
+- 22 the simulation decides, heuristics schedule: pruning is deciding, so a candidate is removed only by proof ([engine.md](engine.md));
+- 23 nothing past c: here c is the toolkit's top speed, the light cone that bounds both T (the bracket's LB) and where a change can matter;
+- 24 the memory floor is information: bytes per bot and per cell are measured against what they must hold;
+- 25 no sunk cost; avoid ruin: an irreversible loss is a barrier, never a price ([engine.md](engine.md));
 - 26 steal from skin in the game;
-- 27 the goal, never a proxy;
-- 32 symmetry is found, not given;
-- 33 each scale resolves what matters at that scale;
+- 27 the goal, never a proxy: progress is T, cost and scale, not gates passed ([AGENTS.md](../AGENTS.md));
+- 31 the logs hold the philosophy; keep contradictions; check the incentives we create (the register, the contradictions table, the attractors);
+- 32 symmetry is found, not given: identical footprints and mirrored runs are detected by hashing, never declared;
+- 33 each scale resolves what matters at that scale; smaller influences enter as aggregates, never dropped;
+- 34 the oracles are guards, not shepherds: Mojang's law rejects a wrong port, but never designs the representation;
 - 35 start from the goal and the dynamics.
 
 **Not carried over:**
 - **14, "no ticks":** Mojang's law ticks at 20 Hz. The planner may jump from event to event, but a plan is always checked tick by tick.
 - **16, "cheapest arithmetic":** the law's numbers are Mojang's floats and doubles, not ours to choose.
+- **28 (the view is an instrument), 29 (history, not a winner), 30 (what must be perfect: navigation, knowledge, dynamics):** about ES as a game. The goal here is T.
+
+**Kept side by side:** 8, "cathedral foundations, not an MVP", against "We're doing the spaceX loop here" (X4); see the contradictions table.
 
 Integer arithmetic does carry over for time. T is a whole number of ticks, so composing times by min-plus over integers is exact and associative.
 
@@ -97,7 +109,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | ice: faster but dynamical; convert properties into T | S6 | **Adopted:** speed in the state only where friction remembers it (representation.md). Measured: ice sprint-jumping at 9.2 m/s, 19.3 under a ceiling, against 5.6 m/s sprinting |
 | store the generator: a ladder's rectangle, floating, shift | S6 | **Adopted:** the law's hooks as generators (engine.md) |
 | running and shifting change things; jumping is an arc | S6 | **Adopted:** closed forms between events, checked by the ticked law |
-| fast multipole for how a block's T acts at a distance | S6 | **Adopted:** portal tables in min-plus (FMM in the tropical semiring), Phase 4 |
+| fast multipole for how a block's T acts at a distance | S6 | **Tracked request** (in ES he asked about ten times and it was never built; see its FMM post-mortem). Phase 4 must build far influence as a compact summary with a stated remainder bound, beside the exact portal tables, never instead of them. The design is open (Opus designer); [HANDOFF](HANDOFF.md) tracks it |
 | all scales in space and time | S6 | **Adopted:** hierarchy, plus the scale rung from Phase 2 |
 | "is this a negative weight triangle problem … A star?" | S6 | **Answered:** no negative cycles, because T only grows. The triangle inequality fails on positions (momentum) and holds on the full state, so A* applies over that state |
 | Google precomputes nodes | S6 | **Adopted:** CRP-style tables customised per toolkit (Phase 4) |
@@ -169,5 +181,6 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | Simulate or not | "run minecraft literally but 100x faster to predict the future" (S6) | "The best compute is no compute." (X2) |
 | Discrete or continuous | "it's blocks" (X2) | "we might even be better of to think of minecraft as continuous who knows" (X2) |
 | Build or think | "not build for now" (X1); "think first" (S8) | "plan for the whole build" (S10) |
+| Foundations or the loop | "build cathedral foundations, not an MVP" (ES 8) | "We're doing the spaceX loop here." (X4) |
 | Performance mods | "just keep the perf mods" (S1) | the approved plan: a vanilla judge for the bot's client and the server |
 | Editing to get around | "a wall is a two second delay not a wall" (X4); "using a water bucket above him, float, take it back, put it back higher" (X4) | "Basically don't modify the world to get around there's many ways to move in minecraft." (S13) |
