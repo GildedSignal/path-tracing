@@ -48,8 +48,29 @@ if ($Sync) {
   if (-not (Test-Path $file)) { 'No GLM key is stored: run the script without -Sync first.'; return }
   $cred = Import-Clixml $file
 } else {
-$cred = Get-Credential -UserName 'zai' -Message 'Paste your Z.ai API key into the password field, then press OK. It is stored encrypted for your Windows account only.'
-if (-not $cred -or $cred.Password.Length -eq 0) { 'Cancelled: nothing was stored.'; return }
+# Our own small window, always on top with the field focused (Get-Credential's dialog could open behind the console).
+Add-Type -AssemblyName System.Windows.Forms
+$form = New-Object Windows.Forms.Form
+$form.Text = 'Z.ai key for GLM'; $form.TopMost = $true; $form.StartPosition = 'CenterScreen'
+$form.FormBorderStyle = 'FixedDialog'; $form.MaximizeBox = $false; $form.MinimizeBox = $false
+$form.ClientSize = New-Object Drawing.Size(460, 120)
+$label = New-Object Windows.Forms.Label
+$label.Text = 'Paste your Z.ai API key (Ctrl+V), then press OK. It shows as dots and is stored encrypted for your Windows account only.'
+$label.SetBounds(12, 10, 436, 34)
+$box = New-Object Windows.Forms.TextBox
+$box.UseSystemPasswordChar = $true; $box.SetBounds(12, 50, 436, 24)
+$ok = New-Object Windows.Forms.Button
+$ok.Text = 'OK'; $ok.DialogResult = 'OK'; $ok.SetBounds(292, 84, 75, 26)
+$cancel = New-Object Windows.Forms.Button
+$cancel.Text = 'Cancel'; $cancel.DialogResult = 'Cancel'; $cancel.SetBounds(373, 84, 75, 26)
+$form.Controls.AddRange(@($label, $box, $ok, $cancel)); $form.AcceptButton = $ok; $form.CancelButton = $cancel
+$form.Add_Shown({ $form.Activate(); $box.Focus() })
+$result = $form.ShowDialog()
+$secure = New-Object Security.SecureString
+if ($result -eq 'OK') { foreach ($ch in $box.Text.Trim().ToCharArray()) { $secure.AppendChar($ch) } }
+$box.Text = ''; $form.Dispose()
+if ($secure.Length -eq 0) { 'Cancelled: nothing was stored.'; return }
+$cred = New-Object Management.Automation.PSCredential('zai', $secure)
 if ($cred.Password.Length -lt 20) { 'That looks too short to be an API key: nothing was stored.'; return }
 New-Item -ItemType Directory -Force $dir | Out-Null
 $cred | Export-Clixml -Path $file   # SecureString inside is DPAPI-encrypted for this user
