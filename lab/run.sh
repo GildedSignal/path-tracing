@@ -20,10 +20,12 @@ capture_changes() {
   restore_tree
 }
 phase() {
-  local name=$1 minutes=$2
+  local name=$1 minutes=$2 prompt=$scratch/$name-prompt.md
+  # On Windows (S43, Git Bash), omp.exe needs a Windows path; "@" stops MSYS from converting it.
+  if command -v cygpath >/dev/null; then prompt=$(cygpath -w "$prompt"); fi
   timeout --signal=TERM --kill-after=1m "${minutes}m" \
     omp -p --model=zai/glm-5.3 --thinking=high --approval-mode=yolo --no-session \
-    --max-time="${minutes}m" "@$scratch/$name-prompt.md" > "$scratch/$name.log" 2>&1
+    --max-time="${minutes}m" "@$prompt" > "$scratch/$name.log" 2>&1
 }
 finish() {
   local status=$?
@@ -39,7 +41,7 @@ finish() {
   exit "$status"
 }
 main() {
-  [[ ${GITHUB_ACTIONS:-} == true ]] || die 'GLM runs only on GitHub Actions; local verification must use the offline stub test'
+  [[ ${GITHUB_ACTIONS:-} == true || ${GLM_LOCAL:-} == S43 ]] || die 'GLM runs only on GitHub Actions or through scripts/glm-local.ps1 (S43); local verification must use the offline stub test'
   [[ $# == 2 || $# == 3 ]] || die 'Usage: lab/run.sh <lens> <run-id> [author-minutes]'
   local lens=$1 id=$2 minutes=${3:-60} checker_minutes author_status=0 checker_status=0 grade claim first author_complete=true
   [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README ]] || die 'Invalid lens name'
