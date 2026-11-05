@@ -1,40 +1,53 @@
-# Movement law checkpoint
+# Movement law
 
-The Rust workspace is scaffolded; the movement port and replay harness have not started. No L0 result is claimed. The development dependencies have been removed as instructed; the crate now has no dependencies. Nothing has been committed.
+The dependency-free workspace contains `law`, a one-player movement tick port from the unobfuscated 26.2 client jar. L0 awaits recorder fixtures and a fresh judge. No live game or server result is claimed here.
 
-## Decision needed: client input semantics
+## Build and checks
 
-The recorder applies raw keys through `KeyMapping.setDown`, but the 26.2 client has additional input behaviour outside the methods listed for job 1.5:
-
-- `LocalPlayer.move` calls `updateAutoJump`. It can set `autoJumpTime = 1`; the next `LocalPlayer.aiStep` calls `ClientInput.makeJump`, even with the jump key released.
-- `LocalPlayer.aiStep` reads `Options.sprintWindow()` to implement double-tap sprinting. It can call `setSprinting(true)` without the sprint key being held.
-- `scripts/setup.ps1` copies the pack's options into the bot's client and does not override either setting. Job 1.2's recording format does not capture these settings.
-
-Should L0 freeze auto-jump off and the double-tap sprint window to zero, or should job 1.5 include these option-dependent `LocalPlayer` behaviours, with their configuration supplied in fixture metadata? Neither policy is assumed here. The job explicitly requires stopping on a scope ambiguity instead of choosing.
-
-Inspect the source with the staged tools, from the repository root:
+Run Cargo **from `engine/`** so it reads `.cargo/config.toml` and writes to `D:/path-tracing-target`.
 
 ```powershell
-& D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe -cp D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2/minecraft-26.2-client.jar -c -p -constants net.minecraft.client.player.LocalPlayer
+Set-Location engine
+cargo test --offline
+cargo test --offline --test law -- --nocapture
+cargo build --offline --features mutant-axis-tie
+cargo build --offline --features mutant-step-up
+cargo build --offline --features mutant-edge-backoff
+cargo build --offline --features mutant-ceiling
 ```
 
-The disassemblies from the earlier attempt remain ignored under `.bytecode/`. `probes/ReadMethods.ps1` selects complete methods from them, for example:
+Invoking Cargo from the repository root with only `--manifest-path engine/Cargo.toml` bypasses the nested configuration and writes to `engine/target/`. That invocation occurred during this continuation. Cleanup was denied at `D:/path-tracing-wt/law/engine/target/.rustc_info.json`, so local artifacts remain. All final commands run from `engine/` and use the configured D: target directory. From the root, add `--config engine/.cargo/config.toml` explicitly.
 
-```powershell
-& engine/probes/ReadMethods.ps1 client.player.LocalPlayer @('aiStep', 'move', 'updateAutoJump')
-```
+The installed toolchain lacks the rustfmt component. No Rust or development dependencies are used.
 
-## Braking recurrence probe
+## Interface and coverage
 
-Run from the repository root:
+`tick(&mut PlayerState, &impl World, &Input)` advances one tick. `World` supplies block collision shapes and contexts, material factors, climbability, fluid height/current, block hooks, loaded chunks, environmental settings and extra collision shapes. `BoxWorld` provides sparse blocks, inclusive regions and those settings for tests. It does not read the block dump.
 
-```powershell
-& D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/java.exe engine/probes/Braking.java
-```
+- `LivingEntity.aiStep` thresholds, jumping, jump delay, air/ground and fluid travel, friction/drag modifiers, climbable handling and fall calculations.
+- `Entity.move`, axis-ordered collision sweeps, candidate-height step-up, supporting-block selection, stuck multipliers, speed/jump factors, fall-distance bookkeeping and fall-reset rays.
+- `Player` edge back-off, standing/crouching/swimming poses, airborne acceleration, food threshold, movement/jump exhaustion and food-data updates.
+- Cobweb and powder-snow stuck hooks, powder-snow collision contexts, honey sliding and supplied landing/bounce properties.
+- `Mth` floor/casts and the full sine table. `sin.bin` is extracted directly from the jar's initialized `Mth.SIN`, preserving every float bit.
+- Voxel occupancy, coordinate merging for intersections, collision sweeps, AABB clipping and the block-intersection traversal used by inside hooks.
 
-This is a cardinal, yaw-zero ground recurrence, not a full player tick, server measurement, or L0 gate. It reaches steady velocity over 2,000 forward ticks, then measures 400 ticks per protocol. Releasing forward or pressing back stops sprinting, as in `LocalPlayer.shouldStopRunSprinting`; reverse acceleration is walking acceleration. The ground, food level and friction stay fixed. The probe measures the first subsequent `aiStep` threshold event and the first such event after reverse input ends; these coincide in all 28 measured cases. Tick 1 is the first tick after forward input ends.
+Each port function carries its Mojang method provenance. No Azalea code was copied.
 
-Ticks until the horizontal velocity is zeroed by the threshold:
+The speed used for ground acceleration is the stored `LivingEntity.speed`. `Player.aiStep` refreshes it from the movement-speed attribute after travel. Sprint changes therefore affect ground acceleration one tick later, while airborne acceleration and the jump impulse use the current sprint flag.
+
+## Regenerating jar evidence
+
+From the repository root, run `engine/probes/Regenerate.ps1`. It uses the staged Java runtime and libraries under `D:/path-tracing-deps/data`, extracts `sin.bin`, and regenerates `tests/data/shapes.tsv` and `intersections.tsv` through `JarOracle.java`. The Rust jar tests compare collision results bit for bit, shape intersections and ordered block visits. This corpus exercises shape routines independently of the Rust implementation.
+
+`probes/ReadMethods.ps1` selects methods from the ignored disassemblies in `.bytecode/`. Regenerate a disassembly with the staged `javap.exe -cp <client jar> -c -p -constants <class>`.
+
+The steady-speed, ladder, terminal-fall and fall-damage checks are generated by `tests/law.rs`. They match every requested printed speed. The jump-speed checks tap jump on landing and release it in flight. They keep food full to isolate the movement recurrence.
+
+## Braking
+
+Both Rust braking tests warm up with forward input, then measure the first `aiStep` horizontal threshold event. Tick 1 is the first tick after forward ends. Reverse k means hold back for k ticks and then release, with k from 1 through 6. Food and terrain remain fixed.
+
+The accepted recurrence table is retained in `braking_recurrence`, with reverse walking acceleration applied immediately. Regenerate the original probe from the repository root with the staged `java.exe engine/probes/Braking.java`.
 
 | Ground / initial gait | Release | Reverse 1 | Reverse 2 | Reverse 3 | Reverse 4 | Reverse 5 | Reverse 6 |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -43,8 +56,32 @@ Ticks until the horizontal velocity is zeroed by the threshold:
 | Ice / walk | 38 | 36 | 35 | 33 | 30 | 25 | 7 |
 | Ice / sprint | 40 | 39 | 38 | 36 | 35 | 32 | 27 |
 
-Each reverse protocol means reverse for k ticks, then release. The fastest measured protocols are reverse once on stone (5 ticks after walking, 6 after sprinting) and reverse six times on ice (7 ticks after walking, 27 after sprinting). These are minima over the requested k = 0..6 only. Reversing for at least two ticks on stone overshoots on tick 2 in both gaits; none of the measured ice protocols overshoots. The probe emits every individual result as CSV, including negative-velocity and threshold timing.
+The full `tick` measurement, regenerated by `braking_player_tick`, includes the stored-speed refresh order.
 
-## Remaining work
+| Ground / initial gait | Release | Reverse 1 | Reverse 2 | Reverse 3 | Reverse 4 | Reverse 5 | Reverse 6 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Stone / walk | 8 | 5 | 8 | 10 | 11 | 12 | 13 |
+| Stone / sprint | 8 | 5 | 8 | 10 | 11 | 12 | 13 |
+| Ice / walk | 38 | 36 | 35 | 33 | 30 | 25 | 7 |
+| Ice / sprint | 40 | 39 | 38 | 36 | 34 | 31 | 26 |
 
-All requested movement, collision, fluids, block hooks, poses, exhaustion and damage functions remain to be ported. No Rust unit tests, replay harness, fixture format, or mutant behaviour exists yet. The feature names exist only in the manifest. There are no `unimplemented!` branches yet because the Rust library is empty. Cargo test and the four mutant builds have not been run for this checkpoint; an empty-library pass would not validate the requested work.
+The fastest full-tick protocols within this measured set are one reverse tick on stone, stopping on tick 5 after either gait, and six reverse ticks on ice, stopping on tick 7 after walking or tick 26 after sprinting. These are Rust measurements awaiting the recorder judge.
+
+## Replay and negative controls
+
+See `../../lab/fixtures/README.md` for paired recordings and world descriptions. With no recordings, the build emits a warning and the replay test is ignored with an explicit reason. Adding recordings enables it automatically. A recording must contain at least one tick. Mismatched bits, anomalies, tick gaps and incompatible option headers fail. Unit checks exercise the parser and replay entry point, including one-bit corruption and an anomaly.
+
+Replay compares raw positions/velocities, rotations, collision/ground/sprint/sneak/water/climb flags, pose and fall distance. Optional fixture `serverEnd` snapshots check predicted health, food, saturation and exhaustion separately from packet-delayed client health. It reports per-fixture ticks/s and the min, median, p90, p99 and max across fixtures. No replay performance figures exist until fixtures run.
+
+The four features alter the specified axis tie, step-height ulp, back-off decrement and ceiling restitution. The corresponding targeted Rust tests fail under their feature. L0 still requires the independent recorder fixtures to catch each mutant.
+
+## Assumptions and remaining uncertainty
+
+- Survival movement, a living player, no riding, elytra, creative flight, item use or status effects. The supplied options disable automatic/toggled input. Sprint follows the held key as explicitly requested, with the food, forward-input, crouch and collision restrictions.
+- Defaults describe an ordinary settled player. Fixture metadata must supply any differing hidden state, especially the stored speed, jump delay, previous eye-water state, support block, food timer and pending stuck multiplier.
+- The supplied world is the complete collision/material/current description for that tick. Block updates, moving entities and currents must be refreshed by the caller. Entities and world borders can contribute supplied extra collision shapes.
+- Whole-player bit exactness remains unverified until L0. Pose transitions, fluid entry/exit, support choices at mixed-material edges, simultaneous hooks and fall-reset rays need the live recordings. Shape corpora establish only their exercised routine inputs.
+- Food and fall damage are simulated together with client motion. Server packet/tick alignment and attribute synchronization need server snapshots. Environmental fire, lava contact, drowning, suffocation and freezing damage, freezing-induced attribute updates, armor and damage invulnerability are outside the listed movement/food/fall methods and are not modeled.
+- Shape boxes retain their supplied coordinate partition. Unusual unions whose source VoxelShape had optimized-away interior planes may expose different step candidates. The block dump adapter will need to preserve native shape coordinates or verify equivalence on those cases.
+
+Explicit `unimplemented!` branches remain for status effects, boats, riding, elytra/`Math.cos`, creative flight and item-use slowdown.
