@@ -16,6 +16,7 @@ This file holds the state of the build, what is in flight and what comes next. I
   - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab`: GLM's harness on Actions.
 - **Queued for the next free GPT slot:** job 1.5b, the judge's findings on the law (it passed "ready with fixes"): the sprint latch (the 1.5 spec was wrong), two float epsilons, bed landing, the push-out, silent gaps made explicit, tests against the jar.
 - **Open for L0:** two of the four mutants can't be caught by random recordings. Axis tie needs |x| = |z| exactly (a deliberate 45° corner fixture, an L0-x worst case). Step-up +1 ulp may be unreachable with vanilla geometry; if so it is an equivalent mutant, and the red-team replaces it at freeze (ladder.md), which is a repaired control, not a weakened gate.
+- **Queued after 1.6** (both edit the bot mod): job 1.7, parkour tracks (S25): `/track new <name>` and two stick clicks, one timer for him and the bot, his best time as the bot's minimum line.
 - **Next:** run `record-fixtures.ps1` (Julien's client out), then L0 by a fresh judge, then merge `wt/law`.
 - **After L1:** the integrator writes the first lenses, only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, jar questions for the elytra port; the breaker once fixtures exist. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.
 - **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
