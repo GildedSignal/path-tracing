@@ -18,6 +18,10 @@ $env:LAB_MINUTES = "$Minutes"
 $env:GITHUB_RUN_ID = 'local-' + (Get-Date -Format 'yyyyMMdd-HHmm')
 $env:GITHUB_RUN_ATTEMPT = '1'
 $env:RUNNER_TEMP = $temp
+# Julien's explicit approval to run here without isolation (S43), and the two files the GitHub runner normally provides.
+$env:GLM_LOCAL = 'S43'
+$env:GITHUB_STEP_SUMMARY = Join-Path $temp 'summary.md'
+$env:GITHUB_OUTPUT = Join-Path $temp 'output.txt'
 $env:PATH = "$omp;$env:PATH"
 Set-Location $Root
 Write-Host "$(Get-Date -Format HH:mm) GLM run $env:GITHUB_RUN_ID started: $Lenses ($Minutes minutes each). Close this window to stop it."
