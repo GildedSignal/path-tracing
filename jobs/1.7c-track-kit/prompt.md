@@ -34,3 +34,5 @@ On `wt/tracks`, now equal to `main` (`7e2a9a6`). Read `bot/tracks.md`, `bot/src/
   - refusing `/track kit` during a run.
 - `TrackMixinAudit` passes for every injection, new or changed.
 - The final message lists every change and every assumption.
+
+**Resumed run.** A previous run stopped mid-way ("model at capacity"). Its partial work is committed on `wt/tracks` as `91dcf5b`, and its tests fail. Continue from it and finish every item.
