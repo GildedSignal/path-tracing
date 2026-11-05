@@ -31,6 +31,10 @@ The sandbox cannot read `%LOCALAPPDATA%`, so use the staged copy, which has the 
 - **Your braking table is accepted.** Keep it in `engine/README.md` and as the braking test.
 - **Don't stop again for scope.** Take the most literal reading of this spec, write each assumption down in your final message, and keep porting. Stop only for something that blocks the build.
 
+## The fourth run stopped
+
+The previous run's process died at 23:08 on 4 November, in the middle of a `javap` read, with no error. Its work is still in the worktree: `engine/law/src/` (`lib.rs`, `math.rs`, `movement.rs`, `shapes.rs`, `state.rs`, `world.rs`, `sin.bin`, `build.rs`), `engine/law/tests/`, `engine/probes/`. **Continue from it.** Read what is there, finish the port and the tests, and don't start over. Delete `engine/law/src/write-probe.tmp`. The cargo target dir is `D:/path-tracing-target` (set in `engine/.cargo/config.toml`), so `engine/target/` should not be needed: say whether something still writes there.
+
 ## What to build
 
 A Cargo workspace at `engine/`, holding one library crate, `engine/law`.

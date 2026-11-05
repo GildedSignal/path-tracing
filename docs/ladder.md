@@ -17,6 +17,7 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 - **Latency:** ticks from the whisper's arrival at the bot's client to its first applied control. The p99 must be ≤ 1.
 - **Failures:** failed edges, server corrections, restoration misses and irreversible losses. Each must be zero.
 - **Scale:** planning cost against trip length, in work units and in wall time.
+- **Swarm:** the planner will serve hundreds of bots (S17), so cost is also reported per bot, with many bots on one machine. How it is measured is frozen with Phase 10.
 - **Reports** give n, min, median, p90, p99 and max, plus the worst seeds with their replays. Never an average alone, never a trimmed outlier. A result holds only inside the range it was observed in.
 
 ## Fixtures
@@ -37,6 +38,7 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 | R3 | 2 | Gaps of 1 to 4 blocks, step-ups, drops up to the 3-block safe fall. Damaging drops are barriers until tokens exist | to freeze before Phase 2 runs |
 | R-retarget | 2 | A new goal at a random tick mid-trip. T counts from the new command; momentum carries over | to freeze before Phase 2 runs |
 | R-scale | 2 | Trips of 10, 10², 10³ and 10⁴ blocks along a fixture corridor of default terrain. Frozen with Phase 2 and red until Phase 4 bends it | to freeze before Phase 2 runs |
+| R-brach | after 2 | **The brachistochrone, as a falsifier of the method** (S17). Elytra with no fireworks, from rest on one pillar to a lower one, in still air. Needs only the elytra law (pitch and yaw controls; its `Math.cos` exactness class) added as law data, with **no new search or geometry code**. **Pass:** T within the bracket, whose UB is the independent time-optimal search over raw controls for this exact law; and the dive-then-flatten curve appears without being asked for. The reference is that UB curve, not the textbook cycloid, because the law has drag and pitch-dependent lift. **Kills:** no dive means speed was dropped from the state or something other than T was minimised; a kinked dive means states were merged too coarsely at speed | frozen once Phase 2 passes, before its first run |
 | R4 | 3 | Movement in a world left unmodified: sneak edges, ladders and vines, water, slime, crawling under existing trapdoors. Pass includes every block state unchanged after the trip | when Phase 3 starts |
 | R5 | 3 | Courses Julien designs and runs himself, judged against his time | when Phase 3 starts |
 | R6 | 5 | The bucket where its water leaves no trace: falls, climbs; the Nether (no water) | when Phase 5 starts |

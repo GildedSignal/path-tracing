@@ -15,11 +15,12 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Waiting on Julien:** his approval of PRINCIPLES.md, which he owns. No builder starts before it.
 - **Meanwhile:** Phase 1.0 (the toolchain) and 1.1 (lab hygiene), done by the integrator.
 
-## Resuming after a compaction (4 November, about 23:00)
+## Resuming after a compaction (updated 5 November, 09:00)
 
-- **Running in the background** (both GPT Sol slots):
-  - job 1.5, in `D:\path-tracing-wt\law`;
-  - job 1.2b, in `D:\path-tracing-wt\recorder`.
+- **Running in the background:**
+  - job 1.5 (GPT Sol), in `D:\path-tracing-wt\law`. Its fourth run died at 23:08 with no error; relaunched on 5 November to continue from the partial port;
+  - the Sonnet judge of 1.2b (commit `a6e3d7a` on `wt/recorder`); stopped by the Claude limit, resumed. Its findings go into section B of `jobs/1.2c-console-commands/prompt.md`, then 1.2c is launched (second GPT slot).
+- **Owed to Julien:** ES's testing philosophy (Spartan training, adversarial tests, unknown unknowns; ES PRINCIPLES 10 and 20 and its register rows of 7 October) carried over as a proposal. Only the one line "test like a Spartan" is here.
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`. GPT can't commit, so commit its changes on its branch with `Built-by: gpt-6.1-sol`.
 - **Relaunching:** run `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. Answers to a job's questions go into its `prompt.md` under "Answers…".
 - **After 1.2b:**
@@ -60,6 +61,7 @@ This file holds the state of the build, what is in flight and what comes next. I
    - executor v0 (tick-stamped controls, local re-solve).
 
    Gate: R1–R3, re-targeting, and the scale rung (a baselined red until Phase 4).
+2b. **The brachistochrone (S17, S18):** port the elytra law (GPT, judged against new L0 fixtures, including its `Math.cos` class), then rung R-brach. It enters as law data only. It is the method's first falsifier beyond the legs, run before scaling out.
 3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). This replaces edits as conjugates (S13).
 4. Scale: the server observer, portal tables, Hashlife, local repair, light-cone scheduling.
 5. Verticals: the bucket.
@@ -68,7 +70,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 8. The moving world: fluids, falling blocks, mobs, redstone.
 9. Risk: edge width under jitter, Monte Carlo, irreversible losses.
 10. Speed: Vulkan, threads, learned ordering that only schedules.
-11. Far travel: boats, the Nether, elytra.
+11. Far travel: boats, the Nether, elytra with fireworks.
 12. The benchmark against Baritone.
 
 After the first flight, the scoreboard reorders phases 3–12, furthest gap first.
