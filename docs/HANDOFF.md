@@ -13,7 +13,6 @@ This file holds the state of the build, what is in flight and what comes next. I
 **Julien's double-clicks** (README): `Play.cmd`, `Play with bot.cmd`, `Set GLM key.cmd`. The L0 courses are built in the superflat at x = 4096 + 128·i, with teleport buttons at spawn and on each roof (`scripts\place-teleports.ps1`).
 
 **Running:**
-- GPT job 1.7b on `wt/tracks` (launched 15:00): the 1.7 judge's findings ("ready with fixes", `jobs/1.7-tracks/judge.md`);
 - the Sonnet judge for 1.6b (it writes `jobs/1.6b-fixture-fixes/judge.md`). If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. The S32 research is routed (claims 6 and 9, R6, R-far, the rediscovery rung, the speed-of-light lens). The next sweep is the GLM lens `elite-techniques` (S33).
 
 **Queued:**
@@ -31,7 +30,7 @@ The fixture tooling merges once judged; L0 gates the law, not the tooling.
 |---|---|---|
 | `wt/law` (`law`) | the Rust law, jobs 1.5 to 1.5c committed (`0f6c901`; 39 tests pass, four mutant builds). Judged "ready with fixes"; fixes done | job **1.5d** committed (`3f6d65c`; 49 tests, four mutant builds). It already reads `serverTickOffset`, so 1.6b's reader patch is probably redundant: the 1.6b judge's verdict on that patch decides.<br>**Open mismatch** (1.5d's report): the exporter writes the effective `movementSpeed`, while the law treats it as the base before modifiers, so sprint would be applied twice. A small job fixes the contract (export the base value and the modifiers).<br>Then record fixtures live, then L0 |
 | `wt/fixtures` (`fixtures`) | job 1.6b committed (`684946e`): abort cleanup, rimmed water with a flow check, one-tick server reads, `ticksFrozen`, the `corner` course, edges, exporter values. It adds `EntityCollisionMixin` to observe collisions, and the judge must confirm it only observes | its judge, then merge, then `record-fixtures.ps1` live (the server is ours to use, S29), then L0 by a fresh judge |
-| `wt/tracks` (`tracks`), cut from `wt/fixtures` at `b3d3297` | job 1.7 committed (`00fc6d8`): `/track` commands, one detector for both clients, run records, the bot's replay with the current planner; 69 offline checks | judged "ready with fixes"; job **1.7b** running. Merge after `wt/fixtures` |
+| `wt/tracks` (`tracks`), cut from `wt/fixtures` at `b3d3297` | job 1.7 committed (`00fc6d8`): `/track` commands, one detector for both clients, run records, the bot's replay with the current planner; 69 offline checks | judged "ready with fixes"; job **1.7b** committed (`7123c49`; integrator re-ran the build, 101 headless checks and 19 audited injections; bests per player and mode verified in the diff). Merge after `wt/fixtures` |
 | `main` | recorder merged (gate 1.2 passed live), GLM harness merged | — |
 
 - **L0's planted faults:** the axis tie gets the scripted corner course (1.6b). The step-up fault (+1 ulp) looks unreachable with vanilla blocks (GLM lens `step-up-reachability` settles it); if so, the red-team replaces it at L0's freeze, which repairs the control and doesn't weaken the gate.
