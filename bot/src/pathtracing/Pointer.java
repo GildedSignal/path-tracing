@@ -25,7 +25,12 @@ final class Pointer {
         if (player == null || mc.gui.screen() != null || !player.getMainHandItem().is(Items.STICK)) return;
         // Consume the click before vanilla sees it, so the stick never interacts with the block.
         while (mc.options.keyUse.consumeClick()) {
+            mc.options.keyUse.setDown(false);
             if (player.isShiftKeyDown()) {
+                if (Tracks.selecting()) {
+                    Tracks.click(mc, BlockPos.ZERO, true);
+                    continue;
+                }
                 send(mc, "stop");
                 continue;
             }
@@ -35,6 +40,10 @@ final class Pointer {
                 continue;
             }
             BlockHitResult block = (BlockHitResult) hit;
+            if (Tracks.selecting()) {
+                Tracks.click(mc, block.getBlockPos(), false);
+                continue;
+            }
             // The cell in front of the face you pointed at: on a floor, the air cell the bot should stand in.
             BlockPos goal = block.getBlockPos().relative(block.getDirection());
             send(mc, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ());

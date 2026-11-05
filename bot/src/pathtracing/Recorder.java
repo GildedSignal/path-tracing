@@ -64,12 +64,44 @@ public final class Recorder {
     }
 
     private static void open(Minecraft mc, String runName) throws IOException {
+        open(mc, runName, file(mc, "recordings", runName));
+    }
+
+    static Path recordTrack(Minecraft mc, Path directory, String track) throws IOException {
+        if (active()) throw new IllegalStateException("A recording or replay is already running.");
+        TickInput.holdSettings(mc);
+        JsonObject initial = PlayerSnapshot.capture(mc);
+        for (long index = 1; ; index++) {
+            String runName = "track-" + track + "-" + index;
+            Path path = directory.resolve(runName + ".jsonl");
+            if (Files.exists(path) || Files.exists(path.resolveSibling(path.getFileName() + ".tmp"))) continue;
+            try {
+                open(mc, runName, path);
+                header.add("initialPlayer", initial);
+                return path;
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                // CREATE_NEW reserves the name across both clients.
+            }
+        }
+    }
+
+    static boolean finishTrack(Minecraft mc, Path path) {
+        if (output == null || !path.equals(outputPath) || replaying()) return false;
+        finish(mc, true);
+        return Files.exists(path);
+    }
+
+    static void discardTrack(Minecraft mc, Path path) {
+        if (output != null && path.equals(outputPath) && !replaying()) finish(mc, false);
+    }
+
+    private static void open(Minecraft mc, String runName, Path path) throws IOException {
         JsonObject metadata = TickInput.holdSettings(mc);
         metadata.addProperty("type", "recording");
-        Path path = file(mc, "recordings", runName);
-        if (Files.exists(path)) throw new IllegalStateException("Output already exists: " + path);
+        if (Files.exists(path)) throw new java.nio.file.FileAlreadyExistsException(path.toString(), null, "Output already exists");
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
-        if (Files.exists(temporary)) throw new IllegalStateException("Temporary output already exists: " + temporary + ". Delete it before reusing this name.");
+        if (Files.exists(temporary)) throw new java.nio.file.FileAlreadyExistsException(temporary.toString(), null,
+            "Temporary output already exists. Delete it before reusing this name.");
         Files.createDirectories(path.getParent());
         BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
         header = metadata;
@@ -188,7 +220,7 @@ public final class Recorder {
             }
         }
         if (header != null) {
-            header.add("initialPlayer", PlayerSnapshot.capture(mc));
+            if (!header.has("initialPlayer")) header.add("initialPlayer", PlayerSnapshot.capture(mc));
             try {
                 output.write(header.toString());
                 output.write('\n');

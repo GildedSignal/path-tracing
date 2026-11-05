@@ -14,7 +14,7 @@ Names contain only letters, digits, `_` and `-`. Replay reads input `name` and w
 (default: `name`). Replay and manual recording refuse an existing final or temporary output, naming
 the file in the reply. A blocking `.tmp` reply says to delete that file before reusing the name.
 Choose another output name or move the old final file before starting again.
-Only the bot role registers the recorder. Replay owns all seven movement keys, rejects other movement
+Both roles register the recorder for automatic track recordings (see tracks.md). Replay owns all seven movement keys, rejects other movement
 commands and suspends the follow loop. `rec stop` cancels a replay too; `stop` also clears the existing
 follow path. Starting a replay clears the old follow path, so it cannot resume afterwards.
 Both replay and recording require `toggleSprint`, `toggleCrouch` and `autoJump` off, and
