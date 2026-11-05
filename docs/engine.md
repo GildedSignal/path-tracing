@@ -24,6 +24,7 @@ Exactness classes:
 | server-exact | health, food, saturation, exhaustion, fall damage, breaking progress | the server (read over RCON) |
 | behaviour-exact | fluids, falling blocks, mobs, redstone | replays, at the resolution the decisions need |
 | advisory | floats on the GPU, learned estimates, forecasts | nothing: a wrong value may only cost speed, never change T |
+| server-driven | state the server computes and the client only receives: speed modifiers by attribute packet (powder-snow frost, effects), `ticksFrozen` decay | recorded per tick and read by the law as input, never simulated, because the packet's arrival tick is network timing. Found in the 26.2 jar on 5 November: freezing runs only in `ServerLevel` |
 
 There is one known exception. Elytra flight (`LivingEntity.updateFallFlyingMovement`) calls `Math.cos` and `Math.sqrt`. `Math.cos` goes through HotSpot's own implementation, so the port must reproduce it bit for bit or give it a class of its own (Phase 11).
 
