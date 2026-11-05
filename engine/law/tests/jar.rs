@@ -103,3 +103,31 @@ fn jar_landing_hooks() {
         assert_eq!(100.0-state.health, expected as f32, "{row}");
     }
 }
+#[test]
+fn jar_movement_speed_attribute_order() {
+    for (line, row) in include_str!("data/attributes.tsv").lines().enumerate() {
+        let (header, modifiers) = row.split_once('|').unwrap();
+        let header: Vec<_> = header.split_whitespace().collect();
+        let from_hex = |s| f64::from_bits(u64::from_str_radix(s, 16).unwrap());
+        let mut state = law::PlayerState {
+            movement_speed_base: from_hex(header[0]),
+            sprinting: header[1] == "true",
+            ..law::PlayerState::default()
+        };
+        state.speed_modifiers = modifiers.split(';').filter(|s| !s.is_empty()).map(|entry| {
+            let fields: Vec<_> = entry.split_whitespace().collect();
+            law::SpeedModifier {
+                id: fields[0].to_owned(),
+                amount: from_hex(fields[1]),
+                operation: match fields[2] {
+                    "0" => law::SpeedOperation::AddValue,
+                    "1" => law::SpeedOperation::AddMultipliedBase,
+                    "2" => law::SpeedOperation::AddMultipliedTotal,
+                    _ => panic!("attribute operation"),
+                },
+            }
+        }).collect();
+        assert_eq!(state.movement_speed_value().to_bits(), from_hex(header[2]).to_bits(),
+            "jar attribute case {line}");
+    }
+}

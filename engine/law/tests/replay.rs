@@ -1,7 +1,7 @@
 #[path = "support/json.rs"]
 mod json;
 
-use json::{Object, hex, numbers};
+use json::{Object, array, hex, numbers};
 use law::*;
 use std::{fs, path::{Path, PathBuf}, time::{Duration, Instant}};
 
@@ -55,11 +55,35 @@ fn pose(value: &str) -> Pose {
     }
 }
 
+fn speed_modifiers(object: &Object<'_>) -> Vec<SpeedModifier> {
+    let mut modifiers: Vec<SpeedModifier> = Vec::new();
+    for tuple in array(object.required("speedModifiers")) {
+        let fields = array(tuple);
+        assert_eq!(fields.len(), 3, "speedModifiers needs [id, amount, operation]");
+        let id = fields[0].strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+            .expect("speedModifiers id string");
+        assert_ne!(id, "minecraft:sprinting", "speedModifiers must exclude sprint");
+        assert!(!modifiers.iter().any(|m| m.id == id), "duplicate speedModifiers id {id}");
+        let amount: f64 = fields[1].parse().expect("speedModifiers amount");
+        assert!(amount.is_finite(), "non-finite speedModifiers amount");
+        let operation = match fields[2].trim_matches('"') {
+            "ADD_VALUE" | "add_value" | "0" => SpeedOperation::AddValue,
+            "ADD_MULTIPLIED_BASE" | "add_multiplied_base" | "1" => SpeedOperation::AddMultipliedBase,
+            "ADD_MULTIPLIED_TOTAL" | "add_multiplied_total" | "2" => SpeedOperation::AddMultipliedTotal,
+            value => panic!("unsupported speedModifiers operation {value}"),
+        };
+        modifiers.push(SpeedModifier { id: id.to_owned(), amount, operation });
+    }
+    modifiers
+}
+
 fn load_state(object: &Object<'_>) -> PlayerState {
     let mut state = PlayerState::default();
     state.position = vector(&object.object("position"));
     state.velocity = vector(&object.object("velocity"));
     state.sprinting = object.boolean("isSprinting");
+    state.movement_speed_base = object.f64("movementSpeedBase");
+    state.speed_modifiers = speed_modifiers(object);
     if object.get("inputs").is_some() { state.input = input(&object.object("inputs")); }
     macro_rules! flags {
         ($($key:literal => $field:ident),*) => { $(
@@ -95,12 +119,12 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "waterMovementEfficiency" => water_movement_efficiency, "movementEfficiency" => movement_efficiency,
         "sneakingSpeed" => sneaking_speed);
     doubles!("fallDistance" => fall_distance, "waterHeight" => water_height, "lavaHeight" => lava_height,
-        "movementSpeed" => movement_speed, "jumpStrength" => jump_strength, "gravity" => gravity,
+        "jumpStrength" => jump_strength, "gravity" => gravity,
         "safeFallDistance" => safe_fall_distance, "fallDamageMultiplier" => fall_damage_multiplier,
         "bounciness" => bounciness);
     if object.get("remainingFireTicks").is_some() { state.remaining_fire_ticks = object.number("remainingFireTicks") as i32; }
     if object.get("noJumpDelay").is_some() { state.no_jump_delay = object.number("noJumpDelay") as i32; }
-    if object.get("ticksFrozen").is_some() { state.ticks_frozen = object.number("ticksFrozen") as i32; }
+    if object.get("ticksFrozen").is_some() { state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen"); }
     if object.get("foodLevel").is_some() { state.food_level = object.number("foodLevel") as i32; }
     if object.get("foodTickTimer").is_some() { state.food_tick_timer = object.number("foodTickTimer") as u32; }
     if object.get("mainSupportingBlock").is_some() {
@@ -110,6 +134,9 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         state.stuck_speed_multiplier = vector(&object.object("stuckSpeedMultiplier"));
     }
     if object.get("pose").is_some() { state.pose = pose(object.string("pose")); }
+    if object.get("speed").is_none() && object.get("speedBits").is_none() {
+        state.speed = state.movement_speed_value() as f32;
+    }
     state
 }
 
@@ -268,6 +295,8 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
             previous_tick_count = Some(count);
         }
+        state.speed_modifiers = speed_modifiers(&object);
+        state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen");
         let applied = input(&object.object("inputs"));
         let start = Instant::now();
         tick(state, world, &applied);
@@ -285,20 +314,25 @@ fn assert_server(state: &PlayerState, expected: &Object<'_>) {
     assert_eq!(state.food_level as f64, expected.number("foodLevel"), "server food");
     assert_eq!(state.saturation.to_bits(), expected.f32("saturationLevel").to_bits(), "server saturation");
     assert_eq!(state.exhaustion.to_bits(), expected.f32("exhaustion").to_bits(), "server exhaustion");
+    assert_eq!(state.food_tick_timer as f64, expected.number("foodTickTimer"), "server foodTickTimer");
 }
 
-fn check_server_end(state: &PlayerState, expected: &Object<'_>) -> bool {
-    let key = if expected.get("serverTickOffset").is_some() { "serverTickOffset" } else { "ticksAfterEnd" };
-    if expected.get(key).is_none_or(|value| value == "null") {
-        println!("server resources skipped: serverEnd {key} is unknown");
+fn check_server_end(state: &mut PlayerState, world: &BoxWorld, expected: &Object<'_>) -> bool {
+    if expected.get("atRest") != Some("true") {
+        println!("server resources skipped: serverEnd atRest is false or unknown");
         return false;
     }
-    let ticks = expected.number(key);
-    assert!(ticks >= 0.0 && ticks.is_finite() && ticks.fract() == 0.0, "invalid {key}");
-    if ticks != 0.0 {
-        println!("server resources skipped: serverEnd read {ticks} server ticks after recording end");
+    if expected.get("serverTickOffset").is_none_or(|value| value == "null") {
+        println!("server resources skipped: serverEnd serverTickOffset is unknown");
         return false;
     }
+    let offset: i64 = expected.required("serverTickOffset").parse().expect("invalid serverTickOffset");
+    if offset < 0 {
+        println!("server resources skipped: serverEnd serverTickOffset is negative ({offset})");
+        return false;
+    }
+    let input = Input { yaw: state.yaw, pitch: state.pitch, ..Input::default() };
+    for _ in 0..offset { tick(state, world, &input); }
     assert_server(state, expected);
     true
 }
@@ -313,6 +347,7 @@ fn replay() {
     assert!(!files.is_empty(), "No recorder recordings in lab/fixtures; replay must be ignored until fixtures exist");
     let mut rates = Vec::new();
     let mut server_checks = 0;
+    let mut server_skips = 0;
     for file in files {
         let fixture = fs::read_to_string(file.with_extension("world.jsonl")).expect("fixture world description");
         let (world, mut state, server_end) = parse_world(&fixture);
@@ -320,14 +355,20 @@ fn replay() {
         let (ticks, elapsed) = replay_text(&text, &world, &mut state);
         if let Some(snapshot) = server_end {
             println!("{} serverEnd", file.display());
-            server_checks += check_server_end(&state, &Object::parse(&snapshot)) as usize;
+            if check_server_end(&mut state, &world, &Object::parse(&snapshot)) {
+                server_checks += 1;
+            } else {
+                server_skips += 1;
+            }
         } else {
             println!("{} server resources skipped: no serverEnd snapshot", file.display());
+            server_skips += 1;
         }
         let rate = ticks as f64 / elapsed.as_secs_f64();
         rates.push(rate);
         println!("{} {ticks} ticks, {rate:.0} ticks/s", file.display());
     }
+    println!("server resources: {server_checks} fixtures compared, {server_skips} fixtures skipped");
     rates.sort_by(f64::total_cmp);
     let quantile = |p: f64| rates[((rates.len() - 1) as f64 * p).ceil() as usize];
     println!("fixture ticks/s n={}, min={:.0}, median={:.0}, p90={:.0}, p99={:.0}, max={:.0}, server snapshots={server_checks}",
@@ -362,11 +403,11 @@ fn reject_option_dependent_recording() {
 #[test]
 fn fixture_initialization() {
     let (world, state, server_end) = parse_world(concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"speed\":0.13,\"noJumpDelay\":7,\"onGroundNoBlocks\":true}\n",
+        "{\"kind\":\"player\",\"movementSpeedBase\":0.10000000149011612,\"speedModifiers\":[],\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"speed\":0.13,\"noJumpDelay\":7,\"onGroundNoBlocks\":true}\n",
         "{\"kind\":\"world\",\"difficulty\":3,\"naturalRegeneration\":false,\"fastLava\":true,\"unloadedChunks\":[[1,-1]]}\n",
         "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]],\"friction\":0.98}\n",
         "{\"kind\":\"block\",\"at\":[0,-1,0],\"boxes\":[[0,0,0,1,0.5,1]],\"speedFactor\":0.4}\n",
-        "{\"kind\":\"serverEnd\",\"health\":20,\"foodLevel\":20,\"saturationLevel\":5,\"exhaustion\":0}\n"
+        "{\"kind\":\"serverEnd\",\"health\":20,\"foodLevel\":20,\"saturationLevel\":5,\"exhaustion\":0,\"foodTickTimer\":0}\n"
     ));
     assert_eq!(state.speed, 0.13f32);
     assert_eq!(state.no_jump_delay, 7);
@@ -383,13 +424,13 @@ fn fixture_initialization() {
 #[test]
 #[should_panic(expected = "missing isSprinting")]
 fn fixture_requires_initial_sprint_latch() {
-    parse_world(r#"{"kind":"player","position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0}}"#);
+    parse_world(r#"{"kind":"player","movementSpeedBase":0.10000000149011612,"speedModifiers":[],"position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0}}"#);
 }
 
 fn stationary_tick() -> String {
     let vertical_bits = (-0.08 * 0.98f32 as f64).to_bits();
     format!(concat!(
-        "{{\"t\":0,\"inputs\":{{\"forward\":false,\"back\":false,\"left\":false,\"right\":false,\"jump\":false,\"sneak\":false,\"sprint\":false,\"yaw\":0,\"pitch\":0}},",
+        "{{\"t\":0,\"speedModifiers\":[],\"ticksFrozen\":0,\"inputs\":{{\"forward\":false,\"back\":false,\"left\":false,\"right\":false,\"jump\":false,\"sneak\":false,\"sprint\":false,\"yaw\":0,\"pitch\":0}},",
         "\"position\":{{\"x\":0,\"xBits\":\"0000000000000000\",\"y\":0,\"yBits\":\"0000000000000000\",\"z\":0,\"zBits\":\"0000000000000000\"}},",
         "\"velocity\":{{\"x\":0,\"xBits\":\"0000000000000000\",\"y\":-0.0784,\"yBits\":\"{vertical_bits:016x}\",\"z\":0,\"zBits\":\"0000000000000000\"}},",
         "\"yRotBits\":\"00000000\",\"xRotBits\":\"00000000\",\"onGround\":true,\"horizontalCollision\":false,\"verticalCollision\":true,",
@@ -457,7 +498,7 @@ fn replay_compares_optional_fields() {
 #[test]
 fn replay_seeds_sprint_from_player() {
     let fixture = concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":true}\n",
+        "{\"kind\":\"player\",\"movementSpeedBase\":0.10000000149011612,\"speedModifiers\":[],\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":true}\n",
         "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]]}\n"
     );
     let (world, mut initial, _) = parse_world(fixture);
@@ -532,36 +573,56 @@ fn replay_rejects_invalid_trailers_and_row_types() {
 }
 
 #[test]
-fn fixture_server_end_requires_zero_delay() {
+fn fixture_server_end_replays_rest_ticks_and_checks_every_resource() {
     let fixture = concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false}\n",
-        "{\"kind\":\"serverEnd\",\"serverTickOffset\":0,\"health\":20,\"foodLevel\":20,\"saturationLevel\":5,\"exhaustion\":0}"
+        "{\"kind\":\"player\",\"movementSpeedBase\":0.10000000149011612,\"speedModifiers\":[],\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":false,\"health\":19,\"saturationLevel\":6,\"foodTickTimer\":8}\n",
+        "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]]}"
     );
-    let (_, state, snapshot) = parse_world(fixture);
-    let snapshot = snapshot.unwrap();
-    assert!(check_server_end(&state, &Object::parse(&snapshot)));
-    let wrong = snapshot.replace("\"health\":20", "\"health\":1");
-    let failure = std::panic::catch_unwind(|| check_server_end(&state, &Object::parse(&wrong)));
-    assert!(failure.is_err(), "aligned resource mismatch was accepted");
-    for delay in [1, 20] {
-        let delayed = wrong.replace("\"serverTickOffset\":0", &format!("\"serverTickOffset\":{delay}"));
-        let (_, state, snapshot) = parse_world(&fixture.replace(&snapshot, &delayed));
-        assert!(!check_server_end(&state, &Object::parse(&snapshot.unwrap())));
+    for (offset, health, saturation, exhaustion, timer) in [
+        (0, 19, 6, 0, 9), (1, 20, 6, 6, 0), (2, 20, 5, 2, 0), (20, 20, 5, 2, 0)
+    ] {
+        let snapshot = format!("{{\"kind\":\"serverEnd\",\"atRest\":true,\"serverTickOffset\":{offset},\"health\":{health},\"foodLevel\":20,\"saturationLevel\":{saturation},\"exhaustion\":{exhaustion},\"foodTickTimer\":{timer}}}");
+        let (world, mut state, end) = parse_world(&format!("{fixture}\n{snapshot}"));
+        replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+        assert!(check_server_end(&mut state, &world, &Object::parse(&end.unwrap())));
+        assert_eq!(state.t, 1 + offset as u64);
+        for (key, correct, wrong) in [
+            ("health", health, health-1), ("foodLevel", 20, 19),
+            ("saturationLevel", saturation, saturation+1), ("exhaustion", exhaustion, exhaustion+1),
+            ("foodTickTimer", timer, timer+1)
+        ] {
+            let corrupt = snapshot.replace(&format!("\"{key}\":{correct}"), &format!("\"{key}\":{wrong}"));
+            let (world, mut state, _) = parse_world(fixture);
+            replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+            let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_server_end(&mut state, &world, &Object::parse(&corrupt));
+            }));
+            assert!(failure.is_err(), "server {key} corruption accepted at offset {offset}");
+        }
     }
-    let unknown = wrong.replace("\"serverTickOffset\":0,", "");
-    assert!(!check_server_end(&state, &Object::parse(&unknown)));
-    let uncertain = wrong.replace("\"serverTickOffset\":0", "\"serverTickOffset\":null,\"serverTickOffsetMin\":0,\"serverTickOffsetMax\":1");
-    assert!(!check_server_end(&state, &Object::parse(&uncertain)));
-    let legacy = snapshot.replace("serverTickOffset", "ticksAfterEnd");
-    assert!(check_server_end(&state, &Object::parse(&legacy)));
-    let mixed = format!("{},\"ticksAfterEnd\":0}}", &uncertain[..uncertain.len()-1]);
-    assert!(!check_server_end(&state, &Object::parse(&mixed)));
+}
+
+#[test]
+fn fixture_server_end_skips_unaligned_or_moving_snapshots() {
+    let (world, mut state) = stationary_fixture();
+    for metadata in [
+        r#""atRest":false,"serverTickOffset":0"#,
+        r#""serverTickOffset":0"#,
+        r#""atRest":true,"serverTickOffset":-1"#,
+        r#""atRest":true,"serverTickOffset":-20"#,
+        r#""atRest":true"#,
+        r#""atRest":true,"serverTickOffset":null"#,
+        r#""atRest":true,"ticksAfterEnd":0"#,
+    ] {
+        assert!(!check_server_end(&mut state, &world, &Object::parse(&format!("{{{metadata}}}"))));
+        assert_eq!(state.t, 0, "skipped snapshot advanced simulation");
+    }
 }
 
 #[test]
 fn fixture_reads_exported_world_fields() {
     let fixture = concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"ticksFrozen\":73}\n",
+        "{\"kind\":\"player\",\"movementSpeedBase\":0.10000000149011612,\"speedModifiers\":[],\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"ticksFrozen\":73}\n",
         "{\"kind\":\"block\",\"at\":[0,-1,0],\"block\":\"minecraft:red_bed\",\"boxes\":[[0,0,0,1,0.5,1]],\"bed\":true}\n",
         "{\"kind\":\"block\",\"at\":[1,-1,0],\"boxes\":[[0,0,0,1,1,1]],\"suffocating\":true}\n",
         "{\"kind\":\"block\",\"at\":[2,-1,0],\"boxes\":[],\"endPortalOrGateway\":true}\n"
@@ -589,18 +650,45 @@ fn replay_rejects_touched_unmodeled_block_by_name() {
 }
 
 #[test]
-fn fixture_seeds_frost_and_replays_decay() {
+fn fixture_reads_server_driven_modifiers_and_frozen_counter_each_tick() {
     let fixture = concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":false,\"ticksFrozen\":3}\n",
+        "{\"kind\":\"player\",\"movementSpeedBase\":0.10000000149011612,\"speedModifiers\":[[\"minecraft:powder_snow\",-0.025,\"ADD_VALUE\"]],\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":false,\"ticksFrozen\":73}\n",
         "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]]}"
     );
     let (world, mut state, _) = parse_world(fixture);
-    let speed = (0.1f32 as f64 + (-0.05f32 * (1.0f32 / 140.0f32)) as f64) as f32;
-    let row = stationary_tick();
-    let first = format!("{},\"speedBits\":\"{:08x}\"}}", &row[..row.len()-1], speed.to_bits());
-    let second = format!("{},\"speedBits\":\"3dcccccd\"}}", &row[..row.len()-1]).replace("\"t\":0", "\"t\":1");
-    replay_text(&complete_recording(&format!("{first}\n{second}"), 2), &world, &mut state);
-    assert_eq!(state.ticks_frozen, 0);
+    assert_eq!(state.speed.to_bits(), ((0.10000000149011612f64-0.025) as f32).to_bits());
+    let mut rows = Vec::new();
+    for (index, modifiers, frozen, speed) in [
+        (0, r#"[["minecraft:powder_snow",-0.05000000074505806,"ADD_VALUE"]]"#, 140, 0.05f32),
+        (1, "[]", 0, 0.1f32),
+        (2, r#"[["test:total",1,"ADD_MULTIPLIED_TOTAL"],["test:base",0.5,"ADD_MULTIPLIED_BASE"],["test:add",0.125,"ADD_VALUE"]]"#, 73, 0.675f32),
+    ] {
+        let row = stationary_tick().replace("\"speedModifiers\":[]",
+            &format!("\"speedModifiers\":{modifiers}"))
+            .replace("\"ticksFrozen\":0", &format!("\"ticksFrozen\":{frozen}"));
+        let row = format!("{},\"speedBits\":\"{:08x}\"}}", &row[..row.len()-1], speed.to_bits());
+        rows.push(row.replace("\"t\":0", &format!("\"t\":{index}")));
+    }
+    replay_text(&complete_recording(&rows.join("\n"), 3), &world, &mut state);
+    assert_eq!(state.ticks_frozen, 73, "server observation replaces the counter");
+    assert_eq!(state.speed_modifiers.len(), 3);
+}
+
+#[test]
+#[should_panic(expected = "missing movementSpeedBase")]
+fn fixture_requires_movement_speed_base() {
+    parse_world(r#"{"kind":"player","position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0},"isSprinting":false,"movementSpeed":0.13,"speedModifiers":[]}"#);
+}
+
+#[test]
+fn fixture_base_and_modifiers_seed_sprint_exactly_once() {
+    let fixture = r#"{"kind":"player","position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0},"isSprinting":true,"movementSpeedBase":0.125,"speedModifiers":[["test:add",0.125,"ADD_VALUE"],["test:base",0.5,"ADD_MULTIPLIED_BASE"],["test:total",1,"ADD_MULTIPLIED_TOTAL"]]}"#;
+    let (_, state, _) = parse_world(fixture);
+    let expected = (0.25f64 + 0.25*0.5) * 2.0 * (1.0 + 0.3f32 as f64);
+    assert_eq!(state.speed.to_bits(), (expected as f32).to_bits());
+    let explicit_speed = fixture.replace("\"movementSpeedBase\":", "\"speed\":0.0625,\"movementSpeedBase\":");
+    let (_, state, _) = parse_world(&explicit_speed);
+    assert_eq!(state.speed.to_bits(), 0.0625f32.to_bits(), "preserve recorded cached speed");
 }
 
 #[test]
@@ -611,4 +699,60 @@ fn replay_rejects_unmodeled_landing_by_name() {
         r#"{"boxes":[[0,0,0,1,1,1]],"inside":"unmodeled","block":"minecraft:pointed_dripstone"}"#
     )));
     replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+}
+
+#[test]
+fn replay_modifier_changes_keep_the_client_stored_speed_delay() {
+    let (world, mut state) = stationary_fixture();
+    let acceleration = |speed: f32| speed * (0.21600002f32 / (0.6f32*0.6f32*0.6f32));
+    let drag = (0.6f32 * 0.91f32) as f64;
+    let first_move = 0.98f32 as f64 * acceleration(0.1) as f64;
+    let second_move = first_move*drag + 0.98f32 as f64 * acceleration(0.05) as f64;
+    let mut rows = Vec::new();
+    for (index, z, velocity, frozen, modifiers, speed) in [
+        (0, first_move, first_move*drag, 140,
+            r#"[["minecraft:powder_snow",-0.05000000074505806,"ADD_VALUE"]]"#, 0.05f32),
+        (1, first_move+second_move, second_move*drag, 0, "[]", 0.1f32),
+    ] {
+        let mut row = stationary_tick().replace("\"forward\":false", "\"forward\":true")
+            .replace("\"t\":0", &format!("\"t\":{index}"))
+            .replace("\"ticksFrozen\":0", &format!("\"ticksFrozen\":{frozen}"))
+            .replace("\"speedModifiers\":[]", &format!("\"speedModifiers\":{modifiers}"));
+        for value in [z, velocity] {
+            row = row.replacen("\"z\":0,\"zBits\":\"0000000000000000\"",
+                &format!("\"z\":{value},\"zBits\":\"{:016x}\"", value.to_bits()), 1);
+        }
+        rows.push(format!("{},\"speedBits\":\"{:08x}\"}}", &row[..row.len()-1], speed.to_bits()));
+    }
+    replay_text(&complete_recording(&rows.join("\n"), 2), &world, &mut state);
+    assert_eq!(state.position.z.to_bits(), (first_move+second_move).to_bits());
+}
+
+#[test]
+fn server_end_rejects_one_bit_resource_errors() {
+    let (world, state) = stationary_fixture();
+    for (field, value) in [("health", state.health), ("saturationLevel", state.saturation), ("exhaustion", state.exhaustion)] {
+        let snapshot = format!(concat!(
+            "{{\"atRest\":true,\"serverTickOffset\":0,\"health\":20,\"foodLevel\":20,",
+            "\"saturationLevel\":5,\"exhaustion\":0,\"foodTickTimer\":0,\"{field}Bits\":\"{bits:08x}\"}}"
+        ), field = field, bits = value.to_bits() ^ 1);
+        let mut actual = state.clone();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_server_end(&mut actual, &world, &Object::parse(&snapshot));
+        }));
+        assert!(failure.is_err(), "one-bit {field} mismatch was accepted");
+    }
+}
+
+#[test]
+fn replay_requires_server_driven_fields() {
+    for key in ["speedModifiers", "ticksFrozen"] {
+        let (world, mut state) = stationary_fixture();
+        let row = stationary_tick().replace(&format!("\"{key}\":{},", if key == "speedModifiers" { "[]" } else { "0" }), "");
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replay_text(&complete_recording(&row, 1), &world, &mut state);
+        })).expect_err("missing input field was accepted");
+        let diagnostic = failure.downcast_ref::<String>().expect("panic message");
+        assert!(diagnostic.contains(&format!("missing {key}")), "{diagnostic}");
+    }
 }

@@ -104,14 +104,11 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     };
     travel(state, world, movement);
     apply_block_effects(state, world, start);
-    // InsideBlockEffectType.FREEZE; LivingEntity.aiStep freezing section.
-    // FREEZE is deferred and runs once even when several powder-snow blocks touch the body.
+    // InsideBlockEffectType.FREEZE
     if state.in_powder_snow && !state.leather_boots {
         state.ticks_frozen = (state.ticks_frozen + 1).min(140);
-    } else {
-        state.ticks_frozen = (state.ticks_frozen - 2).max(0);
     }
-    state.speed = attribute_speed(state, world);
+    state.speed = state.movement_speed_value() as f32;
     state.position.x = state.position.x.clamp(-29999999.0, 29999999.0);
     state.position.z = state.position.z.clamp(-29999999.0, 29999999.0);
     update_pose(state, world);
@@ -206,21 +203,6 @@ fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32) -> Vec3 {
         z *= speed;
     }
     Vec3::new(x as f64, 0.0, z as f64)
-}
-
-// LivingEntity.removeFrost/tryAddFrost; Entity.getPercentFrozen;
-// Player.aiStep; AttributeInstance.calculateValue
-fn attribute_speed(state: &PlayerState, world: &impl World) -> f32 {
-    let mut speed = state.movement_speed;
-    if state.ticks_frozen > 0 && !world.block(on_pos(state, world, 0.2)).air {
-        let percent_frozen = state.ticks_frozen.min(140) as f32 / 140.0f32;
-        speed += (-0.05f32 * percent_frozen) as f64;
-    }
-    (if state.sprinting {
-        speed * (1.0 + 0.30000001192092896)
-    } else {
-        speed
-    }).clamp(0.0, 1024.0) as f32
 }
 
 // Player.getFlyingSpeed

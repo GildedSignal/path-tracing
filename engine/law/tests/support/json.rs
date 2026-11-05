@@ -45,3 +45,39 @@ pub fn hex(v:&str,len:usize)->u64{
     u64::from_str_radix(&v[1..v.len()-1],16).expect("raw IEEE hex")
 }
 pub fn numbers(v:&str)->Vec<f64>{v.split([',','[',']']).filter_map(|s|{let s=s.trim();if s.is_empty(){None}else{Some(s.parse().expect("numeric array"))}}).collect()}
+
+// Recorder speedModifiers tuples
+pub fn array(text: &str) -> Vec<&str> {
+    let text = text.trim();
+    assert!(text.starts_with('[') && text.ends_with(']'), "invalid JSON array");
+    let mut result = Vec::new();
+    let mut start = 1;
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, c) in text.char_indices().skip(1).take_while(|(i, _)| *i < text.len()-1) {
+        if quoted {
+            if escaped { escaped = false; }
+            else if c == '\\' { escaped = true; }
+            else if c == '"' { quoted = false; }
+        } else {
+            match c {
+                '"' => quoted = true,
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    let value = text[start..index].trim();
+                    assert!(!value.is_empty(), "empty JSON array element");
+                    result.push(value);
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(!quoted && depth == 0, "unclosed JSON array value");
+    let value = text[start..text.len()-1].trim();
+    if !value.is_empty() { result.push(value); }
+    else { assert!(result.is_empty(), "trailing JSON array comma"); }
+    result
+}

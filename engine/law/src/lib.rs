@@ -1,3 +1,5 @@
+mod attributes;
+pub use attributes::{SpeedModifier, SpeedOperation};
 mod movement;
 pub mod blocks;
 pub mod math;

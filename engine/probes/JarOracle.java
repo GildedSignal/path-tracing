@@ -212,6 +212,38 @@ public class JarOracle {
         }
     }
 
+    // AttributeInstance.calculateValue
+    static void attributeOracle(Path path) throws Exception {
+        var operations = net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.values();
+        try (PrintWriter out = new PrintWriter(path.toFile())) {
+            for (int count : new int[]{0, 1, 4, 24, 25, 49}) {
+                for (boolean sprint : new boolean[]{false, true}) {
+                    var attribute = new net.minecraft.world.entity.ai.attributes.AttributeInstance(
+                        net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED, ignored -> {});
+                    double base = 1.5;
+                    attribute.setBaseValue(base);
+                    Random random = new Random(1505 + count);
+                    StringBuilder modifiers = new StringBuilder();
+                    for (int n = 0; n < count * 3; n++) {
+                        int operation = n % 3;
+                        String id = "test:modifier_" + n;
+                        double amount = (random.nextDouble() - 0.5) * 0.04;
+                        attribute.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                            net.minecraft.resources.Identifier.parse(id), amount, operations[operation]));
+                        modifiers.append(id).append(' ').append(String.format("%016x", Double.doubleToRawLongBits(amount)))
+                            .append(' ').append(operation).append(';');
+                    }
+                    if (sprint) {
+                        attribute.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                            net.minecraft.resources.Identifier.parse("minecraft:sprinting"), (double)0.3f, operations[2]));
+                    }
+                    out.printf("%016x %s %016x|%s%n", Double.doubleToRawLongBits(base), sprint,
+                        Double.doubleToRawLongBits(attribute.getValue()), modifiers);
+                }
+            }
+        }
+    }
+
     // Mth.SIN; Shapes.collide; Direction.axisStepOrder
     public static void main(String[] args) throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
@@ -225,6 +257,7 @@ public class JarOracle {
         brakingOracle(evidence.resolve("braking.tsv"), unsafe);
         rayOracle(evidence.resolve("rays.tsv"));
         epsilonOracle(evidence.resolve("epsilons.tsv"));
+        attributeOracle(evidence.resolve("attributes.tsv"));
         Field field = Mth.class.getDeclaredField("SIN");
         field.setAccessible(true);
         float[] sine = (float[]) field.get(null);

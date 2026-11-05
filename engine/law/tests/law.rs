@@ -403,7 +403,7 @@ fn suffocation_full_cube_keeps_sub_epsilon_overlap() {
     assert!(world.collides_with_suffocating_block(bounds, CollisionContext::of(&player())));
 }
 #[test]
-fn powder_snow_frost_accumulates_once_and_caps() {
+fn client_freeze_hook_does_not_compute_frost_speed() {
     let mut world = floor(0.6, false);
     world.fill([-1, 0, -1], [1, 1, 1], Block {
         inside: Inside::PowderSnow,
@@ -414,52 +414,68 @@ fn powder_snow_frost_accumulates_once_and_caps() {
         tick(&mut state, &world, &Input::default());
         assert!(state.in_powder_snow);
         assert_eq!(state.ticks_frozen, frozen);
-        let modifier = -0.05f32 * (frozen as f32 / 140.0f32);
-        let expected = (0.1f32 as f64 + modifier as f64) as f32;
-        assert_eq!(state.speed.to_bits(), expected.to_bits(), "frozen={frozen}");
+        assert_eq!(state.speed.to_bits(), 0.1f32.to_bits());
     }
     tick(&mut state, &world, &Input::default());
     assert_eq!(state.ticks_frozen, 140);
-    assert_eq!(state.speed, 0.05f32);
     state.leather_boots = true;
     tick(&mut state, &world, &Input::default());
-    assert_eq!(state.ticks_frozen, 138);
+    assert_eq!(state.ticks_frozen, 140);
+    tick(&mut state, &floor(0.6, false), &Input::default());
+    assert_eq!(state.ticks_frozen, 140, "client must not run server decay");
 }
 
 #[test]
-fn frost_decays_after_travel_before_speed_refresh() {
-    let world = floor(0.6, false);
-    let mut state = PlayerState { ticks_frozen: 72, ..player() };
-    tick(&mut state, &world, &Input { forward: true, sprint: true, ..Input::default() });
-    // Travel uses the old stored speed, then frost ADD_VALUE precedes sprint ADD_MULTIPLIED_TOTAL.
-    let acceleration = 0.1f32 * (0.21600002f32 / (0.6f32 * 0.6f32 * 0.6f32));
-    assert_eq!(state.position.z.to_bits(), (0.98f32 as f64 * acceleration as f64).to_bits());
-    assert_eq!(state.ticks_frozen, 70);
-    let expected = ((0.1f32 as f64 + (-0.025f32) as f64) * (1.0 + 0.3f32 as f64)) as f32;
-    assert_eq!(state.speed.to_bits(), expected.to_bits());
-    for _ in 0..35 {
-        tick(&mut state, &world, &Input::default());
-    }
-    assert_eq!(state.ticks_frozen, 0);
-    assert_eq!(state.speed, 0.1f32);
-}
-
-#[test]
-fn frost_modifier_requires_non_air_support_and_clamps_attribute() {
+fn supplied_frost_applies_without_support_and_attribute_clamps() {
     let mut state = PlayerState {
         position: Vec3::new(0.5, 10.0, 0.5),
-        ticks_frozen: 140,
+        ticks_frozen: 0,
+        speed_modifiers: vec![SpeedModifier {
+            id: "minecraft:powder_snow".to_owned(),
+            amount: -0.05f32 as f64,
+            operation: SpeedOperation::AddValue,
+        }],
         ..PlayerState::default()
     };
     tick(&mut state, &BoxWorld::default(), &Input::default());
-    assert_eq!(state.ticks_frozen, 138);
-    assert_eq!(state.speed, 0.1f32);
-    let world = floor(0.6, false);
-    let mut state = PlayerState { ticks_frozen: 142, movement_speed: 0.0, ..player() };
-    tick(&mut state, &world, &Input::default());
-    assert_eq!(state.speed, 0.0);
-    state.movement_speed = 0.1f32 as f64;
-    state.ticks_frozen = 200;
-    tick(&mut state, &world, &Input::default());
-    assert_eq!(state.speed, 0.05f32);
+    assert_eq!(state.speed.to_bits(), 0.05f32.to_bits());
+    state.movement_speed_base = 0.0;
+    tick(&mut state, &BoxWorld::default(), &Input::default());
+    assert_eq!(state.speed.to_bits(), 0.0f32.to_bits());
+    state.movement_speed_base = 2048.0;
+    tick(&mut state, &BoxWorld::default(), &Input::default());
+    assert_eq!(state.speed.to_bits(), 1024.0f32.to_bits());
+}
+
+#[test]
+fn corner_course_axis_tie_first_contact() {
+    let mut world = BoxWorld::default();
+    world.fill([10, -1, 0], [30, -1, 20], Block::full());
+    world.fill([20, 0, 8], [20, 1, 8], Block::full());
+    let mut state = PlayerState {
+        position: Vec3::new(16.5, 0.0, 4.5),
+        velocity: Vec3::default(),
+        ..player()
+    };
+    let input = Input { forward: true, left: true, yaw: 0.0, ..Input::default() };
+    for contact_tick in 0..100 {
+        let before = state.position;
+        tick(&mut state, &world, &input);
+        if !state.horizontal_collision { continue; }
+        let wanted = state.movement_this_tick.expect("contact movement");
+        assert_eq!(wanted.x.abs().to_bits(), wanted.z.abs().to_bits(), "contact tick {contact_tick}");
+        let free_x = before.x + wanted.x;
+        let free_z = before.z + wanted.z;
+        let clipped_x = state.position.x.to_bits() != free_x.to_bits();
+        let clipped_z = state.position.z.to_bits() != free_z.to_bits();
+        assert!(clipped_x ^ clipped_z, "exactly one horizontal axis must clip");
+        let vanilla = Vec3::new(free_x, 0.0, 8.0 - 0.6f32 as f64 / 2.0);
+        println!("corner first contact tick={contact_tick}, wanted={wanted:?}, position={:?}", state.position);
+        if cfg!(feature = "mutant-axis-tie") {
+            assert_ne!(state.position, vanilla, "STOP: axis-tie mutant is uncatchable on the corner course");
+        }
+        assert_eq!(state.position, vanilla, "vanilla clips Z after moving X on the tie");
+        return;
+    }
+    panic!("corner course never made contact");
 }
