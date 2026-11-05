@@ -127,4 +127,4 @@ Everything below exists to make that field cheap to build, cheap to repair and e
 
 - **Compactness:** whether border states stay compact once speed is included. The probe decides, before the geometry is designed.
 - **Consumable prices:** Julien's call (S13).
-- **Goals for builders** (S23): a builder's goal is rarely a cell. It is any state from which the block it must place is in reach and in sight, which is a region rooted at the block. Raised in chat on 5 November; not yet decided.
+- **Goals for builders** (S23, S24): a builder's goal is rarely a cell. It is any state from which the block it must place is in reach and in sight, which is a region rooted at the block. Which spot and which order is the commission scheduler's call, not the pathfinder's: the fastest spot alone can wall off voids. The pathfinder serves it travel times (many to many), cheap admissible estimates, and fast "what if these blocks are placed" answers. Building itself is out of scope for now (S24).
