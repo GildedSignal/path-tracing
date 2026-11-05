@@ -8,43 +8,20 @@ This file holds the state of the build, what is in flight and what comes next. I
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
 2. Run `git status --short` and `git log -8 --oneline`.
 
-## Now (4 November 2026)
+## Now (5 November, late morning)
 
-- The lab works (see README). The algorithm slot holds `StraightLine`, which stays as the negative control.
-- **Step 0 is done:** the philosophy log. That is PRINCIPLES (goal, principles, register), [engine.md](engine.md), [representation.md](representation.md) (a draft), [ladder.md](ladder.md), and [his words, verbatim](reference/julien-2026-11-04.md).
-- **Waiting on Julien:** his approval of PRINCIPLES.md, which he owns. No builder starts before it.
-- **Meanwhile:** Phase 1.0 (the toolchain) and 1.1 (lab hygiene), done by the integrator.
-
-## Resuming after a compaction (updated 5 November, 09:00)
-
-- **Running in the background:**
-  - job 1.5 (GPT Sol), in `D:\path-tracing-wt\law`. Its fourth run died at 23:08 with no error; relaunched on 5 November to continue from the partial port;
-  - job 1.2c is **built** (`4539beb` on `wt/recorder`): commands over RCON plus the six findings on 1.2b. **Next:** a fresh Sonnet judge of `a6e3d7a..4539beb`, once the one-liner audit (the only Claude sub-agent) returns; then the live 1.2 gate over RCON.
-  - the one-liner audit (Sonnet, read-only, S19): our docs against ES's sources.
-- **For 1.5's L0 gate:** recordings now open with a header line (`type:"recording"`, the hold settings) and, after 1.2c, close with an `end` trailer. Its replay harness must skip both; tell the judge.
-- **Owed to Julien:** ES's testing philosophy (Spartan training, adversarial tests, unknown unknowns; ES PRINCIPLES 10 and 20 and its register rows of 7 October) carried over as a proposal. Only the one line "test like a Spartan" is here.
-- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`. GPT can't commit, so commit its changes on its branch with `Built-by: gpt-6.1-sol`.
-- **Relaunching:** run `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. Answers to a job's questions go into its `prompt.md` under "Answers…".
-- **After 1.2b:**
-  1. a fresh Sonnet judge;
-  2. **console commands** (Julien said yes, S16): job `1.2c`, GPT Sol on `wt/recorder` once 1.2b ends (1.2b edits `Bot.java`), judged with the 1.2b fixes. The integrator writes the spec, not the code. The facts for the spec: a `/msg PathBot …` over RCON arrives as disguised chat: the CHAT event with `sender` and `signed` both null, text `Rcon whispers to you: …` (`Server` from the console's stdin; `RconConsoleSource.RCON = "Rcon"`, checked with javap). Accept `WHISPER` matches from `Rcon` or `Server` only when `sender == null`; player chat always carries a sender. Replies then go to the server log, so the gate scripts read results from the files, not from chat;
-  3. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
-  4. a live run of the 1.2 gate (`lab/gates/`), driven over RCON;
-  5. recording the L0 fixtures for 1.5;
-  6. the merges.
-
-## In flight
-
-| Job | Who, where | Lands | Next action |
-|---|---|---|---|
-| Register completeness check | Haiku | done: 2 rows added (X1 "gather resources on think", S10) | — |
-| Red-team of representation.md | Opus, fresh context | done: corrections approved (S14) and folded in | — |
-| 1.2 Recorder and dumper | GPT gpt-6.1-sol, `D:\path-tracing-wt\recorder` on `wt/recorder` | built (ce09c2e). The Sonnet judge passed its exactness and flagged 12 fixes, now job `jobs/1.2b-recorder-fixes/` (running) | after 1.2b: console commands over RCON (approved, S16), a live run of the frozen gate in the rig, then the merge |
-| 1.5 Movement law in Rust | GPT gpt-6.1-sol, worktree `D:\path-tracing-wt\law` on `wt/law`, job `jobs/1.5-law/` | `wt/law`, `jobs/1.5-law/last.md` | queued for 22:37 beside 1.2. Its L0 gate waits for 1.2's recorder and the fixtures |
-| 1.4 Prior art | Sonnet, read-only | **done; decided: port from the bytecode, with Azalea as a reading guide** | Azalea (MIT, targets 26.2) mirrors vanilla's shape, merger and sweep code, but has gaps inside the bit-exact class: no friction or drag modifiers, 0.216/f³ applied to every block (the jar applies it only when f > 0.6), soul sand, honey and stuck factors still TODO, no exhaustion, no tick-by-tick test. Pumpkin (GPL) doesn't simulate players. Parkour Calculator (GPL) runs the game's own entity. Baritone has a 26.2 build (v1.19.0, LGPL), so Phase 12 can run |
-| 1.0 Toolchain | integrator | **done:** rustc and cargo 1.99.1, stable-x86_64-pc-windows-gnu; `RUSTUP_HOME` and `CARGO_HOME` under `D:\rust`; a hello-world builds | — |
-| 1.1 Lab hygiene | integrator | **done:** vanilla judge (Lithium and C2ME only in Julien's client); `$Rig` from `PATHTRACING_ROOT`; `Enter-Rig`/`Exit-Rig` lock in `scripts/common.ps1`. **Left:** the lab server on D: (port 25566, RCON 25576) with pre-generated fixture worlds, and `/tick rate` in the gate runner | next integrator step, then the 1.2 job file |
-
+- **Running:**
+  - job 1.5 (GPT Sol) in `D:\path-tracing-wt\law`: the Rust law. Its fourth run died at 23:08 with no error; relaunched to continue from the partial port;
+  - the Sonnet judge of job 1.2c (`a6e3d7a..4539beb` on `wt/recorder`): commands over RCON plus the six fixes from 1.2b's review.
+- **After the 1.2c judge:**
+  1. fold its findings into a job if needed;
+  2. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
+  3. a live run of the 1.2 gate (`lab/gates/`), driven over RCON (`bot-command.ps1`);
+  4. recording the L0 fixtures for 1.5, then 1.5's judge. Recordings open with a header line and close with an `end` trailer; the replay harness must skip both;
+  5. the merges.
+- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
+- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`. Relaunch with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`; answers go into its `prompt.md`.
+- **Done:** the philosophy log (step 0); toolchain (1.0); lab hygiene (1.1, apart from the above); prior art (1.4: port from the bytecode, Azalea only as a reading guide; Baritone v1.19.0 runs on 26.2 for Phase 12); the representation's red-team; the register checks; ES's testing method (`ladder.md`) and the one-liner audit (S19).
 ## The roadmap (approved 4 November; one sub-agent per family at a time)
 
 1. **The law.**
@@ -82,7 +59,7 @@ Every capability passes the universal gate: it enters as law and toolkit data, w
 ## Decisions (Julien, 4 November)
 
 - Port the law to Rust first. Mojang's code in the bot's client stays the judge.
-- Restoration means the identical block and block state. Without Silk Touch, blocks whose drop differs are barriers.
+- Getting around never modifies the world; a tool use is legal only if it leaves no trace (S13, S14; supersedes "identical block").
 - GPT takes well-formed tasks and Claude takes those where taste decides. No Fable.
 - He approved the plan's defaults:
   - T in server ticks, judged against a bracket;
