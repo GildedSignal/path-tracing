@@ -43,3 +43,9 @@ These are the public sources found during the 4 November discussions, kept apart
 ## Not available here
 
 - **The other model's research note** (`Minecraft_Minimum_Time_Research_v0_1.md`, revision 0.2) stays in that model's sandbox. If it should be kept, it needs to be pasted in.
+
+## From the S32 research (5 November)
+
+- **Parkour Calculator** (GPL-3.0, github.com/Leg0shii/ParkourCalculatorMod): a client mod that solves jump inputs tick by tick on the real player entity, with 26.x support. A candidate cross-check for track jumps and short-course brackets. It's an oracle, never the judge.
+- **HeadlessMC** (MIT, github.com/3arthqu4ke/headlessmc): runs the vanilla client without a display. A candidate for running several bot clients at once, if job 1.8's clock works.
+- **Other bots' failures** (Baritone, mineflayer-pathfinder, AltoClef, Azalea): issue lists in the research memo, section 3. They are R-far's trips and Phase 12's benchmark.

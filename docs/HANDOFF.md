@@ -10,7 +10,15 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## Now (5 November, 14:10)
 
-**Running:** GPT jobs 1.7 (tracks) and 1.6b (fixture fixes), relaunched at 14:05. If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. A Sonnet research sub-agent (S32) is writing `docs/reference/research-2026-11-05.md`: the wiki's mechanics, elite techniques, other bots' failure modes, parkour maps, long trips, running faster. When it lands, the integrator reads it, turns the rediscovery list and the failure modes into rung drafts, and sends the mechanics that matter to the L0 fixture list or a later phase.
+**Running:** GPT jobs 1.7 (tracks) and 1.6b (fixture fixes), relaunched at 14:05. If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. The S32 research landed (`docs/reference/research-2026-11-05.md`, checked against the jar at its top) and is routed:
+- the impulse census in claim 9;
+- wind-charge side effects in claim 6;
+- the powder-snow clutch in R6;
+- R-far's draft trips F1 to F14;
+- the rediscovery rung's draft list;
+- the speed-of-light lens.
+
+**Queued: job 1.8** (`jobs/1.8-client-clock/prompt.md`): the 26.2 client never ticks faster than 20 per second, so `/tick rate` doesn't speed up the bot. Launch it when a GPT slot frees and `wt/fixtures` is merged, in a worktree cut from `main`.
 
 | Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
 |---|---|---|
@@ -22,7 +30,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **L0's planted faults:** the axis tie gets the scripted corner course (1.6b). The step-up fault (+1 ulp) looks unreachable with vanilla blocks (GLM lens `step-up-reachability` settles it); if so, the red-team replaces it at L0's freeze, which repairs the control and doesn't weaken the gate.
 - **GLM:** first run (42008039888, 11:07) failed: every request got Z.ai error 1113. Probed directly (5 November): every chat endpoint (Anthropic, coding paas/v4, general paas/v4) and model (glm-5.3, glm-4.7) refuses with 1113, while the quota and subscription endpoints answer. So it is the account's entitlement, not omp, the model or the endpoint. Lead: the annual GLM Coding Pro (id 170955) shows `paymentType: WAIT_PAY` for its current period, and the two paid monthly Pro orders are scheduled from 2027-04-07. **Julien checks his Z.ai billing.** Queued lenses after that: `speed-of-light`, `track-designer`.
 - **GLM harness:** merged (`.github/workflows/glm-lab.yml`, started only by hand). Three lenses exist (`lab/lenses/`): `hook-catalogue`, `step-up-reachability`, `elytra-law`, all jar questions with checkable answers. Dispatch: `gh workflow run glm-lab.yml -R GildedSignal/path-tracing -f lenses="hook-catalogue step-up-reachability elytra-law" -f minutes=60`; results come back as the artifact `glm-lab-results` (`gh run download`). The Actions secret is set. **First run dispatched 5 November 11:07** (run 42008039888, all three lenses, 60 minutes each): download its artifact, read only the `DONE` lines and the reproduced results.
-- **Integrator left from 1.1:** the lab server on D: (port 25566) with fixture worlds; `/tick rate` in the gate runner. The superflat server is running and ours to use (S29).
+- **Integrator left from 1.1:** the lab server on D: (port 25566) with fixture worlds; `/tick rate` in the gate runner, which needs job 1.8 first. The superflat server is running and ours to use (S29).
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`, then a Sonnet judge in a fresh context (one Claude sub-agent at a time), then fixes as a new job.
 - **Done:** the philosophy log; toolchain (1.0); lab hygiene (1.1, apart from the above); recorder and dumper (1.2, gate passed live, report `lab/gates/evidence/gate-1.2-20261105.md`, evidence on `D:\path-tracing-evidence`); prior art (1.4); the Rust law ported and fixed (1.5 to 1.5c); ES's testing method; the one-liner audit; least-time claims 13 and 14; GLM's harness.
 ## The roadmap (approved 4 November; one sub-agent per family at a time)

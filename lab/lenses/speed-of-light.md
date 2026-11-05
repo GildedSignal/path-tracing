@@ -9,6 +9,7 @@
 **What to establish.**
 - For each terrain class (every block with non-default friction, speed factor or jump factor; ceilings of every height a player can sprint-jump under; ladders and vines; water and bubble columns; slime; soul sand and soul soil; honey; powder snow): the steady speed and the peak speed over 200 ticks, under the best input sequence you can find (say how you searched).
 - The overall maximum per toolkit, with the world and input sequence that achieves it.
+- Which impulse sources the law can't simulate yet, each as an open hole in `c`: wind charges, the mace's Wind Burst, the spear's Lunge, riptide, bed bounces, mounts, boats, sulfur geysers (`docs/reference/research-2026-11-05.md`, section 1e). For each, find in the 26.2 jar the method that applies the impulse, and state its largest per-tick velocity change.
 
 **What to produce.**
 - `reproduce.sh`: builds the law at the fetched commit and re-runs every simulation, printing each speed as exact bits and in blocks per second.

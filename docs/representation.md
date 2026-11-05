@@ -61,7 +61,7 @@ Everything below exists to make that field cheap to build, cheap to repair and e
    - **The toolkit decides what is restorable.** A block is restorable only if the bot gets back the identical block and state. Stone broken by hand yields nothing; with silk touch it yields stone (S32). Drops scatter and must be picked up. A nether portal kit allows a portal built and taken down. When the game generates the Nether side, it can carve space and place obsidian, and that must be restored too.
    - **Irreversible effects are barriers:** a drop that differs from the block, a mob killed, trampled farmland, a random outcome the bot can't reverse.
    - **Orders may relax it later** (S32): a command could carry permission to leave some changes. Until one does, none.
-   - **Each edit is checked against the law,** never assumed: flow, neighbour updates (a torch popping off its support), what the water reaches before it is taken back.
+   - **Each edit is checked against the law,** never assumed: flow, neighbour updates (a torch popping off its support), what the water reaches before it is taken back. Side effects count as edits: a wind-charge burst flips doors, trapdoors, gates and levers, presses buttons, and shatters decorated pots, which can't be undone.
    - *Killed if:* at arrival, one block state anywhere differs (including redstone state, fluids and trapdoors), a dropped item remains, or the inventory is short.
 
 7. **Consumables need a budget; health and food are constraints.**
@@ -86,6 +86,7 @@ Everything below exists to make that field cheap to build, cheap to repair and e
      - pearls thrown while moving, which inherit the thrower's velocity;
      - falling at 78 m/s, within the health constraint;
      - the Nether at ×8.
+   - **Every impulse source counts** (the research of 5 November, confirmed present in the 26.2 jar): wind charges, the mace's Wind Burst, the spear's Lunge, riptide in rain, bed and slime bounces, camel and nautilus dashes, ridden happy ghasts. Sources that sit in the world count even when the toolkit is empty: sulfur geysers, bubble columns, existing mounts, boats and slime. A cone that misses one stops being a lower bound, and a bot that uses it would "beat" the bound. So the speed limit comes from simulating the law over every source, never from a list or the wiki's numbers.
    - **Its two jobs:** the cone bounds what to shape (where the bot can be before a deadline) and where plans can break (where Julien or the world can change things first).
    - *Killed if:* any measured T, the bot's or Julien's (see [ladder.md](ladder.md)), beats the cone's lower bound for that toolkit.
 
