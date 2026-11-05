@@ -16,14 +16,14 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 **Running** (if the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`):
 - GPT job **1.6c** on `wt/fixtures`: the 1.6b judge's findings ("ready with fixes", `jobs/1.6b-fixture-fixes/judge.md`). An outer corner so the axis tie can be caught, runs ending at rest, a stable start state, server-driven state recorded per tick, the obsolete reader patch deleted.
-- GPT job **1.5e** on `wt/law`: the law reads server-driven state as input (frost is server-side: `engine.md`, class "server-driven"), `movementSpeedBase`, the end-of-run replay, and a test proving the axis-tie mutant is catchable.
+- GPT job **1.7c** on `wt/tracks` (fast-forwarded to `main`): the track kit (S34). Survival with the kit on A, his inventory and creative back at B, crash recovery. When it lands, merge it into `main`, rebuild both clients, then a smoke test. `play.ps1` sets `keep_inventory` on each start.
 - GLM run 42038557893 (below).
 
 **Queued:** job **1.8** (`jobs/1.8-client-clock/prompt.md`, the client clock), once `wt/fixtures` is merged, in a worktree cut from `main`.
 
 | Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
 |---|---|---|
-| `wt/law` (`law`) | jobs 1.5 to 1.5d committed (`3f6d65c`; 49 tests, four mutant builds) | job **1.5e** running. Then record fixtures live, then L0 |
+| `wt/law` (`law`) | jobs 1.5 to 1.5e committed (`9fc0842`; 56 tests, four mutant builds). Server-driven state is input, `movementSpeedBase`, end-of-run replay; the axis-tie mutant now fails the outer-corner test at tick 22 | after 1.6c: record fixtures live, then L0 |
 | `wt/fixtures` (`fixtures`) | job 1.6b committed (`684946e`), judged "ready with fixes" | job **1.6c** running. Then merge into `main` (conflicts expected in the recorder, since `main` now has the tracks), then `record-fixtures.ps1` live, then L0 by a fresh judge |
 | `main` | recorder (gate 1.2 passed live), GLM harness, tracks (1.7, 1.7b) | — |
 

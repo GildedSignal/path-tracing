@@ -196,6 +196,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | multiple objectives, such as gathering x wood, "for later, i'm just contextualizing" | S32 | **Context:** the pathfinder must serve goals that are sets of places and amounts, beside the builders' goals (S24); nothing built |
 | the litmus test: fast, emergent properties "always breaking our tests", combining functions "like legos", "alien like thinking and rediscovering things elite performers use" | S32 | **Adopted:** "The goal" above; the rediscovery rung in [ladder.md](ladder.md) |
 | the Sonnet research "overfitted on searching the wiki", it should also have used online guides; "this will be a glm job"; "wiki was there to think more than spread gospell it is not known to be perfect unlike reading directly the code" | S33 | **Followed:** GLM lens elite-techniques (wide sources; each technique proven under the law with a T it saves, or named in the jar; otherwise a lead). The memo of 5 November is marked as leads checked against the jar |
+| on A: switch to survival with the inventory he has besides the stick, saved as the track's kit and restored each time; at B: back to creative with his inventory from before A | S34 | **Adopted:** job 1.7c (track kit, track mode, crash recovery); keep_inventory on, so a death in a run drops nothing into the world. The bot's toolkit stays the items he used (S28) |
 
 ## Contradictions (kept side by side)
 

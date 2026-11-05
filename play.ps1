@@ -13,6 +13,10 @@ while (-not (Test-Port $ServerHost $ServerPort)) {
   if ((Get-Date) -gt $deadline) { throw 'Server did not open its port within 3 minutes; check the server window.' }
   Start-Sleep -Seconds 1
 }
+# Track runs are in survival (S34): dying must never drop the kit into the world.
+$deadline = (Get-Date).AddMinutes(1)
+while (-not (Test-Port $ServerHost $RconPort) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+try { $null = & "$Root\scripts\rcon.ps1" 'gamerule keep_inventory true' } catch { Write-Host "Could not set keep_inventory: $_" }
 
 if ($PlayerOnly) {
   $null = & "$Root\scripts\launch-client.ps1" -Role player
