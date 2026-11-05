@@ -12,13 +12,13 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 - **Done today:** the recorder and dumper (1.2 to 1.2e) passed gate 1.2 live over RCON and are merged into `main` (report: `lab/gates/evidence/gate-1.2-20261105.md`; full evidence on `D:\path-tracing-evidence`).
 - **Running:**
-
   - job 1.6 (GPT Sol) in `D:\path-tracing-wt\fixtures`: the L0 fixtures. The bot's client exports the world around each recording; courses for every terrain class; one recording command;
   - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab`: GLM's harness on Actions.
 - **Queued for the next free GPT slot:** job 1.5b, the judge's findings on the law (it passed "ready with fixes"): the sprint latch (the 1.5 spec was wrong), two float epsilons, bed landing, the push-out, silent gaps made explicit, tests against the jar.
 - **Open for L0:** two of the four mutants can't be caught by random recordings. Axis tie needs |x| = |z| exactly (a deliberate 45° corner fixture, an L0-x worst case). Step-up +1 ulp may be unreachable with vanilla geometry; if so it is an equivalent mutant, and the red-team replaces it at freeze (ladder.md), which is a repaired control, not a weakened gate.
 - **Next:** run `record-fixtures.ps1` (Julien's client out), then L0 by a fresh judge, then merge `wt/law`.
-- **After L1:** the integrator writes the first lenses, only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, jar questions for the elytra port; the breaker once fixtures exist. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
+- **After L1:** the integrator writes the first lenses, only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, jar questions for the elytra port; the breaker once fixtures exist. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.
+- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`. Relaunch with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`; answers go into its `prompt.md`.
 - **Done:** the philosophy log (step 0); toolchain (1.0); lab hygiene (1.1, apart from the above); prior art (1.4: port from the bytecode, Azalea only as a reading guide; Baritone v1.19.0 runs on 26.2 for Phase 12); the representation's red-team; the register checks; ES's testing method (`ladder.md`) and the one-liner audit (S19).
 ## The roadmap (approved 4 November; one sub-agent per family at a time)
