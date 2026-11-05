@@ -7,3 +7,5 @@ rig.lock
 jobs/*/log.jsonl
 jobs/*/stderr.txt
 jobs/*/full-prompt.md
+lab/results/*
+!lab/results/README.md

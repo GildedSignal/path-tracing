@@ -1,0 +1,46 @@
+name: glm-lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      lenses:
+        description: 'Space-separated integrator lens names (one to three)'
+        required: true
+        type: string
+      minutes:
+        description: 'Author minutes per run (1–180); checker gets half, rounded up'
+        required: true
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+jobs:
+  runs:
+    runs-on: ubuntu-latest
+    # Maximum: author 180 + checker 90 + two kill graces; quota/setup/collection have headroom.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned omp
+        run: bash lab/setup.sh
+      - name: Run lenses, collect and scrub results
+        id: runs
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          LAB_LENSES: ${{ inputs.lenses }}
+          LAB_MINUTES: ${{ inputs.minutes }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          bash lab/actions.sh
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.runs.outputs.sanitized == 'true' }}
+        with:
+          name: glm-lab-results
+          path: lab/results/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
