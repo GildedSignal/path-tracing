@@ -30,6 +30,10 @@ Read first: `bot/src/pathtracing/` (`Pointer.java`: the stick; `Bot.java`; `Reco
 ## The bot
 
 - A bot command `track run <name>`: teleport to A's top centre over RCON-style `tp` as `replay` does, settle, then `goto` B with the current planner. The same detector times it, and its runs go to the same file with its name. Report its latency from the command to its first non-empty input separately.
+- **The same toolkit as Julien** (S28: "it should have in its inventory all the items that i used because if i use them it means that it was meant to test them"):
+  - During each of his runs, record every item he *used*: placed, used (right-click), thrown, consumed or swung at a block, with counts. Write the list into the run line as `itemsUsed`.
+  - Before `track run`, give the bot exactly the union of `itemsUsed` over his runs on that track, with each item's largest count in any single run. Use vanilla server commands over RCON (`clear`, then `give`); no server mod.
+  - Say in the run line which toolkit the bot had, so a later change in his runs can't silently change an old comparison.
 - **The same liberty as Julien** (S27): he may start sprinting or moving on A without leaving it, and the clock only starts when he leaves. So may the bot. Nothing in the bot's side may restrict its movement on A or start its clock earlier than the detector does.
 
 ## Done means
