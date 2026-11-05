@@ -13,12 +13,13 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
   - **His time is the minimum threshold** (S25): on every track he has run, the bot's T must be at most his best T. Surpassing him is the aim.
   - Tracks (S25): he defines A and B on the superflat; T runs from the tick the body leaves A to the tick it touches B, measured by the same detector for him and for the bot. The bot's latency from command to first move is reported separately. Time on A is free for both (S27): a run-up on A, sprinting or moving without leaving it, costs nothing, so for the planner every move on A is a zero-cost edge and it chooses its own exit speed and point.
   - Only his time is used, never his path.
-  - He runs it in survival with the same toolkit as the bot, without modifying the world.
+  - He runs it in survival with the same toolkit as the bot, leaving the world as he found it by the time he touches B (S32).
   - His T is a real upper bound: a route that fast exists. Every rung reports the bot's T / his T next to T / UB.
   - For the harder rungs this is the ground truth that the offline search can't reach.
 - **Latency:** ticks from the whisper's arrival at the bot's client to its first applied control. The p99 must be ≤ 1.
 - **Failures:** failed edges, server corrections, restoration misses and irreversible losses. Each must be zero.
 - **Scale:** planning cost against trip length, in work units and in wall time.
+- **Feedback loop** (principle 26, S32): wall time from a change to its verdict, per gate, and simulated ticks per wall second for offline runs. Every gate reports it, and each phase should shrink it.
 - **Swarm:** the planner will serve hundreds of bots (S17), so cost is also reported per bot, with many bots on one machine. How it is measured is frozen with Phase 10.
 - **Reports** give n, min, median, p90, p99 and max, plus the worst seeds with their replays. Never an average alone, never a trimmed outlier. A result holds only inside the range it was observed in.
 
@@ -29,10 +30,11 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 - **Courses:** built on those worlds through RCON.
 - **No superflat:** every superflat chunk is the same, so the memo, repair and scale tests could not fail there.
 - **Isolation:** gates take the rig lock and run under `/tick rate`, so each test stays under 60 seconds. Julien's player stays away from the bot, because players push each other.
+- **The fast loop** (S32): once L0 passes, most trips run offline in the Rust law against the fixture worlds' region files, far faster than any server. The live server and the bot's client audit a sampled fraction of them, under `/tick rate`, because a planner and a simulator that share one law can agree on the same mistake. An offline result counts only while its audits agree.
 
 ## How we test (from ES, adopted 5 November, S19)
 
-Julien, in ES: "test like a spartan would train, harder than for the war"; "extremes inform the mean"; "even baby spartans started 'small'". Sources: ES `docs/test-ladder.md`, `docs/method.md`, PRINCIPLES 10 and 20.
+Julien, in ES: "test like a spartan would train, harder than for the war"; "extremes inform the mean"; "even baby spartans started 'small' yet harshly". Sources: ES `docs/test-ladder.md`, `docs/method.md`, PRINCIPLES 10 and 20.
 
 The purpose of a test is to shorten the time until we notice we are fooling ourselves, not to prevent every issue.
 
@@ -85,10 +87,12 @@ When a rung below is frozen, it is frozen as a ladder: its extreme tracks, each 
 | R3 | 2 | Gaps of 1 to 4 blocks, step-ups, drops up to the 3-block safe fall. Damaging drops are barriers until tokens exist | to freeze before Phase 2 runs |
 | R-retarget | 2 | A new goal at a random tick mid-trip. T counts from the new command; momentum carries over | to freeze before Phase 2 runs |
 | R-scale | 2 | Trips of 10, 10², 10³ and 10⁴ blocks along a fixture corridor of default terrain. Frozen with Phase 2 and red until Phase 4 bends it | to freeze before Phase 2 runs |
+| R-far | 2 on | **Long trips in natural terrain, kept simple** (S32): A to B in default worlds with fixed seeds, 10³ and 10⁴ blocks, endpoints drawn from a frozen sampler across biomes (oceans, ravines, mountains, caves, swamps). **A 10,000-block trip is a named goal.** It runs with whatever toolkit the phase has (legs first; the Nether and elytra once they exist). **Pass:** arrives on every trip; zero failed edges and restoration misses; T against the bracket and, where he has run it, against his time; planning cost per block reported. Mostly offline (the fast loop), with live audits | frozen with Phase 2's rungs |
+| Rediscovery | every phase | **His litmus test** (S32): a list of techniques elite players use (from [the research memo](reference/research-2026-11-05.md)), each with a course where it pays. **Pass** counts the techniques the bot uses where they pay with no code naming them (the universal gate). A technique the bot finds that isn't on the list is added to it, with its replay. The count only grows; it is a score, not a frozen line | list drafted from the research; courses enter as each capability does |
 | R-brach | after 2 | **The brachistochrone, as a falsifier of the method** (S17). Elytra with no fireworks, from rest on one pillar to a lower one, in still air. Needs only the elytra law (pitch and yaw controls; its `Math.cos` exactness class) added as law data, with **no new search or geometry code**. **Pass:** T within the bracket, whose UB is the independent time-optimal search over raw controls for this exact law; and the dive-then-flatten curve appears without being asked for. The reference is that UB curve, not the textbook cycloid, because the law has drag and pitch-dependent lift. **Kills:** no dive means speed was dropped from the state or something other than T was minimised; a kinked dive means states were merged too coarsely at speed | frozen once Phase 2 passes, before its first run |
 | R4 | 3 | Movement in a world left unmodified: sneak edges, ladders and vines, water, slime, crawling under existing trapdoors. Pass includes every block state unchanged after the trip | when Phase 3 starts |
 | R5 | 3 | Courses Julien designs and runs himself, judged against his time | when Phase 3 starts |
-| R6 | 5 | The bucket where its water leaves no trace: falls, climbs; the Nether (no water) | when Phase 5 starts |
+| R6 | 5 | Edits restored by arrival (S32): the bucket (falls, climbs, anything its water breaks repaired), trapdoors opened and put back, walls broken with silk touch and rebuilt; the Nether (no water) | when Phase 5 starts |
 | R7 | 6 | Momentum ground: ice tunnels, slime, soul sand, honey | when Phase 6 starts |
 | R8 | 7 | Tokens: pearls, food, health, durability | when Phase 7 starts |
 | R9 | 8 | The moving world: fluids, falling blocks, mobs, redstone | when Phase 8 starts |

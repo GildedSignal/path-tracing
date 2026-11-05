@@ -8,9 +8,9 @@ This file holds the state of the build, what is in flight and what comes next. I
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
 2. Run `git status --short` and `git log -8 --oneline`.
 
-## Now (5 November, about 11:00; written before a compaction)
+## Now (5 November, 14:10)
 
-**Nothing is running right now.** GPT is at its usage limit until 14:00. Two background shells in the main session will relaunch at 14:05 and 14:06; if the session was compacted or restarted, they may have died, so check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`.
+**Running:** GPT jobs 1.7 (tracks) and 1.6b (fixture fixes), relaunched at 14:05. If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. A Sonnet research sub-agent (S32) is writing `docs/reference/research-2026-11-05.md`: the wiki's mechanics, elite techniques, other bots' failure modes, parkour maps, long trips, running faster. When it lands, the integrator reads it, turns the rediscovery list and the failure modes into rung drafts, and sends the mechanics that matter to the L0 fixture list or a later phase.
 
 | Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
 |---|---|---|
@@ -44,16 +44,18 @@ This file holds the state of the build, what is in flight and what comes next. I
 
    Gate: R1–R3, re-targeting, and the scale rung (a baselined red until Phase 4).
 2b. **The brachistochrone (S17, S18):** port the elytra law (GPT, judged against new L0 fixtures, including its `Math.cos` class), then rung R-brach. It enters as law data only. It is the method's first falsifier beyond the legs, run before scaling out.
-3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). This replaces edits as conjugates (S13).
+3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). The simplest case of the restoration rule.
 4. Scale: the server observer, portal tables, **multipoles** (a tracked request, see below), Hashlife, local repair, light-cone scheduling.
-5. Verticals: the bucket.
+5. Edits restored by arrival (S32): the bucket (anything its water breaks repaired), trapdoors opened and put back, silk-touch breaking and rebuilding. Edits as conjugates whose undo lands before T stops.
 6. Momentum ground: ice, slime, soul sand, honey.
 7. Tokens: pearls, food, health, durability.
 8. The moving world: fluids, falling blocks, mobs, redstone.
 9. Risk: edge width under jitter, Monte Carlo, irreversible losses.
 10. Speed: Vulkan, threads, learned ordering that only schedules.
-11. Far travel: boats, the Nether, elytra with fireworks.
-12. The benchmark against Baritone.
+11. Far travel: boats, the Nether (a portal kit, both portals taken down by arrival, S32), elytra with fireworks. R-far's 10,000-block trip is the named goal (S32).
+12. The benchmark against Baritone and the other bots, on their known failure modes.
+
+Later, logged only (S32): multiple objectives (gather x wood); an optional human-limits profile (velocities and inputs capped at what Julien can do).
 
 After the first flight, the scoreboard reorders phases 3–12, furthest gap first.
 
@@ -62,7 +64,7 @@ Every capability passes the universal gate: it enters as law and toolkit data, w
 ## Decisions (Julien, 4 November)
 
 - Port the law to Rust first. Mojang's code in the bot's client stays the judge.
-- Getting around never modifies the world; a tool use is legal only if it leaves no trace (S13, S14; supersedes "identical block").
+- The world must be the same once the bot reaches B (S32, rewording S13 and S14): edits on the way are allowed if restored by arrival, with the identical block and state.
 - GPT takes well-formed tasks and Claude takes those where taste decides. No Fable.
 - He approved the plan's defaults:
   - T in server ticks, judged against a bracket;
@@ -90,7 +92,7 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 **Open:** the price of consumables (S13, unsure). Until he decides, a command grants a budget, zero by default; health and food are feasibility constraints.
 
 **Settled on 4 November (S13, S14):**
-- **Getting around never modifies the world.** A tool use is legal only if the world is identical once it is undone: the bucket's water destroys nothing, creates no source and leaves nothing behind.
+- **Getting around never modifies the world** (reworded by S32 on 5 November: the world must be the same once the bot reaches B).
 - **Braking** is part of the law.
 - **A block lost to the void** is a spent token.
 - **The red-team's corrections** are folded into [representation.md](representation.md) (approved).

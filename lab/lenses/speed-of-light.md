@@ -4,7 +4,7 @@
 
 **The law.** The Rust port of Minecraft 26.2's movement law is on branch `wt/law` (`git fetch origin wt/law`; crate `engine/law`, stable Rust, no dependencies; `engine/README.md` explains `tick`, `World` and `BoxWorld`). It is not yet validated against the live game (rung L0), so every result here is provisional and says so. Where the law hits `unimplemented!`, that terrain is out of reach for this lens: list it.
 
-**The toolkit here:** an empty inventory, then each of: a water bucket (used only where its water leaves no trace), an ender pearl, boots with Soul Speed, Depth Strider. The world is never modified to get around (Julien, S13): only terrain that already exists, built once by the experimenter as a `BoxWorld`.
+**The toolkit here:** an empty inventory, then each of: a water bucket (used only where its water leaves no trace), an ender pearl, boots with Soul Speed, Depth Strider. The world must be as it was once the bot reaches B (S32); this lens keeps to the simpler case where nothing is changed at all, since the law has no edits yet: only terrain that already exists, built once by the experimenter as a `BoxWorld`.
 
 **What to establish.**
 - For each terrain class (every block with non-default friction, speed factor or jump factor; ceilings of every height a player can sprint-jump under; ladders and vines; water and bubble columns; slime; soul sand and soul soil; honey; powder snow): the steady speed and the peak speed over 200 ticks, under the best input sequence you can find (say how you searched).

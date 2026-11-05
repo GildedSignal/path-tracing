@@ -2,7 +2,7 @@
 
 This file describes how the bot sees the world so that the search becomes trivial (principle 3). Each claim names the test that would kill it, and a claim becomes law only once its rung passes. A fix bolted onto a claim means the claim is wrong (ES principle 19).
 
-The red-team's corrections were folded in on 4 November with Julien's approval (S14), together with his rule that getting around never modifies the world (S13, S14).
+The red-team's corrections were folded in on 4 November with Julien's approval (S14), together with his rule that getting around never modifies the world (S13, S14), which he reworded on 5 November: the world must be the same once the bot reaches B (S32, claim 6).
 
 ## The target
 
@@ -55,11 +55,14 @@ Everything below exists to make that field cheap to build, cheap to repair and e
    - **Memo:** every memo hit is verified by exact replay.
    - *Killed if:* a replayed memo hit diverges beyond its width, or two canonical states that should merge differ.
 
-6. **Getting around never modifies the world** (principle 20; S13, S14).
-   - **The rule:** a tool use is legal only if the world is identical once it is undone. A bucket's water must destroy nothing, create no source and change nothing once it is taken back. A trapdoor is never moved, even to crawl.
-   - **No breaking:** nothing is broken or placed to get around, because "there's many ways to move in minecraft".
-   - **Each use is checked:** the legality check runs against the law (flow, neighbours, what the water reaches before it is removed), never assumed.
-   - *Killed if:* after any trip, one block state anywhere differs (including redstone state, fluids and trapdoors), or the inventory is short.
+6. **The world is the same once the bot reaches B** (principle 20; S32, which rewords S13 and S14).
+   - **The rule:** at arrival, every block state, fluid and redstone state is as it was when the command came, no item the trip dropped is left lying, and the inventory is whole. On the way, the bot may change things it undoes before arrival: water may break what it reaches if the bot repairs it, and a trapdoor may be opened to crawl if it is put back in its state.
+   - **Edits are conjugates again:** A·B·A⁻¹, where the undo A⁻¹ lands before T stops, so restoring costs T. The swarm reason (S13) stands: the end state is what other bots and players inherit.
+   - **The toolkit decides what is restorable.** A block is restorable only if the bot gets back the identical block and state. Stone broken by hand yields nothing; with silk touch it yields stone (S32). Drops scatter and must be picked up. A nether portal kit allows a portal built and taken down. When the game generates the Nether side, it can carve space and place obsidian, and that must be restored too.
+   - **Irreversible effects are barriers:** a drop that differs from the block, a mob killed, trampled farmland, a random outcome the bot can't reverse.
+   - **Orders may relax it later** (S32): a command could carry permission to leave some changes. Until one does, none.
+   - **Each edit is checked against the law,** never assumed: flow, neighbour updates (a torch popping off its support), what the water reaches before it is taken back.
+   - *Killed if:* at arrival, one block state anywhere differs (including redstone state, fluids and trapdoors), a dropped item remains, or the inventory is short.
 
 7. **Consumables need a budget; health and food are constraints.**
    - **Consumables:** pearls and durability are spent, and nothing is gathered or regenerated yet. Their price is open (S13). Until he decides, the bot spends only what a command grants, which is zero by default.
@@ -116,15 +119,16 @@ Everything below exists to make that field cheap to build, cheap to repair and e
 
 ## The four questions (X3)
 
-- **Breaking a wall versus going around:** the bot never breaks it. A wall leaves only the ways through that already exist: around it, over it, through an opening, or a bucket climb that leaves no trace.
+- **Breaking a wall versus going around** (as reworded by S32): the bot breaks it only if its toolkit can restore every block before arrival (silk touch for stone), and breaking, passing and rebuilding costs less T than the best way around. Otherwise the wall leaves the ways through that already exist.
 - **One-high holes:**
   - For a standing or sneaking bot, they don't exist in the space.
-  - With an existing trapdoor or water to enter the crawling pose, they exist at crawling speed.
-- **When a bucket is excellent:** it is excellent wherever its water, placed and taken back, leaves no trace, and the fall or climb it allows saves T. A 100-block cliff becomes about a 3-second road: 61 ticks of falling, plus the time to place and take back the water. The bucket's value at a spot is T without it minus T with it.
+  - With a trapdoor it opens and closes again, or water it places and takes back, they exist at crawling speed.
+- **When a bucket is excellent:** it is excellent wherever the world is as it was by arrival (anything its water broke repaired, at a cost in T), and the fall or climb it allows saves T. A 100-block cliff becomes about a 3-second road: 61 ticks of falling, plus the time to place and take back the water. The bucket's value at a spot is T without it minus T with it.
 - **When it must sprint for a jump:** the far side of a long gap connects only to states that are already fast. So the route passes through a run-up, and backs off for more runway if it needs it.
 
 ## Still open
 
 - **Compactness:** whether border states stay compact once speed is included. The probe decides, before the geometry is designed.
 - **Consumable prices:** Julien's call (S13).
+- **Edits seen in passing** (S32): between A and B an edit is visible to other bots and players. Whether a transient edit near others needs more than restoration by arrival is open.
 - **Goals for builders** (S23, S24): a builder's goal is rarely a cell. It is any state from which the block it must place is in reach and in sight, which is a region rooted at the block. Which spot and which order is the commission scheduler's call, not the pathfinder's: the fastest spot alone can wall off voids. The pathfinder serves it travel times (many to many), cheap admissible estimates, and fast "what if these blocks are placed" answers. Building itself is out of scope for now (S24).
