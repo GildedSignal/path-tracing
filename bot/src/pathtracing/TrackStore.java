@@ -53,6 +53,7 @@ final class TrackStore {
     }
 
     void create(Track track) throws IOException {
+        if (track.a.equals(track.b)) throw new IllegalArgumentException("B must differ from A.");
         JsonObject out = new JsonObject();
         out.add("A", track.a.json());
         out.add("B", track.b.json());
@@ -63,9 +64,17 @@ final class TrackStore {
         // Publish a complete definition atomically. The name is reserved under the shared lock.
         try (var channel = lockChannel(); var lock = channel.lock()) {
             if (Files.exists(file(track.name))) throw new IOException("Track already exists: " + track.name);
-            Path temporary = directory.resolve(track.name + ".json.tmp");
-            Files.writeString(temporary, out + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
-            Files.move(temporary, file(track.name));
+            publish(file(track.name), out + "\n");
+        }
+    }
+
+    static void publish(Path target, String contents) throws IOException {
+        Path temporary = Files.createTempFile(target.getParent(), target.getFileName() + ".", ".tmp");
+        try {
+            Files.writeString(temporary, contents, StandardCharsets.UTF_8);
+            Files.move(temporary, target);
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 
@@ -129,7 +138,9 @@ final class TrackStore {
         try (var channel = lockChannel(); var lock = channel.lock()) {
             long best = run.get("T").getAsLong();
             for (JsonObject previous : readRuns(name)) {
-                if (previous.get("trackCreated").equals(run.get("trackCreated"))) best = Math.min(best, previous.get("T").getAsLong());
+                if (previous.get("trackCreated").equals(run.get("trackCreated"))
+                    && previous.get("player").equals(run.get("player"))
+                    && previous.get("gameMode").equals(run.get("gameMode"))) best = Math.min(best, previous.get("T").getAsLong());
             }
             Files.createDirectories(runs(name).getParent());
             try (var output = FileChannel.open(runs(name), StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
@@ -146,6 +157,42 @@ final class TrackStore {
             }
             return best;
         }
+    }
+
+    record Saved(long best, Path unsaved, Exception failure) { }
+
+    Saved save(String name, JsonObject run) throws IOException {
+        try { return new Saved(append(name, run), null, null); }
+        catch (IOException | RuntimeException failure) {
+            Files.createDirectories(runs(name).getParent());
+            Path fallback = Files.createTempFile(runs(name).getParent(),
+                name + ".unsaved-" + System.currentTimeMillis() + "-", ".json");
+            try (var output = FileChannel.open(fallback, StandardOpenOption.WRITE)) {
+                ByteBuffer bytes = StandardCharsets.UTF_8.encode(run + "\n");
+                while (bytes.hasRemaining()) output.write(bytes);
+                output.force(true);
+            } catch (IOException | RuntimeException fallbackFailure) {
+                fallbackFailure.addSuppressed(failure);
+                throw fallbackFailure;
+            }
+            return new Saved(run.get("T").getAsLong(), fallback, failure);
+        }
+    }
+
+    static List<JsonObject> bests(List<JsonObject> history, String bot, boolean bots) {
+        Map<String, JsonObject> best = new TreeMap<>();
+        for (var run : history) {
+            String player = run.get("player").getAsString();
+            if (player.equals(bot) != bots) continue;
+            String key = player + ":" + run.get("gameMode").getAsString();
+            if (!best.containsKey(key) || run.get("T").getAsLong() < best.get(key).get("T").getAsLong()) best.put(key, run);
+        }
+        return List.copyOf(best.values());
+    }
+
+    JsonObject humanBest(Track track, String bot) throws IOException {
+        return history(track).stream().filter(r -> !r.get("player").getAsString().equals(bot))
+            .min(java.util.Comparator.comparingLong(r -> r.get("T").getAsLong())).orElse(null);
     }
 
     Map<String, Integer> toolkit(Track track, String owner) throws IOException {

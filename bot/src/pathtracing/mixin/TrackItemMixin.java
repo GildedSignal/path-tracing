@@ -20,6 +20,6 @@ abstract class TrackItemMixin {
 
     @Inject(method = "releaseUsing", at = @At("HEAD"))
     private void pathtracing$release(Level level, LivingEntity user, int remaining, CallbackInfo ci) {
-        if (user == Minecraft.getInstance().player) Tracks.completedUse((ItemStack) (Object) this);
+        if (user == Minecraft.getInstance().player) Tracks.attacked((ItemStack) (Object) this);
     }
 }

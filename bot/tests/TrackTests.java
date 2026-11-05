@@ -30,6 +30,7 @@ public final class TrackTests {
         }
         detector();
         usage();
+        recordings(root.resolve("recordings"));
         files(root.resolve("files"));
         rcon(root.resolve("rcon"));
         TrackMixinAudit.run(Path.of(args[1]), Path.of(args[2]));
@@ -82,31 +83,74 @@ public final class TrackTests {
         detector.reset();
         event(detector, false, true, false, 58, 408, TrackDetector.Event.NONE);
         check(!detector.active(), "Explicit cancel requires arming again");
+        var b = new TrackStore.Cell(0, 5, 0);
+        // A swimming/crawling-height player can have both endpoints outside a two-block fall.
+        var above = new net.minecraft.world.phys.AABB(0.2, 6.1, 0.2, 0.8, 6.7, 0.8);
+        var below = above.move(0, -2, 0);
+        check(!TrackDetector.touchesB(null, above, b) && !TrackDetector.touchesB(null, below, b),
+            "Neither endpoint overlaps the non-solid finish cell");
+        check(TrackDetector.touchesB(above, below, b), "Swept stop detects a two-block-per-tick fall through non-solid B");
+        var away = above.move(2, 0, 0);
+        check(!TrackDetector.touchesB(away, away.move(0, -2, 0), b), "Swept stop rejects a fall beside B");
+        detector.reset();
+        event(detector, true, false, false, 60, 410, TrackDetector.Event.ARMED);
+        event(detector, false, false, false, 61, 411, TrackDetector.Event.START);
+        event(detector, false, TrackDetector.touchesB(above, below, b), false, 62, 412, TrackDetector.Event.STOP);
+        check(detector.ticks() == 1, "Swept contact stops on the first crossing sample");
     }
 
     private static void usage() {
         var usage = new TrackUsage();
-        Object food = new Object();
-        usage.rightClick("minecraft:apple", food);
-        usage.complete("minecraft:apple", food);
-        check(usage.counts().get("minecraft:apple") == 1, "Consumption must not double count its right-click");
-        usage.complete("minecraft:bread", new Object());
-        check(usage.counts().get("minecraft:bread") == 1, "Consumption started before the timer still counts");
-        usage.rightClick("minecraft:stone", null);
-        usage.rightClick("minecraft:stone", null);
-        usage.add("minecraft:stone", 12);
-        check(usage.counts().get("minecraft:stone") == 14, "Placement, repeated uses and stack drops count");
-        usage.add("minecraft:stone", 0);
+        for (int tick = 0; tick < 40; tick++) usage.use("minecraft:iron_pickaxe", 1, 1);
+        check(usage.counts().get("minecraft:iron_pickaxe") == 1, "A 40-tick mining hold needs one pickaxe");
+        usage.broken("minecraft:iron_pickaxe");
+        for (int tick = 0; tick < 40; tick++) usage.use("minecraft:iron_pickaxe", 1, 1);
+        check(usage.counts().get("minecraft:iron_pickaxe") == 2, "A broken pickaxe adds one replacement, not more swings");
+        usage.broken("minecraft:iron_pickaxe");
+        check(usage.counts().get("minecraft:iron_pickaxe") == 3, "Each break adds exactly one");
+        for (int pearl = 0; pearl < 3; pearl++) usage.use("minecraft:ender_pearl", 16, 1);
+        check(usage.counts().get("minecraft:ender_pearl") == 3, "Three thrown ender pearls need three units");
+        usage.use("minecraft:stone", 64, 1);
+        usage.use("minecraft:stone", 64, 1);
+        usage.use("minecraft:stone", 64, 12);
+        check(usage.counts().get("minecraft:stone") == 14, "Placement and stack drops count units");
+        usage.use("minecraft:stone", 64, 0);
         check(usage.counts().get("minecraft:stone") == 14, "Unsuccessful drop adds nothing");
+        usage.use("minecraft:water_bucket", 1, 40);
+        check(usage.counts().get("minecraft:water_bucket") == 1, "Repeated reusable bucket use needs one bucket");
         usage.clear();
         check(usage.counts().isEmpty(), "Re-arm discards item uses");
-        usage.complete("minecraft:apple", food);
-        check(usage.counts().get("minecraft:apple") == 1, "Re-arm discards the old consumption token");
+        usage.use("minecraft:iron_pickaxe", 1, 1);
+        check(usage.counts().get("minecraft:iron_pickaxe") == 1, "Re-arm also clears break history");
+    }
+
+    private static void recordings(Path root) throws Exception {
+        Files.createDirectories(root);
+        Files.writeString(root.resolve("track-course-human-7.jsonl"), "old\n");
+        Files.writeString(root.resolve("track-course-human-9.jsonl.tmp"), "stale\n");
+        var first = TrackRecording.open(root, "track-course-human-");
+        check(first.path.getFileName().toString().equals("track-course-human-10.jsonl"), "First scan includes completed and temporary indices");
+        first.writer.write("discard me\n");
+        first.writer.flush();
+        check(Files.size(first.temporary) == 0, "False-start data never reaches disk");
+        first.discard();
+        check(!Files.exists(first.path) && !Files.exists(first.temporary), "Re-arm/cancel/abandon discard removes reservation");
+        // A rescan would notice this file and allocate 1001. Cached allocation must give 11.
+        Files.writeString(root.resolve("track-course-human-1000.jsonl"), "unrelated later file\n");
+        var second = TrackRecording.open(root, "track-course-human-");
+        check(second.path.getFileName().toString().equals("track-course-human-11.jsonl"), "Next index is cached after the first scan");
+        second.writer.write("kept\n");
+        second.commit();
+        check(Files.readString(second.path).equals("kept\n") && !Files.exists(second.temporary), "Finish publishes complete bytes and removes temporary name");
+        var bot = TrackRecording.open(root, "track-course-bot-");
+        check(!bot.path.equals(second.path), "Bot and human recording namespaces cannot collide");
+        bot.discard();
     }
 
     private static JsonObject run(String player, long ticks, Map<String, Integer> items, String created) {
         JsonObject run = new JsonObject();
         run.addProperty("player", player);
+        run.addProperty("gameMode", "survival");
         run.addProperty("T", ticks);
         run.addProperty("trackCreated", created);
         run.add("itemsUsed", TrackStore.items(items));
@@ -136,6 +180,17 @@ public final class TrackTests {
             "Toolkit uses per-item maxima, excludes bot runs and old definitions");
         check(store.history(track.name()).size() == 4, "Append preserves every run");
         check(store.history(track).size() == 3, "Current definition excludes archived runs");
+        var creative = run("human", 2, Map.of(), created);
+        creative.addProperty("gameMode", "creative");
+        check(store.append(track.name(), creative) == 2, "Game modes have independent bests");
+        check(store.append(track.name(), run("human", 25, Map.of(), created)) == 20, "Bot and creative times cannot become this player's survival best");
+        check(store.append(track.name(), run("other-human", 15, Map.of(), created)) == 15, "Each human has a separate best");
+        var bests = TrackStore.bests(store.history(track), "bot", false);
+        check(bests.size() == 3, "Human bests group by both player and game mode");
+        check(bests.stream().allMatch(r -> !r.get("player").getAsString().equals("bot")), "Human best line never contains bot runs");
+        var bots = TrackStore.bests(store.history(track), "bot", true);
+        check(bots.size() == 1 && bots.getFirst().get("T").getAsLong() == 10, "Bot best is separate");
+        check(store.humanBest(track, "bot").get("gameMode").getAsString().equals("creative"), "Bot preparation uses the fastest human run's mode");
         check(store.append(track.name(), run("human", 80, Map.of(), "new-creation")) == 80, "Recreated tracks have their own best");
         List<Process> writers = new ArrayList<>();
         for (int i = 0; i < 2; i++) {
@@ -145,11 +200,38 @@ public final class TrackTests {
         for (Process writer : writers) check(writer.waitFor(20, TimeUnit.SECONDS) && writer.exitValue() == 0, "Concurrent writer completed");
         check(store.history("race").size() == 200, "Cross-process appends lose no lines");
         store.delete(track.name());
-        check(store.list().isEmpty() && store.history(track.name()).size() == 5, "Delete retains audit history");
+        check(store.list().isEmpty() && store.history(track.name()).size() == 8, "Delete retains audit history");
         Files.writeString(root.resolve("lab/tracks/runs/broken.jsonl"), "{broken\n");
         try { store.append("broken", run("human", 1, Map.of(), created)); throw new AssertionError("Corrupt history accepted"); }
         catch (RuntimeException expected) { checks++; }
         check(Files.readString(root.resolve("lab/tracks/runs/broken.jsonl")).equals("{broken\n"), "Corrupt history is preserved");
+        var result = run("human", 42, Map.of("minecraft:ender_pearl", 3), created);
+        var saved = store.save("broken", result);
+        check(saved.failure() != null && saved.unsaved().getFileName().toString().matches("broken\\.unsaved-[0-9]+-[0-9]+\\.json"),
+            "Corrupt history produces a timestamped unsaved result");
+        check(com.google.gson.JsonParser.parseString(Files.readString(saved.unsaved())).equals(result), "Fallback retains every result field");
+        Files.createDirectory(root.resolve("lab/tracks/runs/blocked.jsonl"));
+        check(store.save("blocked", result).unsaved() != null, "An I/O append failure also saves the result");
+        check(store.save("healthy", result).unsaved() == null, "Healthy append uses the normal run file");
+        Path definitions = root.resolve("lab/tracks");
+        Path stale = definitions.resolve("stale.json.tmp");
+        Files.writeString(stale, "previous crash");
+        var staleTrack = new TrackStore.Track("stale", track.a(), track.b(), track.dimension(), created, "human");
+        store.create(staleTrack);
+        check(store.read("stale").equals(staleTrack), "An old definition temp file cannot block a name");
+        Path blocked = definitions.resolve("blocked.json");
+        Files.createDirectory(blocked);
+        Files.writeString(blocked.resolve("child"), "blocks move");
+        try { TrackStore.publish(blocked, "new data"); throw new AssertionError("Failed publication accepted"); }
+        catch (IOException expected) { checks++; }
+        try (var paths = Files.list(definitions)) {
+            check(paths.noneMatch(p -> p.getFileName().toString().startsWith("blocked.json.")), "Failed definition publication deletes its unique temp in finally");
+        }
+        try {
+            store.create(new TrackStore.Track("same", track.a(), track.a(), track.dimension(), created, "human"));
+            throw new AssertionError("Equal A and B accepted");
+        } catch (IllegalArgumentException expected) { checks++; }
+        check(!Files.exists(definitions.resolve("same.json")), "Equal endpoints are refused before publication");
     }
 
     private static void rcon(Path root) throws Exception {

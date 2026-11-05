@@ -245,6 +245,14 @@ attributes, fluid/eye flags, support position, stuck multiplier, jump delay and 
 Read-only mixin accessors expose private/protected state. Its tickCount is the pre-tick count.
 Local FoodData exhaustion and timer are client observations, not server-authoritative values.
 
+Track recordings include the departure input: row `t=0` is the physics tick whose input left A,
+observed by the detector at the next START. Its header is the state on A before that input.
+The timer's departure sample is still T=0; a zero-T finish therefore has one recorded input row.
+While armed, the recorder retains one candidate tick in memory. During a track run all rows stay
+in memory until finish; discarded starts close and delete their reserved `.tmp` without writing rows.
+Track filenames include the player's name so the two clients cache independent next indices.
+Other control settings still allow timing; the run row explains a missing recording.
+
 ### Fixture driver
 
 ```powershell

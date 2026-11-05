@@ -19,7 +19,7 @@ final class TrackMixinAudit {
     static void run(Path modPath, Path gamePath) throws IOException {
         int injections = 0;
         try (var mod = new JarFile(modPath.toFile()); var game = new JarFile(gamePath.toFile())) {
-            for (String name : List.of("TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin")) {
+            for (String name : List.of("TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin")) {
                 ClassNode mixin = read(mod, "pathtracing/mixin/" + name);
                 AnnotationNode declaration = annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations).stream()
                     .filter(a -> a.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")).findFirst().orElseThrow();
@@ -58,7 +58,7 @@ final class TrackMixinAudit {
                 }
             }
         }
-        require(injections == 18, "Expected 18 checked track injections, got " + injections);
+        require(injections == 19, "Expected 19 checked track injections, got " + injections);
         System.out.println("Verified " + injections + " compiled track injections against Minecraft 26.2.");
     }
 

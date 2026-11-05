@@ -37,6 +37,11 @@ public final class Recorder {
     private static Integer previousTickCount;
     private static boolean teleported;
     private static JsonArray anomalies = new JsonArray();
+    private static TrackRecording trackRecording;
+    private static JsonObject departureInitial;
+    private static JsonObject departureRow;
+    private static JsonObject pendingDeparture;
+    private static boolean capturingDeparture;
 
     static void register() {
         ClientTickEvents.START_CLIENT_TICK.register(Recorder::startTick);
@@ -69,20 +74,28 @@ public final class Recorder {
 
     static Path recordTrack(Minecraft mc, Path directory, String track) throws IOException {
         if (active()) throw new IllegalStateException("A recording or replay is already running.");
-        TickInput.holdSettings(mc);
-        JsonObject initial = PlayerSnapshot.capture(mc);
-        for (long index = 1; ; index++) {
-            String runName = "track-" + track + "-" + index;
-            Path path = directory.resolve(runName + ".jsonl");
-            if (Files.exists(path) || Files.exists(path.resolveSibling(path.getFileName() + ".tmp"))) continue;
-            try {
-                open(mc, runName, path);
-                header.add("initialPlayer", initial);
-                return path;
-            } catch (java.nio.file.FileAlreadyExistsException e) {
-                // CREATE_NEW reserves the name across both clients.
-            }
+        JsonObject metadata = TickInput.holdSettings(mc);
+        if (departureRow == null || departureInitial == null
+            || departureRow.get("tickCount").getAsInt() != mc.player.tickCount) {
+            throw new IllegalStateException("Departure tick unavailable; run timed without a recording.");
         }
+        // The player namespace lets both clients cache their own index without rescanning.
+        trackRecording = TrackRecording.open(directory, "track-" + track + "-" + mc.player.getName().getString() + "-");
+        output = trackRecording.writer;
+        outputPath = trackRecording.path;
+        temporaryPath = trackRecording.temporary;
+        name = outputPath.getFileName().toString().replace(".jsonl", "");
+        header = metadata;
+        header.addProperty("type", "recording");
+        header.add("initialPlayer", departureInitial);
+        pendingDeparture = departureRow.deepCopy();
+        pendingDeparture.addProperty("t", 0);
+        tick = 1;
+        previousTickCount = departureRow.get("tickCount").getAsInt();
+        capturingDeparture = false;
+        applied = null;
+        anomalies = new JsonArray();
+        return outputPath;
     }
 
     static boolean finishTrack(Minecraft mc, Path path) {
@@ -168,7 +181,7 @@ public final class Recorder {
 
     private static void abort(Minecraft mc, String reason) {
         if (!active()) return;
-        Bot.reply(mc, reason + " Aborted; partial output remains in " + temporaryPath + ".");
+        Bot.reply(mc, reason + (trackRecording == null ? " Aborted; partial output remains in " + temporaryPath + "." : " Aborted; track recording discarded."));
         finish(mc, false);
     }
 
@@ -183,13 +196,17 @@ public final class Recorder {
         if (output == null) return;
         BufferedWriter writer = output;
         output = null;
+        TrackRecording track = trackRecording;
+        trackRecording = null;
         try {
+            if (track != null && !clean) {
+                header = null;
+                pendingDeparture = null;
+                track.discard();
+                return;
+            }
             try (writer) {
-                if (header != null) {
-                    writer.write(header.toString());
-                    writer.write('\n');
-                    header = null;
-                }
+                writePreamble(writer);
                 JsonObject end = new JsonObject();
                 end.addProperty("type", "end");
                 end.addProperty("ticks", tick);
@@ -198,7 +215,8 @@ public final class Recorder {
                 writer.write('\n');
             }
             if (clean) {
-                Files.move(temporaryPath, outputPath);
+                if (track == null) Files.move(temporaryPath, outputPath);
+                else track.commit();
                 Bot.reply(mc, "Saved " + name + ": " + tick + " ticks.");
             }
         } catch (IOException e) {
@@ -208,7 +226,18 @@ public final class Recorder {
 
     private static void startTick(Minecraft mc) {
         applied = null;
-        if (output == null) return;
+        capturingDeparture = output == null && Tracks.captureDeparture() && mc.player != null && mc.level != null;
+        if (capturingDeparture) {
+            departureInitial = PlayerSnapshot.capture(mc);
+            applied = TickInput.capture(mc);
+            anomalies = new JsonArray();
+            return;
+        }
+        if (output == null) {
+            departureInitial = null;
+            departureRow = null;
+            return;
+        }
         if (mc.player == null || mc.level == null) {
             abort(mc, "Player or world unavailable at tick " + tick + ".");
             return;
@@ -222,8 +251,7 @@ public final class Recorder {
         if (header != null) {
             if (!header.has("initialPlayer")) header.add("initialPlayer", PlayerSnapshot.capture(mc));
             try {
-                output.write(header.toString());
-                output.write('\n');
+                writePreamble(output);
                 output.flush();
                 header = null;
             } catch (IOException e) {
@@ -236,7 +264,7 @@ public final class Recorder {
     }
 
     private static void endTick(Minecraft mc) {
-        if (output == null || mc.player == null) return;
+        if ((output == null && !capturingDeparture) || mc.player == null) return;
         var player = mc.player;
         if (start != null) {
             settlingTicks++;
@@ -274,6 +302,11 @@ public final class Recorder {
         out.addProperty("foodLevel", player.getFoodData().getFoodLevel());
         TraceJson.number(out, "saturationLevel", player.getFoodData().getSaturationLevel());
         if (!anomalies.isEmpty()) out.add("anomaly", anomalies);
+        if (capturingDeparture) {
+            departureRow = out;
+            capturingDeparture = false;
+            return;
+        }
         try {
             output.write(out.toString());
             output.write('\n');
@@ -291,12 +324,25 @@ public final class Recorder {
         }
     }
 
+    private static void writePreamble(BufferedWriter writer) throws IOException {
+        if (header != null) {
+            writer.write(header.toString());
+            writer.write('\n');
+            header = null;
+        }
+        if (pendingDeparture != null) {
+            writer.write(pendingDeparture.toString());
+            writer.write('\n');
+            pendingDeparture = null;
+        }
+    }
+
     private static boolean same(double a, double b) {
         return Double.doubleToRawLongBits(a) == Double.doubleToRawLongBits(b);
     }
 
     public static void positionPacket(ClientboundPlayerPositionPacket packet) {
-        if (output == null) return;
+        if (output == null && !capturingDeparture) return;
         if (start != null) {
             teleported = true;
             settled = 0;
@@ -317,7 +363,7 @@ public final class Recorder {
 
     public static void motionPacket(ClientboundSetEntityMotionPacket packet) {
         var player = Minecraft.getInstance().player;
-        if (output == null || start != null || player == null || packet.id() != player.getId()) return;
+        if ((output == null && !capturingDeparture) || start != null || player == null || packet.id() != player.getId()) return;
         JsonObject out = new JsonObject();
         out.addProperty("type", "ClientboundSetEntityMotionPacket");
         out.addProperty("id", packet.id());
@@ -326,7 +372,7 @@ public final class Recorder {
     }
 
     public static void rotationPacket(ClientboundPlayerRotationPacket packet) {
-        if (output == null || start != null || Minecraft.getInstance().player == null) return;
+        if ((output == null && !capturingDeparture) || start != null || Minecraft.getInstance().player == null) return;
         JsonObject out = new JsonObject();
         out.addProperty("type", "ClientboundPlayerRotationPacket");
         TraceJson.number(out, "yRot", packet.yRot());
@@ -337,7 +383,7 @@ public final class Recorder {
     }
 
     public static void explosionPacket(ClientboundExplodePacket packet) {
-        if (output == null || start != null || Minecraft.getInstance().player == null || packet.playerKnockback().isEmpty()) return;
+        if ((output == null && !capturingDeparture) || start != null || Minecraft.getInstance().player == null || packet.playerKnockback().isEmpty()) return;
         JsonObject out = new JsonObject();
         out.addProperty("type", "ClientboundExplodePacket");
         out.add("center", TraceJson.vector(packet.center()));

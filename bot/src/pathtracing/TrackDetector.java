@@ -2,6 +2,12 @@ package pathtracing;
 
 /** One sample per client tick. Geometry and clocks are supplied by the caller. */
 final class TrackDetector {
+    static boolean touchesB(net.minecraft.world.phys.AABB previous, net.minecraft.world.phys.AABB current, TrackStore.Cell b) {
+        var swept = previous == null ? current : previous.minmax(current);
+        return swept.intersects(new net.minecraft.world.phys.AABB(b.x(), b.y(), b.z(),
+            b.x() + 1.0, b.y() + 1.0, b.z() + 1.0).inflate(1e-3));
+    }
+
     enum Event { NONE, ARMED, START, REARM, STOP, DISCARD }
 
     private boolean armed;

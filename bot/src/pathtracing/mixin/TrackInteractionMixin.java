@@ -21,21 +21,25 @@ import pathtracing.Tracks;
 @Mixin(MultiPlayerGameMode.class)
 abstract class TrackInteractionMixin {
     @Unique private ItemStack pathtracing$beforeUse;
+    @Unique private ItemStack pathtracing$usingStack;
     @Unique private ItemStack pathtracing$beforeDrop;
 
     @Inject(method = "useItemOn", at = @At("HEAD"))
     private void pathtracing$beforeBlock(LocalPlayer player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> ci) {
-        pathtracing$beforeUse = player.getItemInHand(hand).copy();
+        pathtracing$usingStack = player.getItemInHand(hand);
+        pathtracing$beforeUse = pathtracing$usingStack.copy();
     }
 
     @Inject(method = "useItem", at = @At("HEAD"))
     private void pathtracing$beforeAir(Player player, InteractionHand hand, CallbackInfoReturnable<InteractionResult> ci) {
-        pathtracing$beforeUse = player.getItemInHand(hand).copy();
+        pathtracing$usingStack = player.getItemInHand(hand);
+        pathtracing$beforeUse = pathtracing$usingStack.copy();
     }
 
     @Inject(method = "interact", at = @At("HEAD"))
     private void pathtracing$beforeEntity(Player player, Entity entity, EntityHitResult hit, InteractionHand hand, CallbackInfoReturnable<InteractionResult> ci) {
-        pathtracing$beforeUse = player.getItemInHand(hand).copy();
+        pathtracing$usingStack = player.getItemInHand(hand);
+        pathtracing$beforeUse = pathtracing$usingStack.copy();
     }
 
     @Inject(method = {"useItemOn", "useItem", "interact"}, at = @At("RETURN"))
@@ -43,7 +47,7 @@ abstract class TrackInteractionMixin {
         var result = ci.getReturnValue();
         boolean usedItem = result.consumesAction()
             && (!(result instanceof InteractionResult.Success success) || success.wasItemInteraction());
-        Tracks.rightClick(pathtracing$beforeUse, usedItem);
+        Tracks.rightClick(pathtracing$beforeUse, pathtracing$usingStack, usedItem);
     }
 
     @Inject(method = "handleContainerInput", at = @At("HEAD"))

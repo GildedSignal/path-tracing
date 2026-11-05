@@ -7,13 +7,13 @@ $classpath = (Get-GameClasspath) -join ';'
 $sourceRoot = Join-Path $Root 'bot\src\pathtracing'
 & "$Jdk\javac.exe" --release 25 -proc:none -cp $classpath -d $testBuild `
   "$sourceRoot\TrackDetector.java" "$sourceRoot\TrackUsage.java" "$sourceRoot\TrackStore.java" `
-  "$sourceRoot\TrackRcon.java" "$PSScriptRoot\TrackTests.java" "$PSScriptRoot\TrackMixinAudit.java"
+  "$sourceRoot\TrackRcon.java" "$sourceRoot\TrackRecording.java" "$PSScriptRoot\TrackTests.java" "$PSScriptRoot\TrackMixinAudit.java"
 if ($LASTEXITCODE) { throw 'Track test compilation failed' }
 $testRig = Join-Path $testBuild ([Guid]::NewGuid().ToString('N'))
 & "$Jdk\java.exe" -cp "$testBuild;$classpath" pathtracing.TrackTests $testRig `
   "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar"
 if ($LASTEXITCODE) { throw 'Track tests failed' }
-foreach ($script in @('scripts\launch-client.ps1', 'bot\tests\test-tracks.ps1')) {
+foreach ($script in @('scripts\launch-client.ps1', 'bot\build.ps1', 'bot\tests\test-tracks.ps1')) {
   $tokens = $null
   $parseErrors = $null
   $scriptPath = Join-Path $Root $script

@@ -171,6 +171,8 @@ final class Bot {
         path = List.of();
     }
 
+    static void trackMode() { survivalIn = -1; }
+
     private static void keys(Minecraft mc, boolean forward, boolean jump) {
         mc.options.keyUp.setDown(forward);
         mc.options.keyJump.setDown(jump);

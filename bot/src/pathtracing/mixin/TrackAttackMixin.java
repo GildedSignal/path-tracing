@@ -42,6 +42,6 @@ abstract class TrackAttackMixin {
 
     @Unique private void pathtracing$count() {
         var hit = Minecraft.getInstance().hitResult;
-        if (hit != null && hit.getType() == HitResult.Type.BLOCK) Tracks.itemUsed(pathtracing$attackStack, 1);
+        if (hit != null && (hit.getType() == HitResult.Type.BLOCK || hit.getType() == HitResult.Type.ENTITY)) Tracks.attacked(pathtracing$attackStack);
     }
 }

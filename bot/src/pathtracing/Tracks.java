@@ -25,6 +25,7 @@ import net.minecraft.world.phys.AABB;
 
 /** Client-only markers and one shared timer for the human and the bot. */
 public final class Tracks {
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("pathtracing");
     private static final TrackDetector DETECTOR = new TrackDetector();
     private static final TrackStore STORE = new TrackStore(Path.of(System.getProperty("pathtracing.rig", ".")));
     private static List<TrackStore.Track> tracks = List.of();
@@ -33,7 +34,13 @@ public final class Tracks {
     private static TrackStore.Cell first;
     private static String creationDimension;
     private static long clock;
-    private static long suppressedUntil;
+    private static List<TrackStore.Track> suppressed = List.of();
+    private static AABB previousBox;
+    private static long sampleNanos;
+    private static long startNanos;
+    private static boolean tickFault;
+    private static long botLimit = 6000;
+    private static String botMode;
     private static String loadError;
     private static JsonObject run;
     private static final TrackUsage USED = new TrackUsage();
@@ -69,6 +76,8 @@ public final class Tracks {
             creating = null;
             first = null;
             tracks = List.of();
+            suppressed = List.of();
+            tickFault = false;
         });
     }
 
@@ -78,6 +87,7 @@ public final class Tracks {
 
     static int command(Minecraft mc, String text, long receivedNanos) {
         try {
+            tickFault = false;
             String[] words = text.trim().split("\\s+");
             if (words.length == 1 && words[0].equals("cancel")) {
                 cancel(mc, true);
@@ -93,6 +103,7 @@ public final class Tracks {
                 switch (words[0]) {
                     case "new" -> {
                         if (isBot()) throw new IllegalStateException("Create tracks in the player client.");
+                        if (run != null || DETECTOR.running() || botAttempt) throw new IllegalStateException("A track run is in progress. Use /track cancel first.");
                         if (STORE.list().stream().anyMatch(t -> t.name().equals(words[1]))) {
                             throw new IllegalArgumentException("Track already exists: " + words[1]);
                         }
@@ -110,8 +121,8 @@ public final class Tracks {
                     }
                     case "best" -> {
                         var history = STORE.history(STORE.read(words[1]));
-                        say(mc, history.isEmpty() ? "No finished runs for " + words[1] + "." : words[1] + " best "
-                            + time(history.stream().mapToLong(r -> r.get("T").getAsLong()).min().orElseThrow()) + ".");
+                        say(mc, words[1] + " human best: " + bestLine(history, false));
+                        say(mc, words[1] + " bot best: " + bestLine(history, true));
                     }
                     case "run" -> startBot(mc, words[1], receivedNanos);
                     default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/cancel; bot track run <name>.");
@@ -162,6 +173,19 @@ public final class Tracks {
     }
 
     private static void tick(Minecraft mc) {
+        if (tickFault) return;
+        try { tickBody(mc); }
+        catch (Exception failure) {
+            LOGGER.error("Track tick failed; cancelling the run", failure);
+            tickFault = true;
+            try { cancel(mc, true); }
+            catch (Exception cleanup) { LOGGER.error("Track cancellation failed", cleanup); }
+            try { say(mc, "Track tick failed; run cancelled. Use /track cancel to resume tracks."); }
+            catch (Exception report) { LOGGER.error("Track error report failed", report); }
+        }
+    }
+
+    private static void tickBody(Minecraft mc) {
         clock++;
         if (mc.player == null || mc.level == null) return;
         if (clock % 20 == 0) {
@@ -180,13 +204,17 @@ public final class Tracks {
             return;
         }
         if (selected == null) {
-            if (creating != null || clock < suppressedUntil || Recorder.replaying() || isBot()) return;
-            selected = tracks.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).findFirst().orElse(null);
+            suppressed = suppressed.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
+            if (creating != null || Recorder.replaying() || isBot()) return;
+            selected = tracks.stream().filter(t -> !suppressed.contains(t) && t.dimension().equals(dimension(mc)) && onA(mc, t)).findFirst().orElse(null);
             if (selected == null) return;
         }
         boolean abandoned = !selected.dimension().equals(dimension(mc)) || !mc.player.isAlive()
-            || mc.player.getY() < Math.min(selected.a().y(), selected.b().y()) - 64;
+            || mc.player.getY() < Math.min(selected.a().y(), selected.b().y()) - 64
+            || (botAttempt && run != null && DETECTOR.running() && DETECTOR.ticks() + 1 >= botLimit);
+        sampleNanos = System.nanoTime();
         var event = DETECTOR.sample(onA(mc, selected), touchesB(mc, selected), abandoned, clock, mc.level.getGameTime());
+        previousBox = mc.player.getBoundingBox();
         switch (event) {
             case ARMED -> say(mc, selected.name() + " armed. Leave A to start.");
             case START -> begin(mc);
@@ -194,7 +222,7 @@ public final class Tracks {
                 discardRecording(mc);
                 run = null;
                 USED.clear();
-                say(mc, selected.name() + " re-armed.");
+                mc.player.sendOverlayMessage(Component.literal(selected.name() + " re-armed."));
             }
             case STOP -> {
                 if (run == null) begin(mc); // A and B can be crossed within the same sampled tick.
@@ -206,6 +234,8 @@ public final class Tracks {
             }
             default -> { }
         }
+        if (selected != null && !DETECTOR.running() && run == null) USED.clear();
+        if (DETECTOR.running() && mc.player.isFallFlying()) itemUsed(mc.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST), 1);
         if (DETECTOR.running()) mc.player.sendOverlayMessage(Component.literal(selected.name() + " " + time(DETECTOR.ticks())));
     }
 
@@ -216,11 +246,11 @@ public final class Tracks {
     }
 
     private static boolean touchesB(Minecraft mc, TrackStore.Track track) {
-        var b = track.b();
-        return mc.player.getBoundingBox().intersects(new AABB(b.x(), b.y(), b.z(), b.x() + 1.0, b.y() + 1.0, b.z() + 1.0).inflate(1e-3));
+        return TrackDetector.touchesB(previousBox, mc.player.getBoundingBox(), track.b());
     }
 
     private static void begin(Minecraft mc) {
+        startNanos = sampleNanos;
         run = TickInput.settings(mc);
         run.addProperty("player", mc.player.getName().getString());
         run.addProperty("gameMode", mc.gameMode.getPlayerMode().getName());
@@ -229,7 +259,6 @@ public final class Tracks {
         run.addProperty("trackCreated", selected.created());
         run.addProperty("dimension", selected.dimension());
         if (botAttempt) run.add("toolkit", TrackStore.items(toolkit));
-        USED.clear();
         recordingReason = null;
         try {
             recording = Recorder.recordTrack(mc, STORE.rig.resolve("recordings"), selected.name());
@@ -244,6 +273,9 @@ public final class Tracks {
         long gameTicks = DETECTOR.gameTicks();
         run.addProperty("T", ticks);
         run.addProperty("gameTimeDifference", gameTicks);
+        run.addProperty("wallStartNanos", startNanos);
+        run.addProperty("wallStopNanos", sampleNanos);
+        run.addProperty("wallNanos", sampleNanos - startNanos);
         run.add("itemsUsed", TrackStore.items(USED.counts()));
         if (botAttempt) {
             if (latency != null) {
@@ -258,9 +290,11 @@ public final class Tracks {
         }
         if (recordingReason != null) run.addProperty("recordingNote", recordingReason);
         try {
-            long best = STORE.append(selected.name(), run);
+            var saved = STORE.save(selected.name(), run);
             say(mc, selected.name() + " finished in " + time(ticks) + (ticks == gameTicks ? "" : "; level game time " + gameTicks + " ticks")
-                + ". Best " + time(best) + "." + (recordingReason == null ? "" : " No recording: " + recordingReason));
+                + (saved.unsaved() == null ? ". Best " + run.get("player").getAsString() + " [" + run.get("gameMode").getAsString() + "] " + time(saved.best()) + "."
+                    : ". Run append failed; result saved to " + saved.unsaved() + ".")
+                + (recordingReason == null ? "" : " No recording: " + recordingReason));
         } catch (IOException | RuntimeException e) {
             say(mc, "Track result could not be saved: " + e.getMessage() + ". Result " + run);
         }
@@ -268,24 +302,32 @@ public final class Tracks {
     }
 
     private static void discardRecording(Minecraft mc) {
-        if (recording != null) Recorder.discardTrack(mc, recording);
-        recording = null;
+        try {
+            if (recording != null) Recorder.discardTrack(mc, recording);
+        } finally { recording = null; }
     }
 
     static void cancel(Minecraft mc, boolean stopBot) {
-        generation++;
-        settling = false;
-        if (stopBot && botAttempt) {
-            Bot.clearFollowPath();
-            TickInput.release(mc);
+        try {
+            if (mc.player != null && mc.level != null) suppressed = tracks.stream()
+                .filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
+        } finally {
+            previousBox = null;
+            generation++;
+            settling = false;
+            boolean wasBot = botAttempt;
+            selected = null;
+            run = null;
+            USED.clear();
+            DETECTOR.reset();
+            botAttempt = false;
+            try {
+                if (stopBot && wasBot) {
+                    Bot.clearFollowPath();
+                    TickInput.release(mc);
+                }
+            } finally { discardRecording(mc); }
         }
-        discardRecording(mc);
-        selected = null;
-        run = null;
-        USED.clear();
-        DETECTOR.reset();
-        botAttempt = false;
-        suppressedUntil = clock + 1;
     }
 
     private static void startBot(Minecraft mc, String name, long receivedNanos) throws IOException {
@@ -295,6 +337,9 @@ public final class Tracks {
         TrackStore.Track track = STORE.read(name);
         if (!track.dimension().equals(dimension(mc))) throw new IllegalStateException("Bot must be in the track's dimension.");
         Map<String, Integer> kit = STORE.toolkit(track, PathTracingMod.OWNER);
+        JsonObject humanBest = STORE.humanBest(track, PathTracingMod.BOT);
+        String mode = humanBest == null ? mc.gameMode.getPlayerMode().getName() : humanBest.get("gameMode").getAsString();
+        if (!List.of("survival", "creative", "adventure", "spectator").contains(mode)) throw new IOException("Invalid baseline game mode.");
         checkCapacity(kit);
         String player = mc.player.getName().getString();
         if (!player.matches("[A-Za-z0-9_]{1,16}")) throw new IllegalArgumentException("Invalid bot player name.");
@@ -303,12 +348,16 @@ public final class Tracks {
         TickInput.release(mc);
         selected = track;
         botAttempt = true;
+        botMode = mode;
+        botLimit = humanBest == null ? 6000 : Math.multiplyExact(20, humanBest.get("T").getAsLong());
+        Bot.trackMode();
         toolkit = Map.copyOf(kit);
         latency = null;
         latencyMs = null;
         commandTick = clock;
         commandNanos = receivedNanos;
         List<String> commands = new ArrayList<>();
+        commands.add("gamemode " + mode + " " + player);
         commands.add("clear " + player);
         kit.forEach((item, count) -> commands.add("give " + player + " " + item + " " + count));
         var a = track.a();
@@ -348,10 +397,12 @@ public final class Tracks {
         var a = selected.a();
         var velocity = mc.player.getDeltaMovement();
         boolean atStart = mc.player.getX() == a.x() + 0.5 && mc.player.getZ() == a.z() + 0.5;
-        settled = atStart && onA(mc, selected) && velocity.x == 0 && velocity.z == 0 && inventory(mc).equals(toolkit) ? settled + 1 : 0;
+        settled = atStart && onA(mc, selected) && velocity.x == 0 && velocity.z == 0 && inventory(mc).equals(toolkit)
+            && mc.gameMode.getPlayerMode().getName().equals(botMode) ? settled + 1 : 0;
         if (settled == 5) {
             settling = false;
             DETECTOR.sample(true, false, false, clock, mc.level.getGameTime());
+            previousBox = mc.player.getBoundingBox();
             say(mc, selected.name() + " armed. Toolkit " + TrackStore.items(toolkit) + ".");
             var b = selected.b();
             Bot.goTo(mc, new BlockPos(b.x(), b.y() + 1, b.z()));
@@ -369,20 +420,39 @@ public final class Tracks {
     }
 
     public static void itemUsed(ItemStack stack, int count) {
-        if (!DETECTOR.running() || run == null || stack.isEmpty() || count <= 0) return;
-        USED.add(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), count);
+        if (!DETECTOR.active() || stack == null || stack.isEmpty() || count <= 0) return;
+        USED.use(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), stack.getMaxStackSize(), count);
     }
 
-    public static void rightClick(ItemStack before, boolean success) {
-        if (!success || !DETECTOR.running() || run == null || before.isEmpty()) return;
+    public static void attacked(ItemStack stack) {
+        if (stack != null && stack.getMaxStackSize() == 1) itemUsed(stack, 1);
+    }
+
+    public static void itemBroken(ItemStack stack) {
+        if (!DETECTOR.active() || stack.isEmpty() || stack.getMaxStackSize() != 1) return;
+        USED.broken(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+    }
+
+    public static void rightClick(ItemStack before, ItemStack after, boolean success) {
+        if (!success || before == null || before.isEmpty()) return;
         var player = Minecraft.getInstance().player;
-        USED.rightClick(BuiltInRegistries.ITEM.getKey(before.getItem()).toString(),
-            player != null && player.isUsingItem() ? player.getUseItem() : null);
+        if (before.getMaxStackSize() == 1) itemUsed(before, 1);
+        else if (player != null && !player.isUsingItem()) {
+            int consumed = before.getCount() - (ItemStack.isSameItem(before, after) ? after.getCount() : 0);
+            itemUsed(before, consumed > 0 ? consumed : player.hasInfiniteMaterials() ? 1 : 0);
+        }
     }
 
     public static void completedUse(ItemStack stack) {
-        if (!DETECTOR.running() || run == null || stack.isEmpty()) return;
-        USED.complete(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), stack);
+        itemUsed(stack, 1);
+    }
+
+    static boolean captureDeparture() { return DETECTOR.active() && !DETECTOR.running() && run == null; }
+
+    private static String bestLine(List<JsonObject> history, boolean bots) {
+        var bests = TrackStore.bests(history, PathTracingMod.BOT, bots);
+        return bests.isEmpty() ? "none." : String.join("; ", bests.stream().map(r -> r.get("player").getAsString()
+            + " [" + r.get("gameMode").getAsString() + "] " + time(r.get("T").getAsLong())).toList());
     }
 
     private static Map<String, Integer> inventory(Minecraft mc) {
