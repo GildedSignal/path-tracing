@@ -2,7 +2,8 @@ param(
   [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9_-]+$')][string]$Name,
   [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$Ticks,
   [Parameter(Mandatory = $true)][int]$Seed,
-  [Parameter(Mandatory = $true)][string[]]$Start
+  [Parameter(Mandatory = $true)][string[]]$Start,
+  [ValidateRange(0, 100)][int]$SneakPercent = 50
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
@@ -48,6 +49,7 @@ try {
         # Alternate pressed/released runs; a pressed run is always 1 through 20 ticks.
         $held[$key] = if ($held.ContainsKey($key)) { -not $held[$key] } else { $random.Next(2) -eq 1 }
         $remaining[$key] = $random.Next(1, 21)
+        if ($key -eq 'sneak' -and $SneakPercent -ne 50) { $held[$key] = $random.Next(100) -lt $SneakPercent }
       }
       $row += '"' + $key + '":' + $held[$key].ToString().ToLowerInvariant()
       $remaining[$key]--

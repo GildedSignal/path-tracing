@@ -20,6 +20,8 @@ import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec3;
 
 /** START applies controls, END records their result. Packets between ticks belong to the next END. */
 public final class Recorder {
@@ -37,6 +39,7 @@ public final class Recorder {
     private static Integer previousTickCount;
     private static boolean teleported;
     private static JsonArray anomalies = new JsonArray();
+    private static JsonArray collisionSteps = new JsonArray();
 
     static void register() {
         ClientTickEvents.START_CLIENT_TICK.register(Recorder::startTick);
@@ -176,6 +179,7 @@ public final class Recorder {
 
     private static void startTick(Minecraft mc) {
         applied = null;
+        collisionSteps = new JsonArray();
         if (output == null) return;
         if (mc.player == null || mc.level == null) {
             abort(mc, "Player or world unavailable at tick " + tick + ".");
@@ -210,7 +214,8 @@ public final class Recorder {
             settlingTicks++;
             boolean atStart = same(player.getX(), start[0]) && same(player.getY(), start[1]) && same(player.getZ(), start[2]);
             var velocity = player.getDeltaMovement();
-            settled = teleported && atStart && player.onGround() && velocity.x == 0 && velocity.z == 0 ? settled + 1 : 0;
+            settled = teleported && atStart && player.onGround() && velocity.x == 0 && velocity.z == 0
+                && player.getTicksFrozen() == 0 ? settled + 1 : 0;
             if (settled == 5) {
                 start = null;
                 anomalies = new JsonArray();
@@ -223,6 +228,8 @@ public final class Recorder {
         JsonObject out = new JsonObject();
         out.addProperty("t", tick);
         out.addProperty("tickCount", player.tickCount);
+        out.addProperty("gameTime", mc.level.getGameTime());
+        out.add("collisionSteps", collisionSteps);
         boolean gap = previousTickCount != null && (long) player.tickCount - previousTickCount != 1;
         out.add("inputs", applied.json());
         out.add("position", TraceJson.vector(player.position()));
@@ -261,6 +268,15 @@ public final class Recorder {
 
     private static boolean same(double a, double b) {
         return Double.doubleToRawLongBits(a) == Double.doubleToRawLongBits(b);
+    }
+
+    // Observe the actual collision request after vanilla's sneak/stuck processing.
+    public static void collisionStep(Entity entity, Vec3 requested, Vec3 result) {
+        if (output == null || applied == null || entity != Minecraft.getInstance().player) return;
+        JsonObject step = new JsonObject();
+        step.add("requested", TraceJson.vector(requested));
+        step.add("result", TraceJson.vector(result));
+        collisionSteps.add(step);
     }
 
     public static void positionPacket(ClientboundPlayerPositionPacket packet) {

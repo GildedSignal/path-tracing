@@ -1,0 +1,101 @@
+diff --git a/engine/law/tests/replay.rs b/engine/law/tests/replay.rs
+--- a/engine/law/tests/replay.rs
++++ b/engine/law/tests/replay.rs
+@@ -242,9 +242,17 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
+     let mut expected_tick = 0;
+     let mut previous_tick_count = None;
+     let mut elapsed = Duration::ZERO;
++    let mut ended = false;
+     for (line_index, line) in text.lines().filter(|line| !line.trim().is_empty()).enumerate() {
+         let object = Object::parse(line);
++        assert!(!ended, "recording has data after end trailer");
+         if object.get("type").is_some() {
++            if object.string("type") == "end" {
++                assert!(object.boolean("complete"), "incomplete recording trailer");
++                assert_eq!(object.number("ticks"), expected_tick as f64, "trailer tick count");
++                ended = true;
++                continue;
++            }
+             assert_eq!(line_index, 0, "recording header must be first");
+             recording_header(&object);
+             continue;
+@@ -273,6 +281,19 @@ fn assert_server(state: &PlayerState, expected: &Object<'_>) {
+     assert_eq!(state.food_level as f64, expected.number("foodLevel"), "server food");
+     assert_eq!(state.saturation.to_bits(), expected.f32("saturationLevel").to_bits(), "server saturation");
+     assert_eq!(state.exhaustion.to_bits(), expected.f32("exhaustion").to_bits(), "server exhaustion");
++    if expected.get("foodTickTimer").is_some() {
++        assert_eq!(state.food_tick_timer as f64, expected.number("foodTickTimer"), "server food timer");
++    }
++}
++
++fn check_server_snapshot(state: &PlayerState, expected: &Object<'_>) -> bool {
++    if expected.get("serverTickOffset") != Some("0") {
++        println!("serverEnd skipped: serverTickOffset={} (compare only an explicit zero)",
++            expected.get("serverTickOffset").unwrap_or("missing"));
++        return false;
++    }
++    assert_server(state, expected);
++    true
+ }
+ 
+ #[test]
+@@ -291,8 +312,7 @@ fn replay() {
+         let text = fs::read_to_string(&file).unwrap();
+         let (ticks, elapsed) = replay_text(&text, &world, &mut state);
+         if let Some(snapshot) = server_end {
+-            assert_server(&state, &Object::parse(&snapshot));
+-            server_checks += 1;
++            if check_server_snapshot(&state, &Object::parse(&snapshot)) { server_checks += 1; }
+         }
+         let rate = ticks as f64 / elapsed.as_secs_f64();
+         rates.push(rate);
+@@ -459,4 +479,32 @@ fn fixture_keeps_unsupported_hooks_explicit() {
+         let block = load_block(&Object::parse(&format!("{{\"boxes\":[],\"inside\":\"{hook}\"}}")));
+         assert_eq!(block.inside, Inside::Unsupported(hook.to_owned()));
+     }
+-}
+\ No newline at end of file
++}
++
++#[test]
++fn delayed_server_snapshots_are_not_compared() {
++    let state = PlayerState::default();
++    for offset in ["1", "9", "null"] {
++        let snapshot = format!("{{\"serverTickOffset\":{offset},\"health\":-1}}");
++        assert!(!check_server_snapshot(&state, &Object::parse(&snapshot)));
++    }
++    assert!(!check_server_snapshot(&state, &Object::parse("{\"health\":-1}")));
++    let snapshot = "{\"serverTickOffset\":0,\"health\":20,\"foodLevel\":20,\"saturationLevel\":5,\"exhaustion\":0,\"foodTickTimer\":0}";
++    assert!(check_server_snapshot(&state, &Object::parse(snapshot)));
++    let bad = snapshot.replace("\"foodTickTimer\":0", "\"foodTickTimer\":7");
++    assert!(std::panic::catch_unwind(|| check_server_snapshot(&state, &Object::parse(&bad))).is_err());
++    let bad = snapshot.replace("\"health\":20", "\"health\":19");
++    assert!(std::panic::catch_unwind(|| check_server_snapshot(&state, &Object::parse(&bad))).is_err());
++}
++
++#[test]
++fn recorder_end_trailer() {
++    let (world, mut state) = stationary_fixture();
++    let recording = format!("{}\n{{\"type\":\"end\",\"ticks\":1,\"complete\":true}}", stationary_recording());
++    assert_eq!(replay_text(&recording, &world, &mut state).0, 1);
++    for bad in [recording.replace("\"complete\":true", "\"complete\":false"),
++        recording.replace("\"ticks\":1", "\"ticks\":2"), format!("{recording}\n{}", stationary_recording())] {
++        let (world, mut state) = stationary_fixture();
++        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay_text(&bad, &world, &mut state))).is_err());
++    }
++}
+diff --git a/lab/fixtures/README.md b/lab/fixtures/README.md
+--- a/lab/fixtures/README.md
++++ b/lab/fixtures/README.md
+@@ -52,6 +52,8 @@ Set `waterBlock` for actual water or bubble-column blocks. Waterlogged solids re
+ 
+ An optional `world` line supplies `minY`, `difficulty` (the vanilla integer id), `naturalRegeneration`, `fastLava` and `unloadedChunks` as chunk-coordinate pairs. Their defaults are the `BoxWorld` defaults. Optional `collision` lines supply absolute extra collision boxes for entities or a world border.
+ 
+-An optional `serverEnd` line supplies `health`, `foodLevel`, `saturationLevel` and `exhaustion`, copied from a tick-aligned final server snapshot. All four are compared, with optional raw bits for the float fields. Supply initial server resources in the `player` line. The replay prints how many server snapshots it checked. A movement-only recording does not establish the server-resource part of L0.
++An optional `serverEnd` line supplies `health`, `foodLevel`, `saturationLevel`, `exhaustion` and `foodTickTimer` from one atomic `data get entity` reply. `serverTickOffset` is the number of server game ticks since the final recorded `gameTime`. The reader compares resources only for an explicit zero offset and prints why other snapshots are skipped, including legacy snapshots without an offset. Game-time queries bracket the read; a read spanning ticks has a null offset and `serverTickOffsetMin`/`serverTickOffsetMax` bounds. Float fields support raw bits. Initial server resources, including the timer, go in `player`. The replay prints how many server snapshots it checked. Client game time is synchronized from server packets, so matching clocks alone does not prove packet-level alignment or establish the server-resource part of L0.
+ 
+-Run `cargo test --release --test replay -- --nocapture` from `engine/` to compare fixtures and print tick-throughput distributions. L0 also needs an independent check of server corrections and coverage sufficient to catch every mutant.
+\ No newline at end of file
++Recorder end trailers (`type=end`) are accepted only when complete, with a matching tick count and no subsequent data. Player `ticksFrozen` is exported for the law to model; a snapshot does not implement the changing powder-snow movement-speed modifier.
++
++Run `cargo test --release --test replay -- --nocapture` from `engine/` to compare fixtures and print tick-throughput distributions. L0 also needs an independent check of server corrections and coverage sufficient to catch every mutant.

@@ -44,6 +44,7 @@ final class PlayerSnapshot {
         out.addProperty("leatherBoots", p.getItemBySlot(EquipmentSlot.FEET).is(Items.LEATHER_BOOTS));
         out.addProperty("inPowderSnow", p.isInPowderSnow);
         out.addProperty("wasInPowderSnow", p.wasInPowderSnow);
+        out.addProperty("ticksFrozen", p.getTicksFrozen());
         out.addProperty("onGroundNoBlocks", entity.pathtracing$onGroundNoBlocks());
         out.addProperty("noJumpDelay", ((LivingStateAccess) p).pathtracing$noJumpDelay());
         out.addProperty("foodLevel", p.getFoodData().getFoodLevel());

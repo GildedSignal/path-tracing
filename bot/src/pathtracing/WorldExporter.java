@@ -32,6 +32,9 @@ import net.minecraft.world.level.block.HoneyBlock;
 import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.PowderSnowBlock;
+import net.minecraft.world.level.block.EndPortalBlock;
+import net.minecraft.world.level.block.EndGatewayBlock;
+import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SlimeBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
@@ -140,6 +143,7 @@ final class WorldExporter {
                 player.setBoundingBox(bounds);
                 out.add("insideBoxes", boxes(state.getEntityInsideCollisionShape(level, pos, player).toAabbs()));
                 properties(out, state);
+                out.addProperty("suffocating", state.isSuffocating(level, pos));
                 var fluid = state.getFluidState();
                 out.addProperty("fluid", fluid.is(FluidTags.WATER) ? "water" : fluid.is(FluidTags.LAVA) ? "lava" : "empty");
                 TraceJson.number(out, "fluidHeight", fluid.getHeight(level, pos));
@@ -173,14 +177,32 @@ final class WorldExporter {
         out.addProperty("air", state.isAir());
         out.addProperty("scaffolding", block instanceof ScaffoldingBlock);
         out.addProperty("slime", block instanceof SlimeBlock);
+        out.addProperty("bed", block instanceof BedBlock);
+        out.addProperty("endPortalOrGateway", block instanceof EndPortalBlock || block instanceof EndGatewayBlock);
         out.addProperty("waterBlock", block instanceof LiquidBlock && state.getFluidState().is(FluidTags.WATER) || block instanceof BubbleColumnBlock);
-        out.addProperty("inside", block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none");
+        String inside = block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none";
+        boolean modeledInside = block instanceof WebBlock || block instanceof PowderSnowBlock || block instanceof HoneyBlock;
+        boolean modeledFall = block instanceof HayBlock || block instanceof HoneyBlock || block instanceof BedBlock
+            || block instanceof SlimeBlock || block instanceof PowderSnowBlock;
+        if ((!modeledInside && overrides(block, "entityInside", BlockBehaviour.class))
+            || (!modeledFall && overrides(block, "fallOn", Block.class))) inside = "unmodeled";
+        out.addProperty("inside", inside);
         // These fallOn hooks have no data getter. Values follow their 26.2 bytecode.
-        TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : block instanceof BedBlock ? 0.5F : 1.0F);
+        TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : 1.0F);
         if (block instanceof LadderBlock) out.addProperty("ladderFacing", state.getValue(LadderBlock.FACING).get3DDataValue());
         if (block instanceof TrapDoorBlock && state.getValue(TrapDoorBlock.OPEN)) {
             out.addProperty("openTrapdoorFacing", state.getValue(TrapDoorBlock.FACING).get3DDataValue());
         }
+    }
+
+    private static boolean overrides(Block block, String hook, Class<?> base) {
+        // Walk inherited overrides too. Unknown hooks must never assert "none".
+        for (Class<?> type = block.getClass(); type != base; type = type.getSuperclass()) {
+            for (var method : type.getDeclaredMethods()) {
+                if (method.getName().equals(hook)) return true;
+            }
+        }
+        return false;
     }
 
     private static JsonArray boxes(List<AABB> values) {

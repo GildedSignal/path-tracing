@@ -88,6 +88,8 @@ try {
     if ($fieldsA.Count -eq 0 -or $fieldsB.Count -eq 0) { throw "Missing raw-bit fields at tick $tick." }
     $rowA.PSObject.Properties.Remove('tickCount')
     $rowB.PSObject.Properties.Remove('tickCount')
+    $rowA.PSObject.Properties.Remove('gameTime')
+    $rowB.PSObject.Properties.Remove('gameTime')
     $difference = Find-Difference $rowA $rowB
     if ($null -ne $difference) { throw "First difference at tick ${tick}: $difference." }
     $tick++
