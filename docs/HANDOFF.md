@@ -10,11 +10,13 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## Now (5 November, 14:45)
 
-**Running:** GPT job 1.5d on `wt/law` (launched 14:25), and the Sonnet judge for job 1.7 (it writes `jobs/1.7-tracks/judge.md`). If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. The S32 research is routed (claims 6 and 9, R6, R-far, the rediscovery rung, the speed-of-light lens). The next sweep is the GLM lens `elite-techniques` (S33).
+**Running:**
+- GPT job 1.5d on `wt/law` (launched 14:25);
+- GPT job 1.7b on `wt/tracks` (launched 15:00): the 1.7 judge's findings ("ready with fixes", `jobs/1.7-tracks/judge.md`);
+- the Sonnet judge for 1.6b (it writes `jobs/1.6b-fixture-fixes/judge.md`). If the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`. The S32 research is routed (claims 6 and 9, R6, R-far, the rediscovery rung, the speed-of-light lens). The next sweep is the GLM lens `elite-techniques` (S33).
 
 **Queued:**
 - **job 1.8** (`jobs/1.8-client-clock/prompt.md`): the 26.2 client never ticks faster than 20 per second, so `/tick rate` doesn't speed up the bot. Launch it once `wt/fixtures` is merged, in a worktree cut from `main`.
-- **the judge for 1.6b**, after 1.7's judge (one Claude sub-agent at a time).
 
 **Milestone 1, Julien races his tracks:**
 1. The judges for 1.7 and 1.6b, then any fixes.
@@ -28,7 +30,7 @@ The fixture tooling merges once judged; L0 gates the law, not the tooling.
 |---|---|---|
 | `wt/law` (`law`) | the Rust law, jobs 1.5 to 1.5c committed (`0f6c901`; 39 tests pass, four mutant builds). Judged "ready with fixes"; fixes done | job **1.5d** running (the reader meets the real recordings).<br>**Field mismatch:** 1.5d's spec accepts `ticksAfterEnd`, but 1.6b named the field `serverTickOffset`: null when the read straddles ticks, plus `serverTickOffsetMin`/`Max` (`bot/recorder.md` on `wt/fixtures`).<br>1.6b also left a 101-line reader patch, `jobs/1.6-l0-fixtures/law-reader.patch` on `wt/fixtures`. After 1.5d lands, a small job reconciles both; don't apply the patch by hand.<br>Then record fixtures live, then L0 |
 | `wt/fixtures` (`fixtures`) | job 1.6b committed (`684946e`): abort cleanup, rimmed water with a flow check, one-tick server reads, `ticksFrozen`, the `corner` course, edges, exporter values. It adds `EntityCollisionMixin` to observe collisions, and the judge must confirm it only observes | its judge, then merge, then `record-fixtures.ps1` live (the server is ours to use, S29), then L0 by a fresh judge |
-| `wt/tracks` (`tracks`), cut from `wt/fixtures` at `b3d3297` | job 1.7 committed (`00fc6d8`): `/track` commands, one detector for both clients, run records, the bot's replay with the current planner; 69 offline checks | judge running. Merge after `wt/fixtures` |
+| `wt/tracks` (`tracks`), cut from `wt/fixtures` at `b3d3297` | job 1.7 committed (`00fc6d8`): `/track` commands, one detector for both clients, run records, the bot's replay with the current planner; 69 offline checks | judged "ready with fixes"; job **1.7b** running. Merge after `wt/fixtures` |
 | `main` | recorder merged (gate 1.2 passed live), GLM harness merged | — |
 
 - **L0's planted faults:** the axis tie gets the scripted corner course (1.6b). The step-up fault (+1 ulp) looks unreachable with vanilla blocks (GLM lens `step-up-reachability` settles it); if so, the red-team replaces it at L0's freeze, which repairs the control and doesn't weaken the gate.
