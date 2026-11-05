@@ -12,11 +12,11 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 - **Running:**
   - job 1.5 (GPT Sol) in `D:\path-tracing-wt\law`: the Rust law. Its fourth run died at 23:08 with no error; relaunched to continue from the partial port;
-  - job 1.2d (GPT Sol) in `D:\path-tracing-wt\recorder`: the four findings of the Sonnet judge, who passed 1.2c (`4539beb`) with fixes (`-FailOn` and exit codes in `bot-command.ps1`, clean stdout, cancelled runs never "identical", exact pitch per row).
-- **After 1.2d** (no judge for these driver fixes; the live gate exercises them):
+  - job 1.2e (GPT Sol) in `D:\path-tracing-wt\recorder`: `lab/gates/run-gate-1.2.ps1`, one command that runs the frozen 1.2 gate live over RCON and writes a report. 1.2d (the 1.2c judge's fixes) is committed (`5a071fe`).
+- **After 1.2e:**
   1. commit it on `wt/recorder`;
-  2. `.\scripts\setup.ps1`: the bot's no-auto-input options and the new jar in both clients; restart the bot client, Julien's client out;
-  3. a live run of the 1.2 gate (`lab/gates/`) under the rig lock, driven over RCON (`bot-command.ps1 -WaitFor 'Saved <out>:'` with a long timeout; a 400-tick replay takes about 20 s plus settling). PathBot must be joined and op (replay sends `tp`); the `msg` reply to the absent owner errors harmlessly;
+  2. `.\scripts\setup.ps1` from main (the bot's no-auto-input options), with Julien's client out; build the jar in the worktree;
+  3. a Haiku runner runs `run-gate-1.2.ps1 -Jar <worktree jar>` and returns the report's gate lines. PathBot must be op (replay sends `tp`);
   4. recording the L0 fixtures for 1.5, then 1.5's judge. Recordings open with a header line and close with an `end` trailer; the replay harness must skip both;
   5. the merges.
 - **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
