@@ -195,6 +195,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | limit the bot's velocities and inputs to what he can do, so it doesn't look too superhuman, "once everything will be done", "just to be logged as an idea" | S32 | **Open, later:** an optional human-limits profile, after the benchmark (Phase 12). Nothing built |
 | multiple objectives, such as gathering x wood, "for later, i'm just contextualizing" | S32 | **Context:** the pathfinder must serve goals that are sets of places and amounts, beside the builders' goals (S24); nothing built |
 | the litmus test: fast, emergent properties "always breaking our tests", combining functions "like legos", "alien like thinking and rediscovering things elite performers use" | S32 | **Adopted:** "The goal" above; the rediscovery rung in [ladder.md](ladder.md) |
+| the Sonnet research "overfitted on searching the wiki", it should also have used online guides; "this will be a glm job"; "wiki was there to think more than spread gospell it is not known to be perfect unlike reading directly the code" | S33 | **Followed:** GLM lens elite-techniques (wide sources; each technique proven under the law with a T it saves, or named in the jar; otherwise a lead). The memo of 5 November is marked as leads checked against the jar |
 
 ## Contradictions (kept side by side)
 
