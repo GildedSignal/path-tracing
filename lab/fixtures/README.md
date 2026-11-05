@@ -25,11 +25,11 @@ Each line is an object with `kind`. Coordinates and all collision boxes are doub
 A minimal settled fixture follows. Its numeric values describe the vanilla standing body and gravity drag, and are checked by `replay_stationary_tick` in `engine/law/tests/replay.rs`.
 
 ```jsonl
-{"kind":"player","position":{"x":0.5,"y":0,"z":0.5},"velocity":{"x":0,"y":-0.0784000015258789,"z":0},"onGround":true,"pose":"STANDING"}
+{"kind":"player","position":{"x":0.5,"y":0,"z":0.5},"velocity":{"x":0,"y":-0.0784000015258789,"z":0},"onGround":true,"isSprinting":false,"pose":"STANDING"}
 {"kind":"region","min":[-10,-1,-10],"max":[10,-1,1000],"boxes":[[0,0,0,1,1,1]],"friction":0.6}
 ```
 
-Exactly one `player` line supplies the state **before recording tick zero**. It requires `position` and `velocity`. All other fields default to PlayerState::default(). The replay initializes the sprint latch from the recording tick-zero isSprinting before simulating that tick, following job 1.5b. Vector fields can include raw bits. Float/double scalar fields can include `<name>Bits`.
+Exactly one `player` line supplies the state **before recording tick zero**. It requires `position`, `velocity` and `isSprinting`. The sprint latch and every other hidden state are initialized only from this line, with optional fields defaulting to PlayerState::default(). `isSprinting` is required because recorder rows are post-tick and tick zero cannot supply the latch's initial value. A missing `isSprinting` fails the fixture with a message naming the field. Vector fields can include raw bits. Float/double scalar fields can include `<name>Bits`.
 
 Player metadata supports the recorder flag names and these hidden fields.
 

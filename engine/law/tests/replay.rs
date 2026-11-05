@@ -59,6 +59,7 @@ fn load_state(object: &Object<'_>) -> PlayerState {
     let mut state = PlayerState::default();
     state.position = vector(&object.object("position"));
     state.velocity = vector(&object.object("velocity"));
+    state.sprinting = object.boolean("isSprinting");
     if object.get("inputs").is_some() { state.input = input(&object.object("inputs")); }
     macro_rules! flags {
         ($($key:literal => $field:ident),*) => { $(
@@ -81,7 +82,7 @@ fn load_state(object: &Object<'_>) -> PlayerState {
     }
     flags!("onGround" => on_ground, "horizontalCollision" => horizontal_collision,
         "verticalCollision" => vertical_collision, "verticalCollisionBelow" => vertical_collision_below,
-        "minorHorizontalCollision" => minor_horizontal_collision, "isSprinting" => sprinting,
+        "minorHorizontalCollision" => minor_horizontal_collision,
         "isShiftKeyDown" => shift_key_down, "isInWater" => in_water, "isInLava" => in_lava,
         "onClimbable" => on_climbable, "crouching" => crouching, "swimming" => swimming,
         "underwater" => underwater, "eyeInWater" => eye_in_water, "wasEyeInWater" => was_eye_in_water,
@@ -256,9 +257,6 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
             previous_tick_count = Some(count);
         }
-        if expected_tick == 0 {
-            state.sprinting = object.boolean("isSprinting");
-        }
         let applied = input(&object.object("inputs"));
         let start = Instant::now();
         tick(state, world, &applied);
@@ -334,7 +332,7 @@ fn reject_option_dependent_recording() {
 #[test]
 fn fixture_initialization() {
     let (world, state, server_end) = parse_world(concat!(
-        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"speed\":0.13,\"noJumpDelay\":7,\"onGroundNoBlocks\":true}\n",
+        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"speed\":0.13,\"noJumpDelay\":7,\"onGroundNoBlocks\":true}\n",
         "{\"kind\":\"world\",\"difficulty\":3,\"naturalRegeneration\":false,\"fastLava\":true,\"unloadedChunks\":[[1,-1]]}\n",
         "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]],\"friction\":0.98}\n",
         "{\"kind\":\"block\",\"at\":[0,-1,0],\"boxes\":[[0,0,0,1,0.5,1]],\"speedFactor\":0.4}\n",
@@ -351,6 +349,13 @@ fn fixture_initialization() {
     assert_eq!(world.difficulty(), 3);
     assert_server(&state, &Object::parse(&server_end.unwrap()));
 }
+
+#[test]
+#[should_panic(expected = "missing isSprinting")]
+fn fixture_requires_initial_sprint_latch() {
+    parse_world(r#"{"kind":"player","position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0}}"#);
+}
+
 fn stationary_recording() -> String {
     let vertical_bits = (-0.08 * 0.98f32 as f64).to_bits();
     format!(concat!(
@@ -420,19 +425,32 @@ fn replay_compares_optional_fields() {
 }
 
 #[test]
-fn replay_seeds_sprint_from_tick_zero() {
-    let (world, mut initial) = stationary_fixture();
+fn replay_seeds_sprint_from_player() {
+    let fixture = concat!(
+        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":true}\n",
+        "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]]}\n"
+    );
+    let (world, mut initial, _) = parse_world(fixture);
+    assert!(initial.sprinting);
     let mut expected = initial.clone();
-    expected.sprinting = true;
     tick(&mut expected, &world, &Input { forward: true, ..Input::default() });
+    assert!(expected.sprinting);
     let mut recording = stationary_recording().replace("\"forward\":false", "\"forward\":true")
         .replace("\"isSprinting\":false", "\"isSprinting\":true");
     for value in [expected.position.z, expected.velocity.z] {
         recording = recording.replacen("\"z\":0,\"zBits\":\"0000000000000000\"",
             &format!("\"z\":{value},\"zBits\":\"{:016x}\"", value.to_bits()), 1);
     }
-    replay_text(&recording, &world, &mut initial);
+    assert!(!Object::parse(&recording).object("inputs").boolean("sprint"));
+    let (ticks, _) = replay_text(&recording, &world, &mut initial);
+    assert_eq!(ticks, 1);
     assert!(initial.sprinting);
+
+    let (world, mut initial, _) = parse_world(&fixture.replace("\"isSprinting\":true", "\"isSprinting\":false"));
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replay_text(&recording, &world, &mut initial);
+    }));
+    assert!(failure.is_err(), "post-tick isSprinting was accepted as the initial latch");
 }
 
 #[test]
