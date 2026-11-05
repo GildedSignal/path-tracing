@@ -20,7 +20,8 @@ capture_changes() {
   restore_tree
 }
 phase() {
-  local name=$1 minutes=$2 prompt=$scratch/$name-prompt.md
+  local name=$1 minutes=$2 prompt
+  prompt=$scratch/$name-prompt.md
   # On Windows (S43, Git Bash), omp.exe needs a Windows path; "@" stops MSYS from converting it.
   if command -v cygpath >/dev/null; then prompt=$(cygpath -w "$prompt"); fi
   timeout --signal=TERM --kill-after=1m "${minutes}m" \
