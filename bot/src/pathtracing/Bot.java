@@ -9,6 +9,8 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import pathtracing.planner.Planner;
 import pathtracing.planner.StraightLine;
 
@@ -17,6 +19,7 @@ import pathtracing.planner.StraightLine;
  * path, then walks it by holding the same movement keys a person would.
  */
 final class Bot {
+    private static final Logger LOGGER = LoggerFactory.getLogger("pathtracing");
     private static final Planner PLANNER = new StraightLine();
     private static final Pattern WHISPER = Pattern.compile("(\\S+) whispers to you: (.*)");
     private static final float TURN_PER_TICK = 30;
@@ -34,6 +37,10 @@ final class Bot {
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> survivalIn = 20);
         ClientReceiveMessageEvents.CHAT.register((message, signed, sender, type, time) -> {
             if (sender != null && signed != null && sender.name().equals(PathTracingMod.OWNER)) command(signed.signedContent());
+            if (sender == null && signed == null) {
+                Matcher m = WHISPER.matcher(message.getString());
+                if (m.matches() && (m.group(1).equals("Rcon") || m.group(1).equals("Server"))) command(m.group(2));
+            }
         });
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             Matcher m = WHISPER.matcher(message.getString());
@@ -157,6 +164,7 @@ final class Bot {
     }
 
     static void reply(Minecraft mc, String text) {
+        LOGGER.info("[pathtracing] {}", text.replace('\r', ' ').replace('\n', ' '));
         if (mc.getConnection() != null) mc.getConnection().sendCommand("msg " + PathTracingMod.OWNER + " " + text);
     }
 

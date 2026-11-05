@@ -2,7 +2,6 @@ param([Parameter(Mandatory = $true, Position = 0)][string]$File)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
 $reader = $null
-Enter-Rig 'check-recording'
 try {
   $reader = [IO.File]::OpenText((Resolve-Path -LiteralPath $File).Path)
   $header = $reader.ReadLine() | ConvertFrom-Json
@@ -15,9 +14,12 @@ try {
   $tick = 0
   $previous = $null
   $failed = $false
+  $trailer = $null
   while ($null -ne ($line = $reader.ReadLine())) {
     $lineNumber++
+    if ($null -ne $trailer) { throw 'End trailer must be the final line.' }
     $row = $line | ConvertFrom-Json
+    if ($row.type -eq 'end') { $trailer = $row; continue }
     if ($null -eq $row.t -or $row.t -ne $tick) {
       Write-Output "Tick stamp gap at line ${lineNumber}: expected $tick, got $($row.t)."
       $failed = $true
@@ -37,6 +39,11 @@ try {
     $previous = $row.tickCount
     $tick++
   }
+  if ($null -eq $trailer) { throw 'Missing end trailer.' }
+  if ($null -eq $trailer.ticks -or $trailer.ticks -is [string] -or $trailer.ticks -ne $tick) {
+    throw "Invalid trailer tick count: expected $tick, got $($trailer.ticks)."
+  }
+  if ($trailer.complete -isnot [bool] -or -not $trailer.complete) { throw 'Recording is incomplete.' }
   if ($tick -eq 0) { throw 'No recorded ticks.' }
   if ($failed) { exit 1 }
   Write-Output "Recording OK: $tick ticks, no anomalies or tickCount gaps."
@@ -45,5 +52,4 @@ try {
   exit 1
 } finally {
   if ($null -ne $reader) { $reader.Dispose() }
-  Exit-Rig
 }

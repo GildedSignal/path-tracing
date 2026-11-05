@@ -68,7 +68,7 @@ public final class Recorder {
         Path path = file(mc, "recordings", runName);
         if (Files.exists(path)) throw new IllegalStateException("Output already exists: " + path);
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
-        if (Files.exists(temporary)) throw new IllegalStateException("Temporary output already exists: " + temporary);
+        if (Files.exists(temporary)) throw new IllegalStateException("Temporary output already exists: " + temporary + ". Delete it before reusing this name.");
         Files.createDirectories(path.getParent());
         BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
         try {
@@ -148,6 +148,7 @@ public final class Recorder {
 
     private static void finish(Minecraft mc, boolean clean) {
         boolean wasReplay = replaying();
+        boolean complete = clean && (!wasReplay || tick == replay.size());
         replay = null;
         start = null;
         applied = null;
@@ -157,7 +158,14 @@ public final class Recorder {
         BufferedWriter writer = output;
         output = null;
         try {
-            writer.close();
+            try (writer) {
+                JsonObject end = new JsonObject();
+                end.addProperty("type", "end");
+                end.addProperty("ticks", tick);
+                end.addProperty("complete", complete);
+                writer.write(end.toString());
+                writer.write('\n');
+            }
             if (clean) {
                 Files.move(temporaryPath, outputPath);
                 Bot.reply(mc, "Saved " + name + ": " + tick + " ticks.");
@@ -227,12 +235,12 @@ public final class Recorder {
             output.write(out.toString());
             output.write('\n');
             output.flush();
+            tick++;
             if (gap) {
-                abort(mc, "tickCount did not advance by 1 at tick " + tick + ": " + previousTickCount + " -> " + player.tickCount + ".");
+                abort(mc, "tickCount did not advance by 1 at tick " + (tick - 1) + ": " + previousTickCount + " -> " + player.tickCount + ".");
                 return;
             }
             previousTickCount = player.tickCount;
-            tick++;
             anomalies = new JsonArray();
             if (replaying() && tick == replay.size()) stop(mc);
         } catch (IOException e) {

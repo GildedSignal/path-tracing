@@ -2,7 +2,6 @@ param([Parameter(Mandatory = $true, Position = 0)][string]$File)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
 $reader = $null
-Enter-Rig 'check-dump'
 try {
   $reader = [IO.File]::OpenText((Resolve-Path -LiteralPath $File).Path)
   $header = $reader.ReadLine() | ConvertFrom-Json
@@ -48,5 +47,4 @@ try {
   exit 1
 } finally {
   if ($null -ne $reader) { $reader.Dispose() }
-  Exit-Rig
 }

@@ -11,7 +11,8 @@ Run these whispers from the owner (Brain_Forge by default):
 
 Names contain only letters, digits, `_` and `-`. Replay reads input `name` and writes recording `out`
 (default: `name`). Replay and manual recording refuse an existing final or temporary output, naming
-the file in the reply. Choose another output name or move the old file before starting again.
+the file in the reply. A blocking `.tmp` reply says to delete that file before reusing the name.
+Choose another output name or move the old final file before starting again.
 Only the bot role registers the recorder. Replay owns all seven movement keys, rejects other movement
 commands and suspends the follow loop. `rec stop` cancels a replay too; `stop` also clears the existing
 follow path. Starting a replay clears the old follow path, so it cannot resume afterwards.
@@ -47,6 +48,15 @@ fields. Its first line records the required input settings:
 {"toggleSprint":false,"toggleCrouch":false,"autoJump":false,"sprintWindow":0,"type":"recording"}
 ```
 
+Every closed recording ends with a trailer, where `ticks` is the number of tick rows.
+
+```json
+{"type":"end","ticks":400,"complete":true}
+```
+
+`complete` is true only after all replay inputs ran or a manual recording ended with `rec stop`.
+An early replay `rec stop` or `stop` writes `complete:false`. Aborts also write a false trailer
+when the output remains writable. A write or close failure can leave a missing or malformed trailer.
 Output is written to `.jsonl.tmp` and renamed only after a successful close at replay completion
 or an explicit `rec stop` / replay `stop` (including early cancellation). A disconnect, missing
 player/world, write failure, settling timeout or tickCount gap aborts and retains only the temporary
@@ -101,7 +111,8 @@ pose, position, bounds and fall distance are restored in `finally` before return
 The final line has `type: "summary"`, `writtenCount` (state rows actually written) and
 `registryCount` (a separate sum of possible-state counts across the block registry). A mismatch
 fails the dump. Both counts appear in the reply. Header and summary are not state rows; total
-physical lines are `writtenCount + 2`.
+physical lines are `writtenCount + 2`. The frozen 1.2 gate's line count means state lines, excluding
+the header and summary. `check-dump.ps1` is the gate's check of this count against the registry.
 
 States with offsets also have `offset`: `method`, `type` (`XZ` or `XYZ`), maximum offsets, Java
 expressions for the seed and components, and eight fixed `samples` containing `pos` and `offset`.
@@ -111,31 +122,50 @@ the origin; subtract that offset before applying the offset at another position.
 
 ## Gate helpers
 
-All four helpers in `lab/gates/` use Windows PowerShell 5.1, contain only ASCII, and take the rig
-lock from `scripts/common.ps1`. Offline checks accept literal paths (including a retained `.tmp`).
+All five helpers in `lab/gates/` use Windows PowerShell 5.1 and contain only ASCII. The gate driver
+holds the rig lock with `Enter-Rig` / `Exit-Rig` from `scripts/common.ps1`. The helpers run inside
+that lock. Offline checks accept literal paths (including a retained `.tmp`).
 
 ```powershell
 .\lab\gates\new-inputs.ps1 -Name random400 -Ticks 400 -Seed 7 -Start '0.5,-60,0.5,0,0'
 .\lab\gates\compare-recordings.ps1 <a.jsonl> <b.jsonl>
 .\lab\gates\check-recording.ps1 <recording.jsonl>
 .\lab\gates\check-dump.ps1 <blocks.jsonl>
+.\lab\gates\bot-command.ps1 -Text 'replay random400 run1' -WaitFor 'Saved run1:' -TimeoutSeconds 60
 ```
 
 `new-inputs` writes `$Rig\clients\bot\pathtracing\inputs\<Name>.jsonl`. A seeded `System.Random`
 selects independent pressed/released runs of 1-20 ticks for each key (the final run can be shorter),
 and nonzero integer yaw steps from -90 through 90 degrees every 1-20 ticks. Pitch remains the
 start pitch. The same arguments on Windows PowerShell 5.1 produce the same bytes; an existing input
-file is replaced. No game commands are sent by these helpers.
+file is replaced. The start line is built with invariant-culture round-trip (`R`) formatting for
+the three doubles and the two float-rounded angles.
 
-`compare-recordings` compares the header's four settings and recursively compares every `*Bits`
-field, including inputs and anomalies. It reports the first differing `t` and field, or `identical`;
-different lengths, invalid tick stamps, missing headers and malformed raw fields fail. It does not
-compare decimal values, boolean state flags or absolute tickCount (which differs between runs).
+`compare-recordings` compares the header's four settings and every tick-row field except absolute
+`tickCount`, including decimals, raw bits, inputs, on-ground and collision flags, pose, food values
+and anomalies. Fields are visited in sorted name order and arrays in index order. It reports the
+first differing tick and field, or `identical`, and compares the end trailers too. Different lengths,
+invalid tick stamps, missing headers/trailers and malformed raw fields fail.
 `check-recording` reports every anomaly line, nonconsecutive `t`, and missing/invalid or
-nonconsecutive tickCount. `check-dump` checks state-row count against both summary counts and checks
+nonconsecutive tickCount. It also rejects a missing trailer, a wrong trailer count or `complete:false`.
+`check-dump` checks state-row count against both summary counts and checks
 every state of ice (friction 0.98), blue ice (0.989), slime (0.8), soul sand (speed 0.4), and honey
 (speed 0.4, jump 0.5), comparing as Mojang floats. Both checkers reject empty/malformed files or
 missing metadata. All checks exit nonzero on a failure.
+
+### Commands over RCON
+
+Gates drive the bot while Julien's client is out of the game. `bot-command.ps1` sends
+`msg PathBot <command>` through `scripts/rcon.ps1`. The bot accepts disguised CHAT whispers only
+when both sender and signature are null and the decorated sender name is exactly `Rcon` or `Server`.
+The console's stdin can send the same `msg PathBot <command>`. Owner command handling is preserved.
+
+Every reply is still whispered to the owner and also logged on one line with `[pathtracing] `.
+With `-WaitFor`, the helper opens `$Rig\clients\bot\logs\latest.log` at its end immediately before
+sending, then waits for a newly appended prefixed reply whose full log line matches the regex. It
+prints the full log line and exits 0, or exits nonzero on timeout (30 seconds by default). Without
+`-WaitFor` it sends the command and returns the RCON response. The gate driver holds the rig lock
+through sending and waiting.
 
 ## Server endpoints
 
