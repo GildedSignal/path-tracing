@@ -12,11 +12,11 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 - **Running:**
   - job 1.5 (GPT Sol) in `D:\path-tracing-wt\law`: the Rust law. Its fourth run died at 23:08 with no error; relaunched to continue from the partial port;
-  - the Sonnet judge of job 1.2c (`a6e3d7a..4539beb` on `wt/recorder`): commands over RCON plus the six fixes from 1.2b's review.
-- **After the 1.2c judge:**
-  1. fold its findings into a job if needed;
-  2. `.\scripts\setup.ps1`, which applies the bot's no-auto-input options;
-  3. a live run of the 1.2 gate (`lab/gates/`), driven over RCON (`bot-command.ps1`);
+  - job 1.2d (GPT Sol) in `D:\path-tracing-wt\recorder`: the four findings of the Sonnet judge, who passed 1.2c (`4539beb`) with fixes (`-FailOn` and exit codes in `bot-command.ps1`, clean stdout, cancelled runs never "identical", exact pitch per row).
+- **After 1.2d** (no judge for these driver fixes; the live gate exercises them):
+  1. commit it on `wt/recorder`;
+  2. `.\scripts\setup.ps1`: the bot's no-auto-input options and the new jar in both clients; restart the bot client, Julien's client out;
+  3. a live run of the 1.2 gate (`lab/gates/`) under the rig lock, driven over RCON (`bot-command.ps1 -WaitFor 'Saved <out>:'` with a long timeout; a 400-tick replay takes about 20 s plus settling). PathBot must be joined and op (replay sends `tp`); the `msg` reply to the absent owner errors harmlessly;
   4. recording the L0 fixtures for 1.5, then 1.5's judge. Recordings open with a header line and close with an `end` trailer; the replay harness must skip both;
   5. the merges.
 - **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
