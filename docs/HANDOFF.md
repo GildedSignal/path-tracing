@@ -13,6 +13,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Running:**
   - job 1.5 (GPT Sol) in `D:\path-tracing-wt\law`: the Rust law. Its fourth run died at 23:08 with no error; relaunched to continue from the partial port;
   - job 1.2e (GPT Sol) in `D:\path-tracing-wt\recorder`: `lab/gates/run-gate-1.2.ps1`, one command that runs the frozen 1.2 gate live over RCON and writes a report. 1.2d (the 1.2c judge's fixes) is committed (`5a071fe`).
+- **Queued for the next free GPT slot:** job `L1-glm-lab` (GLM's harness on Actions). Then the integrator writes the first lenses, and only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, and jar questions for the elytra port. The breaker lens waits for the law (1.5) and fixtures. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.
 - **After 1.2e:**
   1. commit it on `wt/recorder`;
   2. `.\scripts\setup.ps1` from main (the bot's no-auto-input options), with Julien's client out; build the jar in the worktree;
