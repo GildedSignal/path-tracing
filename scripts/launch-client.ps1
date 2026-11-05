@@ -18,6 +18,7 @@ $classpath = Get-GameClasspath
 $jvm = @(
   $(if ($Role -eq 'bot') { '-Xmx3G' } else { '-Xmx6G' }), '-Xms1G',
   "-Dpathtracing.role=$Role", "-Dpathtracing.bot=$BotName", "-Dpathtracing.owner=$PlayerName",
+  "-Dpathtracing.rig=$Rig",
   '-cp', ($classpath -join ';'),
   'net.fabricmc.loader.impl.launch.knot.KnotClient'
 )

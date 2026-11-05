@@ -5,12 +5,17 @@ import net.minecraft.client.Minecraft;
 
 record TickInput(boolean forward, boolean back, boolean left, boolean right, boolean jump, boolean sneak,
                  boolean sprint, float yaw, float pitch) {
-    static JsonObject holdSettings(Minecraft mc) {
+    static JsonObject settings(Minecraft mc) {
         JsonObject out = new JsonObject();
         out.addProperty("toggleSprint", mc.options.toggleSprint().get());
         out.addProperty("toggleCrouch", mc.options.toggleCrouch().get());
         out.addProperty("autoJump", mc.options.autoJump().get());
         out.addProperty("sprintWindow", mc.options.sprintWindow().get());
+        return out;
+    }
+
+    static JsonObject holdSettings(Minecraft mc) {
+        JsonObject out = settings(mc);
         if (mc.options.toggleSprint().get() || mc.options.toggleCrouch().get() || mc.options.autoJump().get()
             || mc.options.sprintWindow().get() != 0) {
             throw new IllegalStateException("Requires hold-style input: " + out);
