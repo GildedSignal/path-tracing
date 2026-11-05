@@ -1,3 +1,4 @@
 # GPT job queue: <job id> <worktree>. "Run queue.cmd" runs these in order, two GPT jobs at most at once.
 1.8-client-clock D:\path-tracing-wt\clock
 2.1a-region-reader D:\path-tracing-wt\world
+1.7d-track-labels D:\path-tracing-wt\tracks

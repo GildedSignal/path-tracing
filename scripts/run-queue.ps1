@@ -18,7 +18,15 @@ foreach ($line in Get-Content $queue) {
   $job, $worktree = $line -split '\s+', 2
   $last = Join-Path $Root "jobs\$job\last.md"
   if (Test-Path $last) { Write-Host "Done already: $job"; continue }
-  while ((Count-Gpt) -ge 2) { Write-Host "Two GPT jobs are running; waiting..."; Start-Sleep -Seconds 60 }
+  $busy = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match 'gpt\.ps1' -and $_.CommandLine -match [regex]::Escape($job) }).Count
+  if ($busy) { Write-Host "Already running elsewhere: $job"; continue }
+  # Wait for a free slot, and for any other job in the same worktree to finish.
+  $tree = [regex]::Escape($worktree)
+  while ((Count-Gpt) -ge 2 -or @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match 'gpt\.ps1' -and $_.CommandLine -match $tree }).Count) {
+    Write-Host "$(Get-Date -Format HH:mm) Waiting for a free GPT slot or for $worktree to be free..."; Start-Sleep -Seconds 60
+  }
   Write-Host "$(Get-Date -Format HH:mm) Starting $job in $worktree"
   & "$PSScriptRoot\gpt.ps1" -Job $job -Worktree $worktree
   if (Test-Path $last) {
