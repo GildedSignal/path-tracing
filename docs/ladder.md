@@ -28,11 +28,56 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 - **No superflat:** every superflat chunk is the same, so the memo, repair and scale tests could not fail there.
 - **Isolation:** gates take the rig lock and run under `/tick rate`, so each test stays under 60 seconds. Julien's player stays away from the bot, because players push each other.
 
+## How we test (from ES, adopted 5 November, S19)
+
+Julien, in ES: "test like a spartan would train, harder than for the war"; "extremes inform the mean"; "even baby spartans started 'small'". Sources: ES `docs/test-ladder.md`, `docs/method.md`, PRINCIPLES 10 and 20.
+
+The purpose of a test is to shorten the time until we notice we are fooling ourselves, not to prevent every issue.
+
+1. **Every capability gets a ladder.** Rungs are frozen before they run, each about 10× harder than the last on the one dimension it stresses. Climb until a rung fails.
+   - The last passing rung is what the bot can do.
+   - The first failing rung, with the mechanism that limits it, is the next work item.
+   - A ladder with no failing rung has not been climbed far enough.
+2. **Two kinds of rung, both required.**
+   - **Extreme:** one dimension pushed to its limit, everything else trivial. It finds which dimension breaks, and how cost grows along it.
+   - **Chaotic:** many mechanisms meeting at the scale of the goal. It finds what breaks when they meet. For this project, that means real terrain where ice, water, soul sand, ceilings and drops chain together, re-targets mid-air, and, once there are several bots, crowds of bots pushing each other.
+3. **Worst cases are built on purpose:**
+   - exact ties in the collision axis order;
+   - grazing a block corner at the body's exact width;
+   - simultaneous contacts, and step-ups on edges;
+   - gaps at the sprint-jump limit;
+   - coordinates far from the origin, where doubles lose precision;
+   - the highest speeds the law allows;
+   - chunk borders.
+4. **A test that cannot fail is not evidence.** Every gate has a positive control that must pass, and a planted fault that must fail.
+   - The planted fault is a mutant in rarely run code, chosen by the red-team at freeze, never by the builder.
+   - Easy fixtures are controls, not rungs.
+5. **Correctness before speed.** Small rungs compare against an independent reference: the bot's own client, or the offline search. Large rungs keep invariants, exact replay and digests. A fast wrong answer is a failure.
+6. **Behaviour over many seeds.** Behaviour gates draw many seeds from a frozen sampler and judge the distribution. One seed's data is never the target. Determinism is checked seed by seed, bit for bit.
+7. **Statistical etiquette** (as in the scoreboard).
+   - Describe the behaviour before choosing the test: what should happen, what must never happen, what the tails look like.
+   - Assume fat tails until thin tails are shown.
+   - Verdicts are k of n beyond a frozen line, plus the worst case. Worst cases are compared at equal n only.
+   - Count independent events, not runs that share a harness.
+8. **Anomalies are the most important data.**
+   - Every run writes a record that replays exactly: inputs, seeds, commit, law version, each invariant's worst margin, every refusal.
+   - A broken invariant, a new worst margin, a server correction, or two representations disagreeing goes to the anomaly log automatically. Logging is free and blames no one.
+   - An unexplained anomaly blocks only the claims that depend on it, which then show as "unexplained", not "pass".
+   - Once explained, it becomes a generator for its family, or a fix to the law.
+9. **Unknown unknowns: neither ignore nor hunt them.** Meet them with fewer parts, records that replay exactly, independent judges once a part is load-bearing, and fast recovery. Julien's play is the sensor we cannot build: when he and a metric disagree, the metric is presumed broken.
+10. **Every test runs in under 60 seconds** (under `/tick rate` where needed). A known red is baselined: it has an owner, it may only get better, and it is never called a pass.
+
+Not yet adopted from ES's method: the merge command and the commit hooks (`method.md`, M7 to M10). They come when merges to `main` become frequent.
+
 ## Rungs
+
+When a rung below is frozen, it is frozen as a ladder: its extreme tracks, each with rungs about 10× apart, plus its chaotic track.
 
 | Rung | Phase | What it stresses | Status |
 |---|---|---|---|
 | L0 | 1 | **The law.** Fixtures for each terrain class: full blocks, slabs and stairs, step-ups, ceilings, ladders and vines, water, ice and blue ice, slime, soul sand, honey, cobweb, powder snow, and edges for the sneak back-off. Many random input sequences each. **Pass:** bit-identical positions and velocities on every tick; damage and exhaustion equal the server's; zero corrections; every mutant caught (axis tie order, step-up, the sneak back-off at edges, ceiling bonks) | to freeze before 1.5 runs |
+| L0-x | 1 | **The law at its extremes**, a second rung beside L0, which was frozen before this method arrived: coordinates at 10⁴, 10⁶ and 3×10⁷; exact axis-order ties; grazing corners at the body's width; step-ups on edges and corners; elytra-scale speeds into walls; chunk borders. Same pass line as L0, with a red-team-chosen mutant | to freeze before L0's first run |
+| Legs ladder | 2 | Frames R1 to R-scale as one ladder. **Extreme tracks:** trip length, maze depth, gap width up to the sprint-jump limit, corner precision, distance from the origin. **Chaotic track:** default terrain from fixed seeds with re-targets. The tracks and their rungs are frozen with R1 to R-scale | to freeze before Phase 2 runs |
 | R1 | 2 | Flat trips, straight and diagonal, 10 to 200 blocks | to freeze before Phase 2 runs |
 | R2 | 2 | Walls and mazes on legs alone: detours | to freeze before Phase 2 runs |
 | R3 | 2 | Gaps of 1 to 4 blocks, step-ups, drops up to the 3-block safe fall. Damaging drops are barriers until tokens exist | to freeze before Phase 2 runs |

@@ -52,12 +52,13 @@ His ES philosophy ([PRINCIPLES](https://github.com/GildedSignal/emergent-space-e
 - 6 store the generator;
 - 7 spacetime, where geodesics are straight lines;
 - 9 a failed experiment kills the configuration, never the method;
-- 10 measure before claiming, test like a Spartan;
+- 10 measure before claiming, test like a Spartan: climbing ladders, extreme and chaotic rungs, planted faults, anomalies as data ([ladder.md](ladder.md), "How we test");
 - 11 text has a cost;
 - 13 errors never compound;
 - 15 local laws;
 - 18 the right question, then the representation;
 - 19 a fix signals the wrong representation;
+- 20 behaviours over many seeds, no engineered outcome: a behaviour counts only if it emerges from the law, judged over many seeds (R-brach; [ladder.md](ladder.md), "How we test");
 - 22 the simulation decides, heuristics schedule;
 - 25 no sunk cost, avoid ruin;
 - 26 steal from skin in the game;
@@ -154,6 +155,9 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | the brachistochrone should emerge with elytra under the method; its emergence "under certain conditions mean that we're doing good" | S17 | **Adopted:** rung R-brach in [ladder.md](ladder.md), a falsifier of the method: the reference is the time-optimal curve for the exact elytra law (drag, pitch-dependent lift), not the textbook cycloid |
 | the planner "will be used by hundreds of bots that's why i bother so much with performances" | S18 | **Adopted:** cost is reported per bot with many bots on one machine ([ladder.md](ladder.md), scoreboard); the measure is frozen with Phase 10 |
 | "i say pathtracing instead of pathfinding for reason i guess" | S18 | **Interpretation, not his words:** routes are rays of least time through a medium whose speed the toolkit sets, as in Fermat's principle. Johann Bernoulli solved the brachistochrone that way, as light refracting through layers. A field of times to one goal serves every bot heading there |
+| "Yes bring the ES testing method as proposed" | S19 | **Adopted:** [ladder.md](ladder.md), "How we test": climbing ladders, extreme and chaotic rungs, planted faults chosen by the red-team, many seeds, anomalies and run records |
+| check for one-liners that could be problematic, as "test like a Spartan" was | S19 | **Followed:** an audit by a Sonnet sub-agent against ES's sources (5 November) |
+| think a bit about many bots now, for "methods that scale and allow swarm behaviors and emergent properties for cheap" | S19 | **Answered** in chat on 5 November; nothing built |
 | push the elytra test early, "because it's just jumping between pillars and guiding it", "not too early either but remember how we test" | S18 | **Adopted:** R-brach runs right after the first flight, before Phase 3, as soon as the elytra law is ported; it enters as law data only |
 | pricing consumables: "i'm unsure here honnestly", a matter of amortization and resource management without knowing the income, while nothing is gathered or regenerated | S13 | **Open.** Proposal: spending a consumable needs a budget he gives per command (zero by default); health and food regenerate, so they are feasibility constraints, not tokens |
 
