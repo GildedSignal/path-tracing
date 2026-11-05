@@ -100,6 +100,7 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "bounciness" => bounciness);
     if object.get("remainingFireTicks").is_some() { state.remaining_fire_ticks = object.number("remainingFireTicks") as i32; }
     if object.get("noJumpDelay").is_some() { state.no_jump_delay = object.number("noJumpDelay") as i32; }
+    if object.get("ticksFrozen").is_some() { state.ticks_frozen = object.number("ticksFrozen") as i32; }
     if object.get("foodLevel").is_some() { state.food_level = object.number("foodLevel") as i32; }
     if object.get("foodTickTimer").is_some() { state.food_tick_timer = object.number("foodTickTimer") as u32; }
     if object.get("mainSupportingBlock").is_some() {
@@ -148,6 +149,7 @@ fn load_block(object: &Object<'_>) -> Block {
         block.inside = match object.string("inside") {
             "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow,
             "honey" => Inside::Honey, "none" => Inside::None,
+            "unmodeled" if object.get("block").is_some() => Inside::Unsupported(object.string("block").to_owned()),
             value => Inside::Unsupported(value.to_owned()),
         };
     }
@@ -242,11 +244,20 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
     let mut expected_tick = 0;
     let mut previous_tick_count = None;
     let mut elapsed = Duration::ZERO;
-    for (line_index, line) in text.lines().filter(|line| !line.trim().is_empty()).enumerate() {
+    let mut ended = false;
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty()).enumerate().peekable();
+    while let Some((line_index, line)) = lines.next() {
         let object = Object::parse(line);
         if object.get("type").is_some() {
-            assert_eq!(line_index, 0, "recording header must be first");
-            recording_header(&object);
+            if line_index == 0 && object.string("type") == "recording" {
+                recording_header(&object);
+                continue;
+            }
+            assert_eq!(object.string("type"), "end", "unexpected recording row type");
+            assert!(lines.peek().is_none(), "end trailer must be last");
+            assert!(object.boolean("complete"), "incomplete recording");
+            assert_eq!(object.number("ticks"), expected_tick as f64, "end trailer tick count");
+            ended = true;
             continue;
         }
         assert!(object.get("anomaly").is_none(), "recording has a correction/push");
@@ -264,6 +275,7 @@ fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, D
         assert_tick(state, &object, expected_tick);
         expected_tick += 1;
     }
+    assert!(ended, "missing end trailer");
     assert!(expected_tick > 0, "empty recording");
     (expected_tick, elapsed)
 }
@@ -273,6 +285,22 @@ fn assert_server(state: &PlayerState, expected: &Object<'_>) {
     assert_eq!(state.food_level as f64, expected.number("foodLevel"), "server food");
     assert_eq!(state.saturation.to_bits(), expected.f32("saturationLevel").to_bits(), "server saturation");
     assert_eq!(state.exhaustion.to_bits(), expected.f32("exhaustion").to_bits(), "server exhaustion");
+}
+
+fn check_server_end(state: &PlayerState, expected: &Object<'_>) -> bool {
+    let key = if expected.get("serverTickOffset").is_some() { "serverTickOffset" } else { "ticksAfterEnd" };
+    if expected.get(key).is_none_or(|value| value == "null") {
+        println!("server resources skipped: serverEnd {key} is unknown");
+        return false;
+    }
+    let ticks = expected.number(key);
+    assert!(ticks >= 0.0 && ticks.is_finite() && ticks.fract() == 0.0, "invalid {key}");
+    if ticks != 0.0 {
+        println!("server resources skipped: serverEnd read {ticks} server ticks after recording end");
+        return false;
+    }
+    assert_server(state, expected);
+    true
 }
 
 #[test]
@@ -291,8 +319,10 @@ fn replay() {
         let text = fs::read_to_string(&file).unwrap();
         let (ticks, elapsed) = replay_text(&text, &world, &mut state);
         if let Some(snapshot) = server_end {
-            assert_server(&state, &Object::parse(&snapshot));
-            server_checks += 1;
+            println!("{} serverEnd", file.display());
+            server_checks += check_server_end(&state, &Object::parse(&snapshot)) as usize;
+        } else {
+            println!("{} server resources skipped: no serverEnd snapshot", file.display());
         }
         let rate = ticks as f64 / elapsed.as_secs_f64();
         rates.push(rate);
@@ -356,7 +386,7 @@ fn fixture_requires_initial_sprint_latch() {
     parse_world(r#"{"kind":"player","position":{"x":0,"y":0,"z":0},"velocity":{"x":0,"y":0,"z":0}}"#);
 }
 
-fn stationary_recording() -> String {
+fn stationary_tick() -> String {
     let vertical_bits = (-0.08 * 0.98f32 as f64).to_bits();
     format!(concat!(
         "{{\"t\":0,\"inputs\":{{\"forward\":false,\"back\":false,\"left\":false,\"right\":false,\"jump\":false,\"sneak\":false,\"sprint\":false,\"yaw\":0,\"pitch\":0}},",
@@ -381,7 +411,7 @@ fn stationary_fixture() -> (BoxWorld, PlayerState) {
 #[test]
 fn replay_stationary_tick() {
     let (world, mut state) = stationary_fixture();
-    let (ticks, _) = replay_text(&stationary_recording(), &world, &mut state);
+    let (ticks, _) = replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
     assert_eq!(ticks, 1);
 }
 
@@ -389,25 +419,25 @@ fn replay_stationary_tick() {
 #[should_panic(expected = "position.x")]
 fn replay_rejects_single_bit_difference() {
     let (world, mut state) = stationary_fixture();
-    let recording = stationary_recording().replacen("\"xBits\":\"0000000000000000\"", "\"xBits\":\"0000000000000001\"", 1);
-    replay_text(&recording, &world, &mut state);
+    let recording = stationary_tick().replacen("\"xBits\":\"0000000000000000\"", "\"xBits\":\"0000000000000001\"", 1);
+    replay_text(&complete_recording(&recording, 1), &world, &mut state);
 }
 
 #[test]
 #[should_panic(expected = "correction/push")]
 fn replay_rejects_anomaly() {
     let (world, mut state) = stationary_fixture();
-    let recording = stationary_recording();
+    let recording = stationary_tick();
     let recording = format!("{},\"anomaly\":[{{\"type\":\"ClientboundPlayerPositionPacket\"}}]}}", &recording[..recording.len()-1]);
-    replay_text(&recording, &world, &mut state);
+    replay_text(&complete_recording(&recording, 1), &world, &mut state);
 }
 #[test]
 fn replay_compares_optional_fields() {
     let (world, mut state) = stationary_fixture();
-    let recording = stationary_recording();
+    let recording = stationary_tick();
     let record = format!("{},\"minorHorizontalCollision\":false,\"verticalCollisionBelow\":true,\"speedBits\":\"3dcccccd\",\"swimming\":false,\"crouching\":false}}",
         &recording[..recording.len()-1]);
-    replay_text(&record, &world, &mut state);
+    replay_text(&complete_recording(&record, 1), &world, &mut state);
     for (key, old, new) in [
         ("minorHorizontalCollision", "false", "true"),
         ("verticalCollisionBelow", "true", "false"),
@@ -418,7 +448,7 @@ fn replay_compares_optional_fields() {
         let corrupt = record.replace(&format!("\"{key}\":{old}"), &format!("\"{key}\":{new}"));
         let (world, mut state) = stationary_fixture();
         let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            replay_text(&corrupt, &world, &mut state);
+            replay_text(&complete_recording(&corrupt, 1), &world, &mut state);
         }));
         assert!(failure.is_err(), "{key} corruption was accepted");
     }
@@ -435,20 +465,20 @@ fn replay_seeds_sprint_from_player() {
     let mut expected = initial.clone();
     tick(&mut expected, &world, &Input { forward: true, ..Input::default() });
     assert!(expected.sprinting);
-    let mut recording = stationary_recording().replace("\"forward\":false", "\"forward\":true")
+    let mut recording = stationary_tick().replace("\"forward\":false", "\"forward\":true")
         .replace("\"isSprinting\":false", "\"isSprinting\":true");
     for value in [expected.position.z, expected.velocity.z] {
         recording = recording.replacen("\"z\":0,\"zBits\":\"0000000000000000\"",
             &format!("\"z\":{value},\"zBits\":\"{:016x}\"", value.to_bits()), 1);
     }
     assert!(!Object::parse(&recording).object("inputs").boolean("sprint"));
-    let (ticks, _) = replay_text(&recording, &world, &mut initial);
+    let (ticks, _) = replay_text(&complete_recording(&recording, 1), &world, &mut initial);
     assert_eq!(ticks, 1);
     assert!(initial.sprinting);
 
     let (world, mut initial, _) = parse_world(&fixture.replace("\"isSprinting\":true", "\"isSprinting\":false"));
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        replay_text(&recording, &world, &mut initial);
+        replay_text(&complete_recording(&recording, 1), &world, &mut initial);
     }));
     assert!(failure.is_err(), "post-tick isSprinting was accepted as the initial latch");
 }
@@ -459,4 +489,126 @@ fn fixture_keeps_unsupported_hooks_explicit() {
         let block = load_block(&Object::parse(&format!("{{\"boxes\":[],\"inside\":\"{hook}\"}}")));
         assert_eq!(block.inside, Inside::Unsupported(hook.to_owned()));
     }
+}
+
+fn complete_recording(rows: &str, ticks: u64) -> String {
+    format!("{rows}\n{{\"type\":\"end\",\"ticks\":{ticks},\"complete\":true}}")
+}
+
+#[test]
+fn replay_accepts_recorder_trailer() {
+    let header = r#"{"type":"recording","autoJump":false,"toggleSprint":false,"toggleCrouch":false,"sprintWindow":0}"#;
+    let row = stationary_tick();
+    for rows in [row.clone(), format!("{header}\n{row}"), format!("{header}\n{row}\n{}", row.replace("\"t\":0", "\"t\":1"))] {
+        let count = if rows.contains("\"t\":1") { 2 } else { 1 };
+        let (world, mut state) = stationary_fixture();
+        let (ticks, _) = replay_text(&complete_recording(&rows, count), &world, &mut state);
+        assert_eq!(ticks, count);
+    }
+}
+
+#[test]
+fn replay_rejects_invalid_trailers_and_row_types() {
+    let row = stationary_tick();
+    let end = r#"{"type":"end","ticks":1,"complete":true}"#;
+    for (name, text, message) in [
+        ("missing", row.clone(), "missing end trailer"),
+        ("incomplete", format!("{row}\n{}", end.replace("true", "false")), "incomplete recording"),
+        ("wrong count", format!("{row}\n{}", end.replace(":1", ":2")), "end trailer tick count"),
+        ("fractional count", format!("{row}\n{}", end.replace(":1", ":1.5")), "end trailer tick count"),
+        ("tick after end", format!("{row}\n{end}\n{row}"), "end trailer must be last"),
+        ("duplicate end", format!("{row}\n{end}\n{end}"), "end trailer must be last"),
+        ("late header", format!("{row}\n{{\"type\":\"recording\"}}\n{end}"), "unexpected recording row type"),
+        ("unknown type", format!("{row}\n{{\"type\":\"other\"}}\n{end}"), "unexpected recording row type"),
+    ] {
+        let (world, mut state) = stationary_fixture();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replay_text(&text, &world, &mut state);
+        })).expect_err(name);
+        let diagnostic = failure.downcast_ref::<String>().map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied()).expect("panic message");
+        assert!(diagnostic.contains(message), "{name}: {diagnostic}");
+    }
+}
+
+#[test]
+fn fixture_server_end_requires_zero_delay() {
+    let fixture = concat!(
+        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false}\n",
+        "{\"kind\":\"serverEnd\",\"serverTickOffset\":0,\"health\":20,\"foodLevel\":20,\"saturationLevel\":5,\"exhaustion\":0}"
+    );
+    let (_, state, snapshot) = parse_world(fixture);
+    let snapshot = snapshot.unwrap();
+    assert!(check_server_end(&state, &Object::parse(&snapshot)));
+    let wrong = snapshot.replace("\"health\":20", "\"health\":1");
+    let failure = std::panic::catch_unwind(|| check_server_end(&state, &Object::parse(&wrong)));
+    assert!(failure.is_err(), "aligned resource mismatch was accepted");
+    for delay in [1, 20] {
+        let delayed = wrong.replace("\"serverTickOffset\":0", &format!("\"serverTickOffset\":{delay}"));
+        let (_, state, snapshot) = parse_world(&fixture.replace(&snapshot, &delayed));
+        assert!(!check_server_end(&state, &Object::parse(&snapshot.unwrap())));
+    }
+    let unknown = wrong.replace("\"serverTickOffset\":0,", "");
+    assert!(!check_server_end(&state, &Object::parse(&unknown)));
+    let uncertain = wrong.replace("\"serverTickOffset\":0", "\"serverTickOffset\":null,\"serverTickOffsetMin\":0,\"serverTickOffsetMax\":1");
+    assert!(!check_server_end(&state, &Object::parse(&uncertain)));
+    let legacy = snapshot.replace("serverTickOffset", "ticksAfterEnd");
+    assert!(check_server_end(&state, &Object::parse(&legacy)));
+    let mixed = format!("{},\"ticksAfterEnd\":0}}", &uncertain[..uncertain.len()-1]);
+    assert!(!check_server_end(&state, &Object::parse(&mixed)));
+}
+
+#[test]
+fn fixture_reads_exported_world_fields() {
+    let fixture = concat!(
+        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":0,\"z\":0},\"isSprinting\":false,\"ticksFrozen\":73}\n",
+        "{\"kind\":\"block\",\"at\":[0,-1,0],\"block\":\"minecraft:red_bed\",\"boxes\":[[0,0,0,1,0.5,1]],\"bed\":true}\n",
+        "{\"kind\":\"block\",\"at\":[1,-1,0],\"boxes\":[[0,0,0,1,1,1]],\"suffocating\":true}\n",
+        "{\"kind\":\"block\",\"at\":[2,-1,0],\"boxes\":[],\"endPortalOrGateway\":true}\n"
+    );
+    let (world, state, _) = parse_world(fixture);
+    assert_eq!(state.ticks_frozen, 73);
+    assert!(world.block([0,-1,0]).bed);
+    assert!(world.block([1,-1,0]).suffocating);
+    assert!(world.block([2,-1,0]).end_portal_or_gateway);
+}
+
+#[test]
+fn replay_rejects_touched_unmodeled_block_by_name() {
+    let (mut world, mut state) = stationary_fixture();
+    let block = load_block(&Object::parse(r#"{"boxes":[],"inside":"unmodeled","block":"minecraft:sweet_berry_bush"}"#));
+    assert_eq!(block.inside, Inside::Unsupported("minecraft:sweet_berry_bush".to_owned()));
+    world.set([4,0,0], block.clone());
+    replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+    world.set([0,0,0], block);
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+    })).expect_err("unmodeled contact was accepted");
+    let diagnostic = failure.downcast_ref::<String>().expect("panic message");
+    assert!(diagnostic.contains("minecraft:sweet_berry_bush"), "{diagnostic}");
+}
+
+#[test]
+fn fixture_seeds_frost_and_replays_decay() {
+    let fixture = concat!(
+        "{\"kind\":\"player\",\"position\":{\"x\":0,\"y\":0,\"z\":0},\"velocity\":{\"x\":0,\"y\":-0.0784000015258789,\"z\":0},\"onGround\":true,\"isSprinting\":false,\"ticksFrozen\":3}\n",
+        "{\"kind\":\"region\",\"min\":[-1,-1,-1],\"max\":[1,-1,1],\"boxes\":[[0,0,0,1,1,1]]}"
+    );
+    let (world, mut state, _) = parse_world(fixture);
+    let speed = (0.1f32 as f64 + (-0.05f32 * (1.0f32 / 140.0f32)) as f64) as f32;
+    let row = stationary_tick();
+    let first = format!("{},\"speedBits\":\"{:08x}\"}}", &row[..row.len()-1], speed.to_bits());
+    let second = format!("{},\"speedBits\":\"3dcccccd\"}}", &row[..row.len()-1]).replace("\"t\":0", "\"t\":1");
+    replay_text(&complete_recording(&format!("{first}\n{second}"), 2), &world, &mut state);
+    assert_eq!(state.ticks_frozen, 0);
+}
+
+#[test]
+#[should_panic(expected = "minecraft:pointed_dripstone")]
+fn replay_rejects_unmodeled_landing_by_name() {
+    let (mut world, mut state) = stationary_fixture();
+    world.fill([-1,-1,-1], [1,-1,1], load_block(&Object::parse(
+        r#"{"boxes":[[0,0,0,1,1,1]],"inside":"unmodeled","block":"minecraft:pointed_dripstone"}"#
+    )));
+    replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
 }

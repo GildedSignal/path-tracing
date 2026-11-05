@@ -402,3 +402,64 @@ fn suffocation_full_cube_keeps_sub_epsilon_overlap() {
     let bounds = Aabb::new(0.1, 1.0-5.0e-8, 0.1, 0.9, 2.0, 0.9);
     assert!(world.collides_with_suffocating_block(bounds, CollisionContext::of(&player())));
 }
+#[test]
+fn powder_snow_frost_accumulates_once_and_caps() {
+    let mut world = floor(0.6, false);
+    world.fill([-1, 0, -1], [1, 1, 1], Block {
+        inside: Inside::PowderSnow,
+        ..Block::boxes(&[])
+    });
+    let mut state = player();
+    for frozen in 1..=140 {
+        tick(&mut state, &world, &Input::default());
+        assert!(state.in_powder_snow);
+        assert_eq!(state.ticks_frozen, frozen);
+        let modifier = -0.05f32 * (frozen as f32 / 140.0f32);
+        let expected = (0.1f32 as f64 + modifier as f64) as f32;
+        assert_eq!(state.speed.to_bits(), expected.to_bits(), "frozen={frozen}");
+    }
+    tick(&mut state, &world, &Input::default());
+    assert_eq!(state.ticks_frozen, 140);
+    assert_eq!(state.speed, 0.05f32);
+    state.leather_boots = true;
+    tick(&mut state, &world, &Input::default());
+    assert_eq!(state.ticks_frozen, 138);
+}
+
+#[test]
+fn frost_decays_after_travel_before_speed_refresh() {
+    let world = floor(0.6, false);
+    let mut state = PlayerState { ticks_frozen: 72, ..player() };
+    tick(&mut state, &world, &Input { forward: true, sprint: true, ..Input::default() });
+    // Travel uses the old stored speed, then frost ADD_VALUE precedes sprint ADD_MULTIPLIED_TOTAL.
+    let acceleration = 0.1f32 * (0.21600002f32 / (0.6f32 * 0.6f32 * 0.6f32));
+    assert_eq!(state.position.z.to_bits(), (0.98f32 as f64 * acceleration as f64).to_bits());
+    assert_eq!(state.ticks_frozen, 70);
+    let expected = ((0.1f32 as f64 + (-0.025f32) as f64) * (1.0 + 0.3f32 as f64)) as f32;
+    assert_eq!(state.speed.to_bits(), expected.to_bits());
+    for _ in 0..35 {
+        tick(&mut state, &world, &Input::default());
+    }
+    assert_eq!(state.ticks_frozen, 0);
+    assert_eq!(state.speed, 0.1f32);
+}
+
+#[test]
+fn frost_modifier_requires_non_air_support_and_clamps_attribute() {
+    let mut state = PlayerState {
+        position: Vec3::new(0.5, 10.0, 0.5),
+        ticks_frozen: 140,
+        ..PlayerState::default()
+    };
+    tick(&mut state, &BoxWorld::default(), &Input::default());
+    assert_eq!(state.ticks_frozen, 138);
+    assert_eq!(state.speed, 0.1f32);
+    let world = floor(0.6, false);
+    let mut state = PlayerState { ticks_frozen: 142, movement_speed: 0.0, ..player() };
+    tick(&mut state, &world, &Input::default());
+    assert_eq!(state.speed, 0.0);
+    state.movement_speed = 0.1f32 as f64;
+    state.ticks_frozen = 200;
+    tick(&mut state, &world, &Input::default());
+    assert_eq!(state.speed, 0.05f32);
+}
