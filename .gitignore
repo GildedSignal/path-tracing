@@ -9,3 +9,5 @@ jobs/*/stderr.txt
 jobs/*/full-prompt.md
 lab/gates/results/*
 !lab/gates/results/README.md
+lab/results/*
+!lab/results/README.md
