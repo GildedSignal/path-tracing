@@ -4,26 +4,26 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## First ten minutes
 
-0. Read "In flight" below.
+0. Read "Now" below: it says what is running and what each branch needs next.
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
 2. Run `git status --short` and `git log -8 --oneline`.
 
-## Now (5 November, midday)
+## Now (5 November, about 11:00; written before a compaction)
 
-- **Done today:** the recorder and dumper (1.2 to 1.2e) passed gate 1.2 live over RCON and are merged into `main` (report: `lab/gates/evidence/gate-1.2-20261105.md`; full evidence on `D:\path-tracing-evidence`).
-- **Running:**
-  - job 1.6 (GPT Sol) in `D:\path-tracing-wt\fixtures`: the L0 fixtures. The bot's client exports the world around each recording; courses for every terrain class; one recording command;
-  - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab`: GLM's harness on Actions.
-- **Law fixes:** job 1.5b is committed (`45a8d0b`, 38 tests pass). Job 1.5c (running) seeds the sprint latch from the fixture's `player` line, not from tick zero (the 1.5b spec was wrong); job 1.6 must write `isSprinting` there.
-- **Open for L0:** two of the four mutants can't be caught by random recordings. Axis tie needs |x| = |z| exactly (a deliberate 45° corner fixture, an L0-x worst case). Step-up +1 ulp may be unreachable with vanilla geometry; if so it is an equivalent mutant, and the red-team replaces it at freeze (ladder.md), which is a repaired control, not a weakened gate.
-- **GPT is at its usage limit until 14:00** (5 November). Job 1.7 stopped before changing anything; a background relaunch is set for 14:05 on `wt/tracks`, which is cut from `wt/fixtures`. If it didn't run, relaunch it by hand.
-- **Job 1.7,** parkour tracks (S25): `/track new <name>` and two stick clicks, one timer for him and the bot, his best time as the bot's minimum line.
-- **Fixtures not ready** (the Sonnet judge of 1.6): job 1.6b (fixes) and job 1.5d (the reader meets real recordings), both after GPT's reset; 1.6b first. The step-up mutant is equivalent on the game's domain: replace it at the L0 freeze with a red-team-chosen one.
-- **Next:** run `record-fixtures.ps1` (Julien's client out), then L0 by a fresh judge, then merge `wt/law`.
-- **After L1:** the integrator writes the first lenses, only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, jar questions for the elytra port; the breaker once fixtures exist. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.
-- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
-- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`. Relaunch with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`; answers go into its `prompt.md`.
-- **Done:** the philosophy log (step 0); toolchain (1.0); lab hygiene (1.1, apart from the above); prior art (1.4: port from the bytecode, Azalea only as a reading guide; Baritone v1.19.0 runs on 26.2 for Phase 12); the representation's red-team; the register checks; ES's testing method (`ladder.md`) and the one-liner audit (S19).
+**Nothing is running right now.** GPT is at its usage limit until 14:00. Two background shells in the main session will relaunch at 14:05 and 14:06; if the session was compacted or restarted, they may have died, so check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`.
+
+| Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
+|---|---|---|
+| `wt/law` (`law`) | the Rust law, jobs 1.5 to 1.5c committed (`0f6c901`; 39 tests pass, four mutant builds). Judged "ready with fixes"; fixes done | job **1.5d**: the replay reader meets the real recordings (the `end` trailer, `serverEnd` timing, new world fields, powder-snow frost). Then L0 |
+| `wt/fixtures` (`fixtures`) | job 1.6, the fixture recorder (`b3d3297`). Judged **not ready** | job **1.6b** (queued for 14:06): a failed run must not end the session, water floods the start, one-tick server reads, powder snow, the corner course for the axis tie, edges, exporter values. Then its judge, then `record-fixtures.ps1` live (the server is ours to use, S29), then L0 by a fresh judge, then merge `wt/fixtures` and `wt/law` |
+| `wt/tracks` (`tracks`), cut from `wt/fixtures` | job **1.7**, parkour tracks (S25 to S28), not started: GPT's limit stopped it | relaunch queued for 14:05. Merge after `wt/fixtures` |
+| `main` | recorder merged (gate 1.2 passed live), GLM harness merged | — |
+
+- **L0's planted faults:** the axis tie gets the scripted corner course (1.6b). The step-up fault (+1 ulp) looks unreachable with vanilla blocks (GLM lens `step-up-reachability` settles it); if so, the red-team replaces it at L0's freeze, which repairs the control and doesn't weaken the gate.
+- **GLM:** the harness is merged (`.github/workflows/glm-lab.yml`, started only by hand). Three lenses exist (`lab/lenses/`): `hook-catalogue`, `step-up-reachability`, `elytra-law`, all jar questions with checkable answers. Dispatch: `gh workflow run glm-lab.yml -R GildedSignal/path-tracing -f lenses="hook-catalogue step-up-reachability elytra-law" -f minutes=60`; results come back as the artifact `glm-lab-results` (`gh run download`). **Blocked on Julien:** the Actions secret, `scripts\set-glm-key.ps1 -Sync` (his key is stored locally already).
+- **Integrator left from 1.1:** the lab server on D: (port 25566) with fixture worlds; `/tick rate` in the gate runner. The superflat server is running and ours to use (S29).
+- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`, then a Sonnet judge in a fresh context (one Claude sub-agent at a time), then fixes as a new job.
+- **Done:** the philosophy log; toolchain (1.0); lab hygiene (1.1, apart from the above); recorder and dumper (1.2, gate passed live, report `lab/gates/evidence/gate-1.2-20261105.md`, evidence on `D:\path-tracing-evidence`); prior art (1.4); the Rust law ported and fixed (1.5 to 1.5c); ES's testing method; the one-liner audit; least-time claims 13 and 14; GLM's harness.
 ## The roadmap (approved 4 November; one sub-agent per family at a time)
 
 1. **The law.**
