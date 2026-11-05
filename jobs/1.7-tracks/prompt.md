@@ -30,6 +30,7 @@ Read first: `bot/src/pathtracing/` (`Pointer.java`: the stick; `Bot.java`; `Reco
 ## The bot
 
 - A bot command `track run <name>`: teleport to A's top centre over RCON-style `tp` as `replay` does, settle, then `goto` B with the current planner. The same detector times it, and its runs go to the same file with its name. Report its latency from the command to its first non-empty input separately.
+- **The same liberty as Julien** (S27): he may start sprinting or moving on A without leaving it, and the clock only starts when he leaves. So may the bot. Nothing in the bot's side may restrict its movement on A or start its clock earlier than the detector does.
 
 ## Done means
 

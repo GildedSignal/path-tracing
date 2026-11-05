@@ -11,7 +11,7 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
   - Each rung reports the distribution of T / UB and of the bracket width UB / LB.
 - **Human baseline:** Julien runs the same A to B himself, and the time he takes is recorded "for grounding in T not in method" (S14).
   - **His time is the minimum threshold** (S25): on every track he has run, the bot's T must be at most his best T. Surpassing him is the aim.
-  - Tracks (S25): he defines A and B on the superflat; T runs from the tick the body leaves A to the tick it touches B, measured by the same detector for him and for the bot. The bot's latency from command to first move is reported separately.
+  - Tracks (S25): he defines A and B on the superflat; T runs from the tick the body leaves A to the tick it touches B, measured by the same detector for him and for the bot. The bot's latency from command to first move is reported separately. Time on A is free for both (S27): a run-up on A, sprinting or moving without leaving it, costs nothing, so for the planner every move on A is a zero-cost edge and it chooses its own exit speed and point.
   - Only his time is used, never his path.
   - He runs it in survival with the same toolkit as the bot, without modifying the world.
   - His T is a real upper bound: a route that fast exists. Every rung reports the bot's T / his T next to T / UB.
