@@ -1,0 +1,120 @@
+# The GLM lab's host (lab/README.md): it uses no Claude or Codex usage, and GLM never touches the code.
+# GLM's job holds a read-only token and no git credential. A separate, clean job only copies each finished
+# lab/results/<id>/ onto its own claude/lab-<id> branch, and pushes it only if nothing else changed.
+name: glm-lab
+on:
+  schedule: [{cron: '17 * * * *'}]   # a backstop: each window starts the next itself (Julien: "let it work")
+  workflow_dispatch:
+concurrency: {group: glm-lab, cancel-in-progress: false}
+
+jobs:
+  runs:
+    runs-on: [self-hosted, glm]   # agonbox, as the isolated user glmlab (lab/agonbox-setup.sh; Julien, 5 October)
+    timeout-minutes: 700   # agonbox: up to 5 h waiting for GLM's window, then up to 5 h of runs
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Three GLM runs, each in its own worktree
+        env: {ZAI_API_KEY: '${{ secrets.ZAI_API_KEY }}', READWISE_TOKEN: '${{ secrets.READWISE_TOKEN }}', LAB_PUBLISH: none}
+        run: |
+          set -u
+          [ -n "$ZAI_API_KEY" ] || { echo "ZAI_API_KEY secret missing"; exit 2; }
+          if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL   # disk for three cargo targets
+          elif curl -s --max-time 4 -o /dev/null http://192.168.1.1; then
+            echo "refused: this runner reaches the home network (lab/agonbox-setup.sh's firewall is off)"; exit 2
+          fi
+          rm -rf ../lab-*; git worktree prune
+          for b in $(git for-each-ref --format='%(refname:lstrip=3)' 'refs/remotes/origin/wt/'); do git branch -q "$b" "origin/$b"; done
+          bash lab/setup.sh
+          ~/.local/bin/omp usage 2>&1 | tail -6 || true   # GLM's quota, logged each window, to pace the slots by data
+          # GLM's 5-hour token window: if it is spent, wait here on agonbox (free) until its stated reset, then run.
+          for attempt in 1 2 3 4 5 6; do
+            probe=$(timeout 120 ~/.local/bin/omp -p --model=zai/glm-5.3 --no-session --max-time=1m "Reply with the single word ok." 2>&1 || true)
+            echo "$probe" | grep -q "rate_limit_error" || break
+            reset=$(echo "$probe" | grep -o 'reset at [0-9-]* [0-9:]*' | head -1 | cut -d' ' -f3-)
+            wait_s=$(( $(TZ=Asia/Shanghai date -d "$reset" +%s 2>/dev/null || echo $(( $(date +%s) + 1800 ))) - $(date +%s) + 60 ))
+            [ "$wait_s" -gt 60 ] || wait_s=600; [ "$wait_s" -lt 18000 ] || wait_s=18000
+            echo "GLM's window is spent (reset $reset China time): waiting $((wait_s / 60)) minutes"; sleep "$wait_s"
+          done
+          bash lab/next.sh | tee next.txt
+          j=0
+          while read -r kind arg min; do
+            git worktree add -q --detach "../lab-$j" HEAD
+            (cd "../lab-$j" && CARGO_TARGET_DIR="$HOME/lab-target-$j" bash lab/run.sh "$kind" "$arg" "$min" | tail -1) < /dev/null > "id-$j"; cat "id-$j"
+            j=$((j + 1))
+          done < next.txt
+          end=$(( $(date +%s) + 300 * 60 ))
+          mkdir -p out
+          for i in $(seq 0 $((j - 1))); do
+            id=$(cat "id-$i"); d=../lab-$i/lab/results/$id
+            until [ -f "$d/DONE" ] || [ "$(date +%s)" -gt $end ] || ! pgrep -f -- "$id" >/dev/null; do sleep 60; done
+            sleep 5
+            if [ -f "$d/DONE" ]; then cat "$d/DONE"; cp -r "$d" out/; else echo "unfinished: $id"; fi
+          done
+          pkill -x omp || true
+          find out -type l -delete
+          grep -rlF -- "$ZAI_API_KEY" out | xargs -r rm -f   # never publish a key or token
+          [ -z "${READWISE_TOKEN:-}" ] || grep -rlF -- "$READWISE_TOKEN" out | xargs -r rm -f
+      - uses: actions/upload-artifact@v4
+        with: {name: results, path: out/, if-no-files-found: ignore, retention-days: 14}
+
+  publish:
+    needs: runs
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency: {group: glm-lab-publish, cancel-in-progress: false}   # one writer of lab/wiki at a time
+    permissions: {contents: write, actions: write}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}   # the wiki's merges and certificates need main's history
+      - uses: actions/download-artifact@v4
+        with: {name: results, path: ../results}
+        continue-on-error: true
+      - name: Publish each result on its own claude/lab-<id> branch, and nothing else
+        run: |
+          git config user.name glm-lab; git config user.email glm-lab@users.noreply.github.com
+          git fetch -q origin main && base=$(git rev-parse origin/main)   # main's tip: a branch cut from an older commit would look like a workflow edit
+          for d in ../results/*/; do
+            [ -d "$d" ] || continue
+            id=$(basename "$d")
+            [[ $id =~ ^[0-9]{8}-[0-9]{4}-[a-z0-9.-]+-[0-9a-f]{4}$ ]] || { echo "refused (id): $id"; continue; }
+            git checkout -q -B "claude/lab-$id" "$base"
+            mkdir -p lab/results && cp -r "$d" "lab/results/$id"
+            git add "lab/results/$id"
+            git commit -q -m "lab $id: $(head -1 "$d/DONE" | sed "s/ | branch.*//")" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            if [ -z "$(git diff --name-only "$base" HEAD | grep -v "^lab/results/$id/")" ]; then
+              git push -q origin "claude/lab-$id" && echo "published: $id | $(head -1 "$d/DONE")"
+            else echo "refused (paths): $id"; fi
+          done
+      - name: Fold the graded runs' pages into the wiki on main (lab/wiki/ only), then rewrite its index
+        if: always()
+        run: |
+          git fetch -q origin '+refs/heads/claude/lab-*:refs/remotes/origin/claude/lab-*'
+          for try in 1 2 3; do
+            git checkout -q -B main origin/main
+            [ -d ../results ] && python3 lab/wiki.py apply ../results "$(git rev-parse HEAD)" || python3 lab/wiki.py index
+            git add lab/wiki
+            git diff --cached --quiet && { echo "wiki unchanged"; break; }
+            if [ -n "$(git diff --cached --name-only | grep -v '^lab/wiki/')" ]; then echo "refused (paths outside lab/wiki)"; break; fi
+            git commit -q -m "lab wiki: $(ls ../results 2>/dev/null | tr '\n' ' ')" -m "Built-by: glm-lab publish" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            git push -q origin main && { echo "wiki pushed"; break; }
+            git fetch -q origin main; sleep 5
+          done
+      - name: Start the next window at once, unless GLM itself failed (all grades missing means its token window is spent)
+        if: always()
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          # Julien's account is GitHub Free: 2,000 Actions minutes a month for private repos. Stop cleanly before they run out,
+          # because a job cancelled for lack of minutes loses its window's results.
+          # Before 5 October 15:30 UTC the GLM job ran on GitHub's machines; since then it runs on agonbox and only this job is billed.
+          used=$(gh run list --workflow glm-lab.yml --limit 400 --created ">=$(date -u +%Y-%m-01)" --json startedAt,updatedAt \
+            --jq 'map(if .startedAt < "2026-10-05T15:30:00Z" then ((.updatedAt|fromdate) - (.startedAt|fromdate))/60 + 2 else 2 end) | add // 0 | floor')
+          echo "glm-lab minutes this month: about $used"
+          if [ "$used" -ge 1750 ]; then
+            gh workflow disable glm-lab.yml && echo "budget reached: workflow disabled (re-enable with: gh workflow enable glm-lab.yml)"
+          elif ls ../results/*/DONE >/dev/null 2>&1 && grep -L "Grade: missing" ../results/*/DONE | grep -q .; then
+            gh workflow run glm-lab.yml --ref main && echo "next window started"
+          else echo "no healthy result: the hourly backstop retries"; fi
