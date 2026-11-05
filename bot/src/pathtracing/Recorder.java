@@ -24,6 +24,7 @@ import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 /** START applies controls, END records their result. Packets between ticks belong to the next END. */
 public final class Recorder {
     private static BufferedWriter output;
+    private static JsonObject header;
     private static Path outputPath;
     private static Path temporaryPath;
     private static String name;
@@ -63,22 +64,15 @@ public final class Recorder {
     }
 
     private static void open(Minecraft mc, String runName) throws IOException {
-        JsonObject header = TickInput.holdSettings(mc);
-        header.addProperty("type", "recording");
+        JsonObject metadata = TickInput.holdSettings(mc);
+        metadata.addProperty("type", "recording");
         Path path = file(mc, "recordings", runName);
         if (Files.exists(path)) throw new IllegalStateException("Output already exists: " + path);
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
         if (Files.exists(temporary)) throw new IllegalStateException("Temporary output already exists: " + temporary + ". Delete it before reusing this name.");
         Files.createDirectories(path.getParent());
         BufferedWriter writer = Files.newBufferedWriter(temporary, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
-        try {
-            writer.write(header.toString());
-            writer.write('\n');
-            writer.flush();
-        } catch (IOException e) {
-            writer.close();
-            throw e;
-        }
+        header = metadata;
         output = writer;
         outputPath = path;
         temporaryPath = temporary;
@@ -159,6 +153,11 @@ public final class Recorder {
         output = null;
         try {
             try (writer) {
+                if (header != null) {
+                    writer.write(header.toString());
+                    writer.write('\n');
+                    header = null;
+                }
                 JsonObject end = new JsonObject();
                 end.addProperty("type", "end");
                 end.addProperty("ticks", tick);
@@ -187,8 +186,20 @@ public final class Recorder {
                 TickInput.release(mc);
                 return;
             }
-            replay.get(tick).apply(mc);
         }
+        if (header != null) {
+            header.add("initialPlayer", PlayerSnapshot.capture(mc));
+            try {
+                output.write(header.toString());
+                output.write('\n');
+                output.flush();
+                header = null;
+            } catch (IOException e) {
+                abort(mc, "Initial player write failed: " + e.getMessage());
+                return;
+            }
+        }
+        if (replaying()) replay.get(tick).apply(mc);
         applied = TickInput.capture(mc);
     }
 

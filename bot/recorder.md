@@ -7,6 +7,7 @@ Run these whispers from the owner (Brain_Forge by default):
 /msg PathBot rec start <name>
 /msg PathBot rec stop
 /msg PathBot dump blocks
+/msg PathBot export <name> <x0> <y0> <z0> <x1> <y1> <z1>
 ```
 
 Names contain only letters, digits, `_` and `-`. Replay reads input `name` and writes recording `out`
@@ -198,3 +199,98 @@ with `Health`, `foodLevel`, `foodSaturationLevel`, `foodExhaustionLevel`, `Pos`,
 Vectors are numeric arrays. The fields come from separate sequential RCON queries, not an atomic
 snapshot. Restore fixture state, equipment, effects and server resources before comparing replays;
 the replay command only teleports and waits for the specified movement settling condition.
+
+## L0 world export and initial state (job 1.6)
+
+`export` writes `<gameDir>/pathtracing/fixtures/<name>.world.jsonl` through a sibling `.tmp`.
+Both existing final and temporary outputs are refused. Failures retain the temporary output.
+The two corners are normalized per axis and bounds are inclusive. Every intersecting client chunk
+must be loaded. Export refuses during recording/replay. The completion reply is
+`Exported <name>: <count> blocks.`
+
+Every non-air position becomes a `kind=block` row with integer `at`, registry `block` id, diagnostic
+`state` string and local numeric AABB arrays. `boxes` uses the empty collision context. `aboveBoxes`,
+`belowBoxes`, `sneakBoxes` and `holdingScaffoldingBoxes` use the dumper's contexts translated to that
+world position, with the client's actual neighbours. The holding-scaffolding array is extra metadata
+that the current Rust reader ignores. `insideBoxes` comes from `getEntityInsideCollisionShape` with
+the actual player. Equipment, keys, pose, fall distance, position and bounds are restored in `finally`.
+
+Friction, speed/jump factors and bounce are block getters, including `getBounceRestitution`.
+Climbable, fence, wall/gate, bounce suppression and fall-distance reset are the live block tags.
+Fluid kind is read through fluid tags, height through `getHeight(level,pos)` and current through
+`getFlow(level,pos)`. Floats and vectors retain raw IEEE fields. A world row reads client minY,
+difficulty and dimension FAST_LAVA. Remote ClientLevel has no game rules. Export therefore sends
+the vanilla natural-health-regeneration query and reads the `commands.gamerule.query` translatable
+reply's arguments, independent of client language. Missing operator permission/feedback times out
+and refuses export. There is no assumed game-rule value and no player row in an export.
+
+The class-derived hooks follow the 26.2 bytecode. These are the complete export derivations.
+
+- `ScaffoldingBlock` supplies `scaffolding`.
+- `SlimeBlock` supplies `slime`, which selects its landing-damage and step hooks in Rust.
+- A `LiquidBlock` carrying water, or a `BubbleColumnBlock`, supplies `waterBlock`.
+- `WebBlock`, `PowderSnowBlock` and `HoneyBlock` select `inside=cobweb`, `powderSnow` and `honey`.
+  Other blocks select `none`. Their hook parameters are implemented by the law.
+- `HayBlock` and `HoneyBlock` supply `fallOnMultiplier=0.2F`, `BedBlock` supplies `0.5F`, and
+  the default landing hook supplies `1.0F`. These hooks have no numeric getter. Slime and powder
+  snow retain their separate law hooks. Bounce itself is read from the game, including beds/slime.
+- `LadderBlock` reads `FACING` as a vanilla 3D direction id. An open `TrapDoorBlock` reads its
+  `FACING` into `openTrapdoorFacing`. Closed trapdoors omit that field.
+
+The recording header now also contains `initialPlayer`, captured at START after replay settling
+and before applying input zero. Header writing is deferred to this point. Stopping an empty or
+aborted replay still writes its required metadata/trailer. Existing metadata and tick rows retain
+their format. The snapshot has every player field accepted by the fixture README, including
+attributes, fluid/eye flags, support position, stuck multiplier, jump delay and client food timer.
+Read-only mixin accessors expose private/protected state. Its tickCount is the pre-tick count.
+Local FoodData exhaustion and timer are client observations, not server-authoritative values.
+
+### Fixture driver
+
+```powershell
+.\lab\gates\record-fixtures.ps1 -Jar .\bot\build\pathtracing.jar
+.\lab\gates\record-fixtures.ps1 -Courses ice,edges -Runs 8 -Ticks 400 -Seed 1
+.\lab\gates\tests\test-record-fixtures.ps1
+.\lab\gates\tests\test-courses.ps1
+.\lab\gates\tests\test-fixture-json.ps1
+```
+
+The optional Jar installation has the same running-client hash guard as gate 1.2. An installed
+job 1.6 jar is otherwise required. The driver takes the rig lock, refuses Julien's exact online
+name, validates hold-style options and stops only its own PID/start-time-matched processes.
+`fixture-rig.ps1` carries gate 1.2's bounded child-process transport and ownership handling.
+Courses accepts an array or comma-separated names. Omitting it selects every course. Defaults
+for runs, ticks and seed are in the driver. Course seeds use declaration index, so selecting a
+subset preserves each course's input sequence for the same Runs/Seed.
+
+`courses.ps1` constructs enclosed patches on the superflat. Solid floors, walls and roofs contain
+any walk and separate the classes. The start pad is plain stone. Edges use a raised grid over a
+safe catch floor. The water patch has a source pool and a flowing lip. Bubble columns are omitted
+because the frozen fixture schema/law has no acceleration hook for them. The driver teleports
+to load chunks, builds, waits for delivery, and verifies the last gold-block marker through a
+full client export before replaying. Each run exports the inclusive floored position extrema of
+both initialPlayer and post-tick rows, expanded by three blocks on each axis.
+
+Kept recordings are byte-for-byte copies. Their world companions contain one player row, the
+unchanged client export and one serverEnd row. Both files are staged before publication. Existing
+fixtures or staging files are refused. Rejections retain inputs, recordings, exports and command
+logs under `lab/gates/results`, with per-course reasons and kept/rejected/not-run counts.
+
+Server timing remains unaligned. The start sample precedes replay teleport and settling. Initial
+health, food and saturation must match the settled client's snapshot or the run is rejected.
+The player's resource fields then use that server sample, including exhaustion. This assumes
+exhaustion stays constant between sampling and input zero. The end sample is the first operation
+after the Saved reply is observed. `server-state.ps1` issues separate queries, spanning an
+unbounded number of server ticks. These endpoints are provisional resource evidence. No player
+resources, equipment or effects are reset. Live L0 resource exactness requires tick-aligned reads.
+
+The driver assumes the configured rig is the intended lab superflat, the bot is op, and the client
+can load each entire patch. Existing courses at these reserved coordinates are replaced.
+World exports describe the state after a run and assume movement-relevant terrain stayed static
+during it. Readiness verifies loaded chunks and the final construction marker. Coverage of each
+law hook and mutant is still judged by L0 against the recorded paths.
+
+The current `wt/law` replay reader accepts the header but rejects the recorder's `type=end` trailer.
+It needs trailer support before these unchanged recordings can run through L0. The independent
+JSON smoke check compiles a copy of its parser and checks a hand-written block row without
+modifying `wt/law`.
