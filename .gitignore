@@ -11,3 +11,8 @@ lab/gates/results/*
 !lab/gates/results/README.md
 lab/results/*
 !lab/results/README.md
+
+# Track definitions and run times are kept (the human baseline); recordings and locks are not
+recordings/
+lab/tracks/.lock
+lab/tracks/**/*.tmp
