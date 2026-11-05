@@ -33,6 +33,7 @@ public final class TrackTests {
         recordings(root.resolve("recordings"));
         files(root.resolve("files"));
         rcon(root.resolve("rcon"));
+        TrackModeTests.run(root.resolve("human-mode"));
         TrackMixinAudit.run(Path.of(args[1]), Path.of(args[2]));
         System.out.println("Passed " + checks + " headless track checks.");
     }
