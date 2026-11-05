@@ -24,7 +24,14 @@ Update `bot/recorder.md` to say how a gate drives the bot over RCON.
 
 ## B. The judge's findings on 1.2b
 
-(added by the integrator after the review)
+A judge from another model family reviewed commit `a6e3d7a` and passed it with fixes. Make these changes:
+
+1. **The rig lock (required).** None of the scripts in `lab/gates/` takes the rig lock (`Enter-Rig` / `Exit-Rig`); the gate driver that calls them holds it. Remove the lock from all four existing scripts, and don't add it to `bot-command.ps1`.
+2. **The dump's line count.** The frozen 1.2 gate says the dump's line count equals the registry's state count. That means state lines, excluding the header and summary lines. `check-dump.ps1` is the gate's check; say both in `bot/recorder.md`.
+3. **A truncated recording.** Every recording ends with a trailer line `{"type":"end","ticks":N,"complete":true|false}`, where N is the number of tick rows. `complete` is true only when a replay ran its whole input file, or a recording was stopped by `rec stop`. An early replay cancel writes `false`. `check-recording.ps1` exits non-zero on a missing trailer or `complete:false`, and `compare-recordings.ps1` compares the trailers too.
+4. **A stale `.tmp`.** When a `.tmp` blocks a name, the reply names the file and says to delete it.
+5. **What a comparison covers.** `compare-recordings.ps1` compares every field of each tick row except `tickCount`, which is absolute: the raw bits, the inputs, `onGround`, the collision flags, `pose` and the food values. It reports the first tick and the first field that differ.
+6. **Exact start doubles.** `new-inputs.ps1` writes the start's doubles with `.ToString('R', [Globalization.CultureInfo]::InvariantCulture)` and its floats as `[single]` with the same format, building that JSON line by hand instead of `ConvertTo-Json`. Check that a start of `0.30000000000000004` round-trips.
 
 ## Done means
 
