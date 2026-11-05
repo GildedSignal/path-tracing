@@ -37,6 +37,7 @@ final class TrackModeTests {
         codecs(root.resolve("files"));
         transactions(root.resolve("transactions"));
         failures(root.resolve("failures"));
+        serverOrdering(root.resolve("server-ordering"));
         System.out.println("Passed " + checks + " inventory and human track-mode checks.");
     }
 
@@ -138,16 +139,19 @@ final class TrackModeTests {
         boolean permitRefill = true;
         boolean reply = true;
         boolean acknowledge = true;
+        boolean deferRefill;
+        boolean pendingRefill;
         int applications;
         int confirmations;
+        int queries;
         Consumer<TrackMode.Observation> pending;
+        Consumer<String> pendingFailure;
         final List<String> messages = new ArrayList<>();
         final List<String> commands = new ArrayList<>();
         Server(TrackStore store) { this.store = store; }
         @Override public TrackInventory inventory() { return client; }
         @Override public String mode() { return clientMode; }
         @Override public boolean alive() { return alive; }
-        @Override public boolean full() { return full; }
         @Override public void say(String message) { messages.add(message); }
         @Override public void command(String command) {
             savedBeforeMutation();
@@ -155,7 +159,10 @@ final class TrackModeTests {
             if (command.startsWith("gamemode ") && permitMode) {
                 serverMode = command.substring(9);
                 if (acknowledge) clientMode = serverMode;
-            } else if (command.startsWith("effect ") && permitRefill) full = true;
+            } else if (command.startsWith("effect ") && permitRefill) {
+                if (deferRefill) pendingRefill = true;
+                else full = true;
+            }
         }
         void savedBeforeMutation() {
             try { check(store.readSession("human").inventory().equals(original), "Original inventory is durable before mutation"); }
@@ -168,7 +175,9 @@ final class TrackModeTests {
             if (permitSlots) server = value;
         }
         @Override public void confirm(TrackInventory value) { confirmations++; client = value; }
-        @Override public void query(Consumer<TrackMode.Observation> response) {
+        @Override public void query(Consumer<TrackMode.Observation> response, Consumer<String> failure) {
+            queries++;
+            pendingFailure = failure;
             if (reply) response.accept(new TrackMode.Observation(server, serverMode, full));
             else pending = response;
         }
@@ -176,7 +185,10 @@ final class TrackModeTests {
     }
 
     private static void ready(TrackMode mode, long base) {
-        for (long tick = base; tick < base + 10 && !mode.ready(); tick++) mode.tick(tick);
+        for (long tick = base; tick < base + 10 && !mode.ready(); tick++) {
+            mode.serverTick();
+            mode.tick(tick);
+        }
         check(mode.ready(), "Preparation reaches READY");
     }
 
@@ -287,10 +299,13 @@ final class TrackModeTests {
                 case "query" -> port.reply = false;
                 case "refill" -> port.permitRefill = false;
                 case "target-mode" -> { port.reply = false; mode.tick(1); port.permitMode = false; port.answer(); }
-                case "final-refusal" -> { port.reply = false; mode.tick(1); port.answer(); mode.tick(2); port.server = original; port.answer(); }
+                case "final-refusal" -> { port.reply = false; mode.tick(1); port.answer(); mode.tick(2); mode.serverTick(); mode.tick(3); port.server = original; port.answer(); }
                 case "restore-slots" -> { ready(mode, 1); mode.exit(); port.permitSlots = false; }
             }
-            for (long tick = 3; tick < 500 && mode.state() != TrackMode.State.FAILED; tick++) mode.tick(tick);
+            for (long tick = 4; tick < 500 && mode.state() != TrackMode.State.FAILED; tick++) {
+                mode.serverTick();
+                mode.tick(tick);
+            }
             check(mode.state() == TrackMode.State.FAILED && store.readSession("human").inventory().equals(original), fault + " stops and retains original session");
             check(port.messages.stream().anyMatch(s -> s.contains("Saved session retained")), fault + " reports failure in chat");
             if (fault.equals("permission")) check(port.applications == 0, "No creative packets without mode acknowledgement");
@@ -316,8 +331,10 @@ final class TrackModeTests {
         port.clientMode = "creative";
         mode.tick(3);
         var obsoleteReply = port.pending;
+        var obsoleteFailure = port.pendingFailure;
         mode.exit();
         obsoleteReply.accept(new TrackMode.Observation(port.server, port.serverMode, true));
+        obsoleteFailure.accept("Obsolete malformed server reply");
         check(mode.state() == TrackMode.State.ALIVE && port.confirmations == 0, "Exit invalidates in-flight kit callback");
         port.reply = port.acknowledge = true;
         for (long tick = 4; tick < 14 && mode.active(); tick++) mode.tick(tick);
@@ -332,5 +349,43 @@ final class TrackModeTests {
         ready(mode, 60);
         port.client = original;
         check(!mode.validateStart() && mode.state() == TrackMode.State.FAILED, "Departure with changed kit is refused");
+    }
+
+    private static void serverOrdering(Path root) throws Exception {
+        var store = store(root);
+        var port = new Server(store);
+        port.deferRefill = true;
+        var mode = new TrackMode(store, "human", port);
+        mode.enter("course");
+        mode.tick(1);
+        check(port.pendingRefill && !port.full && mode.state() == TrackMode.State.TARGET,
+            "Refill commands can be acknowledged before instant effects run on a server tick");
+        mode.tick(2);
+        mode.tick(3);
+        check(mode.state() == TrackMode.State.REFILL && port.queries == 1,
+            "Client ticks alone cannot verify the refill or arm the run");
+        port.full = true;
+        mode.serverTick();
+        mode.tick(4);
+        check(mode.ready() && port.queries == 2,
+            "A later server time packet permits one authoritative refill verification");
+        mode.exit();
+        exited(mode, port, 5);
+
+        // A failed verification stops the transaction; old callbacks cannot break recovery.
+        mode.enter("course");
+        port.reply = false;
+        mode.tick(20);
+        var error = port.pendingFailure;
+        error.accept("Server refused player data query");
+        check(mode.state() == TrackMode.State.FAILED && store.readSession("human") != null,
+            "Malformed/refused verification retains the session and stops");
+        mode.exit();
+        error.accept("Late verification failure");
+        check(mode.state() == TrackMode.State.ALIVE, "Late verification errors cannot invalidate explicit recovery");
+        port.reply = true;
+        exited(mode, port, 21);
+        check(port.commands.stream().filter(c -> c.equals("gamemode creative")).count() == 4,
+            "Every entry and exit explicitly requests creative, including an already-creative client");
     }
 }

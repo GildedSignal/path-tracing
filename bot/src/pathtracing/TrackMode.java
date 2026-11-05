@@ -5,17 +5,16 @@ import java.util.function.Consumer;
 
 /** Human-only transaction. The session is durable before the first server mutation. */
 final class TrackMode {
-    enum State { IDLE, ALIVE, CREATIVE, INVENTORY, TARGET, VERIFY, READY, FAILED }
+    enum State { IDLE, ALIVE, CREATIVE, INVENTORY, TARGET, REFILL, VERIFY, READY, FAILED }
     record Observation(TrackInventory inventory, String mode, boolean full) { }
     interface Port {
         TrackInventory inventory();
         String mode();
         boolean alive();
-        boolean full();
         void command(String command);
         void apply(TrackInventory inventory);
         void confirm(TrackInventory inventory);
-        void query(Consumer<Observation> response);
+        void query(Consumer<Observation> response, Consumer<String> failure);
         void say(String text);
     }
 
@@ -31,6 +30,8 @@ final class TrackMode {
     private int generation;
     private long deadline;
     private long now;
+    private long serverUpdates;
+    private long refillAfter;
     private State state = State.IDLE;
 
     TrackMode(TrackStore store, String player, Port port) {
@@ -43,6 +44,7 @@ final class TrackMode {
     boolean active() { return state != State.IDLE; }
     boolean ready() { return state == State.READY; }
     boolean restoring() { return restoring; }
+    void serverTick() { serverUpdates++; }
     String kitHash() { return TrackStore.sha256(kit.json()); }
 
     boolean validateStart() {
@@ -110,20 +112,36 @@ final class TrackMode {
                 if (!port.alive()) return;
                 state = State.CREATIVE;
                 deadline = now + 200;
-                if (!port.mode().equals("creative")) port.command("gamemode creative");
+                // Always order a server command before slots, including a stale creative client view.
+                port.command("gamemode creative");
             }
             if (now >= deadline) { fail("Server did not confirm " + state + " within 200 client ticks (permission or packet refusal)."); return; }
             if (state == State.CREATIVE && port.mode().equals("creative")) {
                 state = State.INVENTORY;
                 port.apply(target);
                 int request = generation;
-                port.query(observed -> acceptInventory(request, observed));
-            } else if (state == State.TARGET && port.mode().equals(targetMode) && (restoring || port.full())) {
-                state = State.VERIFY;
-                int request = generation;
-                port.query(observed -> complete(request, observed));
+                port.query(observed -> acceptInventory(request, observed), reason -> queryFailed(request, reason));
+            } else if (state == State.TARGET && port.mode().equals(targetMode)) {
+                if (!restoring) {
+                    // Instant effects run on the server's player tick. A later time packet is
+                    // a server-tick barrier; client saturation is not reliably synchronised.
+                    refillAfter = serverUpdates;
+                    state = State.REFILL;
+                } else verify();
+            } else if (state == State.REFILL && serverUpdates > refillAfter) {
+                verify();
             }
         } catch (RuntimeException failure) { fail(failure.getMessage()); }
+    }
+
+    private void verify() {
+        state = State.VERIFY;
+        int request = generation;
+        port.query(observed -> complete(request, observed), reason -> queryFailed(request, reason));
+    }
+
+    private void queryFailed(int request, String reason) {
+        if (request == generation && (state == State.INVENTORY || state == State.VERIFY)) fail(reason);
     }
 
     private void acceptInventory(int request, Observation observed) {

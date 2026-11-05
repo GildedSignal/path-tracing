@@ -12,10 +12,8 @@ import net.minecraft.world.level.GameType;
 final class TrackHumanClient implements TrackMode.Port {
     private final Minecraft mc;
     private boolean connected = true;
-    private TrackMode mode;
 
     TrackHumanClient(Minecraft mc) { this.mc = mc; }
-    void attach(TrackMode mode) { this.mode = mode; }
     void disconnect() { connected = false; }
 
     @Override public TrackInventory inventory() {
@@ -28,10 +26,6 @@ final class TrackHumanClient implements TrackMode.Port {
 
     @Override public String mode() { return mc.gameMode.getPlayerMode().getName(); }
     @Override public boolean alive() { return mc.player.isAlive(); }
-    @Override public boolean full() {
-        return mc.player.getHealth() == mc.player.getMaxHealth() && mc.player.getFoodData().getFoodLevel() == 20
-            && mc.player.getFoodData().getSaturationLevel() == 20.0f;
-    }
     @Override public void command(String command) { mc.player.connection.sendCommand(command); }
     @Override public void say(String text) { Bot.reply(mc, text); }
 
@@ -52,7 +46,7 @@ final class TrackHumanClient implements TrackMode.Port {
         mc.player.getInventory().setSelectedSlot(inventory.selected);
     }
 
-    @Override public void query(Consumer<TrackMode.Observation> response) {
+    @Override public void query(Consumer<TrackMode.Observation> response, Consumer<String> failure) {
         var connection = mc.player.connection;
         mc.player.connection.getDebugQueryHandler().queryEntityTag(mc.player.getId(), tag -> {
             if (!connected || mc.player == null || mc.level == null || mc.player.connection != connection) return;
@@ -62,7 +56,7 @@ final class TrackHumanClient implements TrackMode.Port {
                 boolean full = tag.getFloat("Health").orElseThrow() == mc.player.getMaxHealth()
                     && tag.getInt("foodLevel").orElseThrow() == 20 && tag.getFloat("foodSaturationLevel").orElseThrow() == 20.0f;
                 response.accept(new TrackMode.Observation(TrackInventoryCodec.server(tag, mc.level.registryAccess()), gameMode, full));
-            } catch (RuntimeException failure) { mode.fail("Server verification: " + failure.getMessage()); }
+            } catch (RuntimeException error) { failure.accept("Server verification: " + error.getMessage()); }
         });
     }
 }

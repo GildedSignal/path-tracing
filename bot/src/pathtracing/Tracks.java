@@ -146,6 +146,10 @@ public final class Tracks {
 
     static boolean selecting() { return creating != null; }
 
+    public static void serverTick() {
+        if (!isBot() && human != null) human.serverTick();
+    }
+
     static void click(Minecraft mc, BlockPos block, boolean cancel) {
         if (cancel) {
             command(mc, "cancel");
@@ -203,7 +207,15 @@ public final class Tracks {
                 say(mc, "Track run discarded.");
                 cancel(mc, true);
             }
+            boolean wasRestoring = mode.restoring();
             mode.tick(clock);
+            if (wasRestoring && !mode.active()) {
+                // Recover first, independently of track files. Do not immediately re-enter
+                // if the join/restore position is still on A.
+                reload();
+                suppressed = tracks.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
+                return;
+            }
             if (mode.active() && !mode.ready()) {
                 if (!mode.restoring() && mode.state() != TrackMode.State.FAILED && selected != null && !onA(mc, selected)) {
                     mode.fail("Stay on A until the survival kit is ready.");
@@ -233,7 +245,11 @@ public final class Tracks {
             selected = tracks.stream().filter(t -> !suppressed.contains(t) && t.dimension().equals(dimension(mc)) && onA(mc, t)).findFirst().orElse(null);
             if (selected == null) return;
             if (!isBot()) {
-                human.enter(selected.name());
+                try { human.enter(selected.name()); }
+                catch (IOException | RuntimeException failure) {
+                    human.fail("Cannot enter track mode: " + failure.getMessage());
+                    cancel(mc, true, false);
+                }
                 return;
             }
         }
@@ -287,10 +303,8 @@ public final class Tracks {
         if (human == null) {
             humanClient = new TrackHumanClient(mc);
             human = new TrackMode(STORE, mc.player.getName().getString(), humanClient);
-            humanClient.attach(human);
             try {
                 human.recover();
-                if (human.active()) suppressed = tracks.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
             } catch (IOException failure) {
                 human.fail("Cannot read the saved session: " + failure.getMessage());
                 throw new java.io.UncheckedIOException(failure);
