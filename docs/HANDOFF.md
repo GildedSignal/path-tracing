@@ -8,20 +8,15 @@ This file holds the state of the build, what is in flight and what comes next. I
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
 2. Run `git status --short` and `git log -8 --oneline`.
 
-## Now (5 November, late morning)
+## Now (5 November, midday)
 
+- **Done today:** the recorder and dumper (1.2 to 1.2e) passed gate 1.2 live over RCON and are merged into `main` (report: `lab/gates/evidence/gate-1.2-20261105.md`; full evidence on `D:\path-tracing-evidence`).
 - **Running:**
-  - the Sonnet judge of job 1.5, the Rust law (`ef3d04b` on `wt/law`; 21 tests pass, four mutants build; its braking table is in `jobs/1.5-law/last.md`). It reviews the port against the bytecode before L0 can run;
-  - job 1.2e (GPT Sol) in `D:\path-tracing-wt\recorder`: `lab/gates/run-gate-1.2.ps1`, one command that runs the frozen 1.2 gate live over RCON and writes a report. 1.2d (the 1.2c judge's fixes) is committed (`5a071fe`);
-  - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab` on `wt/glm-lab`: GLM's harness on Actions.
-- **After L1:** the integrator writes the first lenses, and only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, and jar questions for the elytra port. The breaker lens waits for the law (1.5) and fixtures. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.
-- **After 1.2e:**
-  1. commit it on `wt/recorder`;
-  2. `.\scripts\setup.ps1` from main (the bot's no-auto-input options), with Julien's client out; build the jar in the worktree;
-  3. a Haiku runner runs `run-gate-1.2.ps1 -Jar <worktree jar>` and returns the report's gate lines. PathBot must be op (replay sends `tp`);
-  4. recording the L0 fixtures for 1.5, then 1.5's judge. Recordings open with a header line and close with an `end` trailer; the replay harness must skip both;
-  5. the merges.
-- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
+  - the Sonnet judge of job 1.5, the Rust law (`ef3d04b` on `wt/law`; 21 tests pass, four mutants build). It reviews the port against the bytecode before L0 runs; its findings become a job;
+  - job 1.6 (GPT Sol) in `D:\path-tracing-wt\fixtures`: the L0 fixtures. The bot's client exports the world around each recording; courses for every terrain class; one recording command;
+  - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab`: GLM's harness on Actions.
+- **Next:** run `record-fixtures.ps1` (Julien's client out), then L0 by a fresh judge with the four mutants and a red-team-chosen one (ladder.md), then merge `wt/law`.
+- **After L1:** the integrator writes the first lenses, only where a target exists: a pre-freeze red-team of L0-x and of the legs ladder, jar questions for the elytra port; the breaker once fixtures exist. **Julien:** run `scripts\set-glm-key.ps1 -Sync` once to set the Actions secret.- **Integrator left from 1.1:** the lab server on D: (port 25566, RCON 25576) with fixture worlds; `/tick rate` in the gate runner.
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`. Relaunch with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`; answers go into its `prompt.md`.
 - **Done:** the philosophy log (step 0); toolchain (1.0); lab hygiene (1.1, apart from the above); prior art (1.4: port from the bytecode, Azalea only as a reading guide; Baritone v1.19.0 runs on 26.2 for Phase 12); the representation's red-team; the register checks; ES's testing method (`ladder.md`) and the one-liner audit (S19).
 ## The roadmap (approved 4 November; one sub-agent per family at a time)
