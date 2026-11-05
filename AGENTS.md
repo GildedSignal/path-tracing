@@ -44,7 +44,7 @@ No Fable (Julien, 4 November).
 - **Jobs that keep stopping.** A job that stops twice on its own failure goes back to the integrator for a new spec, not another relaunch.
 - **Julien's words.** His statements go into the register in PRINCIPLES.md, and models never reword them. For a new idea, think and talk with him first, and build when he says so.
 - **Pace.** No time estimates. Progress is the scoreboard: T, cost and scale. A gate passed is a step, not progress; exactness can absorb any amount of work (ES's post-mortem), so the first flight comes as soon as L0 passes.
-- **Publishing.** Nothing is pushed to GitHub without Julien's say.
+- **Publishing.** The repository `GildedSignal/path-tracing` is public (S21): everything pushed is world-readable. The integrator pushes `main`; builders never push. No secret, password, token or game jar is ever committed: the Z.ai key lives only in Actions secrets and the DPAPI file.
 
 ## Text has a cost
 

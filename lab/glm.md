@@ -41,4 +41,4 @@ GLM never builds production code (GPT does), never designs (Opus does), and neve
 
 - GLM's binding limit is its 5-hour token window. In ES, about 12 parallel sessions spent it in under two hours. Start with three runs per window, and pace by `omp usage`.
 - The key is stored by `scripts\set-glm-key.ps1` (one click, a Windows dialog, encrypted for Julien's account). It goes only into an omp process's environment, and runners delete any output file that contains it.
-- **Where GLM runs is open** (Julien's call): it runs with full autonomy (`--approval-mode=yolo`), so it must be isolated from his files.
+- **GLM runs on GitHub's machines** (S21), never on Julien's PC: it runs with full autonomy (`--approval-mode=yolo`). Its job gets the key as a secret and no git credential; results come back as workflow artifacts.
