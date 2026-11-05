@@ -180,19 +180,23 @@ final class WorldExporter {
         out.addProperty("bed", block instanceof BedBlock);
         out.addProperty("endPortalOrGateway", block instanceof EndPortalBlock || block instanceof EndGatewayBlock);
         out.addProperty("waterBlock", block instanceof LiquidBlock && state.getFluidState().is(FluidTags.WATER) || block instanceof BubbleColumnBlock);
-        String inside = block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none";
-        boolean modeledInside = block instanceof WebBlock || block instanceof PowderSnowBlock || block instanceof HoneyBlock;
-        boolean modeledFall = block instanceof HayBlock || block instanceof HoneyBlock || block instanceof BedBlock
-            || block instanceof SlimeBlock || block instanceof PowderSnowBlock;
-        if ((!modeledInside && overrides(block, "entityInside", BlockBehaviour.class))
-            || (!modeledFall && overrides(block, "fallOn", Block.class))) inside = "unmodeled";
-        out.addProperty("inside", inside);
+        out.addProperty("inside", inside(block));
         // These fallOn hooks have no data getter. Values follow their 26.2 bytecode.
         TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : 1.0F);
         if (block instanceof LadderBlock) out.addProperty("ladderFacing", state.getValue(LadderBlock.FACING).get3DDataValue());
         if (block instanceof TrapDoorBlock && state.getValue(TrapDoorBlock.OPEN)) {
             out.addProperty("openTrapdoorFacing", state.getValue(TrapDoorBlock.FACING).get3DDataValue());
         }
+    }
+
+    static String inside(Block block) {
+        String inside = block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none";
+        boolean modeledInside = block instanceof WebBlock || block instanceof PowderSnowBlock || block instanceof HoneyBlock;
+        boolean modeledFall = block instanceof HayBlock || block instanceof HoneyBlock || block instanceof BedBlock
+            || block instanceof SlimeBlock || block instanceof PowderSnowBlock;
+        if ((!modeledInside && overrides(block, "entityInside", BlockBehaviour.class))
+            || ((!modeledFall || inside.equals("none")) && overrides(block, "fallOn", Block.class))) inside = "unmodeled";
+        return inside;
     }
 
     private static boolean overrides(Block block, String hook, Class<?> base) {

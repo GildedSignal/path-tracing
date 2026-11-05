@@ -29,6 +29,15 @@ fn main() {
     assert_eq!(block.f32("fluidHeight"), 0.0);
     assert_eq!(block.string("inside"), "none");
     for axis in ["x", "y", "z"] { assert_eq!(block.object("flow").f64(axis).to_bits(), 0); }
+    let tick = Object::parse(r#"{"t":0,"ticksFrozen":14,"speedModifiers":[["minecraft:powder_snow",-0.005,0]],"collisionSteps":[{"requested":{"xBits":"3fb999999999999a","yBits":"bfb41205bc01a36e","zBits":"3fb999999999999a"},"result":{"xBits":"3fb999999999999a","yBits":"0000000000000000","zBits":"0000000000000000"}}]}"#);
+    assert_eq!(tick.number("ticksFrozen"), 14.0);
+    assert!(tick.required("collisionSteps").contains("\"xBits\":\"3fb999999999999a\""));
+    assert!(tick.required("speedModifiers").contains("minecraft:powder_snow"));
+    let end = Object::parse(r#"{"kind":"serverEnd","atRest":true,"serverTickOffset":4,"serverTickOffsetMin":4,"serverTickOffsetMax":4,"health":20,"healthBits":"41a00000","foodLevel":20,"saturationLevel":5,"exhaustion":0.75,"foodTickTimer":0}"#);
+    assert_eq!(end.string("kind"), "serverEnd");
+    assert!(end.boolean("atRest"));
+    assert_eq!(end.number("serverTickOffset"), 4.0);
+    assert_eq!(end.number("foodTickTimer"), 0.0);
     println!("PASS hand-written export block through wt/law Object, numeric boxes and raw float/vector parsing");
 }
 '@

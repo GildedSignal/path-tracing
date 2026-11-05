@@ -49,12 +49,12 @@ function Get-FixtureCourses {
       }
       'water' {
         # Two-deep source pool, a dry divider, and a one-deep source lip flowing south.
+        # Seal the start-facing rim before placing any water.
+        Fill 1 -61 7 30 -60 7 stone
         Fill 1 -62 8 14 -62 30 stone
         Fill 1 -61 8 14 -60 30 water
         Fill 15 -60 8 16 -60 30 stone
         Fill 17 -60 8 30 -60 8 'water[level=0]'
-        # Start-facing rim seals both the pool and the source lip from the plain strip.
-        Fill 1 -61 7 30 -60 7 stone
       }
       'ice' {
         Fill 1 -61 6 15 -61 30 ice
@@ -87,8 +87,7 @@ function Get-FixtureCourses {
       }
       'corner' {
         # Start +16.5,+4.5; yaw zero and forward+left give bit-equal +x,+z.
-        Fill 20 -60 1 20 -57 8 stone
-        Fill 1 -60 8 20 -57 8 stone
+        Fill 20 -60 8 20 -59 8 stone
       }
     }
     # Last block is a receipt marker, inspected in the client's readiness export.

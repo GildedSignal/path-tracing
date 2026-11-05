@@ -21,6 +21,7 @@ import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.Vec3;
 
 /** START applies controls, END records their result. Packets between ticks belong to the next END. */
@@ -38,6 +39,7 @@ public final class Recorder {
     private static int settlingTicks;
     private static Integer previousTickCount;
     private static boolean teleported;
+    private static boolean awaitStart;
     private static JsonArray anomalies = new JsonArray();
     private static JsonArray collisionSteps = new JsonArray();
 
@@ -87,6 +89,10 @@ public final class Recorder {
     }
 
     static void replay(Minecraft mc, String runName, String outName) throws IOException {
+        replay(mc, runName, outName, false);
+    }
+
+    static void replay(Minecraft mc, String runName, String outName, boolean waitForStart) throws IOException {
         if (output != null || replaying()) throw new IllegalStateException("A recording or replay is already running.");
         TickInput.holdSettings(mc);
         Path path = file(mc, "recordings", outName);
@@ -124,6 +130,7 @@ public final class Recorder {
         settled = 0;
         settlingTicks = 0;
         teleported = false;
+        awaitStart = waitForStart;
         Bot.clearFollowPath();
         TickInput.release(mc);
         mc.getConnection().sendCommand("tp @s " + BigDecimal.valueOf(origin[0]).toPlainString()
@@ -137,6 +144,11 @@ public final class Recorder {
         finish(mc, true);
     }
 
+    static void continueReplay() {
+        if (!replaying() || !awaitStart || start != null) throw new IllegalStateException("Replay has not settled.");
+        awaitStart = false;
+    }
+
     private static void abort(Minecraft mc, String reason) {
         if (!active()) return;
         Bot.reply(mc, reason + " Aborted; partial output remains in " + temporaryPath + ".");
@@ -148,6 +160,7 @@ public final class Recorder {
         boolean complete = clean && (!wasReplay || tick == replay.size());
         replay = null;
         start = null;
+        awaitStart = false;
         applied = null;
         anomalies = new JsonArray();
         if (wasReplay) TickInput.release(mc);
@@ -186,7 +199,7 @@ public final class Recorder {
             return;
         }
         if (replaying()) {
-            if (start != null) {
+            if (start != null || awaitStart) {
                 TickInput.release(mc);
                 return;
             }
@@ -219,6 +232,7 @@ public final class Recorder {
             if (settled == 5) {
                 start = null;
                 anomalies = new JsonArray();
+                if (awaitStart) Bot.reply(mc, "Settled " + name + "; waiting for rec continue.");
             } else if (settlingTicks >= 200) {
                 abort(mc, "Replay start did not settle within 200 ticks of tp (tick " + settlingTicks + ").");
             }
@@ -230,6 +244,8 @@ public final class Recorder {
         out.addProperty("tickCount", player.tickCount);
         out.addProperty("gameTime", mc.level.getGameTime());
         out.add("collisionSteps", collisionSteps);
+        out.add("speedModifiers", TraceJson.speedModifiers(player.getAttribute(Attributes.MOVEMENT_SPEED)));
+        out.addProperty("ticksFrozen", player.getTicksFrozen());
         boolean gap = previousTickCount != null && (long) player.tickCount - previousTickCount != 1;
         out.add("inputs", applied.json());
         out.add("position", TraceJson.vector(player.position()));
@@ -274,8 +290,8 @@ public final class Recorder {
     public static void collisionStep(Entity entity, Vec3 requested, Vec3 result) {
         if (output == null || applied == null || entity != Minecraft.getInstance().player) return;
         JsonObject step = new JsonObject();
-        step.add("requested", TraceJson.vector(requested));
-        step.add("result", TraceJson.vector(result));
+        step.add("requested", TraceJson.vectorBits(requested));
+        step.add("result", TraceJson.vectorBits(result));
         collisionSteps.add(step);
     }
 

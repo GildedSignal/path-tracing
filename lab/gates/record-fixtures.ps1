@@ -1,7 +1,7 @@
 param(
   [string[]]$Courses,
   [ValidateRange(1, 2147483647)][int]$Runs = 8,
-  [ValidateRange(1, 2147483647)][int]$Ticks = 400,
+  [ValidateRange(1, 2147483627)][int]$Ticks = 400,
   [int]$Seed = 1,
   [string]$Jar
 )
@@ -31,6 +31,8 @@ $selected = @()
 $activeRecording = $null
 $completed = $false
 $originalGameMode = $null
+$recordTicks = $Ticks + 20
+$comparableEnds = 0
 
 function Cleanup([string]$Name, [scriptblock]$Action) {
   try { & $Action } catch { Note "$Name cleanup failed: $($_.Exception.Message)" }
@@ -42,7 +44,48 @@ function Axis-TieCollision($Step) {
   $xm = ([Convert]::ToInt32($xb.Substring(0,1),16) -band 7).ToString('x') + $xb.Substring(1)
   $zm = ([Convert]::ToInt32($zb.Substring(0,1),16) -band 7).ToString('x') + $zb.Substring(1)
   $xm -cne '0000000000000000' -and $xm -ceq $zm -and
-    ($xb -cne $Step.result.xBits -or $zb -cne $Step.result.zBits)
+    (($xb -cne $Step.result.xBits) -xor ($zb -cne $Step.result.zBits))
+}
+
+function Signed-TickOffset([long]$QueryTime, [long]$ClientTime) {
+  $period = 2147483647L
+  $offset = $QueryTime - ($ClientTime % $period)
+  if ($offset -gt 1073741823) { $offset -= $period }
+  if ($offset -lt -1073741823) { $offset += $period }
+  $offset
+}
+function At-Rest($Row) {
+  $Row.onGround -eq $true -and $null -ne $Row.velocity -and
+    $null -ne $Row.velocity.x -and $null -ne $Row.velocity.z -and
+    [double]$Row.velocity.x -eq 0 -and [double]$Row.velocity.z -eq 0
+}
+function Require-StableResources($First, $Second) {
+  foreach ($field in @('Health', 'foodSaturationLevel', 'foodExhaustionLevel')) {
+    $a = [BitConverter]::ToUInt32([BitConverter]::GetBytes([single]$First.$field), 0)
+    $b = [BitConverter]::ToUInt32([BitConverter]::GetBytes([single]$Second.$field), 0)
+    if ($a -ne $b) { throw "Start resources changed during settle: $field." }
+  }
+  foreach ($field in @('foodLevel', 'foodTickTimer')) {
+    if ($First.$field -ne $Second.$field) { throw "Start resources changed during settle: $field." }
+  }
+}
+function Restore-Start([string]$Name, [string]$Start) {
+  Assert-Absent
+  $null = Require (Rcon ('tp ' + $BotName + ' ' + $Start.Replace(',', ' '))) 'Thaw teleport'
+  $reply = Require (Rcon "attribute $BotName minecraft:max_health get") 'Maximum health query'
+  if ($reply.Text -notmatch '(-?\d+(?:\.\d+)?)\s*$') { throw 'Cannot read maximum health.' }
+  $maximum = [single]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    $state = Server-Snapshot $Name
+    if ([single]$state.Health -eq $maximum -and $state.foodTickTimer -eq 0 -and $state.TicksFrozen -eq 0) { return $state }
+    if ([single]$state.Health -ne $maximum -or $state.foodTickTimer -ne 0) {
+      $null = Require (Rcon "effect give $BotName instant_health") 'Heal bot'
+    }
+    if ($clock.Elapsed.TotalSeconds -ge 60) { throw 'Bot did not reach maximum health, foodTickTimer=0 and ticksFrozen=0.' }
+    Start-Sleep -Milliseconds 100
+    Assert-Absent
+  } while ($true)
 }
 
 function Export-World([string]$Name, [int[]]$Min, [int[]]$Max, [switch]$Readiness) {
@@ -93,18 +136,17 @@ function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$W
     throw 'Initial server resources disagree with the settled client snapshot; pre-replay resources cannot initialize this fixture.'
   }
   Server-Resources $Player $ServerStart
-  $end = [pscustomobject]@{ kind = 'serverEnd' }
+  $end = [pscustomobject]@{ kind = 'serverEnd'; atRest = (At-Rest $LastTick) }
   Server-Resources $end $ServerEnd
   if ($null -eq $LastTick.PSObject.Properties['gameTime']) { throw 'Recording lacks final gameTime.' }
   # Vanilla time query gametime returns the game time modulo Integer.MAX_VALUE.
-  $last = [long]$LastTick.gameTime % 2147483647
-  $offsetMin = ([long]$ServerEnd.gameTimeBefore - $last + 2147483647) % 2147483647
-  $offsetMax = ([long]$ServerEnd.gameTimeAfter - $last + 2147483647) % 2147483647
+  $offsetMin = Signed-TickOffset $ServerEnd.gameTimeBefore $LastTick.gameTime
+  $offsetMax = Signed-TickOffset $ServerEnd.gameTimeAfter $LastTick.gameTime
   $end | Add-Member -NotePropertyName serverTickOffsetMin -NotePropertyValue $offsetMin
   $end | Add-Member -NotePropertyName serverTickOffsetMax -NotePropertyValue $offsetMax
   $offset = if ($offsetMin -eq $offsetMax) { $offsetMin } else { $null }
   $end | Add-Member -NotePropertyName serverTickOffset -NotePropertyValue $offset
-  Note "$Course run $Run serverEnd offset: $offset; bracket [$offsetMin,$offsetMax]. Compare resources only for an exact zero offset."
+  Note "$Course run $Run serverEnd offset: $offset; bracket [$offsetMin,$offsetMax]; atRest: $($end.atRest)."
   $stream = [IO.File]::Open("$worldTarget.tmp", [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
   $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
   try {
@@ -123,6 +165,7 @@ function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$W
     if ($worldPublished) { Cleanup 'Publication rollback' { Remove-Item -LiteralPath $worldTarget } }
     throw
   }
+  if ($end.atRest -and $null -ne $offset) { $script:comparableEnds++ }
 }
 
 try {
@@ -246,20 +289,21 @@ try {
             Name = $runName; Ticks = $Ticks; Seed = $runSeed; Start = $course.Start; SneakPercent = $course.SneakPercent
           }) 'Generate inputs'
         }
-        Save-Artifact (Join-Path $botDir "pathtracing\inputs\$runName.jsonl")
+        $inputPath = Join-Path $botDir "pathtracing\inputs\$runName.jsonl"
+        # Preserve the last angles exactly and release every key for twenty recorded ticks.
+        $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
+        $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
+        Add-Content -LiteralPath $inputPath -Value $tail -Encoding ASCII
+        Save-Artifact $inputPath
         Assert-Absent
-        # Move off any powder snow, then wait for the vanilla thaw (also on other courses).
-        $null = Require (Rcon ('tp ' + $BotName + ' ' + $course.Start.Replace(',', ' '))) 'Thaw teleport'
-        $thaw = [Diagnostics.Stopwatch]::StartNew()
-        do {
-          $serverStart = Server-Snapshot "$runName-start"
-          if ($serverStart.TicksFrozen -eq 0) { break }
-          if ($thaw.Elapsed.TotalSeconds -ge 60) { throw 'Bot did not thaw to ticksFrozen=0.' }
-          Start-Sleep -Milliseconds 100
-          Assert-Absent
-        } while ($true)
+        $serverStart = Restore-Start "$runName-start" $course.Start
         $activeRecording = $path
-        $replayReply = Bot "replay $runName $runName" ("Saved ${runName}: $Ticks ticks\.") $timeout
+        $settleReply = Bot "replay $runName $runName wait" ("Settled ${runName};") $timeout
+        if ($settleReply.Text -match '(?i)Aborted') { $activeRecording = $null }
+        $null = Require $settleReply 'Replay settle'
+        $serverSettled = Server-Snapshot "$runName-settled"
+        Require-StableResources $serverStart $serverSettled
+        $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
         if ($replayReply.Text -match '(?i)Aborted') { $activeRecording = $null }
         $null = Require $replayReply 'Replay'
         $activeRecording = $null
@@ -270,13 +314,14 @@ try {
         $player = $rows[0].initialPlayer
         if ($null -eq $player -or $player.kind -ne 'player') { throw 'Recording lacks the pre-input initialPlayer snapshot; install the job 1.6 bot jar.' }
         $ticksRead = @($rows | Where-Object { $null -ne $_.PSObject.Properties['t'] })
-        if ($ticksRead.Count -ne $Ticks) { throw "Expected $Ticks ticks, got $($ticksRead.Count)." }
+        if ($ticksRead.Count -ne $recordTicks) { throw "Expected $recordTicks ticks, got $($ticksRead.Count)." }
         if ($player.ticksFrozen -ne 0) { throw 'Initial player ticksFrozen is not zero.' }
         if ($name -eq 'corner') {
           $ties = @($ticksRead | Where-Object {
             @($_.collisionSteps | Where-Object { Axis-TieCollision $_ }).Count -gt 0
           })
           Note "corner run ${i}: nonzero bit-exact |dx|=|dz| collision exists: $($ties.Count -gt 0); ticks: $($ties.t -join ',')."
+          if ($ties.Count -eq 0) { throw 'corner: no witness with exactly one clipped horizontal axis.' }
         }
         $positions = @($player.position) + @($ticksRead | ForEach-Object { $_.position })
         $min = @(); $max = @()
@@ -299,6 +344,7 @@ try {
           }
         }
         $activeRecording = $null
+        Cleanup 'Restore start resources' { $null = Restore-Start "$runName-cleanup" $course.Start }
         Cleanup 'Recording artifact' { Save-Artifact $path }
         Cleanup 'Partial recording artifact' { Save-Artifact "$path.tmp" }
       }
@@ -331,15 +377,18 @@ finally {
     'Each course is a 32x32 enclosed patch at x=4096+128*courseIndex,z=4096 on the lab superflat.',
     'Client readiness requires a full loaded-chunk export and receipt of the final gold-block marker after construction.',
     'Server resources use one atomic data get entity per snapshot, including foodTickTimer.',
-    'serverEnd includes serverTickOffset from the final recorded gameTime; compare only when exactly zero.',
+    "serverEnd snapshots with atRest true and a non-null offset: $comparableEnds of $kept.",
+    'Every input sequence ends with 20 zero-input ticks. serverEnd atRest requires onGround and zero horizontal velocity in the last row.',
+    'serverEnd includes signed serverTickOffset from the final recorded gameTime; the reader advances nonnegative offsets as zero-input ticks only with atRest true and a non-null offset.',
     'Game-time queries bracket the entity read; a bracket spanning ticks has a null offset and must be skipped.',
     'The client gameTime is the server-synchronized client clock; this is not proof of packet-level tick alignment.',
     'The initialPlayer header retains every client field. The world player line substitutes the pre-replay server resources.',
-    'Start resources, including exhaustion and foodTickTimer, are assumed constant until input zero; no tick alignment is claimed there.',
+    'Before each run and during cleanup, heal as needed and wait for maximum health, foodTickTimer=0 and TicksFrozen=0.',
+    'Replay pauses after settle for a second server snapshot. Every resource field must be bit-identical to the first snapshot before rec continue.',
     'A run is rejected if initial health, food or saturation disagree with that settled client snapshot.',
-    'No health, hunger, inventory or effect reset is performed. Courses are static snapshots after the replay.',
+    'Courses are static snapshots after the replay.',
     'The water course includes still and flowing water. Bubble columns are omitted because the frozen world schema has no bubble hook.',
-    'Recordings retain their original header and end trailer. Apply jobs/1.6-l0-fixtures/law-reader.patch to the separate law reader.',
+    'Recordings retain their original header and end trailer. Reader integration belongs to job 1.5e.',
     'Seeds are Seed+courseIndex*Runs+run-1 in the courses.ps1 declaration order, stable under course selection.', '')
   $body += 'Step-up mutant at 0.6f + 1 ulp: no vanilla geometry produces that candidate; equivalent on the game domain. Integrator replaces it at gate freeze.'
   foreach ($course in $selected) {

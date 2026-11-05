@@ -99,6 +99,9 @@ foreach ($course in $courses) {
   Assert ($blocks["$sx,$($sy-1),$sz"] -eq 'stone') "$($course.Name) start cannot settle at its exact specified height."
   $wet = Assert-DryStart $blocks $start $course.Name
   if ($course.Name -eq 'water') {
+    $rimIndex = [array]::FindIndex($course.Commands, [Predicate[string]]{ param($line) $line -eq "fill $($course.Min[0]+1) -61 $($course.Min[2]+7) $($course.Min[0]+30) -60 $($course.Min[2]+7) stone" })
+    $sourceIndex = [array]::FindIndex($course.Commands, [Predicate[string]]{ param($line) $line -match ' water(?:\[|$)' })
+    Assert ($rimIndex -ge 0 -and $rimIndex -lt $sourceIndex) 'Water was placed before the rim.'
     foreach ($key in $wet.Keys) { Assert ([int]$key.Split(',')[2] -ge $course.Min[2]+7) 'Water reached the plain strip.' }
     # Negative control: removing the start-facing upper rim must flood the start vicinity.
     $mutant = $blocks.Clone()
@@ -109,6 +112,17 @@ foreach ($course in $courses) {
       $failed=$true
     }
     Assert $failed 'Fluid tracing did not reject the missing-rim mutant.'
+  }
+  if ($course.Name -eq 'corner') {
+    for ($x=$course.Min[0]+19; $x -le $course.Min[0]+21; $x++) {
+      for ($z=$course.Min[2]+7; $z -le $course.Min[2]+9; $z++) {
+        foreach ($y in -60..-58) {
+          $expectedBlock = if ($x -eq $course.Min[0]+20 -and $z -eq $course.Min[2]+8 -and $y -le -59) { 'stone' } else { 'air' }
+          Assert ($blocks["$x,$y,$z"] -eq $expectedBlock) 'Corner is not an isolated two-block outer column.'
+        }
+      }
+    }
+    Assert ($start[0]-$course.Min[0] -eq 16.5 -and $start[2]-$course.Min[2] -eq 4.5) 'Corner diagonal start changed.'
   }
   if ($course.Name -eq 'edges') {
     Assert ($course.SneakPercent -eq 90) 'Edges do not use the course-specific sneak setting.'
