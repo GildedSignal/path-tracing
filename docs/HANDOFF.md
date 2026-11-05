@@ -19,7 +19,8 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 - **Running in the background:**
   - job 1.5 (GPT Sol), in `D:\path-tracing-wt\law`. Its fourth run died at 23:08 with no error; relaunched on 5 November to continue from the partial port;
-  - job 1.2c (GPT Sol), in `D:\path-tracing-wt\recorder`: commands over RCON plus the six findings of the Sonnet judge, who passed 1.2b (`a6e3d7a`) with fixes. Both GPT slots are busy.
+  - job 1.2c is **built** (`4539beb` on `wt/recorder`): commands over RCON plus the six findings on 1.2b. **Next:** a fresh Sonnet judge of `a6e3d7a..4539beb`, once the one-liner audit (the only Claude sub-agent) returns; then the live 1.2 gate over RCON.
+  - the one-liner audit (Sonnet, read-only, S19): our docs against ES's sources.
 - **For 1.5's L0 gate:** recordings now open with a header line (`type:"recording"`, the hold settings) and, after 1.2c, close with an `end` trailer. Its replay harness must skip both; tell the judge.
 - **Owed to Julien:** ES's testing philosophy (Spartan training, adversarial tests, unknown unknowns; ES PRINCIPLES 10 and 20 and its register rows of 7 October) carried over as a proposal. Only the one line "test like a Spartan" is here.
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`. GPT can't commit, so commit its changes on its branch with `Built-by: gpt-6.1-sol`.
