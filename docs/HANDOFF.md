@@ -14,7 +14,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Running:**
   - job 1.6 (GPT Sol) in `D:\path-tracing-wt\fixtures`: the L0 fixtures. The bot's client exports the world around each recording; courses for every terrain class; one recording command;
   - job L1 (GPT Sol) in `D:\path-tracing-wt\glm-lab`: GLM's harness on Actions.
-- **Queued for the next free GPT slot:** job 1.5b, the judge's findings on the law (it passed "ready with fixes"): the sprint latch (the 1.5 spec was wrong), two float epsilons, bed landing, the push-out, silent gaps made explicit, tests against the jar.
+- **Law fixes:** job 1.5b is committed (`45a8d0b`, 38 tests pass). Job 1.5c (running) seeds the sprint latch from the fixture's `player` line, not from tick zero (the 1.5b spec was wrong); job 1.6 must write `isSprinting` there.
 - **Open for L0:** two of the four mutants can't be caught by random recordings. Axis tie needs |x| = |z| exactly (a deliberate 45° corner fixture, an L0-x worst case). Step-up +1 ulp may be unreachable with vanilla geometry; if so it is an equivalent mutant, and the red-team replaces it at freeze (ladder.md), which is a repaired control, not a weakened gate.
 - **Queued after 1.6** (both edit the bot mod): job 1.7, parkour tracks (S25): `/track new <name>` and two stick clicks, one timer for him and the bot, his best time as the bot's minimum line.
 - **Next:** run `record-fixtures.ps1` (Julien's client out), then L0 by a fresh judge, then merge `wt/law`.
