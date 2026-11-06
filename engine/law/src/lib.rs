@@ -9,7 +9,8 @@ mod world;
 pub use movement::{
     calculate_fall_damage,
     calculate_fall_power,
-    tick
+    tick,
+    tick_server_resources
 };
 pub use shapes::{
     Aabb,

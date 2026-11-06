@@ -21,6 +21,7 @@ use crate::{
 };
 
 // Player.tick; Entity.baseTick; LocalPlayer.aiStep; LivingEntity.aiStep
+// The coupled food update estimates resources from local movement without a server schedule.
 pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     if state.effects {
         unimplemented!("LivingEntity: status effects other than none");
@@ -948,6 +949,28 @@ fn movement_exhaustion(state: &mut PlayerState, delta: Vec3) {
     }
 }
 
+/// Advances resources for a living, unmounted server player with default max health.
+/// Supply the server entity's tickCount at Player.aiStep, with preceding server
+/// exhaustion and damage already applied. This covers ticks with no intervening
+/// resource changes between Player.aiStep's regeneration and FoodData.tick.
+pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server_player_tick: i32) {
+    // ServerPlayer.tickRegeneration, called by Player.aiStep before FoodData.tick.
+    if world.difficulty() == 0 && world.natural_regeneration() {
+        if server_player_tick % 20 == 0 {
+            if state.health < 20.0 {
+                state.health = (state.health + 1.0).min(20.0);
+            }
+            if state.saturation < 20.0 {
+                state.saturation += 1.0;
+            }
+        }
+        if server_player_tick % 10 == 0 && state.food_level < 20 {
+            state.food_level += 1;
+        }
+    }
+    food_tick(state, world);
+}
+
 // FoodData.tick
 fn food_tick(state: &mut PlayerState, world: &impl World) {
     if state.exhaustion>4.0 {
@@ -989,6 +1012,54 @@ fn food_tick(state: &mut PlayerState, world: &impl World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_resource_cadences_precede_food_data() {
+        let resources = |s: &PlayerState| {
+            (s.health, s.food_level, s.saturation, s.exhaustion, s.food_tick_timer)
+        };
+        for (difficulty, natural_regeneration, around_ten, around_twenty) in [
+            (0, true,
+                [(19.0, 19, 19.5, 0.0, 9), (20.0, 20, 19.5, 6.0, 0), (20.0, 20, 18.5, 2.0, 0)],
+                [(19.0, 20, 20.0, 4.0, 9), (20.0, 20, 19.0, 0.25, 0), (20.0, 20, 19.0, 0.25, 0)]),
+            (2, true,
+                [(19.0, 19, 19.5, 0.0, 9), (19.0, 19, 19.5, 0.0, 10), (19.0, 19, 19.5, 0.0, 11)],
+                [(19.0, 20, 20.0, 4.0, 9), (20.0, 20, 19.0, 6.25, 0), (20.0, 20, 18.0, 2.25, 0)]),
+            (0, false,
+                [(19.0, 19, 19.5, 0.0, 0); 3],
+                [(19.0, 20, 20.0, 4.0, 0), (19.0, 20, 19.0, 0.25, 0), (19.0, 20, 19.0, 0.25, 0)]),
+        ] {
+            let mut world = crate::BoxWorld::default();
+            world.difficulty = difficulty;
+            world.natural_regeneration = natural_regeneration;
+            let mut state = PlayerState {
+                health: 19.0, food_level: 19, saturation: 19.5, food_tick_timer: 8,
+                ..Default::default()
+            };
+            for (tick, expected) in (9..=11).zip(around_ten) {
+                tick_server_resources(&mut state, &world, tick);
+                assert_eq!(resources(&state), expected, "difficulty {difficulty}, regen {natural_regeneration}, tick {tick}");
+            }
+
+            let mut state = PlayerState {
+                health: 19.0, saturation: 20.0, exhaustion: 4.0, food_tick_timer: 8,
+                ..Default::default()
+            };
+            for (tick, expected) in (19..=21).zip(around_twenty) {
+                if tick == 20 {
+                    state.exhaustion += 0.25;
+                }
+                tick_server_resources(&mut state, &world, tick);
+                assert_eq!(resources(&state), expected, "difficulty {difficulty}, regen {natural_regeneration}, tick {tick}");
+            }
+        }
+
+        let mut world = crate::BoxWorld::default();
+        world.difficulty = 0;
+        let mut state = PlayerState { saturation: 19.5, ..Default::default() };
+        tick_server_resources(&mut state, &world, 20);
+        assert_eq!(state.saturation, 20.5);
+    }
 
     #[test]
     fn jar_sprint_latch_corpus() {
