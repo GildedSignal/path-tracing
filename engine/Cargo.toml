@@ -1,0 +1,3 @@
+﻿[workspace]
+members = ["law"]
+resolver = "2"
