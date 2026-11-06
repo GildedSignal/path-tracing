@@ -3,7 +3,9 @@
 #   .\launch-client.ps1 -Role bot
 param(
   [Parameter(Mandatory)][ValidateSet('player','bot')][string]$Role,
-  [switch]$NoJoin
+  [switch]$NoJoin,
+  # The clock gate launches a second bot process with this property disabled.
+  [ValidateSet('true','false')][string]$FollowTickRate = 'true'
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -18,7 +20,10 @@ $classpath = Get-GameClasspath
 $jvm = @(
   $(if ($Role -eq 'bot') { '-Xmx3G' } else { '-Xmx6G' }), '-Xms1G',
   "-Dpathtracing.role=$Role", "-Dpathtracing.bot=$BotName", "-Dpathtracing.owner=$PlayerName",
-  "-Dpathtracing.rig=$Rig",
+  "-Dpathtracing.rig=$Rig"
+)
+if ($Role -eq 'bot') { $jvm += "-Dpathtracing.followTickRate=$FollowTickRate" }
+$jvm += @(
   '-cp', ($classpath -join ';'),
   'net.fabricmc.loader.impl.launch.knot.KnotClient'
 )
