@@ -87,6 +87,7 @@ pub struct PlayerState {
     pub leather_boots: bool,
     pub movement_speed_base: f64,
     pub speed_modifiers: Vec<crate::SpeedModifier>,
+    /// Observed Player.getSpeed(), refreshed from the attribute before travel.
     pub speed: f32,
     pub jump_strength: f64,
     pub gravity: f64,

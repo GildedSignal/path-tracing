@@ -24,9 +24,11 @@ public class JarOracle {
         @Override public net.minecraft.world.damagesource.DamageSources damageSources() { return damage; }
         double landingDistance;
         float landingMultiplier;
-        float moveSpeed;
-        @Override public float getSpeed() { return moveSpeed; }
+        net.minecraft.world.entity.ai.attributes.AttributeInstance movementSpeed;
         @Override public double getAttributeValue(net.minecraft.core.Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute) {
+            if (attribute == net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED) {
+                return movementSpeed.getValue();
+            }
             return attribute == net.minecraft.world.entity.ai.attributes.Attributes.SAFE_FALL_DISTANCE ? 3.0 : 1.0;
         }
         net.minecraft.world.entity.player.Abilities abilities;
@@ -129,15 +131,16 @@ public class JarOracle {
         var attribute = new net.minecraft.world.entity.ai.attributes.AttributeInstance(
             net.minecraft.world.entity.ai.attributes.Attributes.MOVEMENT_SPEED, ignored -> {});
         attribute.setBaseValue((double) 0.1f);
-        float walkSpeed = (float) attribute.getValue();
-        attribute.addTransientModifier((net.minecraft.world.entity.ai.attributes.AttributeModifier) sprintModifier.get(null));
-        float sprintSpeed = (float) attribute.getValue();
+        player.movementSpeed = attribute;
+        var modifier = (net.minecraft.world.entity.ai.attributes.AttributeModifier) sprintModifier.get(null);
+        float walkSpeed = player.getSpeed();
         try (PrintWriter out = new PrintWriter(path.toFile())) {
             for (float rawFriction : new float[]{0.6f, 0.98f}) {
                 float friction = (float) modifiedFriction.invoke(null, rawFriction, 1.0f);
                 float drag = friction * (float) modifiedFriction.invoke(null, 0.91f, 1.0f);
                 for (boolean sprint : new boolean[]{false, true}) {
-                    player.moveSpeed = sprint ? sprintSpeed : walkSpeed;
+                    if (sprint) attribute.addTransientModifier(modifier);
+                    float steadySpeed = player.getSpeed();
                     double steady = 0;
                     for (int tick = 0; tick < 2000; tick++) {
                         float acceleration = (float) frictionSpeed.invoke(player, friction);
@@ -145,20 +148,22 @@ public class JarOracle {
                         Vec3 input = (Vec3) inputVector.invoke(null, new Vec3(movement.x, 0, movement.y), acceleration, 0.0f);
                         steady = (steady + input.z) * drag;
                     }
+                    // LocalPlayer removes the modifier before travel. Player.aiStep writes
+                    // the stored field afterward, while Player.getSpeed reads the attribute.
+                    attribute.removeModifier(modifier.id());
                     for (String mode : new String[]{"recurrence", "player"}) {
                         for (int k = 0; k <= 6; k++) {
                             double velocity = steady;
-                            player.moveSpeed = sprint ? sprintSpeed : walkSpeed;
+                            player.setSpeed(mode.equals("player") ? steadySpeed : walkSpeed);
                             int stopped = 0;
                             for (int tick = 1; tick <= 400; tick++) {
                                 if (velocity * velocity < 9.0e-6) { stopped = tick; break; }
-                                if (mode.equals("recurrence")) player.moveSpeed = walkSpeed;
                                 float acceleration = (float) frictionSpeed.invoke(player, friction);
                                 var movement = (net.minecraft.world.phys.Vec2) modifyInput.invoke(player,
                                     new net.minecraft.world.phys.Vec2(0, tick <= k ? -1 : 0));
                                 Vec3 input = (Vec3) inputVector.invoke(null, new Vec3(movement.x, 0, movement.y), acceleration, 0.0f);
                                 velocity = (velocity + input.z) * drag;
-                                player.moveSpeed = walkSpeed;
+                                player.setSpeed(walkSpeed);
                             }
                             if (stopped == 0) throw new AssertionError("braking threshold missing");
                             out.printf("%s %08x %s %d %d%n", mode, Float.floatToRawIntBits(rawFriction), sprint, k, stopped);

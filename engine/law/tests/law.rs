@@ -136,7 +136,6 @@ fn braking_recurrence_regression() {
             let mut stopped=None;
             for t in 1..=400{
                 let zeroed=s.velocity.horizontal_sqr()<9.0e-6;
-                s.speed=0.1;
                 advance(&mut s, &w, &Input{
                     back:t<=k, ..Input::default()
                 });
@@ -298,15 +297,26 @@ fn sneak_edge_backoff() {
 }
 
 #[test]
-fn speed_refresh_follows_travel() {
-    let world=floor(0.6, false);
-    let mut state=player();
-    tick(&mut state, &world, &Input {
-        forward:true, sprint:true, ..Input::default()
-    });
-    let acceleration=0.1f32*(0.21600002f32/(0.6f32*0.6f32*0.6f32));
-    assert_eq!(state.position.z.to_bits(), (0.98f32 as f64*acceleration as f64).to_bits());
-    assert_eq!(state.speed, ((0.1f32 as f64)*(1.0+0.3f32 as f64)) as f32);
+fn grounded_travel_uses_current_sprint_modifier() {
+    let world = floor(0.6, false);
+    let walk_speed = 0.1f32;
+    let sprint_speed = (walk_speed as f64 * (1.0 + 0.3f32 as f64)) as f32;
+    for sprinting in [true, false] {
+        let mut state = PlayerState { sprinting, ..player() };
+        state.speed = if sprinting { sprint_speed } else { walk_speed };
+        let input = Input { forward: !sprinting, left: sprinting, sprint: true, ..Input::default() };
+        tick(&mut state, &world, &input);
+        assert_eq!(state.sprinting, !sprinting);
+        let speed = if sprinting { walk_speed } else { sprint_speed };
+        let acceleration = speed * (0.21600002f32 / (0.6f32 * 0.6f32 * 0.6f32));
+        let expected = 0.98f32 as f64 * acceleration as f64;
+        let wanted = state.movement_this_tick.expect("grounded collision request");
+        let actual = if sprinting { wanted.x } else { wanted.z };
+        assert_eq!(actual.to_bits(), expected.to_bits(),
+            "sprint {sprinting} -> {} requested {actual:?} ({:016x}), expected {expected:?} ({:016x})",
+            state.sprinting, actual.to_bits(), expected.to_bits());
+        assert_eq!(state.speed.to_bits(), speed.to_bits());
+    }
 }
 
 #[test]

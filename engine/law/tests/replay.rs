@@ -709,7 +709,7 @@ fn fixture_base_and_modifiers_seed_sprint_exactly_once() {
     assert_eq!(state.speed.to_bits(), (expected as f32).to_bits());
     let explicit_speed = fixture.replace("\"movementSpeedBase\":", "\"speed\":0.0625,\"movementSpeedBase\":");
     let (_, state, _) = parse_world(&explicit_speed);
-    assert_eq!(state.speed.to_bits(), 0.0625f32.to_bits(), "preserve recorded cached speed");
+    assert_eq!(state.speed.to_bits(), 0.0625f32.to_bits(), "preserve recorded initial getSpeed");
 }
 
 #[test]
@@ -778,12 +778,12 @@ fn registry_export_contacts() {
 }
 
 #[test]
-fn replay_modifier_changes_keep_the_client_stored_speed_delay() {
+fn replay_modifier_changes_apply_to_travel_on_the_observed_tick() {
     let (world, mut state) = stationary_fixture();
     let acceleration = |speed: f32| speed * (0.21600002f32 / (0.6f32*0.6f32*0.6f32));
     let drag = (0.6f32 * 0.91f32) as f64;
-    let first_move = 0.98f32 as f64 * acceleration(0.1) as f64;
-    let second_move = first_move*drag + 0.98f32 as f64 * acceleration(0.05) as f64;
+    let first_move = 0.98f32 as f64 * acceleration(0.05) as f64;
+    let second_move = first_move*drag + 0.98f32 as f64 * acceleration(0.1) as f64;
     let mut rows = Vec::new();
     for (index, z, velocity, frozen, modifiers, speed) in [
         (0, first_move, first_move*drag, 140,

@@ -66,6 +66,8 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     }
     let slowly = state.crouching || (state.pose == Pose::Swimming && !state.in_water);
     update_sprinting(state, input, slowly);
+    // Player.getSpeed reads the attribute after LocalPlayer updates the sprint modifier.
+    state.speed = state.movement_speed_value() as f32;
     if state.in_water && input.sneak {
         state.velocity.y -= 0.04f32 as f64;
     }
@@ -108,7 +110,6 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     if state.in_powder_snow && !state.leather_boots {
         state.ticks_frozen = (state.ticks_frozen + 1).min(140);
     }
-    state.speed = state.movement_speed_value() as f32;
     state.position.x = state.position.x.clamp(-29999999.0, 29999999.0);
     state.position.z = state.position.z.clamp(-29999999.0, 29999999.0);
     update_pose(state, world);
