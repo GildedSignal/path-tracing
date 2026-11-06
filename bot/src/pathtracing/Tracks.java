@@ -67,7 +67,7 @@ public final class Tracks {
                 root.then(ClientCommands.literal(action).then(ClientCommands.argument("name", StringArgumentType.word())
                     .executes(context -> command(Minecraft.getInstance(), action + " " + StringArgumentType.getString(context, "name")))));
             }
-            for (String action : List.of("list", "cancel", "exit")) {
+            for (String action : List.of("list", "cancel", "exit", "restore")) {
                 root.then(ClientCommands.literal(action).executes(context -> command(Minecraft.getInstance(), action)));
             }
             dispatcher.register(root);
@@ -99,6 +99,13 @@ public final class Tracks {
                 creating = null;
                 first = null;
                 say(mc, "Track cancelled.");
+            } else if (words.length == 1 && words[0].equals("restore")) {
+                if (isBot()) throw new IllegalStateException("Restore the session in the player client.");
+                boolean restoring = human(mc).exit();
+                cancel(mc, true, false);
+                creating = null;
+                first = null;
+                say(mc, restoring ? "Restoring your saved track inventory." : "No saved track session.");
             } else if (words.length == 1 && words[0].equals("list")) {
                 reload();
                 say(mc, tracks.isEmpty() ? "No tracks. Use /track new <name>." : "Tracks: "
@@ -134,9 +141,9 @@ public final class Tracks {
                         human(mc).replaceKit(words[1], run != null || DETECTOR.running());
                     }
                     case "run" -> startBot(mc, words[1], receivedNanos);
-                    default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit; bot track run <name>.");
+                    default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit/restore; bot track run <name>.");
                 }
-            } else throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit; bot track run <name>.");
+            } else throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit/restore; bot track run <name>.");
             return 1;
         } catch (IOException | RuntimeException e) {
             say(mc, "Track: " + e.getMessage());
@@ -207,6 +214,10 @@ public final class Tracks {
                 say(mc, "Track run discarded.");
                 cancel(mc, true);
             }
+            if (mode.active() && !mode.ready() && !mode.restoring() && mode.state() != TrackMode.State.FAILED
+                && selected != null && !onA(mc, selected)) {
+                mode.fail("Stay on A until the survival kit is ready.");
+            }
             boolean wasRestoring = mode.restoring();
             mode.tick(clock);
             if (wasRestoring && !mode.active()) {
@@ -216,10 +227,12 @@ public final class Tracks {
                 suppressed = tracks.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
                 return;
             }
+            if (!mode.active() && selected != null) {
+                // Entry was refused before any inventory change.
+                cancel(mc, true, false);
+                return;
+            }
             if (mode.active() && !mode.ready()) {
-                if (!mode.restoring() && mode.state() != TrackMode.State.FAILED && selected != null && !onA(mc, selected)) {
-                    mode.fail("Stay on A until the survival kit is ready.");
-                }
                 if (mode.state() == TrackMode.State.FAILED && selected != null) cancel(mc, true, false);
                 return;
             }
@@ -245,11 +258,7 @@ public final class Tracks {
             selected = tracks.stream().filter(t -> !suppressed.contains(t) && t.dimension().equals(dimension(mc)) && onA(mc, t)).findFirst().orElse(null);
             if (selected == null) return;
             if (!isBot()) {
-                try { human.enter(selected.name()); }
-                catch (IOException | RuntimeException failure) {
-                    human.fail("Cannot enter track mode: " + failure.getMessage());
-                    cancel(mc, true, false);
-                }
+                human.enter(selected.name());
                 return;
             }
         }

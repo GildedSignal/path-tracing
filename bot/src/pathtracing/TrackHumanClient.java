@@ -3,8 +3,8 @@ package pathtracing;
 import java.util.ArrayList;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
-import net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 
@@ -26,16 +26,28 @@ final class TrackHumanClient implements TrackMode.Port {
 
     @Override public String mode() { return mc.gameMode.getPlayerMode().getName(); }
     @Override public boolean alive() { return mc.player.isAlive(); }
+    @Override public void checkEntry() {
+        if (mc.gui.screen() instanceof AbstractContainerScreen<?> || mc.player.containerMenu != mc.player.inventoryMenu
+            || !mc.player.inventoryMenu.getCarried().isEmpty()) {
+            throw new IllegalStateException("Put away any item on the cursor and close the inventory or container before starting a track.");
+        }
+        for (int slot = 1; slot < TrackInventory.FIRST; slot++) {
+            if (!mc.player.inventoryMenu.getSlot(slot).getItem().isEmpty()) {
+                throw new IllegalStateException("Put away the crafting ingredients before starting a track.");
+            }
+        }
+    }
+    @Override public void checkRestorable(TrackInventory inventory) {
+        TrackInventoryCodec.creativePackets(inventory, mc.level.registryAccess(), mc.player.connection.enabledFeatures());
+    }
     @Override public void command(String command) { mc.player.connection.sendCommand(command); }
     @Override public void say(String text) { Bot.reply(mc, text); }
 
     @Override public void apply(TrackInventory inventory) {
         if (!mode().equals("creative")) throw new IllegalStateException("Slot packets require creative mode.");
+        var packets = TrackInventoryCodec.creativePackets(inventory, mc.level.registryAccess(), mc.player.connection.enabledFeatures());
         mc.player.closeContainer();
-        var slots = TrackInventoryCodec.decode(inventory, mc.level.registryAccess());
-        for (int i = 0; i < slots.size(); i++) {
-            mc.player.connection.send(new ServerboundSetCreativeModeSlotPacket(i + TrackInventory.FIRST, slots.get(i)));
-        }
+        for (var packet : packets) mc.player.connection.send(packet);
         mc.player.getInventory().setSelectedSlot(inventory.selected);
         mc.player.connection.send(new ServerboundSetCarriedItemPacket(inventory.selected));
     }
