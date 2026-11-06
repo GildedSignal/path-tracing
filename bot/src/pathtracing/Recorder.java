@@ -203,6 +203,7 @@ public final class Recorder {
     private static void finish(Minecraft mc, boolean clean) {
         boolean wasReplay = replaying();
         boolean complete = clean && (!wasReplay || tick == replay.size());
+        if (wasReplay) ClockAudit.finish(tick, complete);
         replay = null;
         start = null;
         awaitStart = false;
@@ -277,7 +278,10 @@ public final class Recorder {
                 return;
             }
         }
-        if (replaying()) replay.get(tick).apply(mc);
+        if (replaying()) {
+            if (tick == 0) ClockAudit.begin(name);
+            replay.get(tick).apply(mc);
+        }
         applied = TickInput.capture(mc);
     }
 

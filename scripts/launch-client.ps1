@@ -5,7 +5,9 @@ param(
   [Parameter(Mandatory)][ValidateSet('player','bot')][string]$Role,
   [switch]$NoJoin,
   # The clock gate launches a second bot process with this property disabled.
-  [ValidateSet('true','false')][string]$FollowTickRate = 'true'
+  [ValidateSet('true','false')][string]$FollowTickRate = 'true',
+  [ValidateSet('true','false')][string]$FullTickDemand = 'false',
+  [ValidateSet('true','false')][string]$ClockAudit = 'false'
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -22,7 +24,13 @@ $jvm = @(
   "-Dpathtracing.role=$Role", "-Dpathtracing.bot=$BotName", "-Dpathtracing.owner=$PlayerName",
   "-Dpathtracing.rig=$Rig"
 )
-if ($Role -eq 'bot') { $jvm += "-Dpathtracing.followTickRate=$FollowTickRate" }
+if ($Role -eq 'bot') {
+  $jvm += "-Dpathtracing.followTickRate=$FollowTickRate"
+  if ($FullTickDemand -eq 'true') { $jvm += '-Dpathtracing.fullTickDemand=true' }
+  if ($ClockAudit -eq 'true') {
+    $jvm += @('-Dpathtracing.clockAudit=true', "-XX:FlightRecorderOptions=repository=$gameDir")
+  }
+}
 $jvm += @(
   '-cp', ($classpath -join ';'),
   'net.fabricmc.loader.impl.launch.knot.KnotClient'
