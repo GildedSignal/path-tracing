@@ -128,11 +128,11 @@ function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$W
   foreach ($path in @($recordTarget, $worldTarget, "$recordTarget.tmp", "$worldTarget.tmp")) {
     if (Test-Path -LiteralPath $path) { throw "Fixture output already exists: $path" }
   }
-  # Preserve the full client snapshot in the recording header. Resources used by Rust come
-  # from one pre-replay server entity snapshot, with its timing limitation stated in the report.
+  # Health and food influence the client movement law. The server alone owns saturation:
+  # ServerPlayer.doTick sends it when health/food change or saturation crosses zero.
+  # The raw client observation stays in the recording header.
   if ([single]$Player.health -ne [single]$ServerStart.Health -or
-      $Player.foodLevel -ne $ServerStart.foodLevel -or
-      [single]$Player.saturationLevel -ne [single]$ServerStart.foodSaturationLevel) {
+      $Player.foodLevel -ne $ServerStart.foodLevel) {
     throw 'Initial server resources disagree with the settled client snapshot; pre-replay resources cannot initialize this fixture.'
   }
   Server-Resources $Player $ServerStart
@@ -385,7 +385,8 @@ finally {
     'The initialPlayer header retains every client field. The world player line substitutes the pre-replay server resources.',
     'Before each run and during cleanup, heal as needed and wait for maximum health, foodTickTimer=0 and TicksFrozen=0.',
     'Replay pauses after settle for a second server snapshot. Every resource field must be bit-identical to the first snapshot before rec continue.',
-    'A run is rejected if initial health, food or saturation disagree with that settled client snapshot.',
+    'A run is rejected if initial health or food disagree with the settled client snapshot.',
+    'Saturation is taken from the verified server snapshot. The raw header retains the client observation.',
     'Courses are static snapshots after the replay.',
     'The water course includes still and flowing water. Bubble columns are omitted because the frozen world schema has no bubble hook.',
     'Recordings retain their original header and end trailer. Reader integration belongs to job 1.5e.',
