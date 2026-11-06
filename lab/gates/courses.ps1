@@ -3,7 +3,7 @@
 # including ladders and slime jumps, so any length walk stays inside its own course.
 function Get-FixtureCourses {
   $names = @('full-blocks', 'slabs-stairs', 'step-ups', 'ceilings', 'ladders-vines', 'water',
-    'ice', 'slime', 'soul-sand', 'honey', 'cobweb', 'powder-snow', 'edges')
+    'ice', 'slime', 'soul-sand', 'honey', 'cobweb', 'powder-snow', 'edges', 'corner')
   for ($index = 0; $index -lt $names.Count; $index++) {
     $name = $names[$index]
     $x = 4096 + 128 * $index
@@ -49,10 +49,12 @@ function Get-FixtureCourses {
       }
       'water' {
         # Two-deep source pool, a dry divider, and a one-deep source lip flowing south.
-        Fill 1 -62 6 14 -62 30 stone
-        Fill 1 -61 6 14 -60 30 water
-        Fill 15 -60 6 16 -60 30 stone
-        Fill 17 -60 6 30 -60 6 'water[level=0]'
+        # Seal the start-facing rim before placing any water.
+        Fill 1 -61 7 30 -60 7 stone
+        Fill 1 -62 8 14 -62 30 stone
+        Fill 1 -61 8 14 -60 30 water
+        Fill 15 -60 8 16 -60 30 stone
+        Fill 17 -60 8 30 -60 8 'water[level=0]'
       }
       'ice' {
         Fill 1 -61 6 15 -61 30 ice
@@ -70,11 +72,22 @@ function Get-FixtureCourses {
       'cobweb' { Fill 1 -60 6 30 -59 30 cobweb }
       'powder-snow' { Fill 1 -60 6 30 -60 30 powder_snow }
       'edges' {
-        # Safe catch floor 3 blocks below a raised grid. Sneaking encounters edges in both axes.
+        # Broad islands above the catch floor, connected by strips with exposed edges.
         $startY = -57
-        Fill 12 -58 1 20 -58 5 stone
-        for ($column = 2; $column -le 29; $column += 3) { Fill $column -58 6 $column -58 30 stone }
-        for ($row = 6; $row -le 30; $row += 3) { Fill 1 -58 $row 30 -58 $row stone }
+        Fill 12 -58 4 20 -58 5 stone
+        for ($column = 2; $column -le 26; $column += 8) {
+          for ($row = 6; $row -le 26; $row += 8) { Fill $column -58 $row ($column+4) -58 ($row+4) stone }
+        }
+        Fill 16 -58 5 17 -58 30 stone
+        Fill 2 -58 16 30 -58 17 stone
+        # Three one-block rises return from the catch floor to the start platform.
+        Fill 12 -61 1 20 -61 1 stone
+        Fill 12 -60 2 20 -60 2 stone
+        Fill 12 -59 3 20 -59 3 stone
+      }
+      'corner' {
+        # Start +16.5,+4.5; yaw zero and forward+left give bit-equal +x,+z.
+        Fill 20 -60 8 20 -59 8 stone
       }
     }
     # Last block is a receipt marker, inspected in the client's readiness export.
@@ -87,6 +100,7 @@ function Get-FixtureCourses {
       Max = @(($x+31), -45, ($z+31))
       Marker = @(($x+16), -45, ($z+16))
       Commands = $commands.ToArray()
+      SneakPercent = if ($name -eq 'edges') { 90 } else { 50 }
     }
   }
 }

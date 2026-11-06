@@ -4,6 +4,8 @@ Run these whispers from the owner (Brain_Forge by default):
 
 ```text
 /msg PathBot replay <name> [out]
+/msg PathBot replay <name> <out> wait
+/msg PathBot rec continue
 /msg PathBot rec start <name>
 /msg PathBot rec stop
 /msg PathBot dump blocks
@@ -40,9 +42,14 @@ Vertical velocity is left to vanilla. A start that has not settled by the 200th 
 after sending `tp` aborts with a reply. Teleport coordinates and angles use plain decimal notation;
 angles are first rounded to their actual float values.
 
+With `wait`, the recorder replies `Settled <out>; waiting for rec continue.` after settling and
+holds all keys released until `rec continue`. No input row or initialPlayer snapshot is captured
+while waiting. The fixture driver uses this boundary for its second server start read. Ordinary
+replay retains its automatic start. `rec continue` requires a settled, active replay.
+
 ## Recordings
 
-`<gameDir>/pathtracing/recordings/<out or name>.jsonl` is UTF-8 JSONL with LF endings and no clock
+`<gameDir>/pathtracing/recordings/<out or name>.jsonl` is UTF-8 JSONL with LF endings and no wall-clock
 fields. Its first line records the required input settings:
 
 ```json
@@ -65,17 +72,26 @@ output. Existing final recordings are never replaced. Replay opens this output a
 recording samples after the follower's START callback and writes at END, without driving the keys.
 Each tick row has:
 
-- `t`, the player's absolute `tickCount`, and `inputs` (the seven key booleans, `yaw`, `pitch`);
+- `t`, the player's absolute `tickCount`, client-level `gameTime`, and `inputs` (the seven key booleans, `yaw`, `pitch`);
 - `position` and `velocity`, each with `x`, `y`, `z`;
 - `yRot`, `xRot`, `onGround`, `horizontalCollision`, `verticalCollision`, `isSprinting`,
   `isShiftKeyDown`, `pose`, `fallDistance`, `isInWater`, `onClimbable`;
 - client `health`, `foodLevel`, `saturationLevel`;
+- `ticksFrozen`, the client's frozen-tick count at END;
+- `speedModifiers`, every client MOVEMENT_SPEED modifier except `minecraft:sprinting`, read at END;
 - optional `anomaly`: an array of packets, in handler order, preserving multiple anomalies per tick.
+
+`collisionSteps` observes each vanilla `Entity.collide` request and result, with raw vector bits only,
+after sneak back-off and stuck processing. The read-only RETURN injection changes no movement.
+Each `requested` and `result` has only `xBits`, `yBits`, `zBits`, all sixteen-digit hex strings.
+`speedModifiers` is an array of `[id, amount, operation]` tuples. The namespaced id is a string,
+amount is the attribute modifier's double value, and operation is its numeric vanilla id
+(0 ADD_VALUE, 1 ADD_MULTIPLIED_BASE, 2 ADD_MULTIPLIED_TOTAL). Amounts use round-trip JSON numbers.
 
 After the first row, `tickCount` must advance by exactly one per row. An offending row is retained
 in the temporary output and the run aborts, replying with `t` and the previous/current tickCount.
 
-Every double has a sibling `<field>Bits` with sixteen lowercase hex digits. Floats (input angles,
+Scalar doubles and ordinary vectors have sibling `<field>Bits` with sixteen lowercase hex digits. Floats (input angles,
 rotations, health and saturation) use eight. `fallDistance` is a double in 26.2. Raw bits are unsigned
 hex strings without `0x`. The decimal fields remain JSON numbers.
 
@@ -144,7 +160,7 @@ the three doubles and the two float-rounded angles. Every tick row uses the same
 for its float yaw and pitch, without passing them through `ConvertTo-Json`.
 
 `compare-recordings` compares the header's four settings and every tick-row field except absolute
-`tickCount`, including decimals, raw bits, inputs, on-ground and collision flags, pose, food values
+`tickCount` and `gameTime`, including decimals, raw bits, inputs, on-ground and collision flags, pose, food values
 and anomalies. Fields are visited in sorted name order and arrays in index order. It reports the
 first differing tick and field, or `identical`, and compares the end trailers too. Different lengths,
 invalid tick stamps, missing headers/trailers and malformed raw fields fail. Both trailers must have
@@ -195,9 +211,12 @@ The default `-FailOn` covers every current failure reply from `Bot`, `Recorder`,
 ## Server endpoints
 
 Run `.\scripts\server-state.ps1 PathBot` at each recording's start and end. It prints one JSON object
-with `Health`, `foodLevel`, `foodSaturationLevel`, `foodExhaustionLevel`, `Pos`, `Motion`, `FallDistance`.
-Vectors are numeric arrays. The fields come from separate sequential RCON queries, not an atomic
-snapshot. Restore fixture state, equipment, effects and server resources before comparing replays;
+with `Health`, `foodLevel`, `foodSaturationLevel`, `foodExhaustionLevel`, `foodTickTimer`, `TicksFrozen`,
+`playerGameType`, `Pos`, `Motion`, `FallDistance`, `gameTimeBefore` and `gameTimeAfter`.
+Vectors are numeric arrays. All entity fields come from one `data get entity` in one server tick.
+Two `time query gametime` calls bracket that read; the SNBT reader respects nested compounds,
+arrays and quoted strings. Vanilla omits `TicksFrozen` at zero. Restore fixture state, equipment,
+effects and server resources before comparing replays;
 the replay command only teleports and waits for the specified movement settling condition.
 
 ## L0 world export and initial state (job 1.6)
@@ -230,10 +249,17 @@ The class-derived hooks follow the 26.2 bytecode. These are the complete export 
 - `SlimeBlock` supplies `slime`, which selects its landing-damage and step hooks in Rust.
 - A `LiquidBlock` carrying water, or a `BubbleColumnBlock`, supplies `waterBlock`.
 - `WebBlock`, `PowderSnowBlock` and `HoneyBlock` select `inside=cobweb`, `powderSnow` and `honey`.
-  Other blocks select `none`. Their hook parameters are implemented by the law.
-- `HayBlock` and `HoneyBlock` supply `fallOnMultiplier=0.2F`, `BedBlock` supplies `0.5F`, and
-  the default landing hook supplies `1.0F`. These hooks have no numeric getter. Slime and powder
+- An inherited or declared `entityInside`/`fallOn` override without a modeled hook selects
+  `inside=unmodeled`, never `none`. Reflection walks to BlockBehaviour/Block respectively.
+  Pointed dripstone is explicitly unmodeled: its fallOn adds 2.5 to distance and uses multiplier 2.
+- The literal job 1.6c check also forbids `inside=none` for a fallOn-only override, even when a
+  separate flag models its landing. Slime, hay and beds therefore export `inside=unmodeled` while
+  retaining their other fields. The separate law reader conservatively rejects those contacts.
+- `HayBlock` and `HoneyBlock` supply `fallOnMultiplier=0.2F`; beds and the default supply `1.0F`.
+  `BedBlock` supplies `bed=true`; the law performs its halving. These hooks have no numeric getter. Slime and powder
   snow retain their separate law hooks. Bounce itself is read from the game, including beds/slime.
+- `EndPortalBlock` and `EndGatewayBlock` supply `endPortalOrGateway`.
+  `suffocating` comes from `state.isSuffocating(level,pos)` at the actual position.
 - `LadderBlock` reads `FACING` as a vanilla 3D direction id. An open `TrapDoorBlock` reads its
   `FACING` into `openTrapdoorFacing`. Closed trapdoors omit that field.
 
@@ -242,8 +268,19 @@ and before applying input zero. Header writing is deferred to this point. Stoppi
 aborted replay still writes its required metadata/trailer. Existing metadata and tick rows retain
 their format. The snapshot has every player field accepted by the fixture README, including
 attributes, fluid/eye flags, support position, stuck multiplier, jump delay and client food timer.
+`movementSpeedBase` and `movementSpeedBaseBits` contain the MOVEMENT_SPEED attribute's double base
+value, replacing `movementSpeed` and `movementSpeedBits`. The player line also has `speedModifiers`
+in the same tuple format as tick rows. `speed` retains the observed float `getSpeed()` value.
 Read-only mixin accessors expose private/protected state. Its tickCount is the pre-tick count.
 Local FoodData exhaustion and timer are client observations, not server-authoritative values.
+`ticksFrozen` is captured with `getTicksFrozen()`. Before every run the driver teleports onto the
+dry start and waits for server TicksFrozen=0; replay settling also requires client ticksFrozen=0.
+Vanilla `tryAddFrost` adds a MOVEMENT_SPEED ADD_VALUE modifier of -0.05 * percentFrozen while
+ticksFrozen > 0 (subject to its vanilla supporting-block condition). Speed therefore changes
+during a powder-snow recording. Server-driven state is an input the law reads from the recording.
+The server runs frost removal, frost speed updates and thaw. The client receives attribute and
+entity-data updates. Tick rows capture the resulting client modifiers and ticksFrozen at END,
+so the reader consumes those observations at the recorded boundary.
 
 Track recordings include the departure input: row `t=0` is the physics tick whose input left A,
 observed by the detector at the next START. Its header is the state on A before that input.
@@ -261,6 +298,8 @@ Other control settings still allow timing; the run row explains a missing record
 .\lab\gates\tests\test-record-fixtures.ps1
 .\lab\gates\tests\test-courses.ps1
 .\lab\gates\tests\test-fixture-json.ps1
+.\lab\gates\tests\test-fixture-state.ps1
+.\lab\gates\tests\test-exporter.ps1
 ```
 
 The optional Jar installation has the same running-client hash guard as gate 1.2. An installed
@@ -270,27 +309,53 @@ name, validates hold-style options and stops only its own PID/start-time-matched
 Courses accepts an array or comma-separated names. Omitting it selects every course. Defaults
 for runs, ticks and seed are in the driver. Course seeds use declaration index, so selecting a
 subset preserves each course's input sequence for the same Runs/Seed.
+`Ticks` counts the generated movement sequence. The driver appends 20 zero-input ticks, retaining
+the final yaw and pitch, so each completed recording has `Ticks + 20` rows.
 
 `courses.ps1` constructs enclosed patches on the superflat. Solid floors, walls and roofs contain
-any walk and separate the classes. The start pad is plain stone. Edges use a raised grid over a
-safe catch floor. The water patch has a source pool and a flowing lip. Bubble columns are omitted
+any walk and separate the classes. The start pad is plain stone. Edges use wider raised islands,
+connecting strips and a return staircase from the safe catch floor. Only edges passes SneakPercent=90
+to new-inputs; its default is unchanged. The water pool and flowing lip share a start-facing stone
+rim placed before any water, with sources more than three blocks from the start. Offline flow tracing rejects unsafe starts.
+Bubble columns are omitted
 because the frozen fixture schema/law has no acceleration hook for them. The driver teleports
 to load chunks, builds, waits for delivery, and verifies the last gold-block marker through a
 full client export before replaying. Each run exports the inclusive floored position extrema of
 both initialPlayer and post-tick rows, expanded by three blocks on each axis.
+The full readiness export is deleted after checking and is not retained in results.
+`corner` uses corner-inputs.ps1, never the random generator: yaw zero, forward+left, no jump/sprint,
+from rest toward an isolated two-block-high stone column at local x=20,z=8, y=-60..-59.
+The start remains local x=16.5,z=4.5. The report requires nonzero bit-equal |dx|=|dz| and exactly
+one clipped horizontal axis in the same observed collision step. A missing witness rejects that
+run with a `no witness` reason and makes the course fail. Both axes clipped fails the predicate.
+No vanilla geometry produces the step candidate 0.6f + 1 ulp; that mutant is equivalent on the
+game domain and the integrator replaces it at gate freeze. Nothing is built for that mutant.
 
 Kept recordings are byte-for-byte copies. Their world companions contain one player row, the
 unchanged client export and one serverEnd row. Both files are staged before publication. Existing
 fixtures or staging files are refused. Rejections retain inputs, recordings, exports and command
 logs under `lab/gates/results`, with per-course reasons and kept/rejected/not-run counts.
 
-Server timing remains unaligned. The start sample precedes replay teleport and settling. Initial
-health, food and saturation must match the settled client's snapshot or the run is rejected.
-The player's resource fields then use that server sample, including exhaustion. This assumes
-exhaustion stays constant between sampling and input zero. The end sample is the first operation
-after the Saved reply is observed. `server-state.ps1` issues separate queries, spanning an
-unbounded number of server ticks. These endpoints are provisional resource evidence. No player
-resources, equipment or effects are reset. Live L0 resource exactness requires tick-aligned reads.
+Before every run the driver teleports to the dry start, queries the bot's actual maximum-health
+attribute, and waits for that health, foodTickTimer=0 and TicksFrozen=0. When health or the timer
+is wrong it sends `effect give <bot> instant_health` and waits again. Run cleanup does the same,
+including after aborts. The first resource snapshot precedes replay teleport and settling.
+Replay pauses after settling. A second server snapshot must have bit-identical Health,
+foodSaturationLevel and foodExhaustionLevel floats, and identical foodLevel and foodTickTimer.
+Any difference rejects the run before `rec continue`. Initial health, food and saturation must
+also match the settled client's snapshot. The world player's resources use the verified server
+sample, including exhaustion and foodTickTimer.
+
+The end sample is the first operation after Saved. `serverEnd.atRest` is true exactly when the
+last recorded row is on ground with zero x and z velocity. `serverTickOffset` is the signed tick
+distance from the last recorded gameTime to the server snapshot. Game-time queries use modulo
+Integer.MAX_VALUE. The signed representative nearest zero preserves short negative offsets and
+handles wraparound. Equal bracketing times give an exact offset. Different times give null with
+`serverTickOffsetMin` and `serverTickOffsetMax` preserving the signed bracket.
+The report counts kept serverEnd snapshots with atRest true and a non-null offset. The separate
+reader advances a nonnegative offset as zero-input ticks only for those snapshots before comparing
+resources. Negative offsets remain negative and cannot be replayed forward. Client gameTime is
+synchronized from server packets, so equal clocks alone do not prove packet-level alignment.
 
 The driver assumes the configured rig is the intended lab superflat, the bot is op, and the client
 can load each entire patch. Existing courses at these reserved coordinates are replaced.
@@ -298,7 +363,15 @@ World exports describe the state after a run and assume movement-relevant terrai
 during it. Readiness verifies loaded chunks and the final construction marker. Coverage of each
 law hook and mutant is still judged by L0 against the recorded paths.
 
-The current `wt/law` replay reader accepts the header but rejects the recorder's `type=end` trailer.
-It needs trailer support before these unchanged recordings can run through L0. The independent
-JSON smoke check compiles a copy of its parser and checks a hand-written block row without
-modifying `wt/law`.
+Reader integration belongs to parallel job 1.5e. The JSON smoke check copies the law parser and
+checks the block, collisionSteps and serverEnd field shapes. The fixture-state check exercises
+the actual driver predicates, including constant true/false witness mutants and each resource
+field. The exporter check bootstraps the staged jar's registries offline and calls the actual
+classification used by the exporter for every block class named in course commands. It lists
+unmodeled classes and rejects any entityInside/fallOn override classified as none. Planted none
+results must fail. It also checks bits-only collision vectors and all modifier operation tuples.
+The same offline jar check applies both axis orders to the outer-corner column and requires
+different horizontal results, using vanilla Shapes.collide for both orders.
+An abort already closes the recorder and is followed by no rec stop. Each cleanup operation has
+its own catch so failures are reported and later runs/courses are attempted. Original game mode
+is restored before stopping owned processes and releasing the lock, including failure paths.
