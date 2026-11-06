@@ -30,7 +30,7 @@ $replies = @(& "$PSScriptRoot\rcon.ps1" -Commands @('time query gametime', "data
 if ($replies.Count -ne 3) { throw "Expected three RCON replies, got $($replies.Count)" }
 $times = @()
 foreach ($index in @(0, 2)) {
-  if ($replies[$index] -notmatch '(\d+)\s*$') { throw "Unexpected game-time reply: $($replies[$index])" }
+  if ($replies[$index] -cnotmatch '^The game time is (\d+) tick\(s\)\s*$') { throw "Unexpected game-time reply: $($replies[$index])" }
   $times += [long]$Matches[1]
 }
 if ($replies[1] -notmatch '(?s):\s*\{(.*)\}\s*$') { throw "Unexpected entity NBT reply: $($replies[1])" }

@@ -6,7 +6,7 @@ Copy-Item -LiteralPath "$PSScriptRoot\..\..\..\scripts\server-state.ps1" -Destin
 $stub = @'
 param([string[]]$Commands)
 if (($Commands -join '|') -cne 'time query gametime|data get entity PathBot|time query gametime') { throw 'Snapshot was not one entity read.' }
-'The time is 123'
+if ($env:SNAPSHOT_TEST_CASE -eq 'malformed-time') { 'Unknown query 123' } else { 'The game time is 123 tick(s)' }
 $nbt = '{Inventory:[{Health:99f,tag:{text:"a, b: {x}, \"quoted\""}}],Health:19.5f,foodLevel:18,foodSaturationLevel:2.5f,foodExhaustionLevel:1.25e-2f,foodTickTimer:37,playerGameType:2,Pos:[1.5d,-60d,4.5d],Motion:[0d,-0.0784d,0d],FallDistance:0f}'
 switch ($env:SNAPSHOT_TEST_CASE) {
   'missing' { $nbt = $nbt.Replace('foodTickTimer:37,','') }
@@ -14,16 +14,19 @@ switch ($env:SNAPSHOT_TEST_CASE) {
   'frozen' { $nbt = $nbt.Replace('Health:19.5f','TicksFrozen:24,Health:19.5f') }
 }
 "PathBot has the following entity data: $nbt"
-if ($env:SNAPSHOT_TEST_CASE -eq 'straddle') { 'The time is 124' } else { 'The time is 123' }
+if ($env:SNAPSHOT_TEST_CASE -eq 'straddle') { 'The game time is 124 tick(s)' } else { 'The game time is 123 tick(s)' }
 '@
 Set-Content -LiteralPath (Join-Path $scratch 'rcon.ps1') -Value $stub -Encoding ASCII
 $previous = $env:SNAPSHOT_TEST_CASE
 try {
-  foreach ($case in @('normal','frozen','straddle','missing','truncated')) {
+  foreach ($case in @('normal','frozen','straddle','missing','truncated','malformed-time')) {
     $env:SNAPSHOT_TEST_CASE = $case
     $reply = @(& "$PSHOME\powershell.exe" -NoProfile -Command "try { & '$scratch\server-state.ps1' PathBot } catch { Write-Output `$_; exit 1 }" 2>&1)
-    if ($case -in @('missing','truncated')) {
-      if ($LASTEXITCODE -eq 0) { throw "Accepted $case entity NBT" }
+    if ($case -in @('missing','truncated','malformed-time')) {
+      if ($LASTEXITCODE -eq 0) { throw "Accepted $case RCON reply" }
+      if ($case -eq 'malformed-time' -and ($reply -join "`n") -notmatch 'Unexpected game-time reply') {
+        throw 'Malformed game time was rejected for the wrong reason.'
+      }
     } else {
       if ($LASTEXITCODE) { throw ($reply -join "`n") }
       $state = ($reply -join "`n") | ConvertFrom-Json
