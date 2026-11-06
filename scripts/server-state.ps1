@@ -42,7 +42,7 @@ foreach ($entry in (Split-Compound $Matches[1])) {
   $fields[$key] = $Matches[2]
 }
 $state = [ordered]@{ gameTimeBefore = $times[0]; gameTimeAfter = $times[1] }
-foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'foodTickTimer', 'playerGameType', 'Pos', 'Motion', 'FallDistance', 'TicksFrozen')) {
+foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'foodTickTimer', 'playerGameType', 'Pos', 'Motion', 'fall_distance', 'TicksFrozen')) {
   # Vanilla omits TicksFrozen when zero.
   if (-not $fields.ContainsKey($field)) {
     if ($field -eq 'TicksFrozen') { $state[$field] = 0; continue }

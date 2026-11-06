@@ -7,7 +7,7 @@ $stub = @'
 param([string[]]$Commands)
 if (($Commands -join '|') -cne 'time query gametime|data get entity PathBot|time query gametime') { throw 'Snapshot was not one entity read.' }
 if ($env:SNAPSHOT_TEST_CASE -eq 'malformed-time') { 'Unknown query 123' } else { 'The game time is 123 tick(s)' }
-$nbt = '{Inventory:[{Health:99f,tag:{text:"a, b: {x}, \"quoted\""}}],Health:19.5f,foodLevel:18,foodSaturationLevel:2.5f,foodExhaustionLevel:1.25e-2f,foodTickTimer:37,playerGameType:2,Pos:[1.5d,-60d,4.5d],Motion:[0d,-0.0784d,0d],FallDistance:0f}'
+$nbt = '{Inventory:[{Health:99f,tag:{text:"a, b: {x}, \"quoted\""}}],Health:19.5f,foodLevel:18,foodSaturationLevel:2.5f,foodExhaustionLevel:1.25e-2f,foodTickTimer:37,playerGameType:2,Pos:[1.5d,-60d,4.5d],Motion:[0d,-0.0784d,0d],fall_distance:0.125d}'
 switch ($env:SNAPSHOT_TEST_CASE) {
   'missing' { $nbt = $nbt.Replace('foodTickTimer:37,','') }
   'truncated' { $nbt = $nbt.Substring(0,$nbt.Length-5) }
@@ -34,7 +34,7 @@ try {
       $expectedFrozen = if ($case -eq 'frozen') { 24 } else { 0 }
       $expectedAfter = if ($case -eq 'straddle') { 124 } else { 123 }
       if ($state.TicksFrozen -ne $expectedFrozen -or $state.gameTimeBefore -ne 123 -or $state.gameTimeAfter -ne $expectedAfter) { throw 'Wrong timing/frozen state.' }
-      if ($state.Pos[1] -ne -60 -or $state.Motion[1] -ne -0.0784) { throw 'Wrong vector snapshot.' }
+      if ($state.Pos[1] -ne -60 -or $state.Motion[1] -ne -0.0784 -or $state.fall_distance -ne 0.125) { throw 'Wrong motion snapshot.' }
     }
     Write-Output "PASS server-state $case"
   }
