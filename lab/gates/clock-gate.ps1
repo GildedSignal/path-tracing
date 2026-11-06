@@ -188,7 +188,7 @@ function Replay-Clock($Course, [string]$InputName, [int]$Rate, [string]$Follow) 
   $path = Join-Path $botDir "pathtracing\recordings\$name.jsonl"
   $script:activeRecording = $path
   $samples = [Collections.Generic.List[object]]::new()
-  $null = Require (Bot "replay $InputName $name" ("Replay ${InputName}: waiting for")) 'Replay start'
+  $null = Require (Bot "replay $InputName $name" ("Replay ${name}: waiting for")) 'Replay start'
   $deadline = [Diagnostics.Stopwatch]::StartNew()
   while (-not (Test-Path -LiteralPath $path)) {
     if ($deadline.Elapsed.TotalSeconds -gt 60) { throw "Replay $name exceeded 60 seconds." }
