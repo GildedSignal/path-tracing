@@ -96,8 +96,9 @@ $hurt = -not $state.healed -and ($env:FIXTURE_TEST_CASE -eq 'heal' -or
 $health = if ($hurt) { 18 } else { 20 }
 $timer = if ($hurt) { 7 } else { 0 }
 $exhaustion = if ($env:FIXTURE_TEST_CASE -eq 'settle-exhaustion' -and $state.recording) { 0.8 } else { 0.75 }
+$saturation = if ($env:FIXTURE_TEST_CASE -eq 'settle-saturation' -and $state.recording) { 4 } else { 5 }
 if ($env:FIXTURE_TEST_CASE -eq 'settle-timer' -and $state.recording) { $timer = 1 }
-@{ Health=$health; foodLevel=20; foodSaturationLevel=5; foodExhaustionLevel=$exhaustion; foodTickTimer=$timer;
+@{ Health=$health; foodLevel=20; foodSaturationLevel=$saturation; foodExhaustionLevel=$exhaustion; foodTickTimer=$timer;
   TicksFrozen=$frozen; playerGameType=1; gameTimeBefore=$time; gameTimeAfter=$after } | ConvertTo-Json -Compress
 '@
 Set-Content -LiteralPath (Join-Path $fakeScripts 'server-state.ps1') -Value $snapshot -Encoding ASCII
@@ -145,6 +146,7 @@ elseif ($w[0] -eq 'replay') {
     velocity = @{ x = 0; y = -0.0784000015258789; z = 0 }; onGround = $true; pose = 'STANDING';
     speed = 0.1; speedBits = '3dcccccd'; foodLevel = 20; health = 20; saturationLevel = 5; exhaustion = 0; ticksFrozen = 0 }
   if ($env:FIXTURE_TEST_CASE -eq 'initial-mismatch') { $initial.health = 19 }
+  if ($env:FIXTURE_TEST_CASE -eq 'client-saturation-stale') { $initial.saturationLevel = 7 }
   $header = @{ type = 'recording'; autoJump = $false; toggleSprint = $false; toggleCrouch = $false; sprintWindow = 0; initialPlayer = $initial }
   if ($env:FIXTURE_TEST_CASE -eq 'missing-initial') { $header.Remove('initialPlayer') }
   $path = Join-Path $directory "$($w[2]).jsonl"
@@ -274,6 +276,10 @@ function Run-Case([string]$Name, [int]$Expected, [string]$Reason = '', [bool]$La
         Assert ($player.position.x -eq $header.initialPlayer.position.x) "$Name player was post-tick."
         Assert ($player.speedBits -ceq '3dcccccd') "$Name lost initial raw bits."
         Assert ($player.exhaustionBits -ceq '3f400000') "$Name missing initial server exhaustion."
+        if ($Name -eq 'client-saturation-stale') {
+          Assert ($header.initialPlayer.saturationLevel -eq 7) 'Lost the original client observation.'
+          Assert ($player.saturationLevelBits -ceq '40a00000') 'Fixture used stale client saturation instead of the server sample.'
+        }
         Assert ($player.foodTickTimer -eq 0) "$Name missing zero server foodTickTimer."
         Assert (($worldLines[-1] | ConvertFrom-Json).kind -eq 'serverEnd') "$Name missing serverEnd."
         $end = $worldLines[-1] | ConvertFrom-Json
@@ -318,7 +324,7 @@ function Run-Case([string]$Name, [int]$Expected, [string]$Reason = '', [bool]$La
       }
     } elseif ($Name -ne 'existing') { Assert ($kept.Count -eq 0) "$Name published rejected fixture." }
     if ($Name -eq 'existing') { Assert ((Get-Content -LiteralPath $kept[0].FullName -Raw).Trim() -eq 'original') 'Overwrote fixture.' }
-    if ($Name -in @('settle-exhaustion','settle-timer')) {
+    if ($Name -in @('settle-exhaustion','settle-saturation','settle-timer')) {
       Assert ('bot:rec continue' -notin $events) "$Name continued after a changing resource."
       Assert ('bot:rec stop' -in $events) "$Name left a paused recorder active."
       Assert (-not $text.Contains('Restore start resources cleanup failed:')) "$Name failed to restore start resources."
@@ -355,6 +361,7 @@ try {
   Run-Case missing-initial 1 'pre-input initialPlayer'
   Run-Case snapshot-failure 1 'Server snapshot failed'
   Run-Case initial-mismatch 1 'Initial server resources disagree'
+  Run-Case client-saturation-stale 0 'Course full-blocks - kept 1; rejected 0'
   Run-Case export-failure 1 'Client world export failed'
   Run-Case replay-failure 1 'Replay failed'
   Run-Case abort-continue 1 'Course ice - kept 3; rejected 0'
@@ -368,6 +375,7 @@ try {
   Run-Case end-airborne 0
   Run-Case heal 0
   Run-Case settle-exhaustion 1 'Start resources changed during settle: foodExhaustionLevel'
+  Run-Case settle-saturation 1 'Start resources changed during settle: foodSaturationLevel'
   Run-Case settle-timer 1 'Start resources changed during settle: foodTickTimer'
   Run-Case defaults 0 'Runs 8; ticks 400; seed base 1.'
   Run-Case all-courses 0 'Course edges - kept 1; rejected 0'

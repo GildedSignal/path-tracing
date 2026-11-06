@@ -345,9 +345,10 @@ is wrong it sends `effect give <bot> instant_health` and waits again. Run cleanu
 including after aborts. The first resource snapshot precedes replay teleport and settling.
 Replay pauses after settling. A second server snapshot must have bit-identical Health,
 foodSaturationLevel and foodExhaustionLevel floats, and identical foodLevel and foodTickTimer.
-Any difference rejects the run before `rec continue`. Initial health, food and saturation must
-also match the settled client's snapshot. The world player's resources use the verified server
-sample, including exhaustion and foodTickTimer.
+Any difference rejects the run before `rec continue`. Initial health and food must also match
+the settled client's snapshot. The world player's resources use the verified server sample.
+Vanilla only sends positive saturation changes when health or food changes. The client value
+stays in the raw recording as an observation.
 
 The end sample is the first operation after Saved. `serverEnd.atRest` is true exactly when the
 last recorded row is on ground with zero x and z velocity. `serverTickOffset` is the signed tick
