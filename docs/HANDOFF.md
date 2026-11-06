@@ -12,6 +12,17 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 **Milestone 1 is ready: Julien can race his tracks.** `wt/tracks` (1.7, 1.7b) is merged into `main` (`794e2fe`), the mod is rebuilt and installed in both clients, and a live smoke test passed (a hand-written straight track; the bot finished in 87 ticks with the placeholder planner, run line and recording written; test files removed). His tracks and run times live in `lab/tracks/` and are committed as the human baseline; recordings are ignored.
 
+**While Claude's weekly usage is out (from 5 November, 15:20)**
+- **GPT hit its usage limit at 16:00; it resets at 19:06.** Job 1.8 stopped partway (its changes stay in `wt/clock`). The queue is reordered: 1.7e (an item lost after a track, S38), 1.7d (track names), 1.8, 2.1a. Julien double-clicks `Run queue.cmd` after 19:06.
+- **GPT queue.** `Run queue.cmd` runs `jobs/queue.txt`: 1.8 (client clock, `wt/clock`) and 2.1a (region reader, `wt/world`). It never runs more than 2 GPT jobs at once, and commits each finished job on its own branch, unjudged. `Stop GPT.cmd` stops them. After a shutdown, run the queue again: finished jobs are skipped. Job 1.6c is committed on wt/fixtures (822b068). It flags one issue to fix first: it applied "hooks are unmodeled" literally, so slime, hay and beds now export inside=unmodeled although the law models their landing, and the reader rejects those fixtures. The exporter must mark only hooks the law does not model. Job 1.7c (the track kit) is complete: merged into main (e098a09), 394 + 101 offline checks and 24 audited injections, jar installed in both clients. Not yet tried live: Julien is the first to test it. Always check last.md before committing a job.
+- **On return, in order:**
+  1. Commit 1.6c and 1.7c.
+  2. Merge 1.7c into `main` and smoke-test the kit live (Julien is waiting for it).
+  3. Run a Sonnet judge on each queued job.
+  4. Merge `wt/fixtures`, then record the fixtures live, then L0.
+- **GLM now runs on this PC** (5 November, 16:50). GitHub's runner got "Connection error" twice (runs 42038557893 and 42043226109, no dossiers). omp v18.16.0 for Windows (SHA-256 verified) is in D:\path-tracing-deps\omp, and scripts\glm-local.ps1 runs lenses through lab/actions.sh. Julien starts the deep research with Run GLM research.cmd (lens foundations-primary, S42). Results land in lab\results\local-*: check the anchors with its reproduce.sh, then read the dossier. Re-run the earlier six lenses the same way.
+- **GLM.** Run 42038557893 failed: every call got "Connection error" from omp on GitHub's runner, with the new key. That is a network failure: the same key and endpoint work from this PC, and this morning's run did reach Z.ai (error 1113). Run 42043226109 (`speed-of-light`, `track-designer`, `elite-techniques`) was dispatched at 15:15. If it fails the same way, Z.ai is probably refusing GitHub's network: run the lenses on this PC instead (`lab/run.sh` under Git Bash, with the key from `Get-GlmKey`).
+
 **Julien's double-clicks** (README): `Play.cmd`, `Play with bot.cmd`, `Set GLM key.cmd`. The L0 courses are built in the superflat at x = 4096 + 128·i, with teleport buttons at spawn and on each roof (`scripts\place-teleports.ps1`; it sources `lab/gates/courses.ps1`, which on `main` is still 1.6's version until `wt/fixtures` merges).
 
 **Running** (if the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`):

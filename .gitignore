@@ -16,3 +16,5 @@ lab/results/*
 recordings/
 lab/tracks/.lock
 lab/tracks/**/*.tmp
+logs/
+conversation-*.md

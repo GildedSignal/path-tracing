@@ -1,0 +1,5 @@
+# GPT job queue: <job id> <worktree>. "Run queue.cmd" runs these in order, one at a time.
+1.7e-kit-item-loss D:\path-tracing-wt\tracks
+1.7d-track-labels D:\path-tracing-wt\tracks
+1.8-client-clock D:\path-tracing-wt\clock
+2.1a-region-reader D:\path-tracing-wt\world

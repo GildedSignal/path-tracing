@@ -152,6 +152,7 @@ elseif ($Text -like 'replay *') {
     $x = 0.5
     if ($env:GATE_TEST_CASE -eq 'different' -and $name.EndsWith('_b')) { $x = 7 }
     $row = [ordered]@{ t = $t; tickCount = $(if ($name.EndsWith('_b')) { 200 + $t } else { 100 + $t }); position = @{ x = $x; xBits = '3fe0000000000000' } }
+    $row.gameTime = if ($name.EndsWith('_b')) { 2000+$t } else { 1000+$t }
     if ($env:GATE_TEST_CASE -eq 'positive-anomaly') { $row.anomaly = @(@{ type = 'Push' }) }
     $row | ConvertTo-Json -Depth 6 -Compress | Add-Content -LiteralPath $path -Encoding ASCII
   }

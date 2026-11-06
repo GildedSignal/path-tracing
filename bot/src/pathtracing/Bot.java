@@ -66,14 +66,17 @@ final class Bot {
                     if (w[0].equals("replay") && (w.length == 2 || w.length == 3)) {
                         Tracks.cancel(mc, true);
                         Recorder.replay(mc, w[1], w.length == 3 ? w[2] : w[1]);
+                    } else if (w[0].equals("replay") && w.length == 4 && w[3].equals("wait")) {
+                        Recorder.replay(mc, w[1], w[2], true);
                     } else if (w[0].equals("rec") && w.length == 3 && w[1].equals("start")) Recorder.record(mc, w[2]);
+                    else if (w[0].equals("rec") && w.length == 2 && w[1].equals("continue")) Recorder.continueReplay();
                     else if (w[0].equals("rec") && w.length == 2 && w[1].equals("stop")) Recorder.stop(mc);
                     else if (w[0].equals("dump") && w.length == 2 && w[1].equals("blocks")) {
                         reply(mc, BlockDumper.dump(mc));
                     } else if (w[0].equals("export") && w.length == 8) {
                         WorldExporter.export(mc, w[1], new BlockPos(Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4])),
                             new BlockPos(Integer.parseInt(w[5]), Integer.parseInt(w[6]), Integer.parseInt(w[7])));
-                    } else reply(mc, "Usage: replay <name> [out], rec start <name>, rec stop, dump blocks, export <name> <x0> <y0> <z0> <x1> <y1> <z1>");
+                    } else reply(mc, "Usage: replay <name> [out] [wait], rec continue, rec start <name>, rec stop, dump blocks, export <name> <x0> <y0> <z0> <x1> <y1> <z1>");
                 } catch (java.io.IOException | RuntimeException e) {
                     reply(mc, "Recorder/dumper: " + e.getMessage());
                 }

@@ -7,7 +7,9 @@ $classpath = (Get-GameClasspath) -join ';'
 $sourceRoot = Join-Path $Root 'bot\src\pathtracing'
 & "$Jdk\javac.exe" --release 25 -proc:none -cp $classpath -d $testBuild `
   "$sourceRoot\TrackDetector.java" "$sourceRoot\TrackUsage.java" "$sourceRoot\TrackStore.java" `
-  "$sourceRoot\TrackRcon.java" "$sourceRoot\TrackRecording.java" "$PSScriptRoot\TrackTests.java" "$PSScriptRoot\TrackMixinAudit.java"
+  "$sourceRoot\TrackRcon.java" "$sourceRoot\TrackRecording.java" "$sourceRoot\TrackInventory.java" `
+  "$sourceRoot\TrackInventoryCodec.java" "$sourceRoot\TrackMode.java" "$PSScriptRoot\TrackModeTests.java" `
+  "$PSScriptRoot\TrackTests.java" "$PSScriptRoot\TrackMixinAudit.java"
 if ($LASTEXITCODE) { throw 'Track test compilation failed' }
 $testRig = Join-Path $testBuild ([Guid]::NewGuid().ToString('N'))
 & "$Jdk\java.exe" -cp "$testBuild;$classpath" pathtracing.TrackTests $testRig `

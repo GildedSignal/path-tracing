@@ -14,6 +14,7 @@ superflat server on this computer.
 Double-click in this folder:
 - **`Play.cmd`**: the server and your client.
 - **`Play with bot.cmd`**: the server, the bot on your second monitor, and your client.
+- **`Run queue.cmd`**: runs the GPT build jobs listed in `jobs\queue.txt`, one after another. Safe to run again after a shutdown. **`Stop GPT.cmd`** stops them.
 - **`Set GLM key.cmd`**: paste a new Z.ai key into a hidden dialog. It is stored encrypted for your account, copied to the GitHub Actions secret, then checked once with Z.ai.
 
 At spawn, the **Courses** button (4 blocks north) takes you onto the roof of the first test course. Each roof has **Spawn** and **Next** buttons. The courses are closed boxes: press F3+N to switch to spectator and fly in, and F3+N again to press buttons. `scripts\place-teleports.ps1` rebuilds the courses and the buttons.

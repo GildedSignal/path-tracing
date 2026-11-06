@@ -27,7 +27,8 @@ finalize() {
   exit "$status"
 }
 main() {
-  [[ ${GITHUB_ACTIONS:-} == true ]] || { echo 'GLM runs only on GitHub Actions' >&2; exit 2; }
+  # Julien allowed research to run on his PC without isolation (S43); scripts/glm-local.ps1 sets GLM_LOCAL.
+  [[ ${GITHUB_ACTIONS:-} == true || ${GLM_LOCAL:-} == S43 ]] || { echo 'GLM runs only on GitHub Actions or through scripts/glm-local.ps1' >&2; exit 2; }
   [[ -n ${ZAI_API_KEY:-} ]] || { echo 'ZAI_API_KEY Actions secret is missing; set it before running glm-lab' >&2; exit 2; }
   [[ ${LAB_MINUTES:-60} =~ ^[1-9][0-9]{0,2}$ ]] && (( ${LAB_MINUTES:-60} <= 180 )) || {
     echo 'minutes must be an integer from 1 to 180' >&2; exit 2;

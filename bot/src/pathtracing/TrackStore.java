@@ -1,6 +1,7 @@
 package pathtracing;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.IOException;
@@ -10,6 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +111,92 @@ final class TrackStore {
     private FileChannel lockChannel() throws IOException {
         Files.createDirectories(directory);
         return FileChannel.open(directory.resolve(".lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+    }
+
+    private Path kitFile(String name) {
+        validateName(name);
+        return directory.resolve(name + ".kit.json");
+    }
+
+    TrackInventory readKit(String name) throws IOException {
+        Path path = kitFile(name);
+        return Files.exists(path) ? TrackInventory.read(JsonParser.parseString(Files.readString(path)).getAsJsonObject()) : null;
+    }
+
+    void writeKit(String name, TrackInventory kit) throws IOException {
+        try (var channel = lockChannel(); var lock = channel.lock()) {
+            durableReplace(kitFile(name), canonical(kit.withoutSticks().json()) + "\n");
+        }
+    }
+
+    record Session(TrackInventory inventory, String gameMode) {
+        Session {
+            if (!List.of("survival", "creative", "adventure", "spectator").contains(gameMode)) {
+                throw new IllegalArgumentException("Invalid saved game mode.");
+            }
+        }
+
+        JsonObject json() {
+            JsonObject out = new JsonObject();
+            out.add("inventory", inventory.json());
+            out.addProperty("gameMode", gameMode);
+            return out;
+        }
+    }
+
+    private Path sessionFile(String player) {
+        if (!player.matches("[A-Za-z0-9_]{1,16}")) throw new IllegalArgumentException("Invalid session player name.");
+        return directory.resolve(".session-" + player + ".json");
+    }
+
+    Session readSession(String player) throws IOException {
+        Path path = sessionFile(player);
+        if (!Files.exists(path)) return null;
+        JsonObject in = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+        return new Session(TrackInventory.read(in.getAsJsonObject("inventory")), in.get("gameMode").getAsString());
+    }
+
+    void writeSession(String player, Session session) throws IOException {
+        try (var channel = lockChannel(); var lock = channel.lock()) {
+            Path path = sessionFile(player);
+            if (Files.exists(path)) throw new IOException("Saved track session exists. Use /track exit to recover it first.");
+            durableReplace(path, canonical(session.json()) + "\n");
+        }
+    }
+
+    void deleteSession(String player) throws IOException { Files.delete(sessionFile(player)); }
+
+    private static void durableReplace(Path target, String contents) throws IOException {
+        Path temporary = Files.createTempFile(target.getParent(), target.getFileName() + ".", ".tmp");
+        try {
+            try (var output = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                ByteBuffer bytes = StandardCharsets.UTF_8.encode(contents);
+                while (bytes.hasRemaining()) output.write(bytes);
+                output.force(true);
+            }
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally { Files.deleteIfExists(temporary); }
+    }
+
+    /** Sorted object keys, fixed array order, compact Gson primitives, UTF-8 and no trailing newline. */
+    static String canonical(JsonElement value) {
+        if (value.isJsonObject()) {
+            Map<String, JsonElement> sorted = new TreeMap<>();
+            value.getAsJsonObject().entrySet().forEach(e -> sorted.put(e.getKey(), e.getValue()));
+            return "{" + String.join(",", sorted.entrySet().stream()
+                .map(e -> new com.google.gson.JsonPrimitive(e.getKey()) + ":" + canonical(e.getValue())).toList()) + "}";
+        }
+        if (value.isJsonArray()) {
+            List<String> values = new ArrayList<>();
+            value.getAsJsonArray().forEach(e -> values.add(canonical(e)));
+            return "[" + String.join(",", values) + "]";
+        }
+        return value.toString();
+    }
+
+    static String sha256(JsonElement value) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical(value).getBytes(StandardCharsets.UTF_8))); }
+        catch (NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
 
     private Path runs(String name) {

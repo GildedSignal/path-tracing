@@ -57,21 +57,26 @@ public final class Tracks {
     private static Double latencyMs;
     private static boolean botAttempt;
     private static Map<String, Integer> toolkit = Map.of();
+    private static TrackMode human;
+    private static TrackHumanClient humanClient;
 
     static void register() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) -> {
             var root = ClientCommands.literal("track");
-            for (String action : List.of("new", "delete", "best")) {
+            for (String action : List.of("new", "delete", "best", "kit")) {
                 root.then(ClientCommands.literal(action).then(ClientCommands.argument("name", StringArgumentType.word())
                     .executes(context -> command(Minecraft.getInstance(), action + " " + StringArgumentType.getString(context, "name")))));
             }
-            for (String action : List.of("list", "cancel")) {
+            for (String action : List.of("list", "cancel", "exit")) {
                 root.then(ClientCommands.literal(action).executes(context -> command(Minecraft.getInstance(), action)));
             }
             dispatcher.register(root);
         });
         ClientTickEvents.START_CLIENT_TICK.register(Tracks::tick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> {
+            if (humanClient != null) humanClient.disconnect();
+            human = null;
+            humanClient = null;
             cancel(mc, false);
             creating = null;
             first = null;
@@ -89,7 +94,7 @@ public final class Tracks {
         try {
             tickFault = false;
             String[] words = text.trim().split("\\s+");
-            if (words.length == 1 && words[0].equals("cancel")) {
+            if (words.length == 1 && (words[0].equals("cancel") || words[0].equals("exit"))) {
                 cancel(mc, true);
                 creating = null;
                 first = null;
@@ -103,7 +108,7 @@ public final class Tracks {
                 switch (words[0]) {
                     case "new" -> {
                         if (isBot()) throw new IllegalStateException("Create tracks in the player client.");
-                        if (run != null || DETECTOR.running() || botAttempt) throw new IllegalStateException("A track run is in progress. Use /track cancel first.");
+                        if (run != null || DETECTOR.running() || botAttempt || (human != null && human.active())) throw new IllegalStateException("A track run or track mode is in progress. Use /track exit first.");
                         if (STORE.list().stream().anyMatch(t -> t.name().equals(words[1]))) {
                             throw new IllegalArgumentException("Track already exists: " + words[1]);
                         }
@@ -124,10 +129,14 @@ public final class Tracks {
                         say(mc, words[1] + " human best: " + bestLine(history, false));
                         say(mc, words[1] + " bot best: " + bestLine(history, true));
                     }
+                    case "kit" -> {
+                        if (isBot()) throw new IllegalStateException("Set kits in the player client.");
+                        human(mc).replaceKit(words[1], run != null || DETECTOR.running());
+                    }
                     case "run" -> startBot(mc, words[1], receivedNanos);
-                    default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/cancel; bot track run <name>.");
+                    default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit; bot track run <name>.");
                 }
-            } else throw new IllegalArgumentException("Usage: track new/list/delete/best/cancel; bot track run <name>.");
+            } else throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit; bot track run <name>.");
             return 1;
         } catch (IOException | RuntimeException e) {
             say(mc, "Track: " + e.getMessage());
@@ -136,6 +145,10 @@ public final class Tracks {
     }
 
     static boolean selecting() { return creating != null; }
+
+    public static void serverTick() {
+        if (!isBot() && human != null) human.serverTick();
+    }
 
     static void click(Minecraft mc, BlockPos block, boolean cancel) {
         if (cancel) {
@@ -185,9 +198,32 @@ public final class Tracks {
         }
     }
 
-    private static void tickBody(Minecraft mc) {
+    private static void tickBody(Minecraft mc) throws IOException {
         clock++;
         if (mc.player == null || mc.level == null) return;
+        if (!isBot()) {
+            TrackMode mode = human(mc);
+            if (selected != null && mode.active() && !mode.restoring() && mode.state() != TrackMode.State.FAILED && abandoned(mc)) {
+                say(mc, "Track run discarded.");
+                cancel(mc, true);
+            }
+            boolean wasRestoring = mode.restoring();
+            mode.tick(clock);
+            if (wasRestoring && !mode.active()) {
+                // Recover first, independently of track files. Do not immediately re-enter
+                // if the join/restore position is still on A.
+                reload();
+                suppressed = tracks.stream().filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
+                return;
+            }
+            if (mode.active() && !mode.ready()) {
+                if (!mode.restoring() && mode.state() != TrackMode.State.FAILED && selected != null && !onA(mc, selected)) {
+                    mode.fail("Stay on A until the survival kit is ready.");
+                }
+                if (mode.state() == TrackMode.State.FAILED && selected != null) cancel(mc, true, false);
+                return;
+            }
+        }
         if (clock % 20 == 0) {
             try {
                 reload();
@@ -208,10 +244,22 @@ public final class Tracks {
             if (creating != null || Recorder.replaying() || isBot()) return;
             selected = tracks.stream().filter(t -> !suppressed.contains(t) && t.dimension().equals(dimension(mc)) && onA(mc, t)).findFirst().orElse(null);
             if (selected == null) return;
+            if (!isBot()) {
+                try { human.enter(selected.name()); }
+                catch (IOException | RuntimeException failure) {
+                    human.fail("Cannot enter track mode: " + failure.getMessage());
+                    cancel(mc, true, false);
+                }
+                return;
+            }
         }
         boolean abandoned = !selected.dimension().equals(dimension(mc)) || !mc.player.isAlive()
             || mc.player.getY() < Math.min(selected.a().y(), selected.b().y()) - 64
             || (botAttempt && run != null && DETECTOR.running() && DETECTOR.ticks() + 1 >= botLimit);
+        if (!isBot() && DETECTOR.active() && !DETECTOR.running() && !onA(mc, selected) && !human.validateStart()) {
+            cancel(mc, true, false);
+            return;
+        }
         sampleNanos = System.nanoTime();
         var event = DETECTOR.sample(onA(mc, selected), touchesB(mc, selected), abandoned, clock, mc.level.getGameTime());
         previousBox = mc.player.getBoundingBox();
@@ -222,6 +270,7 @@ public final class Tracks {
                 discardRecording(mc);
                 run = null;
                 USED.clear();
+                if (!isBot()) human.rearm();
                 mc.player.sendOverlayMessage(Component.literal(selected.name() + " re-armed."));
             }
             case STOP -> {
@@ -245,6 +294,28 @@ public final class Tracks {
             .filter(p -> p.getX() == a.x() && p.getY() == a.y() && p.getZ() == a.z()).isPresent();
     }
 
+    private static boolean abandoned(Minecraft mc) {
+        return !selected.dimension().equals(dimension(mc)) || !mc.player.isAlive()
+            || mc.player.getY() < Math.min(selected.a().y(), selected.b().y()) - 64;
+    }
+
+    private static TrackMode human(Minecraft mc) throws java.io.UncheckedIOException {
+        if (human == null) {
+            humanClient = new TrackHumanClient(mc);
+            human = new TrackMode(STORE, mc.player.getName().getString(), humanClient);
+            try {
+                human.recover();
+            } catch (IOException failure) {
+                human.fail("Cannot read the saved session: " + failure.getMessage());
+                throw new java.io.UncheckedIOException(failure);
+            } catch (RuntimeException failure) {
+                human.fail("Cannot read the saved session: " + failure.getMessage());
+                throw failure;
+            }
+        }
+        return human;
+    }
+
     private static boolean touchesB(Minecraft mc, TrackStore.Track track) {
         return TrackDetector.touchesB(previousBox, mc.player.getBoundingBox(), track.b());
     }
@@ -254,6 +325,7 @@ public final class Tracks {
         run = TickInput.settings(mc);
         run.addProperty("player", mc.player.getName().getString());
         run.addProperty("gameMode", mc.gameMode.getPlayerMode().getName());
+        if (!isBot()) run.addProperty("kitSha256", human.kitHash());
         run.add("inventory", TrackStore.items(inventory(mc)));
         run.addProperty("date", Instant.now().toString());
         run.addProperty("trackCreated", selected.created());
@@ -308,6 +380,14 @@ public final class Tracks {
     }
 
     static void cancel(Minecraft mc, boolean stopBot) {
+        cancel(mc, stopBot, true);
+    }
+
+    private static void cancel(Minecraft mc, boolean stopBot, boolean restoreHuman) {
+        if (!isBot() && stopBot && restoreHuman && mc.player != null && mc.level != null) {
+            try { human(mc).exit(); }
+            catch (IOException | RuntimeException failure) { human.fail("Cannot restore saved session: " + failure.getMessage()); }
+        }
         try {
             if (mc.player != null && mc.level != null) suppressed = tracks.stream()
                 .filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
@@ -447,7 +527,7 @@ public final class Tracks {
         itemUsed(stack, 1);
     }
 
-    static boolean captureDeparture() { return DETECTOR.active() && !DETECTOR.running() && run == null; }
+    static boolean captureDeparture() { return DETECTOR.active() && !DETECTOR.running() && run == null && (isBot() || (human != null && human.ready())); }
 
     private static String bestLine(List<JsonObject> history, boolean bots) {
         var bests = TrackStore.bests(history, PathTracingMod.BOT, bots);

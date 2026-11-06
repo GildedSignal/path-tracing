@@ -4,8 +4,71 @@ $ErrorActionPreference = 'Stop'
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 $courses = @(Get-FixtureCourses)
 $expected = @('full-blocks', 'slabs-stairs', 'step-ups', 'ceilings', 'ladders-vines', 'water',
-  'ice', 'slime', 'soul-sand', 'honey', 'cobweb', 'powder-snow', 'edges')
+  'ice', 'slime', 'soul-sand', 'honey', 'cobweb', 'powder-snow', 'edges', 'corner')
 Assert (($courses.Name -join ',') -ceq ($expected -join ',')) 'L0 course classes/order changed.'
+
+function Trace-Water($Blocks) {
+  # Vanilla water on these courses meets only air, water and full stone cubes.
+  # Downward flow has priority; horizontal range is seven with a four-cell slope search.
+  $directions = @(@(1,0), @(-1,0), @(0,1), @(0,-1))
+  function Open([int]$X, [int]$Y, [int]$Z) { $Blocks["$X,$Y,$Z"] -eq 'air' }
+  function Drop([int]$X, [int]$Y, [int]$Z) { Open $X ($Y-1) $Z }
+  function Slope([int]$X, [int]$Y, [int]$Z, [int]$Depth, [int]$BackX, [int]$BackZ) {
+    $best = 1000
+    foreach ($d in $directions) {
+      $nx=$X+$d[0]; $nz=$Z+$d[1]
+      if (($nx -eq $BackX -and $nz -eq $BackZ) -or -not (Open $nx $Y $nz)) { continue }
+      if (Drop $nx $Y $nz) { return $Depth }
+      if ($Depth -lt 4) { $best = [Math]::Min($best, (Slope $nx $Y $nz ($Depth+1) $X $Z)) }
+    }
+    $best
+  }
+  $levels = @{}; $queue = [Collections.Generic.Queue[object]]::new()
+  foreach ($entry in $Blocks.GetEnumerator()) {
+    if ($entry.Value -match '^water(?:\[level=0\])?$') {
+      $p = @($entry.Key.Split(',') | ForEach-Object { [int]$_ })
+      $levels[$entry.Key] = 0; $queue.Enqueue(@($p[0],$p[1],$p[2],0))
+    }
+  }
+  function Add-Flow([int]$X, [int]$Y, [int]$Z, [int]$Level) {
+    $key = "$X,$Y,$Z"
+    if ((Open $X $Y $Z) -and (-not $levels.ContainsKey($key) -or $Level -lt $levels[$key])) {
+      $levels[$key]=$Level; $queue.Enqueue(@($X,$Y,$Z,$Level))
+    }
+  }
+  while ($queue.Count -gt 0) {
+    $p=$queue.Dequeue(); $x=$p[0]; $y=$p[1]; $z=$p[2]; $level=$p[3]
+    if (Drop $x $y $z) {
+      Add-Flow $x ($y-1) $z 8
+      if ($level -ne 0) { continue }
+    }
+    $next = if ($level -eq 8) { 1 } else { $level+1 }
+    if ($next -gt 7) { continue }
+    $choices=@(); $best=1000
+    foreach ($d in $directions) {
+      $nx=$x+$d[0]; $nz=$z+$d[1]
+      if (-not (Open $nx $y $nz)) { continue }
+      $slope = if (Drop $nx $y $nz) { 0 } else { Slope $nx $y $nz 1 $x $z }
+      $best=[Math]::Min($best,$slope)
+      $choices += ,@($nx,$nz,$slope)
+    }
+    foreach ($choice in $choices) { if ($choice[2] -eq $best) { Add-Flow $choice[0] $y $choice[1] $next } }
+  }
+  $levels
+}
+function Assert-DryStart($Blocks, $Start, [string]$Name) {
+  $wet = Trace-Water $Blocks
+  foreach ($key in $wet.Keys) {
+    $p=@($key.Split(',') | ForEach-Object { [int]$_ })
+    $distance2=0.0
+    for ($a=0; $a -lt 3; $a++) {
+      $gap=[Math]::Max(0, [Math]::Max($p[$a]-$Start[$a], $Start[$a]-($p[$a]+1)))
+      $distance2 += $gap*$gap
+    }
+    Assert ($distance2 -gt 9) "$Name fluid reaches within 3 blocks of start at $key."
+  }
+  $wet
+}
 $previousMax = $null
 foreach ($course in $courses) {
   $blocks = @{}
@@ -34,6 +97,41 @@ foreach ($course in $courses) {
   $sx = [int][Math]::Floor($start[0]); $sy = [int]$start[1]; $sz = [int][Math]::Floor($start[2])
   Assert ($blocks["$sx,$sy,$sz"] -eq 'air' -and $blocks["$sx,$($sy+1),$sz"] -eq 'air') "$($course.Name) start is obstructed."
   Assert ($blocks["$sx,$($sy-1),$sz"] -eq 'stone') "$($course.Name) start cannot settle at its exact specified height."
+  $wet = Assert-DryStart $blocks $start $course.Name
+  if ($course.Name -eq 'water') {
+    $rimIndex = [array]::FindIndex($course.Commands, [Predicate[string]]{ param($line) $line -eq "fill $($course.Min[0]+1) -61 $($course.Min[2]+7) $($course.Min[0]+30) -60 $($course.Min[2]+7) stone" })
+    $sourceIndex = [array]::FindIndex($course.Commands, [Predicate[string]]{ param($line) $line -match ' water(?:\[|$)' })
+    Assert ($rimIndex -ge 0 -and $rimIndex -lt $sourceIndex) 'Water was placed before the rim.'
+    foreach ($key in $wet.Keys) { Assert ([int]$key.Split(',')[2] -ge $course.Min[2]+7) 'Water reached the plain strip.' }
+    # Negative control: removing the start-facing upper rim must flood the start vicinity.
+    $mutant = $blocks.Clone()
+    for ($x=$course.Min[0]+1; $x -le $course.Max[0]-1; $x++) { $mutant["$x,-60,$($course.Min[2]+7)"]='air' }
+    $failed=$false
+    try { $null = Assert-DryStart $mutant $start 'missing-rim' } catch {
+      if ($_.Exception.Message -notlike '*fluid reaches within 3 blocks of start*') { throw }
+      $failed=$true
+    }
+    Assert $failed 'Fluid tracing did not reject the missing-rim mutant.'
+  }
+  if ($course.Name -eq 'corner') {
+    for ($x=$course.Min[0]+19; $x -le $course.Min[0]+21; $x++) {
+      for ($z=$course.Min[2]+7; $z -le $course.Min[2]+9; $z++) {
+        foreach ($y in -60..-58) {
+          $expectedBlock = if ($x -eq $course.Min[0]+20 -and $z -eq $course.Min[2]+8 -and $y -le -59) { 'stone' } else { 'air' }
+          Assert ($blocks["$x,$y,$z"] -eq $expectedBlock) 'Corner is not an isolated two-block outer column.'
+        }
+      }
+    }
+    Assert ($start[0]-$course.Min[0] -eq 16.5 -and $start[2]-$course.Min[2] -eq 4.5) 'Corner diagonal start changed.'
+  }
+  if ($course.Name -eq 'edges') {
+    Assert ($course.SneakPercent -eq 90) 'Edges do not use the course-specific sneak setting.'
+    foreach ($step in @(@(1,-61),@(2,-60),@(3,-59),@(4,-58))) {
+      $key="$sx,$($step[1]),$($course.Min[2]+$step[0])"
+      Assert ($blocks[$key] -eq 'stone') 'Catch floor lacks the return staircase.'
+      Assert ($blocks["$sx,$($step[1]+1),$($course.Min[2]+$step[0])"] -eq 'air') 'Return staircase is obstructed.'
+    }
+  }
   foreach ($x in $course.Min[0]..$course.Max[0]) {
     foreach ($z in $course.Min[2]..$course.Max[2]) {
       Assert ($blocks["$x,-64,$z"] -ne 'air' -and $blocks["$x,-45,$z"] -ne 'air') "$($course.Name) open floor or roof."
