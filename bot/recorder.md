@@ -249,12 +249,15 @@ The class-derived hooks follow the 26.2 bytecode. These are the complete export 
 - `SlimeBlock` supplies `slime`, which selects its landing-damage and step hooks in Rust.
 - A `LiquidBlock` carrying water, or a `BubbleColumnBlock`, supplies `waterBlock`.
 - `WebBlock`, `PowderSnowBlock` and `HoneyBlock` select `inside=cobweb`, `powderSnow` and `honey`.
-- An inherited or declared `entityInside`/`fallOn` override without a modeled hook selects
-  `inside=unmodeled`, never `none`. Reflection walks to BlockBehaviour/Block respectively.
-  Pointed dripstone is explicitly unmodeled: its fallOn adds 2.5 to distance and uses multiplier 2.
-- The literal job 1.6c check also forbids `inside=none` for a fallOn-only override, even when a
-  separate flag models its landing. Slime, hay and beds therefore export `inside=unmodeled` while
-  retaining their other fields. The separate law reader conservatively rejects those contacts.
+- `inside` classifies `entityInside` alone. The base hook does nothing and exports `none`.
+  An unmodeled override, such as sweet berry bush, exports `unmodeled`.
+- `unsupportedFallOn` independently marks a landing override the law cannot replay. The exporter
+  walks each hook to its declaring class. Slime, hay and beds export `inside=none` and
+  `unsupportedFallOn=false`. Pointed dripstone exports `inside=none` and
+  `unsupportedFallOn=true`. Its upward tip adds 2.5 to fall distance and uses multiplier 2.
+- Old `inside=unmodeled` rows without `unsupportedFallOn` still refuse at either affected contact.
+  Regenerate the world companions that hit that refusal, including 1.6c exports with affected
+  slime, hay or bed contacts. The old flag combines the two hooks.
 - `HayBlock` and `HoneyBlock` supply `fallOnMultiplier=0.2F`; beds and the default supply `1.0F`.
   `BedBlock` supplies `bed=true`; the law performs its halving. These hooks have no numeric getter. Slime and powder
   snow retain their separate law hooks. Bounce itself is read from the game, including beds/slime.
@@ -367,9 +370,10 @@ Reader integration belongs to parallel job 1.5e. The JSON smoke check copies the
 checks the block, collisionSteps and serverEnd field shapes. The fixture-state check exercises
 the actual driver predicates, including constant true/false witness mutants and each resource
 field. The exporter check bootstraps the staged jar's registries offline and calls the actual
-classification used by the exporter for every block class named in course commands. It lists
-unmodeled classes and rejects any entityInside/fallOn override classified as none. Planted none
-results must fail. It also checks bits-only collision vectors and all modifier operation tuples.
+exporter for every block class named in course commands. It checks inside and landing
+classifications separately, passes the slime, hay, bed, sweet berry bush and pointed dripstone
+rows to Rust, and checks landing damage, bounce and explicit refusal. It also checks bits-only
+collision vectors and all modifier operation tuples.
 The same offline jar check applies both axis orders to the outer-corner column and requires
 different horizontal results, using vanilla Shapes.collide for both orders.
 An abort already closes the recorder and is followed by no rec stop. Each cleanup operation has

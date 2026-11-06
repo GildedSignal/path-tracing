@@ -181,6 +181,7 @@ final class WorldExporter {
         out.addProperty("endPortalOrGateway", block instanceof EndPortalBlock || block instanceof EndGatewayBlock);
         out.addProperty("waterBlock", block instanceof LiquidBlock && state.getFluidState().is(FluidTags.WATER) || block instanceof BubbleColumnBlock);
         out.addProperty("inside", inside(block));
+        out.addProperty("unsupportedFallOn", unsupportedFallOn(block));
         // These fallOn hooks have no data getter. Values follow their 26.2 bytecode.
         TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : 1.0F);
         if (block instanceof LadderBlock) out.addProperty("ladderFacing", state.getValue(LadderBlock.FACING).get3DDataValue());
@@ -189,24 +190,29 @@ final class WorldExporter {
         }
     }
 
-    static String inside(Block block) {
-        String inside = block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none";
-        boolean modeledInside = block instanceof WebBlock || block instanceof PowderSnowBlock || block instanceof HoneyBlock;
-        boolean modeledFall = block instanceof HayBlock || block instanceof HoneyBlock || block instanceof BedBlock
-            || block instanceof SlimeBlock || block instanceof PowderSnowBlock;
-        if ((!modeledInside && overrides(block, "entityInside", BlockBehaviour.class))
-            || ((!modeledFall || inside.equals("none")) && overrides(block, "fallOn", Block.class))) inside = "unmodeled";
-        return inside;
+    private static String inside(Block block) {
+        Class<?> owner = hookOwner(block, "entityInside", BlockBehaviour.class);
+        if (owner == BlockBehaviour.class) return "none";
+        if (owner == WebBlock.class) return "cobweb";
+        if (owner == PowderSnowBlock.class) return "powderSnow";
+        if (owner == HoneyBlock.class) return "honey";
+        return "unmodeled";
     }
 
-    private static boolean overrides(Block block, String hook, Class<?> base) {
-        // Walk inherited overrides too. Unknown hooks must never assert "none".
+    private static boolean unsupportedFallOn(Block block) {
+        Class<?> owner = hookOwner(block, "fallOn", Block.class);
+        return owner != Block.class && owner != HayBlock.class && owner != HoneyBlock.class
+            && owner != BedBlock.class && owner != SlimeBlock.class && owner != PowderSnowBlock.class;
+    }
+
+    private static Class<?> hookOwner(Block block, String hook, Class<?> base) {
+        // An inherited implementation keeps the classification of its declaring class.
         for (Class<?> type = block.getClass(); type != base; type = type.getSuperclass()) {
             for (var method : type.getDeclaredMethods()) {
-                if (method.getName().equals(hook)) return true;
+                if (method.getName().equals(hook)) return type;
             }
         }
-        return false;
+        return base;
     }
 
     private static JsonArray boxes(List<AABB> values) {

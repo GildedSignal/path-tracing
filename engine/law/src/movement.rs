@@ -685,10 +685,10 @@ fn check_fall_damage(state: &mut PlayerState, block: &Block, dy: f64) {
         state.fall_distance -= (dy as f32) as f64;
     }
     if state.on_ground {
-        if let Inside::Unsupported(name) = &block.inside {
-            unimplemented!("BlockState.fallOn: {name}");
-        }
         if state.fall_distance>0.0 {
+            if let Some(name) = &block.unsupported_fall_on {
+                unimplemented!("BlockState.fallOn: {name}");
+            }
             let multiplier=if block.slime || block.inside==Inside::PowderSnow {
                 0.0
             } else {

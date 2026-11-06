@@ -172,14 +172,33 @@ fn load_block(object: &Object<'_>) -> Block {
         block.fluid.height = object.f32("fluidHeight");
     }
     if object.get("flow").is_some() { block.fluid.flow = vector(&object.object("flow")); }
+    let unsupported_fall_on = object.get("unsupportedFallOn").map(|_| object.boolean("unsupportedFallOn"));
     if object.get("inside").is_some() {
         block.inside = match object.string("inside") {
             "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow,
             "honey" => Inside::Honey, "none" => Inside::None,
-            "unmodeled" if object.get("block").is_some() => Inside::Unsupported(object.string("block").to_owned()),
+            "unmodeled" if object.get("block").is_some() => {
+                let id = object.string("block");
+                let name = if unsupported_fall_on.is_none() {
+                    format!("{id} (legacy inside=unmodeled). Regenerate the world export.")
+                } else {
+                    id.to_owned()
+                };
+                Inside::Unsupported(name)
+            }
             value => Inside::Unsupported(value.to_owned()),
         };
     }
+    block.unsupported_fall_on = match (unsupported_fall_on, &block.inside) {
+        (Some(true), _) => Some(if object.get("block").is_some() {
+            object.string("block").to_owned()
+        } else {
+            "unmodeled".to_owned()
+        }),
+        // The old field collapsed two hooks into one refusal. Keep both barriers.
+        (None, Inside::Unsupported(name)) => Some(name.clone()),
+        _ => None,
+    };
     if object.get("stuckMultiplier").is_some() {
         block.stuck_multiplier = Some(vector(&object.object("stuckMultiplier")));
     }
@@ -349,6 +368,7 @@ fn replay() {
     let mut server_checks = 0;
     let mut server_skips = 0;
     for file in files {
+        println!("Replaying {}", file.display());
         let fixture = fs::read_to_string(file.with_extension("world.jsonl")).expect("fixture world description");
         let (world, mut state, server_end) = parse_world(&fixture);
         let text = fs::read_to_string(&file).unwrap();
@@ -529,6 +549,7 @@ fn fixture_keeps_unsupported_hooks_explicit() {
     for hook in ["bubbleColumn", "sweetBerryBush", "unmodeled"] {
         let block = load_block(&Object::parse(&format!("{{\"boxes\":[],\"inside\":\"{hook}\"}}")));
         assert_eq!(block.inside, Inside::Unsupported(hook.to_owned()));
+        assert_eq!(block.unsupported_fall_on.as_deref(), Some(hook));
     }
 }
 
@@ -638,7 +659,6 @@ fn fixture_reads_exported_world_fields() {
 fn replay_rejects_touched_unmodeled_block_by_name() {
     let (mut world, mut state) = stationary_fixture();
     let block = load_block(&Object::parse(r#"{"boxes":[],"inside":"unmodeled","block":"minecraft:sweet_berry_bush"}"#));
-    assert_eq!(block.inside, Inside::Unsupported("minecraft:sweet_berry_bush".to_owned()));
     world.set([4,0,0], block.clone());
     replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
     world.set([0,0,0], block);
@@ -646,7 +666,8 @@ fn replay_rejects_touched_unmodeled_block_by_name() {
         replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
     })).expect_err("unmodeled contact was accepted");
     let diagnostic = failure.downcast_ref::<String>().expect("panic message");
-    assert!(diagnostic.contains("minecraft:sweet_berry_bush"), "{diagnostic}");
+    assert!(diagnostic.contains("BlockState.entityInside: minecraft:sweet_berry_bush"), "{diagnostic}");
+    assert!(diagnostic.contains("Regenerate the world export"), "{diagnostic}");
 }
 
 #[test]
@@ -692,13 +713,68 @@ fn fixture_base_and_modifiers_seed_sprint_exactly_once() {
 }
 
 #[test]
-#[should_panic(expected = "minecraft:pointed_dripstone")]
-fn replay_rejects_unmodeled_landing_by_name() {
+#[should_panic(expected = "BlockState.fallOn: minecraft:slime_block (legacy inside=unmodeled). Regenerate")]
+fn replay_refuses_ambiguous_legacy_landing() {
     let (mut world, mut state) = stationary_fixture();
+    state.fall_distance = 13.0;
     world.fill([-1,-1,-1], [1,-1,1], load_block(&Object::parse(
-        r#"{"boxes":[[0,0,0,1,1,1]],"inside":"unmodeled","block":"minecraft:pointed_dripstone"}"#
+        r#"{"boxes":[[0,0,0,1,1,1]],"inside":"unmodeled","block":"minecraft:slime_block","slime":true,"bounce":1}"#
     )));
     replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
+}
+
+#[test]
+#[ignore = "requires the actual 26.2 registry rows from test-exporter.ps1"]
+fn registry_export_contacts() {
+    let path = std::env::var_os("PATHTRACING_HOOK_ROWS").expect("run test-exporter.ps1");
+    let rows = fs::read_to_string(path).expect("read exporter check rows");
+    let mut contacts = 0;
+    for line in rows.lines() {
+        let row = Object::parse(line);
+        let id = row.string("block");
+        let mut world = BoxWorld::default();
+        world.natural_regeneration = false;
+        world.set([0,0,0], load_block(&row));
+        let mut player = PlayerState::default();
+        let inside = id == "minecraft:sweet_berry_bush";
+        let top = boxes(row.required("boxes")).iter().map(|b| b.max.y).fold(0.0, f64::max);
+        if inside {
+            player.position = Vec3::new(0.5, 0.5, 0.5);
+        } else {
+            player.position = Vec3::new(0.5, top + 0.125, 0.5);
+            player.velocity.y = -0.5;
+            player.fall_distance = 13.0;
+        }
+        let refusal = match id {
+            "minecraft:sweet_berry_bush" => Some("BlockState.entityInside"),
+            "minecraft:pointed_dripstone" => Some("BlockState.fallOn"),
+            _ => None,
+        };
+        if let Some(hook) = refusal {
+            let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tick(&mut player, &world, &Input::default());
+            })).expect_err("unmodeled contact was accepted");
+            let diagnostic = failure.downcast_ref::<String>().expect("panic message");
+            assert!(diagnostic.contains(&format!("{hook}: {id}")), "{diagnostic}");
+        } else {
+            let (health, bounce) = match id {
+                "minecraft:slime_block" => (20.0, 1.0),
+                "minecraft:hay_block" => (18.0, 0.0),
+                id if id.ends_with("_bed") => (17.0, 0.75),
+                _ => panic!("unexpected registry witness {id}"),
+            };
+            tick(&mut player, &world, &Input::default());
+            assert!(player.on_ground, "{id} did not land");
+            assert_eq!(player.position.y, top, "{id} contact height");
+            assert_eq!(player.fall_distance, 0.0, "{id} fall distance");
+            assert_eq!(player.health, health, "{id} landing damage");
+            let drag = 0.98f32 as f64;
+            let restitution = (0.25 * 0.08 + 0.5) * (1.0 + 0.25 * (drag - 1.0)) * bounce;
+            assert_eq!(player.velocity.y, (restitution - 0.08) * drag, "{id} landing velocity");
+        }
+        contacts += 1;
+    }
+    assert_eq!(contacts, 20, "slime, hay, all 16 beds and both unsupported hooks");
 }
 
 #[test]

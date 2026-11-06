@@ -1,9 +1,13 @@
 package pathtracing;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.TreeMap;
 import net.minecraft.SharedConstants;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
@@ -11,8 +15,12 @@ import net.minecraft.server.Bootstrap;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.PointedDripstoneBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -27,11 +35,66 @@ public final class ExporterCheck {
         return overrides(type.getSuperclass(), hook, base);
     }
 
-    private static void check(Block block, boolean forceNone) {
-        boolean hook = overrides(block.getClass(), "entityInside", BlockBehaviour.class)
-            || overrides(block.getClass(), "fallOn", Block.class);
-        String inside = forceNone ? "none" : WorldExporter.inside(block);
-        if (hook && inside.equals("none")) throw new AssertionError("Hook silently dropped for " + block);
+    private static Block registryBlock(String id) {
+        var key = Identifier.parse("minecraft:" + id);
+        Block block = BuiltInRegistries.BLOCK.getValue(key);
+        if (!BuiltInRegistries.BLOCK.getKey(block).equals(key)) throw new AssertionError("Missing block " + id);
+        return block;
+    }
+
+    private static JsonObject export(BlockState state) throws Exception {
+        var properties = WorldExporter.class.getDeclaredMethod("properties", JsonObject.class, BlockState.class);
+        properties.setAccessible(true);
+        var out = new JsonObject();
+        out.addProperty("block", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
+        var shape = state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+        out.add("boxes", new Gson().toJsonTree(shape.toAabbs().stream().map(box ->
+            new double[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ}).toList()));
+        properties.invoke(null, out, state);
+        return out;
+    }
+
+    private static void hookFields(JsonObject row, String inside, boolean unsupportedFallOn) {
+        if (!row.get("inside").getAsString().equals(inside)
+            || !row.has("unsupportedFallOn") || row.get("unsupportedFallOn").getAsBoolean() != unsupportedFallOn) {
+            throw new AssertionError("Expected inside=" + inside + " unsupportedFallOn=" + unsupportedFallOn + " for " + row);
+        }
+    }
+
+    private static void landing(JsonObject row, float multiplier, float bounce, boolean slime, boolean bed) {
+        hookFields(row, "none", false);
+        if (!row.get("fallOnMultiplierBits").getAsString().equals("%08x".formatted(Float.floatToRawIntBits(multiplier)))
+            || !row.get("bounceBits").getAsString().equals("%08x".formatted(Float.floatToRawIntBits(bounce)))
+            || row.get("slime").getAsBoolean() != slime || row.get("bed").getAsBoolean() != bed) {
+            throw new AssertionError("Landing data changed for " + row);
+        }
+    }
+
+    private static void contactRows(Path output) throws Exception {
+        var rows = new ArrayList<String>();
+        var slime = export(registryBlock("slime_block").defaultBlockState());
+        landing(slime, 1.0F, 1.0F, true, false);
+        rows.add(slime.toString());
+        var hay = export(registryBlock("hay_block").defaultBlockState());
+        landing(hay, 0.2F, 0.0F, false, false);
+        rows.add(hay.toString());
+        for (Block block : BuiltInRegistries.BLOCK) {
+            if (!(block instanceof BedBlock)) continue;
+            var bed = export(block.defaultBlockState());
+            landing(bed, 1.0F, 0.75F, false, true);
+            rows.add(bed.toString());
+        }
+        Block berry = registryBlock("sweet_berry_bush");
+        if (!overrides(berry.getClass(), "entityInside", BlockBehaviour.class)) throw new AssertionError(berry);
+        var bush = export(berry.defaultBlockState());
+        hookFields(bush, "unmodeled", false);
+        rows.add(bush.toString());
+        Block pointed = registryBlock("pointed_dripstone");
+        if (!overrides(pointed.getClass(), "fallOn", Block.class)) throw new AssertionError(pointed);
+        var dripstone = export(pointed.defaultBlockState().setValue(PointedDripstoneBlock.TIP_DIRECTION, Direction.UP));
+        hookFields(dripstone, "none", true);
+        rows.add(dripstone.toString());
+        Files.write(output, rows);
     }
 
     private static Vec3 corner(boolean xFirst) {
@@ -88,23 +151,26 @@ public final class ExporterCheck {
             || !xFirst.equals(new Vec3(zFirst.z, 0, zFirst.x))) {
             throw new AssertionError("Outer corner failed to distinguish axis order");
         }
+        contactRows(Path.of(args[1]));
         var classes = new TreeMap<String, String>();
         for (String id : Files.readAllLines(Path.of(args[0]))) {
-            var key = Identifier.parse("minecraft:" + id);
-            Block block = BuiltInRegistries.BLOCK.getValue(key);
-            if (!BuiltInRegistries.BLOCK.getKey(block).equals(key)) throw new AssertionError("Missing block " + id);
-            check(block, false);
-            classes.put(block.getClass().getSimpleName(), WorldExporter.inside(block));
+            Block block = registryBlock(id);
+            var row = export(block.defaultBlockState());
+            var inside = row.get("inside").getAsString();
+            boolean unsupportedFallOn = row.get("unsupportedFallOn").getAsBoolean();
+            if (inside.equals("none") && overrides(block.getClass(), "entityInside", BlockBehaviour.class)) {
+                throw new AssertionError("Inside hook silently dropped for " + block);
+            }
+            if (!unsupportedFallOn && overrides(block.getClass(), "fallOn", Block.class)
+                && !row.get("slime").getAsBoolean() && !row.get("bed").getAsBoolean()
+                && row.get("fallOnMultiplier").getAsFloat() == 1.0F && !inside.equals("powderSnow")) {
+                throw new AssertionError("Landing hook silently dropped for " + block);
+            }
+            classes.put(block.getClass().getSimpleName(), "inside=" + inside + " unsupportedFallOn=" + unsupportedFallOn);
         }
-        classes.forEach((type, inside) -> System.out.println(type + " inside=" + inside + " unmodeled=" + inside.equals("unmodeled")));
-        // Unmodeled overrides absent from the courses exercise both hook paths and inherited hooks.
-        for (String id : new String[]{"pointed_dripstone", "bubble_column", "cactus"}) {
-            Block block = BuiltInRegistries.BLOCK.getValue(Identifier.parse("minecraft:" + id));
-            check(block, false);
-            if (!WorldExporter.inside(block).equals("unmodeled")) throw new AssertionError(id);
-            boolean caught = false;
-            try { check(block, true); } catch (AssertionError expected) { caught = true; }
-            if (!caught) throw new AssertionError("none mutant survived for " + id);
+        classes.forEach((type, hooks) -> System.out.println(type + " " + hooks));
+        for (String id : new String[]{"bubble_column", "cactus"}) {
+            hookFields(export(registryBlock(id).defaultBlockState()), "unmodeled", false);
         }
         var bits = TraceJson.vectorBits(new Vec3(1, -0.0, 2));
         if (bits.size() != 3 || !bits.get("yBits").getAsString().equals("8000000000000000")) {
@@ -123,6 +189,6 @@ public final class ExporterCheck {
             if (row.size() != 3 || !row.get(0).getAsString().equals("test:op_" + operation)
                 || row.get(1).getAsDouble() != -0.125) throw new AssertionError("Modifier tuple changed");
         }
-        System.out.println("PASS course exporter hooks, none mutants, collision bits, modifier tuples and outer-corner axis orders");
+        System.out.println("PASS registry exporter hooks, landing data, collision bits, modifier tuples and outer-corner axis orders");
     }
 }
