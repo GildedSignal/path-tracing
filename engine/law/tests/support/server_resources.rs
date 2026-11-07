@@ -195,6 +195,21 @@ fn compare(actual: &Checkpoints, rows: &[Row]) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)] // Used by the standalone 1.6f verifier.
+pub(super) fn verify_landing_resources(
+    text: &str, run: &str, world: &BoxWorld, damage: Option<(i64, i32, u32)>,
+) {
+    let rows = parse_trace(text, run);
+    let observed_damage: Vec<_> = rows.iter().filter_map(|row| match row.kind {
+        Kind::Damage(bits) => Some((row.clock.world, row.clock.player, bits)),
+        _ => None,
+    }).collect();
+    assert_eq!(observed_damage.as_slice(), damage.as_slice(), "{run}: server damage event order");
+    let predicted = replay_trace(&rows, world, 0);
+    compare(&predicted, &rows).unwrap_or_else(|failure| panic!("{run}: {failure}"));
+    println!("{run}: server resource checkpoints {predicted:?}");
+}
+
 fn check_controls(rows: &[Row], world: &BoxWorld) {
     let wrong_phase = compare(&replay_trace(rows, world, 1), rows).expect_err("one-tick phase shift survived");
     assert!(wrong_phase.starts_with("first refill"), "{wrong_phase}");

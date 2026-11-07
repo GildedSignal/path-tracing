@@ -5,6 +5,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import pathtracing.phase.ResourceTrace;
+import pathtracing.phase.LandingTrace;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -17,5 +18,6 @@ public abstract class PlayerProbe {
         target = "Lnet/minecraft/world/entity/player/Player;setHealth(F)V"))
     private void ptDamage(ServerLevel level, DamageSource source, float amount, CallbackInfo ci) {
         ResourceTrace.damage(this, amount);
+        if (LandingTrace.ENABLED) LandingTrace.damage(this, source, amount);
     }
 }

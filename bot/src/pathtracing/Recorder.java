@@ -203,6 +203,7 @@ public final class Recorder {
     private static void finish(Minecraft mc, boolean clean) {
         boolean wasReplay = replaying();
         boolean complete = clean && (!wasReplay || tick == replay.size());
+        if (wasReplay && LandingClientTrace.ENABLED) LandingClientTrace.replayEnd(name, tick, complete);
         replay = null;
         start = null;
         awaitStart = false;
@@ -241,6 +242,7 @@ public final class Recorder {
     }
 
     private static void startTick(Minecraft mc) {
+        if (LandingClientTrace.ENABLED) LandingClientTrace.tickStart();
         applied = null;
         capturingDeparture = output == null && Tracks.captureDeparture() && mc.player != null && mc.level != null;
         if (capturingDeparture) {
@@ -277,11 +279,17 @@ public final class Recorder {
                 return;
             }
         }
-        if (replaying()) replay.get(tick).apply(mc);
+        if (replaying()) {
+            if (LandingClientTrace.ENABLED) {
+                LandingClientTrace.replayStart(name, tick, mc.player.tickCount, mc.level.tickRateManager().tickrate());
+            }
+            replay.get(tick).apply(mc);
+        }
         applied = TickInput.capture(mc);
     }
 
     private static void endTick(Minecraft mc) {
+        if (LandingClientTrace.ENABLED) LandingClientTrace.tickEnd();
         if ((output == null && !capturingDeparture) || mc.player == null) return;
         var player = mc.player;
         if (start != null) {
@@ -322,6 +330,12 @@ public final class Recorder {
         TraceJson.number(out, "fallDistance", player.fallDistance);
         out.addProperty("isInWater", player.isInWater());
         out.addProperty("onClimbable", player.onClimbable());
+        if (LandingClientTrace.ENABLED) {
+            out.addProperty("verticalCollisionBelow", player.verticalCollisionBelow);
+            out.addProperty("minorHorizontalCollision", player.minorHorizontalCollision);
+            out.addProperty("swimming", player.isSwimming());
+            out.addProperty("crouching", player.isCrouching());
+        }
         TraceJson.number(out, "health", player.getHealth());
         out.addProperty("foodLevel", player.getFoodData().getFoodLevel());
         TraceJson.number(out, "saturationLevel", player.getFoodData().getSaturationLevel());
@@ -395,6 +409,7 @@ public final class Recorder {
     }
 
     public static void motionPacket(ClientboundSetEntityMotionPacket packet) {
+        if (LandingClientTrace.ENABLED) LandingClientTrace.motion(packet, tick);
         var player = Minecraft.getInstance().player;
         if ((output == null && !capturingDeparture) || start != null || player == null || packet.id() != player.getId()) return;
         JsonObject out = new JsonObject();

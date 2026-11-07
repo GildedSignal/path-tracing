@@ -23,6 +23,13 @@ use crate::{
 // Player.tick; Entity.baseTick; LocalPlayer.aiStep; LivingEntity.aiStep
 // The coupled food update estimates resources from local movement without a server schedule.
 pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
+    tick_with_collision(state, world, input);
+}
+
+/// Runs the same tick and returns the request and result at Entity.collide.
+pub fn tick_with_collision(
+    state: &mut PlayerState, world: &impl World, input: &Input,
+) -> Option<(Vec3, Vec3)> {
     if state.effects {
         unimplemented!("LivingEntity: status effects other than none");
     }
@@ -105,7 +112,7 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     } else {
         movement
     };
-    travel(state, world, movement);
+    let collision = travel(state, world, movement);
     apply_block_effects(state, world, start);
     // InsideBlockEffectType.FREEZE
     if state.in_powder_snow && !state.leather_boots {
@@ -118,6 +125,7 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
     movement_exhaustion(state, state.position.minus(start));
     food_tick(state, world);
     state.t += 1;
+    collision
 }
 
 // LocalPlayer.aiStep; LocalPlayer.canStartSprinting; LocalPlayer.shouldStopRunSprinting; LocalPlayer.shouldStopSwimSprinting
@@ -308,7 +316,7 @@ fn handle_climbable(state: &mut PlayerState, world: &impl World) {
 }
 
 // Player.travel; LivingEntity.travel
-fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) {
+fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
     if state.swimming {
         let pitch = (state.pitch * 0.017453292f32) as f64;
         let look_y = -math::sin(pitch) as f64;
@@ -322,14 +330,14 @@ fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) {
         }
     }
     if state.in_water || state.in_lava {
-        travel_fluid(state, world, movement);
+        travel_fluid(state, world, movement)
     } else {
-        travel_air(state, world, movement);
+        travel_air(state, world, movement)
     }
 }
 
 // LivingEntity.travelInAir; LivingEntity.handleRelativeFrictionAndCalculateMovement
-fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) {
+fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
     let below = on_pos(state, world, 0.500001);
     let f = if state.on_ground {
         math::modified_friction(world.block(below).friction, state.friction_modifier)
@@ -338,7 +346,7 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) {
     };
     state.velocity = state.velocity.plus(input_vector(movement, friction_speed(state, f), state.yaw));
     handle_climbable(state, world);
-    move_player(state, world, state.velocity);
+    let collision = move_player(state, world, state.velocity);
     let mut velocity = state.velocity;
     if (state.horizontal_collision || state.input.jump) && (climbable(state, world) || state.was_in_powder_snow && state.leather_boots) {
         velocity.y = 0.2;
@@ -354,13 +362,14 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) {
     let horizontal = f*drag;
     let vertical = math::modified_friction(0.98, state.air_drag_modifier);
     state.velocity = Vec3::new(velocity.x*horizontal as f64, vy*vertical as f64, velocity.z*horizontal as f64);
+    collision
 }
 
 // LivingEntity.travelInFluid; LivingEntity.travelInWater; LivingEntity.travelInLava
-fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) {
+fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
     let falling = state.velocity.y <= 0.0;
     let old_y = state.position.y;
-    if state.in_water {
+    let collision = if state.in_water {
         let mut drag = if state.sprinting {
             0.9f32
         } else {
@@ -377,15 +386,16 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) {
             acceleration += (state.speed-acceleration)*efficiency;
         }
         state.velocity = state.velocity.plus(input_vector(movement, acceleration, state.yaw));
-        move_player(state, world, state.velocity);
+        let collision = move_player(state, world, state.velocity);
         if state.horizontal_collision && climbable(state, world) {
             state.velocity.y = 0.2;
         }
         state.velocity = state.velocity.multiply(Vec3::new(drag as f64, 0.8f32 as f64, drag as f64));
         fluid_falling(state, falling);
+        collision
     } else {
         state.velocity = state.velocity.plus(input_vector(movement, 0.02, state.yaw));
-        move_player(state, world, state.velocity);
+        let collision = move_player(state, world, state.velocity);
         if state.lava_height <= 0.4 {
             state.velocity = state.velocity.multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5));
             fluid_falling(state, falling);
@@ -395,12 +405,14 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) {
         if state.gravity != 0.0 {
             state.velocity.y += -state.gravity/4.0;
         }
-    }
+        collision
+    };
     let v = state.velocity;
     let jump_box = state.bounding_box().moved(Vec3::new(v.x, v.y+0.6f32 as f64-state.position.y+old_y, v.z));
     if state.horizontal_collision && world.no_collision(jump_box, CollisionContext::of(state)) && !contains_fluid(world, jump_box) {
         state.velocity.y = 0.3f32 as f64;
     }
+    collision
 }
 
 // LivingEntity.getFluidFallingAdjustedMovement
@@ -582,10 +594,10 @@ fn supporting_block(state: &mut PlayerState, world: &impl World, moved: Vec3) {
 }
 
 // Entity.move; Entity.restituteMovementAfterCollisions
-fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) {
+fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Option<(Vec3, Vec3)> {
     if state.no_physics {
         state.position = state.position.plus(wanted);
-        return;
+        return None;
     }
     if state.stuck_speed_multiplier.length_sqr() > 1.0e-7 {
         wanted = wanted.multiply(state.stuck_speed_multiplier);
@@ -650,6 +662,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) {
     let factor=speed_factor(state, world);
     let factor=(factor+state.movement_efficiency*(1.0f32-factor)) as f64;
     state.velocity=state.velocity.multiply(Vec3::new(factor, 1.0, factor));
+    Some((wanted, moved))
 }
 
 // LocalPlayer.isHorizontalCollisionMinor

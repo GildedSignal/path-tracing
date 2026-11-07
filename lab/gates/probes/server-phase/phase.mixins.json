@@ -2,6 +2,6 @@
   "required": true,
   "package": "pathtracing.phase.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": ["FoodFields", "FoodProbe", "PlayerProbe", "RegenerationProbe"],
+  "mixins": ["FoodFields", "FoodProbe", "PlayerProbe", "RegenerationProbe", "LandingChannel", "LandingRecipient", "LandingEncoder", "LandingDispatch", "LandingTracker", "LandingMove", "LandingEntity", "LandingHurt", "LandingFloor", "LandingRavager"],
   "injectors": {"defaultRequire": 1}
 }

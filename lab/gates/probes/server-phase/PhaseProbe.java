@@ -18,6 +18,26 @@ public final class PhaseProbe implements DedicatedServerModInitializer {
 
     @Override
     public void onInitializeServer() {
+        if (LandingTrace.ENABLED) CommandRegistrationCallback.EVENT.register((dispatcher, access, environment) ->
+            dispatcher.register(Commands.literal("ptlanding")
+                .requires(Commands.hasPermission(Commands.LEVEL_OWNERS))
+                .then(Commands.literal("start").then(Commands.argument("player", EntityArgument.player())
+                    .then(Commands.argument("run", StringArgumentType.word()).executes(context -> {
+                        String run = StringArgumentType.getString(context, "run");
+                        LandingTrace.start(EntityArgument.getPlayer(context, "player"), run);
+                        context.getSource().sendSuccess(() -> Component.literal("Landing capture started " + run), false);
+                        return 1;
+                    }))))
+                .then(Commands.literal("stop").then(Commands.argument("run", StringArgumentType.word()).executes(context -> {
+                    String run = StringArgumentType.getString(context, "run");
+                    LandingTrace.stop(run);
+                    context.getSource().sendSuccess(() -> Component.literal("Landing capture sealed " + run), false);
+                    return 1;
+                })))
+                .then(Commands.literal("cancel").executes(context -> {
+                    LandingTrace.cancel();
+                    return 1;
+                }))));
         CommandRegistrationCallback.EVENT.register((dispatcher, access, environment) ->
             dispatcher.register(Commands.literal("ptphase")
                 .requires(Commands.hasPermission(Commands.LEVEL_OWNERS))

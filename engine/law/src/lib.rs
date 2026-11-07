@@ -12,6 +12,7 @@ pub use movement::{
     calculate_fall_damage,
     calculate_fall_power,
     tick,
+    tick_with_collision,
     tick_server_resources
 };
 pub use shapes::{

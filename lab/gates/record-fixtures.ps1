@@ -5,7 +5,8 @@ param(
   [int]$Seed = 1,
   [string]$Jar,
   [ValidateSet('peaceful', 'normal')][string]$ResourceDifficulty,
-  [string]$ResourceProbeJar
+  [string]$ResourceProbeJar,
+  [ValidateSet(20, 200)][int]$LandingRate
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
@@ -20,7 +21,19 @@ $powershell = Join-Path $PSHOME 'powershell.exe'
 $scripts = Join-Path $PSScriptRoot '..\..\scripts'
 $botDir = Join-Path $Rig 'clients\bot'
 $fixtures = Join-Path $PSScriptRoot '..\fixtures'
-if ($ResourceDifficulty) {
+$landing = $PSBoundParameters.ContainsKey('LandingRate')
+if ($landing) {
+  if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'landing-motion.disposable') -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
+    throw 'Landing capture requires a marked disposable copy and its own port pair.'
+  }
+  if ($ResourceDifficulty -or -not $ResourceProbeJar -or -not $Jar -or $Runs -ne 1 -or
+      $Ticks -ne 400 -or $Seed -ne 1 -or ($Courses -join ',') -cne 'edges,full-blocks,ice') {
+    throw 'Frozen landing capture requires -Courses edges,full-blocks,ice -Runs 1 -Ticks 400 -Seed 1, -Jar and -ResourceProbeJar.'
+  }
+  $fixtures = Join-Path $result 'capture'
+} elseif ($ResourceDifficulty) {
   if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
       -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
     throw 'Resource capture requires a marked disposable copy and its own port pair.'
@@ -32,7 +45,7 @@ if ($ResourceDifficulty) {
   $fixtures = Join-Path $result 'pair'
 } elseif ($ResourceProbeJar) { throw '-ResourceProbeJar requires -ResourceDifficulty.' }
 $prefix = 'l0_' + $stamp
-$timeout = [int][Math]::Min(2147400, [Math]::Ceiling($Ticks / 10.0) + 60)
+$timeout = if ($landing) { 60 } else { [int][Math]::Min(2147400, [Math]::Ceiling($Ticks / 10.0) + 60) }
 $locked = $false
 $exitCode = 1
 $started = @{}
@@ -48,6 +61,7 @@ $recordTicks = $Ticks + 20
 $comparableEnds = 0
 $resourceProbe = $null
 $previousProbeOptIn = $env:PATHTRACING_RESOURCE_PROBE
+$previousLandingOptIn = $env:PATHTRACING_LANDING_PROBE
 
 function Cleanup([string]$Name, [scriptblock]$Action) {
   try { & $Action } catch { Note "$Name cleanup failed: $($_.Exception.Message)" }
@@ -162,6 +176,32 @@ function Prepare-ResourceStart {
   # Both effects last twenty server ticks. The start snapshot and probe enforce their completion.
   Start-Sleep -Seconds 2
 }
+function Seal-Landing([string]$Run) {
+  $client = Join-Path $botDir "pathtracing/recordings/$Run.client-motion.csv"
+  $server = Join-Path $Rig "server/pathtracing-phase/$Run.server-motion.csv"
+  $resources = Join-Path $Rig "server/pathtracing-phase/$Run.csv"
+  try {
+    try { Resource-Command "ptphase resources stop $Run" "Resource capture saved $Run" }
+    finally { Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run" }
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath $client -PathType Leaf) -or
+           -not (Test-Path -LiteralPath $server -PathType Leaf)) {
+      if ($deadline.Elapsed.TotalSeconds -ge 10) { throw "Missing ordered end fence for $Run." }
+      Start-Sleep -Milliseconds 50
+    }
+  } finally {
+    Save-Artifact $client
+    Save-Artifact "$client.tmp"
+    if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
+      Save-Artifact (Join-Path $botDir "pathtracing/recordings/$Run.client-motion.partial.csv")
+    }
+    Save-Artifact $server
+    Save-Artifact "$server.tmp"
+    if (Test-Path -LiteralPath $resources -PathType Leaf) {
+      Copy-Item -LiteralPath $resources -Destination (Join-Path $result "$Run.resources.csv")
+    }
+  }
+}
 function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$World, $Player, $ServerStart, $ServerEnd, $LastTick) {
   $directory = Join-Path $fixtures $Course
   $null = New-Item -ItemType Directory -Force -Path $directory
@@ -235,7 +275,7 @@ try {
   }
   Enter-Rig 'record-fixtures'
   $locked = $true
-  if ($ResourceDifficulty) {
+  if ($ResourceDifficulty -or $landing) {
     if ((Test-Port $ServerHost $ServerPort) -or (Test-Port $ServerHost $RconPort) -or @(Bot-Processes).Count -gt 0) {
       throw 'Resource capture requires an idle disposable rig.'
     }
@@ -258,6 +298,7 @@ try {
     [IO.File]::Copy((Resolve-Path -LiteralPath $ResourceProbeJar).Path, $probeTarget)
     $resourceProbe = $probeTarget
     $env:PATHTRACING_RESOURCE_PROBE = '1'
+    if ($landing) { $env:PATHTRACING_LANDING_PROBE = '1' }
   }
   Note "Rig: $Rig; courses: $($selected.Name -join ', '); Runs=$Runs; Ticks=$Ticks; Seed=$Seed."
   $serverOpen = Test-Port $ServerHost $ServerPort
@@ -289,7 +330,18 @@ try {
   $online = @(Wait-Rcon)
   Assert-Absent
   if ($BotName -notin $online -and @(Bot-Processes).Count -eq 0) {
-    $null = Require (Invoke-Script (Join-Path $scripts 'launch-client.ps1') @{ Role = 'bot' } 30 'bot') 'Bot launch'
+    $launcher = Join-Path $scripts 'launch-client.ps1'
+    $arguments = @{ Role = 'bot' }
+    if ($landing) {
+      $parameters = (Get-Command $launcher).Parameters
+      if ($LandingRate -eq 200 -and (-not $parameters.ContainsKey('FollowTickRate') -or
+          -not $parameters.ContainsKey('FullTickDemand'))) { throw 'Integrate the lab client clock before the 200 TPS capture.' }
+      if ($parameters.ContainsKey('FollowTickRate')) {
+        $arguments.FollowTickRate = if ($LandingRate -eq 200) { 'true' } else { 'false' }
+      }
+      if ($LandingRate -eq 200) { $arguments.FullTickDemand = 'true' }
+    }
+    $null = Require (Invoke-Script $launcher $arguments 30 'bot') 'Bot launch'
   }
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $ready = $false
@@ -307,6 +359,15 @@ try {
   $originalGameMode = [int](Server-Snapshot 'original-mode').playerGameType
   if ($originalGameMode -notin 0..3) { throw 'Unrecognized original game mode.' }
   $null = Require (Rcon "gamemode survival $BotName") 'Survival mode'
+  if ($landing) {
+    $reply = Require (Rcon 'difficulty normal') 'Set normal difficulty'
+    if ($reply.Text.Trim() -cnotin @('The difficulty has been set to Normal', 'The difficulty did not change; it is already set to Normal')) {
+      throw "Difficulty refused. See $($reply.File)."
+    }
+    Resource-Command 'gamerule natural_health_regeneration true' 'Gamerule natural_health_regeneration is now set to: true'
+    Resource-Command 'gamerule spawn_mobs false' 'Gamerule spawn_mobs is now set to: false'
+    $null = Require (Rcon "tick rate $LandingRate") 'Set landing tick rate'
+  }
 
   foreach ($course in $selected) {
     $name = $course.Name
@@ -337,7 +398,7 @@ try {
         }
       }
     } catch {
-      if ($exitCode -eq 3) { throw }
+      if ($exitCode -eq 3 -or $landing) { throw }
       for ($i = 1; $i -le $Runs; $i++) { $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message }) }
       continue
     }
@@ -364,7 +425,9 @@ try {
         $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
         $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
         Add-Content -LiteralPath $inputPath -Value $tail -Encoding ASCII
-        Save-Artifact $inputPath
+        if ($landing) {
+          Copy-Item -LiteralPath $inputPath -Destination (Join-Path $result "$runName.inputs.jsonl")
+        } else { Save-Artifact $inputPath }
         Assert-Absent
         $serverStart = Restore-Start "$runName-start" $course.Start
         $activeRecording = $path
@@ -373,11 +436,23 @@ try {
         $null = Require $settleReply 'Replay settle'
         $serverSettled = Server-Snapshot "$runName-settled"
         Require-StableResources $serverStart $serverSettled
+        if ($landing) {
+          Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName"
+          Resource-Command "ptlanding start $BotName $runName" "Landing capture started $runName"
+        }
         if ($ResourceDifficulty) {
           $resourcePath = Join-Path $Rig "server/pathtracing-phase/$runName.csv"
           Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName"
         }
-        $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
+        try {
+          $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
+          if ($landing) { $null = Require $replayReply 'Replay' }
+        } finally {
+          if ($landing) {
+            Save-Artifact $path
+            Seal-Landing $runName
+          }
+        }
         if ($replayReply.Text -match '(?i)Aborted') { $activeRecording = $null }
         $null = Require $replayReply 'Replay'
         $activeRecording = $null
@@ -410,6 +485,10 @@ try {
           $max += [int][Math]::Floor($bounds.Maximum) + 3
         }
         $world = Export-World $runName $min $max
+        if ($landing) {
+          $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; raw capture awaiting 1.6f verification." })
+          continue
+        }
         $check = Require (Invoke-Script (Join-Path $PSScriptRoot 'check-recording.ps1') @{ File = $path } $timeout) 'Recording check'
         if ($ResourceDifficulty -and -not (At-Rest $ticksRead[-1])) { throw 'Resource pair must end at rest.' }
         Keep-Fixture $name $i $path $world $player $serverStart $serverEnd $ticksRead[-1]
@@ -419,9 +498,13 @@ try {
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; $($check.File); export bounds $($min -join ',') to $($max -join ',')." })
       } catch {
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message })
-        if ($exitCode -eq 3) { throw }
+        if ($exitCode -eq 3 -or $landing) { throw }
       } finally {
-        if ($ResourceDifficulty) { Cleanup 'Cancel resource capture' { $null = Require (Rcon 'ptphase resources cancel') 'Cancel probe' } }
+        if ($ResourceDifficulty -or $landing) { Cleanup 'Cancel resource capture' { $null = Require (Rcon 'ptphase resources cancel') 'Cancel probe' } }
+        if ($landing) {
+          Cleanup 'Cancel landing capture' { $null = Require (Rcon 'ptlanding cancel') 'Cancel probe' }
+          Save-Artifact (Join-Path $Rig "server/pathtracing-phase/$runName.server-motion.partial.csv")
+        }
         Cleanup 'Cancel replay' {
           if ($activeRecording -and (Test-Path -LiteralPath "$activeRecording.tmp")) {
             $null = Require (Bot 'rec stop' ("Saved ${runName}:")) 'Cancel own replay'
@@ -448,9 +531,19 @@ finally {
     foreach ($role in @('bot', 'server')) {
       try { Stop-Owned $role } catch { Note "Cleanup failed: $($_.Exception.Message)" }
     }
+    if ($landing) {
+      foreach ($role in @('bot', 'server')) {
+        $directory = if ($role -eq 'bot') { $botDir } else { Join-Path $Rig 'server' }
+        $latest = Join-Path $directory 'logs/latest.log'
+        if (Test-Path -LiteralPath $latest -PathType Leaf) {
+          Cleanup "Save $role game log" { Copy-Item -LiteralPath $latest -Destination (Join-Path $result "$role-latest.log") }
+        }
+      }
+    }
     if ($resourceProbe) {
       Cleanup 'Remove resource probe' { Remove-Item -LiteralPath $resourceProbe }
       $env:PATHTRACING_RESOURCE_PROBE = $previousProbeOptIn
+      if ($landing) { $env:PATHTRACING_LANDING_PROBE = $previousLandingOptIn }
     }
     try { Exit-Rig } catch { Note "Lock release failed: $($_.Exception.Message)" }
   }
@@ -482,6 +575,11 @@ finally {
   $body += 'Step-up mutant at 0.6f + 1 ulp: no vanilla geometry produces that candidate; equivalent on the game domain. Integrator replaces it at gate freeze.'
   if ($ResourceDifficulty) {
     $body += "1.5h $ResourceDifficulty case. Raw server resource trace and its recording and world are in pair/full-blocks for the independent Rust gate."
+  }
+  if ($landing) {
+    $body = @('# 1.6f raw landing capture', '', "UTC $stamp", "Rig $Rig",
+      "Normal difficulty; configured rate $LandingRate; seed base $Seed; $recordTicks replay ticks.",
+      'PASS here means capture completed. The dedicated verifier adjudicates the evidence.')
   }
   foreach ($course in $selected) {
     $entries = @($outcomes | Where-Object { $_.Course -eq $course.Name })
