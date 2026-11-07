@@ -1,0 +1,5 @@
+## port-legacy-support-overhang
+
+Pin Entity.getOnPosLegacy/getOnPos for a supported entity whose center crosses one horizontal cell while its feet remain on the original support. Use actual method offsets and one reproducible input where legacy support and floor(center) differ. Check only the support-column selection and the below-block fallback relevant to stepOn, with a mutant that floors the center.
+
+Before investigating, write a provisional dossier with Claim: at byte one and create the shortest runnable reproduce.sh. Save raw output from the first run before expanding. Use staged 26.2 jars under D:/path-tracing-lab/server/versions/26.2 or D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2 as appropriate and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Keep every write in your result folder. Do not launch the game, edit production, commit or use the network. Say exactly which evidence was direct runtime, bytecode, or reconstructed arithmetic. Keep the checker entry at Grade: on line one.

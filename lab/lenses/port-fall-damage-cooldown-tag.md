@@ -1,0 +1,5 @@
+## port-fall-damage-cooldown-tag
+
+Check only whether vanilla 26.2 fall damage bypasses the hurt cooldown. Read the actual staged damage type tag data and LivingEntity.hurtServer guard. Build one reproducible pair with lastHurt=1, cooldown=11 and equal raw damage, comparing fall with a known cooldown-bound source. Distinguish tag and branch proof from runtime execution; stop before armor, enchantments or fall geometry.
+
+Before investigating, write a provisional dossier with Claim: at byte one and create the shortest runnable reproduce.sh. Save raw output from the first run before expanding. Use staged 26.2 jars under D:/path-tracing-lab/server/versions/26.2 or D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2 as appropriate and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Keep every write in your result folder. Do not launch the game, edit production, commit or use the network. Say exactly which evidence was direct runtime, bytecode, or reconstructed arithmetic. Keep the checker entry at Grade: on line one.

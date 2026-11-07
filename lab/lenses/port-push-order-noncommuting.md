@@ -1,0 +1,5 @@
+## port-push-order-noncommuting
+
+Use the existing staged PairPush.java witness and the Rust pair-law checkout. Find the smallest A/B/C case where vanilla applying A/B then A/C differs in raw velocity bits from the reversed order or from summing impulses then applying once. Save both operation orders, raw bits and a runnable witness. No spatial query or swarm architecture.
+
+Before investigating, write a provisional dossier with Claim: at byte one and create the shortest runnable reproduce.sh. Save raw output from the first run before expanding. Use staged 26.2 jars under D:/path-tracing-lab/server/versions/26.2 or D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2 as appropriate and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Keep every write in your result folder. Do not launch the game, edit production, commit or use the network. Say exactly which evidence was direct runtime, bytecode, or reconstructed arithmetic. Keep the checker entry at Grade: on line one.

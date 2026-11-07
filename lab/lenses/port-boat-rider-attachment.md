@@ -1,0 +1,5 @@
+## port-boat-rider-attachment
+
+Isolate one vanilla boat rider attachment offset or yaw-related positioning step from the staged Boat/AbstractBoat hierarchy. Use a fixed hull, one rider and two quarter-turn yaw cases. Provide the exact method, raw position outputs and mutant that fails if the local offset is used unrotated. Stop before boarding packets, propulsion or multiple passengers.
+
+Before investigating, write a provisional dossier with Claim: at byte one and create the shortest runnable reproduce.sh. Save raw output from the first run before expanding. Use staged 26.2 jars under D:/path-tracing-lab/server/versions/26.2 or D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2 as appropriate and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Keep every write in your result folder. Do not launch the game, edit production, commit or use the network. Say exactly which evidence was direct runtime, bytecode, or reconstructed arithmetic. Keep the checker entry at Grade: on line one.

@@ -1,0 +1,5 @@
+## port-elytra-climbable-branch
+
+Read staged LivingEntity.travelFallFlying. Pin only the onClimbable branch: when it switches to travelInAir, when it clears the flag, and whether free-glide movement executes at all. Regenerate exact offsets and produce a two-case call-order witness with a mutant that clears flight before invoking travelInAir. Leave cosine, boost and collision damage separate.
+
+Before investigating, write a provisional dossier with Claim: at byte one and create the shortest runnable reproduce.sh. Save raw output from the first run before expanding. Use staged 26.2 jars under D:/path-tracing-lab/server/versions/26.2 or D:/path-tracing-deps/data/libraries/com/mojang/minecraft/26.2 as appropriate and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Keep every write in your result folder. Do not launch the game, edit production, commit or use the network. Say exactly which evidence was direct runtime, bytecode, or reconstructed arithmetic. Keep the checker entry at Grade: on line one.
