@@ -42,3 +42,5 @@ pub use world::{
     Inside,
     World
 };
+
+pub mod entity_contact;
