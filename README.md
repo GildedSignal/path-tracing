@@ -1,13 +1,47 @@
 # Path tracing lab
 
-A local Minecraft 26.2 setup for building a pathfinding algorithm from first principles: you play in your own
-window, and **PathBot** plays as a second player in another window on your second monitor. Both join a vanilla
-superflat server on this computer.
+A Minecraft 26.2 pathfinding project built around one measure. How many server ticks pass from the moment
+you pick a destination until **PathBot** gets there, restores any temporary changes to the world, and
+recovers its kit? Planning time counts. Health, hunger and inventory constrain what the bot can do along
+the way.
 
-**Design:**
-- start with [docs/PRINCIPLES.md](docs/PRINCIPLES.md) for the goal and the philosophy;
-- then [docs/HANDOFF.md](docs/HANDOFF.md) for the state and the plan;
-- then [AGENTS.md](AGENTS.md) for how the work is done.
+## Philosophy
+
+- **Run the law ahead.** Port the Minecraft rules that affect decisions to Rust. Given a world state and
+  candidate controls, the engine should predict motion, resource costs and world changes. The goal is to
+  evaluate many possible futures in the time a client takes to execute one.
+- **Let capabilities shape the route.** Momentum, terrain and the bot's toolkit determine which moves are
+  possible and what they cost. A bucket can open a route by changing the world. The planner should be able
+  to discover that sequence by composing legal actions.
+- **Reuse work across futures.** Share terrain, block rules and unchanged predictions. When something
+  changes, recompute only the predictions that depend on it.
+- **Use vanilla as the judge.** Compare player motion tick by tick with the vanilla client and check
+  server-owned outcomes against the server. Once a case passes, push a boundary harder or combine mechanics
+  that can interfere with each other. Reduce failures to the first divergent event and keep the replay.
+
+Read the [project principles](docs/PRINCIPLES.md), [engine contract](docs/engine.md) and
+[test ladder](docs/ladder.md) for the full design and verification rules.
+
+## Current work
+
+This branch contains the local two-client lab, course recorder and a straight-line placeholder planner.
+The [Rust port branch](https://github.com/GildedSignal/path-tracing/tree/wt/l0) contains movement and collision
+work, resource replay and tests against vanilla. The [clock branch](https://github.com/GildedSignal/path-tracing/tree/wt/clock)
+contains the opt-in lab client that measured 100× active tick throughput on the focused replay workload.
+That is a faster way to check predictions. The Rust engine's target is the throughput needed to compare
+many futures before the next decision.
+
+## Future directions
+
+1. **Finish the port.** Extend coverage across movement modes, block and entity interactions, fluids,
+   scheduled updates, tools and resources. Group cases by the rule they exercise and test how those rules
+   compose in mixed terrain. See the [port plan](https://github.com/GildedSignal/path-tracing/blob/wt/l0/docs/port-plan.md).
+2. **Run one headless bot.** Drive a server-visible player through the normal movement path and compare
+   scripted runs with the vanilla reference. Use that result to measure the cost of scaling to 100 bots
+   that share a world view.
+3. **Develop the representation and planner.** Find ways to reuse reachability and motion predictions
+   when goals, terrain or tools change. Judge routes by total server ticks, including the work to plan,
+   execute and restore. The [representation notes](docs/representation.md) are a draft.
 
 ## Run
 
@@ -84,12 +118,12 @@ courses:
 - **Clients** (`clients\player`, `clients\bot`) start directly from `scripts\launch-client.ps1` in offline mode,
   as `Brain_Forge` and `PathBot`. Offline mode means default skins.
 - **Performance mods** are copied from your pack (exact jars and configs): Sodium (+ Extra, Reese's options),
-  Lithium, C2ME, FerriteCore, ImmediatelyFast, Entity Culling, More Culling (+ Cloth Config), BadOptimizations,
-  Krypton, ScalableLux, Fast IP Ping, RSLS, Mod Menu and Fabric API. Dynamic FPS is installed in your client only,
-  because it throttles unfocused windows and the bot's window is never focused.
+  FerriteCore, ImmediatelyFast, Entity Culling, More Culling (+ Cloth Config), BadOptimizations, Krypton,
+  ScalableLux, Fast IP Ping, RSLS, Mod Menu and Fabric API. Dynamic FPS, Lithium and C2ME are installed in
+  your client only.
 - **The bot client** runs lighter: render distance 10, 60 FPS cap, no sound, never pauses or drops its frame rate
   when unfocused.
-- **The server** (`server\`) is vanilla 26.2 on Fabric, with only Lithium, C2ME, FerriteCore, Krypton and
+- **The server** (`server\`) is vanilla 26.2 on Fabric, with FerriteCore, Krypton and
   ScalableLux. It listens on 127.0.0.1 only, in offline mode, so nothing outside this computer can join.
 - **The mod** (`bot\`) is a single jar in both clients; `-Dpathtracing.role` picks which half runs. The player half
   turns stick clicks into whispers. The bot half reads them, plans and walks. Because 26.x ships unobfuscated,
