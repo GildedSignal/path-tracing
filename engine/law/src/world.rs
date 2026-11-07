@@ -18,8 +18,25 @@ pub enum FluidKind {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fluid {
     pub kind: FluidKind,
+    /// Surface height for snapshots that already supply the evaluated value.
     pub height: f32,
-    pub flow: Vec3
+    pub flow: Vec3,
+    /// Vanilla amount for a raw water or lava state, in 1..=8.
+    pub raw_amount: Option<u8>,
+}
+
+impl Fluid {
+    // FlowingFluid.getHeight; FlowingFluid.hasSameAbove; FlowingFluid.getOwnHeight
+    pub fn surface_height(self, world: &(impl World + ?Sized), [x, y, z]: BlockPos) -> f32 {
+        let Some(amount) = self.raw_amount else {
+            return self.height;
+        };
+        if world.block([x, y + 1, z]).fluid.kind == self.kind {
+            1.0
+        } else {
+            amount as f32 / 9.0
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -176,7 +193,7 @@ pub trait World {
             let height = if block.resets_fall_distance || block.end_portal_or_gateway {
                 1.0
             } else if block.fluid.kind == FluidKind::Water {
-                block.fluid.height as f64
+                block.fluid.surface_height(self, p) as f64
             } else {
                 return false;
             };

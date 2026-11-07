@@ -752,7 +752,7 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
                     FluidKind::Water=>0,
                     FluidKind::Lava=>1
                 };
-                let top=y as f64+f.height as f64;
+                let top=y as f64+f.surface_height(world, [x, y, z]) as f64;
                 if top < b.min.y {
                     continue;
                 }
@@ -881,7 +881,7 @@ visited: &mut std::collections::BTreeSet<BlockPos>, budget: i32) -> i32 {
         let inside=block.inside_shape.as_ref().is_none_or(|shape| body.collided_along(movement, &shape.moved(offset)));
         let fluid_inside = block.fluid.kind != FluidKind::Empty && body.collided_along(movement,
             &VoxelShape::boxes(&[Aabb::new(offset.x, offset.y, offset.z,
-                offset.x+1.0, (p[1] as f32+block.fluid.height) as f64, offset.z+1.0)]));
+                offset.x+1.0, (p[1] as f32+block.fluid.surface_height(world, p)) as f64, offset.z+1.0)]));
         if !(inside || fluid_inside) || !visited.insert(p) {
             return true;
         }
