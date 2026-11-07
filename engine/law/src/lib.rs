@@ -7,6 +7,8 @@ pub mod shapes;
 mod state;
 mod world;
 pub use movement::{
+    ServerResourceEvent,
+    apply_server_resource_event,
     calculate_fall_damage,
     calculate_fall_power,
     tick,

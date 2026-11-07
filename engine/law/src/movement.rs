@@ -954,6 +954,28 @@ fn movement_exhaustion(state: &mut PlayerState, delta: Vec3) {
 /// exhaustion and damage already applied. This covers ticks with no intervening
 /// resource changes between Player.aiStep's regeneration and FoodData.tick.
 pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server_player_tick: i32) {
+    server_regeneration(state, world, server_player_tick);
+    food_tick(state, world);
+}
+
+/// Ordered inputs at the authoritative server resource boundaries.
+pub enum ServerResourceEvent {
+    Exhaustion(f32),
+    Damage(f32),
+    Regeneration(i32),
+    FoodTick,
+}
+
+pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, event: ServerResourceEvent) {
+    match event {
+        ServerResourceEvent::Exhaustion(amount) => add_exhaustion(state, amount),
+        ServerResourceEvent::Damage(amount) => state.health = (state.health - amount).max(0.0),
+        ServerResourceEvent::Regeneration(tick) => server_regeneration(state, world, tick),
+        ServerResourceEvent::FoodTick => food_tick(state, world),
+    }
+}
+
+fn server_regeneration(state: &mut PlayerState, world: &impl World, server_player_tick: i32) {
     // ServerPlayer.tickRegeneration, called by Player.aiStep before FoodData.tick.
     if world.difficulty() == 0 && world.natural_regeneration() {
         if server_player_tick % 20 == 0 {
@@ -968,7 +990,6 @@ pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server
             state.food_level += 1;
         }
     }
-    food_tick(state, world);
 }
 
 // FoodData.tick

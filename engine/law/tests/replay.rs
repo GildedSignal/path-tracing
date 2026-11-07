@@ -1,5 +1,7 @@
 #[path = "support/json.rs"]
 mod json;
+#[path = "support/server_resources.rs"]
+mod server_resources;
 
 use json::{Object, array, hex, numbers};
 use law::*;

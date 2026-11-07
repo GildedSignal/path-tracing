@@ -3,7 +3,9 @@ param(
   [ValidateRange(1, 2147483647)][int]$Runs = 8,
   [ValidateRange(1, 2147483627)][int]$Ticks = 400,
   [int]$Seed = 1,
-  [string]$Jar
+  [string]$Jar,
+  [ValidateSet('peaceful', 'normal')][string]$ResourceDifficulty,
+  [string]$ResourceProbeJar
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
@@ -18,6 +20,17 @@ $powershell = Join-Path $PSHOME 'powershell.exe'
 $scripts = Join-Path $PSScriptRoot '..\..\scripts'
 $botDir = Join-Path $Rig 'clients\bot'
 $fixtures = Join-Path $PSScriptRoot '..\fixtures'
+if ($ResourceDifficulty) {
+  if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
+    throw 'Resource capture requires a marked disposable copy and its own port pair.'
+  }
+  if (-not $ResourceProbeJar -or $Runs -ne 1 -or $Ticks -ne 80 -or $Seed -ne 1 -or
+      $Courses.Count -ne 1 -or $Courses[0] -cne 'full-blocks') {
+    throw 'Frozen resource pair requires -Courses full-blocks -Runs 1 -Ticks 80 -Seed 1 and -ResourceProbeJar.'
+  }
+  $fixtures = Join-Path $result 'pair'
+} elseif ($ResourceProbeJar) { throw '-ResourceProbeJar requires -ResourceDifficulty.' }
 $prefix = 'l0_' + $stamp
 $timeout = [int][Math]::Min(2147400, [Math]::Ceiling($Ticks / 10.0) + 60)
 $locked = $false
@@ -33,6 +46,8 @@ $completed = $false
 $originalGameMode = $null
 $recordTicks = $Ticks + 20
 $comparableEnds = 0
+$resourceProbe = $null
+$previousProbeOptIn = $env:PATHTRACING_RESOURCE_PROBE
 
 function Cleanup([string]$Name, [scriptblock]$Action) {
   try { & $Action } catch { Note "$Name cleanup failed: $($_.Exception.Message)" }
@@ -120,11 +135,39 @@ function Server-Resources($Object, $State) {
   $Object | Add-Member -NotePropertyName foodLevel -NotePropertyValue ([int]$State.foodLevel) -Force
   $Object | Add-Member -NotePropertyName foodTickTimer -NotePropertyValue ([int]$State.foodTickTimer) -Force
 }
+function New-ResourceInputs([string]$Path, [string]$Start) {
+  $rows = @('{"start":[' + $Start + ']}')
+  $rows += for ($t = 0; $t -lt 80; $t++) {
+    $jump = if ($t -in @(0, 20, 40)) { 'true' } else { 'false' }
+    '{"t":' + $t + ',"forward":false,"back":false,"left":false,"right":false,"jump":' + $jump +
+      ',"sneak":false,"sprint":false,"yaw":0,"pitch":0}'
+  }
+  $null = New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force
+  $rows | Set-Content -LiteralPath $Path -Encoding ASCII
+}
+function Resource-Command([string]$Command, [string]$Expected) {
+  $reply = Require (Rcon $Command) $Command
+  if ($reply.Text.Trim() -cne $Expected) { throw "Resource command refused. See $($reply.File)." }
+}
+function Prepare-ResourceStart {
+  $display = $ResourceDifficulty.Substring(0,1).ToUpperInvariant() + $ResourceDifficulty.Substring(1)
+  $reply = Require (Rcon "difficulty $ResourceDifficulty") 'Set resource difficulty'
+  if ($reply.Text.Trim() -cnotin @("The difficulty has been set to $display", "The difficulty did not change; it is already set to $display")) {
+    throw "Difficulty refused. See $($reply.File)."
+  }
+  Resource-Command 'gamerule natural_health_regeneration true' 'Gamerule natural_health_regeneration is now set to: true'
+  Resource-Command 'gamerule spawn_mobs false' 'Gamerule spawn_mobs is now set to: false'
+  Resource-Command "effect give $BotName minecraft:saturation 1 20 true" "Applied effect Saturation to $BotName"
+  Resource-Command "effect give $BotName minecraft:hunger 1 38 true" "Applied effect Hunger to $BotName"
+  # Both effects last twenty server ticks. The start snapshot and probe enforce their completion.
+  Start-Sleep -Seconds 2
+}
 function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$World, $Player, $ServerStart, $ServerEnd, $LastTick) {
   $directory = Join-Path $fixtures $Course
   $null = New-Item -ItemType Directory -Force -Path $directory
-  $recordTarget = Join-Path $directory "$Course-$Run.jsonl"
-  $worldTarget = Join-Path $directory "$Course-$Run.world.jsonl"
+  $base = if ($ResourceDifficulty) { [IO.Path]::GetFileNameWithoutExtension($Recording) } else { "$Course-$Run" }
+  $recordTarget = Join-Path $directory "$base.jsonl"
+  $worldTarget = Join-Path $directory "$base.world.jsonl"
   foreach ($path in @($recordTarget, $worldTarget, "$recordTarget.tmp", "$worldTarget.tmp")) {
     if (Test-Path -LiteralPath $path) { throw "Fixture output already exists: $path" }
   }
@@ -192,6 +235,30 @@ try {
   }
   Enter-Rig 'record-fixtures'
   $locked = $true
+  if ($ResourceDifficulty) {
+    if ((Test-Port $ServerHost $ServerPort) -or (Test-Port $ServerHost $RconPort) -or @(Bot-Processes).Count -gt 0) {
+      throw 'Resource capture requires an idle disposable rig.'
+    }
+    $properties = @(Get-Content -LiteralPath (Join-Path $Rig 'server/server.properties'))
+    foreach ($setting in @("server-port=$ServerPort", "rcon.port=$RconPort", 'server-ip=127.0.0.1',
+        'enable-rcon=true', 'level-name=world', 'online-mode=false')) {
+      $key = $setting.Split('=')[0] + '='
+      $values = @($properties | Where-Object { $_.StartsWith($key) })
+      if ($values.Count -ne 1 -or $values[0] -cne $setting) { throw "Disposable rig requires $setting." }
+    }
+    $save = Join-Path $Rig ("server/world/players/data/" + (Get-OfflineUuid $BotName) + '.dat')
+    if ((Test-Path -LiteralPath $save) -or (Test-Path -LiteralPath "${save}_old")) {
+      throw 'Resource capture requires a fresh PathBot save in each disposable copy.'
+    }
+    $serverMods = Join-Path $Rig 'server/mods'
+    if (@(Get-ChildItem -LiteralPath $serverMods -Filter 'fabric-api-*.jar').Count -ne 1) {
+      throw 'Install the reference Fabric API in the disposable server mods before recording.'
+    }
+    $probeTarget = Join-Path $serverMods 'phase-probe.jar'
+    [IO.File]::Copy((Resolve-Path -LiteralPath $ResourceProbeJar).Path, $probeTarget)
+    $resourceProbe = $probeTarget
+    $env:PATHTRACING_RESOURCE_PROBE = '1'
+  }
   Note "Rig: $Rig; courses: $($selected.Name -join ', '); Runs=$Runs; Ticks=$Ticks; Seed=$Seed."
   $serverOpen = Test-Port $ServerHost $ServerPort
   $online = @()
@@ -280,7 +347,11 @@ try {
       $artifacts.Add($path)
       try {
         $runSeed = [int]([long]$Seed + [long]$courseIndex * $Runs + $i - 1)
-        if ($name -eq 'corner') {
+        $inputPath = Join-Path $botDir "pathtracing\inputs\$runName.jsonl"
+        if ($ResourceDifficulty) {
+          New-ResourceInputs $inputPath $course.Start
+          Prepare-ResourceStart
+        } elseif ($name -eq 'corner') {
           $null = Require (Invoke-Script (Join-Path $PSScriptRoot 'corner-inputs.ps1') @{
             Name = $runName; Ticks = $Ticks; Start = $course.Start
           }) 'Generate corner inputs'
@@ -289,7 +360,6 @@ try {
             Name = $runName; Ticks = $Ticks; Seed = $runSeed; Start = $course.Start; SneakPercent = $course.SneakPercent
           }) 'Generate inputs'
         }
-        $inputPath = Join-Path $botDir "pathtracing\inputs\$runName.jsonl"
         # Preserve the last angles exactly and release every key for twenty recorded ticks.
         $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
         $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
@@ -303,10 +373,19 @@ try {
         $null = Require $settleReply 'Replay settle'
         $serverSettled = Server-Snapshot "$runName-settled"
         Require-StableResources $serverStart $serverSettled
+        if ($ResourceDifficulty) {
+          $resourcePath = Join-Path $Rig "server/pathtracing-phase/$runName.csv"
+          Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName"
+        }
         $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
         if ($replayReply.Text -match '(?i)Aborted') { $activeRecording = $null }
         $null = Require $replayReply 'Replay'
         $activeRecording = $null
+        if ($ResourceDifficulty) {
+          Resource-Command "ptphase resources stop $runName" "Resource capture saved $runName"
+          if (-not (Test-Path -LiteralPath $resourcePath -PathType Leaf)) { throw 'Missing resource trace.' }
+          Save-Artifact $resourcePath
+        }
         # First operation after the completion reply; the entity data itself is one tick.
         $serverEnd = Server-Snapshot "$runName-end"
         Save-Artifact $path
@@ -332,12 +411,17 @@ try {
         }
         $world = Export-World $runName $min $max
         $check = Require (Invoke-Script (Join-Path $PSScriptRoot 'check-recording.ps1') @{ File = $path } $timeout) 'Recording check'
+        if ($ResourceDifficulty -and -not (At-Rest $ticksRead[-1])) { throw 'Resource pair must end at rest.' }
         Keep-Fixture $name $i $path $world $player $serverStart $serverEnd $ticksRead[-1]
+        if ($ResourceDifficulty) {
+          Copy-Item -LiteralPath $resourcePath -Destination (Join-Path $fixtures "$name/$runName.resources.csv")
+        }
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; $($check.File); export bounds $($min -join ',') to $($max -join ',')." })
       } catch {
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message })
         if ($exitCode -eq 3) { throw }
       } finally {
+        if ($ResourceDifficulty) { Cleanup 'Cancel resource capture' { $null = Require (Rcon 'ptphase resources cancel') 'Cancel probe' } }
         Cleanup 'Cancel replay' {
           if ($activeRecording -and (Test-Path -LiteralPath "$activeRecording.tmp")) {
             $null = Require (Bot 'rec stop' ("Saved ${runName}:")) 'Cancel own replay'
@@ -363,6 +447,10 @@ finally {
     }
     foreach ($role in @('bot', 'server')) {
       try { Stop-Owned $role } catch { Note "Cleanup failed: $($_.Exception.Message)" }
+    }
+    if ($resourceProbe) {
+      Cleanup 'Remove resource probe' { Remove-Item -LiteralPath $resourceProbe }
+      $env:PATHTRACING_RESOURCE_PROBE = $previousProbeOptIn
     }
     try { Exit-Rig } catch { Note "Lock release failed: $($_.Exception.Message)" }
   }
@@ -392,6 +480,9 @@ finally {
     'Recordings retain their original header and end trailer. Reader integration belongs to job 1.5e.',
     'Seeds are Seed+courseIndex*Runs+run-1 in the courses.ps1 declaration order, stable under course selection.', '')
   $body += 'Step-up mutant at 0.6f + 1 ulp: no vanilla geometry produces that candidate; equivalent on the game domain. Integrator replaces it at gate freeze.'
+  if ($ResourceDifficulty) {
+    $body += "1.5h $ResourceDifficulty case. Raw server resource trace and its recording and world are in pair/full-blocks for the independent Rust gate."
+  }
   foreach ($course in $selected) {
     $entries = @($outcomes | Where-Object { $_.Course -eq $course.Name })
     $body += "Course $($course.Name) - kept $(@($entries | Where-Object { $_.Kept }).Count); rejected $(@($entries | Where-Object { -not $_.Kept }).Count); not run $($Runs-$entries.Count)."

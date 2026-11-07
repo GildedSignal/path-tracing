@@ -1,3 +1,5 @@
+package pathtracing.phase;
+
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.api.DedicatedServerModInitializer;
@@ -5,6 +7,7 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -28,7 +31,26 @@ public final class PhaseProbe implements DedicatedServerModInitializer {
                 .then(Commands.literal("read").executes(context -> {
                     context.getSource().sendSuccess(() -> Component.literal(String.join(";", samples)), false);
                     return samples.size();
-                }))));
+                }))
+                .then(Commands.literal("resources")
+                    .requires(source -> ResourceTrace.ENABLED)
+                    .then(Commands.literal("start").then(Commands.argument("player", EntityArgument.player())
+                        .then(Commands.argument("run", StringArgumentType.word()).executes(context -> {
+                            String run = StringArgumentType.getString(context, "run");
+                            ResourceTrace.start(EntityArgument.getPlayer(context, "player"), run);
+                            context.getSource().sendSuccess(() -> Component.literal("Resource capture started " + run), false);
+                            return 1;
+                        }))))
+                    .then(Commands.literal("stop").then(Commands.argument("run", StringArgumentType.word()).executes(context -> {
+                        String run = StringArgumentType.getString(context, "run");
+                        ResourceTrace.stop(run);
+                        context.getSource().sendSuccess(() -> Component.literal("Resource capture saved " + run), false);
+                        return 1;
+                    })))
+                    .then(Commands.literal("cancel").executes(context -> {
+                        ResourceTrace.cancel();
+                        return 1;
+                    })))));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (observed == null) return;
             if (observed.isRemoved()) {

@@ -8,21 +8,7 @@ $tree = (Resolve-Path -LiteralPath "$PSScriptRoot/../../../..").Path
 . "$tree/scripts/common.ps1"
 $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ')
 $result = Join-Path $tree "lab/gates/results/$stamp-server-phase"
-$classes = Join-Path $result 'classes'
-$null = New-Item -ItemType Directory -Path $classes -Force
-$loader = Join-Path $Libraries "net/fabricmc/fabric-loader/$LoaderVersion/fabric-loader-$LoaderVersion.jar"
-$dependencies = @(
-    "$Rig/server/versions/$McVersion/server-$McVersion.jar"
-    $loader
-    (Get-ChildItem "$Rig/server/libraries" -Recurse -Filter '*.jar').FullName
-    (Get-ChildItem "$tree/bot/lib" -Filter '*.jar').FullName
-)
-& "$Jdk/javac.exe" --release 25 -proc:none -cp ($dependencies -join ';') -d $classes "$PSScriptRoot/PhaseProbe.java"
-if ($LASTEXITCODE) { throw 'Probe compilation failed. Set up the reference rig and build the bot first.' }
-Copy-Item -LiteralPath "$PSScriptRoot/fabric.mod.json" -Destination $classes
-$probe = Join-Path $result 'phase-probe.jar'
-& "$Jdk/jar.exe" --create --file $probe -C $classes .
-if ($LASTEXITCODE) { throw 'Cannot package the passive probe.' }
+$probe = & "$PSScriptRoot/build.ps1" -Server "$Rig/server" -Output $result
 
 function Rcon([string]$Command) { & "$tree/scripts/rcon.ps1" -Commands @($Command) }
 function Wait-For([scriptblock]$Condition, [string]$Name) {
