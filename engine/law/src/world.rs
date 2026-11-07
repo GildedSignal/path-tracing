@@ -31,6 +31,33 @@ pub enum Inside {
     Unsupported(String)
 }
 
+/// A damage request emitted by a grounded contact hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactDamage {
+    HotFloor,
+}
+
+impl ContactDamage {
+    pub fn raw_amount(self) -> f32 {
+        match self {
+            Self::HotFloor => 1.0,
+        }
+    }
+
+    pub(crate) fn exhaustion(self) -> f32 {
+        match self {
+            Self::HotFloor => 0.1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum GroundedContact {
+    #[default]
+    None,
+    DamageUnlessCareful(ContactDamage),
+}
+
 #[derive(Clone, Debug)]
 pub struct Block {
     pub shape: VoxelShape,
@@ -48,6 +75,7 @@ pub struct Block {
     pub open_trapdoor_facing: Option<u8>,
     pub fluid: Fluid,
     pub inside: Inside,
+    pub grounded_contact: GroundedContact,
     pub stuck_multiplier: Option<Vec3>,
     pub unsupported_fall_on: Option<String>,
     pub fall_on_multiplier: f32,
@@ -81,6 +109,7 @@ impl Default for Block {
             open_trapdoor_facing: None,
             fluid: Fluid::default(),
             inside: Inside::None,
+            grounded_contact: GroundedContact::None,
             stuck_multiplier: None,
             unsupported_fall_on: None,
             fall_on_multiplier: 1.0,
