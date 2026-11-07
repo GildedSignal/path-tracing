@@ -1,0 +1,5 @@
+## port-schedule-order-tie
+
+Using the previous lab/results/local-20261107-1528-1-4-port-collapse-schedule as orientation, check only vanilla ScheduledTick comparator ties. Directly instantiate two entries with the same trigger tick and priority but successive subTickOrder values; show comparator and queue order when insertion is reversed. Check the staged method and exercise a mutant that drops subTickOrder. Stop before a world or a falling entity exists.
+
+Write dossier.md with the one-sentence Claim: on its first physical line and runnable reproduce.sh in your new result folder. Use the staged 26.2 jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Prior untracked lab results are available from D:/path-tracing-wt/glm-lab/ via their same paths. Read those only. Save the initial result and script before expanding. Run it, keep raw output and name the evidence type (direct jar invocation, reconstructed arithmetic, or bytecode). No production edits, network, or live game.

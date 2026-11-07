@@ -1,0 +1,5 @@
+## port-break-stop-boundary
+
+Pin the ServerPlayerGameMode STOP_DESTROY_BLOCK boundary, excluding START and later delayed tick completion. For the matching mining position, show whether the stop threshold is inclusive and which f32 literal is used. Regenerate the exact offsets and use three adjacent float inputs around the threshold in an executable assertion. Include one mutant with the threshold from START. Prior START findings live in lab/results/local-20261107-1528-1-5-port-breaking-threshold.
+
+Write dossier.md with the one-sentence Claim: on its first physical line and runnable reproduce.sh in your new result folder. Use the staged 26.2 jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Prior untracked lab results are available from D:/path-tracing-wt/glm-lab/ via their same paths. Read those only. Save the initial result and script before expanding. Run it, keep raw output and name the evidence type (direct jar invocation, reconstructed arithmetic, or bytecode). No production edits, network, or live game.

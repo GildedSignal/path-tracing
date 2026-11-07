@@ -176,7 +176,7 @@ fn fluids_hooks_and_food(){
     let mut w=BoxWorld::default();
     w.fill([-2, -2, -2], [2, 5, 2], Block{
         air:false, fluid:Fluid{
-            kind:FluidKind::Water, height:1.0, flow:Vec3::default()
+            kind:FluidKind::Water, height:1.0, ..Fluid::default()
         }, ..Block::default()
     });
     let mut s=PlayerState::default();

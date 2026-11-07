@@ -10,7 +10,10 @@ use crate::{
     Block,
     BlockPos,
     CollisionContext,
+    ContactDamage,
     FluidKind,
+    GroundedContact,
+    HurtCooldown,
     Input,
     Inside,
     PlayerState,
@@ -30,6 +33,20 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
 pub fn tick_with_collision(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Option<(Vec3, Vec3)> {
+    tick_movement(state, world, input).0
+}
+
+/// Runs the local movement tick and reports its grounded contact request.
+/// The request is emitted at stepOn. The local tick never resolves it as damage.
+pub fn tick_with_contact(
+    state: &mut PlayerState, world: &impl World, input: &Input,
+) -> Option<ContactDamage> {
+    tick_movement(state, world, input).1
+}
+
+fn tick_movement(
+    state: &mut PlayerState, world: &impl World, input: &Input,
+) -> (Option<(Vec3, Vec3)>, Option<ContactDamage>) {
     if state.effects {
         unimplemented!("LivingEntity: status effects other than none");
     }
@@ -113,7 +130,7 @@ pub fn tick_with_collision(
         movement
     };
     let collision = travel(state, world, movement);
-    apply_block_effects(state, world, start);
+    let contact = apply_block_effects(state, world, start);
     // InsideBlockEffectType.FREEZE
     if state.in_powder_snow && !state.leather_boots {
         state.ticks_frozen = (state.ticks_frozen + 1).min(140);
@@ -125,7 +142,7 @@ pub fn tick_with_collision(
     movement_exhaustion(state, state.position.minus(start));
     food_tick(state, world);
     state.t += 1;
-    collision
+    (collision, contact)
 }
 
 // LocalPlayer.aiStep; LocalPlayer.canStartSprinting; LocalPlayer.shouldStopRunSprinting; LocalPlayer.shouldStopSwimSprinting
@@ -752,7 +769,7 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
                     FluidKind::Water=>0,
                     FluidKind::Lava=>1
                 };
-                let top=y as f64+f.height as f64;
+                let top=y as f64+f.surface_height(world, [x, y, z]) as f64;
                 if top < b.min.y {
                     continue;
                 }
@@ -760,11 +777,8 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
                     eyes[a]=true;
                 }
                 heights[a]=heights[a].max(top-state.bounding_box().min.y);
-                let flow=if heights[a]<0.4 {
-                    f.flow.scale(heights[a])
-                } else {
-                    f.flow
-                };
+                let flow=f.current(world, [x, y, z]);
+                let flow=if heights[a]<0.4 { flow.scale(heights[a]) } else { flow };
                 currents[a]=currents[a].plus(flow);
                 counts[a]+=1;
             }
@@ -826,18 +840,29 @@ fn stuck(state: &mut PlayerState, multiplier: Vec3) {
     state.stuck_speed_multiplier=multiplier;
 }
 
+/// Runs the grounded stepOn phase on the already-moved player, before inside effects.
+/// Resolve the returned request on the server resource timeline when predicting damage.
+pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Option<ContactDamage> {
+    if state.no_physics || !state.on_ground {
+        return None;
+    }
+    let block = world.block(on_pos(state, world, 0.2));
+    if block.slime && state.velocity.y.abs()<0.1 && !state.shift_key_down {
+        let f=0.4+state.velocity.y.abs()*0.2;
+        state.velocity=state.velocity.multiply(Vec3::new(f, 1.0, f));
+    }
+    match block.grounded_contact {
+        GroundedContact::DamageUnlessCareful(request) if !state.shift_key_down => Some(request),
+        _ => None,
+    }
+}
+
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks
-fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) {
+fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) -> Option<ContactDamage> {
     if state.no_physics {
-        return;
+        return None;
     }
-    if state.on_ground {
-        let block=world.block(on_pos(state, world, 0.2));
-        if block.slime && state.velocity.y.abs()<0.1 && !state.shift_key_down {
-            let f=0.4+state.velocity.y.abs()*0.2;
-            state.velocity=state.velocity.multiply(Vec3::new(f, 1.0, f));
-        }
-    }
+    let contact = apply_grounded_step(state, world);
     let delta=state.position.minus(start);
     let mut visited=std::collections::BTreeSet::new();
     let mut budget=16;
@@ -858,6 +883,7 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
     if budget<=0 {
         inside_segment(state, world, state.position, state.position, &mut visited, 1);
     }
+    contact
 }
 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
@@ -881,7 +907,7 @@ visited: &mut std::collections::BTreeSet<BlockPos>, budget: i32) -> i32 {
         let inside=block.inside_shape.as_ref().is_none_or(|shape| body.collided_along(movement, &shape.moved(offset)));
         let fluid_inside = block.fluid.kind != FluidKind::Empty && body.collided_along(movement,
             &VoxelShape::boxes(&[Aabb::new(offset.x, offset.y, offset.z,
-                offset.x+1.0, (p[1] as f32+block.fluid.height) as f64, offset.z+1.0)]));
+                offset.x+1.0, (p[1] as f32+block.fluid.surface_height(world, p)) as f64, offset.z+1.0)]));
         if !(inside || fluid_inside) || !visited.insert(p) {
             return true;
         }
@@ -974,7 +1000,15 @@ pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server
 /// Ordered inputs at the authoritative server resource boundaries.
 pub enum ServerResourceEvent {
     Exhaustion(f32),
+    /// Observed health debit. Any observed exhaustion is supplied separately.
     Damage(f32),
+    /// ServerPlayer.tick, once before the connection's ServerPlayer.doTick.
+    HurtCooldownTick,
+    /// Predict the contact debit and its exhaustion in place of the observed events.
+    /// Requires normal survival, fire damage enabled, stock damage data and a
+    /// loaded, non-invulnerable player without gear, effects or absorption.
+    /// Anchor the cooldown and last raw hit before switching from observed damage.
+    UnmodifiedContactDamage(ContactDamage),
     Regeneration(i32),
     FoodTick,
 }
@@ -983,9 +1017,40 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
     match event {
         ServerResourceEvent::Exhaustion(amount) => add_exhaustion(state, amount),
         ServerResourceEvent::Damage(amount) => state.health = (state.health - amount).max(0.0),
+        ServerResourceEvent::HurtCooldownTick => {
+            if state.hurt_cooldown.remaining_ticks > 0 {
+                state.hurt_cooldown.remaining_ticks -= 1;
+            }
+        }
+        ServerResourceEvent::UnmodifiedContactDamage(request) => {
+            assert!(world.difficulty() == 2 && !state.effects && !state.leather_boots,
+                "contact damage prediction requires unmodified normal survival");
+            if state.health > 0.0
+                && let Some(amount) = accept_raw_hit(&mut state.hurt_cooldown, request.raw_amount())
+            {
+                add_exhaustion(state, request.exhaustion());
+                state.health = (state.health - amount).max(0.0);
+            }
+        }
         ServerResourceEvent::Regeneration(tick) => server_regeneration(state, world, tick),
         ServerResourceEvent::FoodTick => food_tick(state, world),
     }
+}
+
+// LivingEntity.hurtServer's cooldown branch for an eligible, non-bypassing hit.
+// Future sources can pass their pre-cooldown amount here before mitigation.
+fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
+    let debit = if cooldown.remaining_ticks > 10 {
+        if amount <= cooldown.last_raw_hit {
+            return None;
+        }
+        amount - cooldown.last_raw_hit
+    } else {
+        cooldown.remaining_ticks = 20;
+        amount
+    };
+    cooldown.last_raw_hit = amount;
+    Some(debit)
 }
 
 fn server_regeneration(state: &mut PlayerState, world: &impl World, server_player_tick: i32) {

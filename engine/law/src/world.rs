@@ -18,8 +18,102 @@ pub enum FluidKind {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fluid {
     pub kind: FluidKind,
+    /// Surface height for snapshots that already supply the evaluated value.
     pub height: f32,
-    pub flow: Vec3
+    /// Current for snapshots that already supply the evaluated vector.
+    pub flow: Vec3,
+    /// Vanilla amount for a raw water or lava state, in 1..=8.
+    pub raw_amount: Option<u8>,
+    /// Vanilla FALLING property. A raw current needs both this and raw_amount.
+    pub raw_falling: Option<bool>,
+}
+
+// Direction.Plane.HORIZONTAL
+const HORIZONTAL: [[i32; 2]; 4] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+impl Fluid {
+    // FlowingFluid.getHeight; FlowingFluid.hasSameAbove; FlowingFluid.getOwnHeight
+    pub fn surface_height(self, world: &(impl World + ?Sized), [x, y, z]: BlockPos) -> f32 {
+        if self.raw_amount.is_none() {
+            return self.height;
+        }
+        let own_height = self.own_height([x, y, z]);
+        if raw_fluid_block(world, [x, y + 1, z]).fluid.kind == self.kind {
+            1.0
+        } else {
+            own_height
+        }
+    }
+
+    fn own_height(self, position: BlockPos) -> f32 {
+        match self.raw_amount {
+            Some(amount @ 1..=8) => amount as f32 / 9.0,
+            _ => panic!("raw fluid current or height needs a valid amount at {position:?}"),
+        }
+    }
+
+    // FlowingFluid.getFlow; FlowingFluid.affectsFlow; FlowingFluid.isSolidFace
+    pub fn current(self, world: &(impl World + ?Sized), [x, y, z]: BlockPos) -> Vec3 {
+        let position = [x, y, z];
+        if self.raw_amount.is_none() && self.raw_falling.is_none() {
+            return self.flow;
+        }
+        let falling = self.raw_falling.unwrap_or_else(|| {
+            panic!("raw fluid current needs FALLING at {position:?}")
+        });
+        let height = self.own_height(position);
+        let mut velocity = Vec3::default();
+        for [dx, dz] in HORIZONTAL {
+            let side = [x + dx, y, z + dz];
+            let neighbor = raw_fluid_block(world, side);
+            let difference = if neighbor.fluid.kind == self.kind {
+                height - neighbor.fluid.own_height(side)
+            } else if neighbor.fluid.kind == FluidKind::Empty && !neighbor.flow_properties(side).blocks_motion {
+                let below = [side[0], y - 1, side[2]];
+                let fluid = raw_fluid_block(world, below).fluid;
+                if fluid.kind != self.kind {
+                    continue;
+                }
+                height - (fluid.own_height(below) - 0.8888889f32)
+            } else {
+                continue;
+            };
+            if difference != 0.0 {
+                velocity.x += (dx as f32 * difference) as f64;
+                velocity.z += (dz as f32 * difference) as f64;
+            }
+        }
+        if falling {
+            for (direction, [dx, dz]) in HORIZONTAL.into_iter().enumerate() {
+                let wall = |p| {
+                    let block = raw_fluid_block(world, p);
+                    block.fluid.kind != self.kind && block.flow_properties(p).solid_faces[direction]
+                };
+                if wall([x + dx, y, z + dz])
+                    || (!cfg!(feature = "mutant-fluid-wall-above") && wall([x + dx, y + 1, z + dz]))
+                {
+                    velocity = velocity.normalize().plus(Vec3::new(0.0, -6.0, 0.0));
+                    break;
+                }
+            }
+        }
+        velocity.normalize()
+    }
+}
+
+/// Block predicates used by FlowingFluid.getFlow.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FluidFlowBlock {
+    /// Vanilla BlockState.blocksMotion.
+    pub blocks_motion: bool,
+    /// isFaceSturdy with IceBlock excluded, in north, east, south, west order.
+    pub solid_faces: [bool; 4],
+}
+
+fn raw_fluid_block(world: &(impl World + ?Sized), position: BlockPos) -> &Block {
+    world.raw_fluid_block(position).unwrap_or_else(|| {
+        panic!("raw fluid neighborhood is unavailable at {position:?}")
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -29,6 +123,33 @@ pub enum Inside {
     PowderSnow,
     Honey,
     Unsupported(String)
+}
+
+/// A damage request emitted by a grounded contact hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactDamage {
+    HotFloor,
+}
+
+impl ContactDamage {
+    pub fn raw_amount(self) -> f32 {
+        match self {
+            Self::HotFloor => 1.0,
+        }
+    }
+
+    pub(crate) fn exhaustion(self) -> f32 {
+        match self {
+            Self::HotFloor => 0.1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum GroundedContact {
+    #[default]
+    None,
+    DamageUnlessCareful(ContactDamage),
 }
 
 #[derive(Clone, Debug)]
@@ -47,7 +168,9 @@ pub struct Block {
     pub ladder_facing: Option<u8>,
     pub open_trapdoor_facing: Option<u8>,
     pub fluid: Fluid,
+    pub fluid_flow: Option<FluidFlowBlock>,
     pub inside: Inside,
+    pub grounded_contact: GroundedContact,
     pub stuck_multiplier: Option<Vec3>,
     pub unsupported_fall_on: Option<String>,
     pub fall_on_multiplier: f32,
@@ -80,7 +203,9 @@ impl Default for Block {
             ladder_facing: None,
             open_trapdoor_facing: None,
             fluid: Fluid::default(),
+            fluid_flow: None,
             inside: Inside::None,
+            grounded_contact: GroundedContact::None,
             stuck_multiplier: None,
             unsupported_fall_on: None,
             fall_on_multiplier: 1.0,
@@ -98,6 +223,12 @@ impl Default for Block {
     }
 }
 impl Block {
+    fn flow_properties(&self, position: BlockPos) -> FluidFlowBlock {
+        self.fluid_flow.unwrap_or_else(|| {
+            panic!("raw fluid current needs block predicates at {position:?}")
+        })
+    }
+
     // Shapes.create
     pub fn boxes(boxes: &[Aabb]) -> Self {
         Self {
@@ -136,6 +267,12 @@ impl CollisionContext {
 }
 pub trait World {
     fn block(&self, position: BlockPos) -> &Block;
+
+    /// Raw fluid queries need known cells, including known air. Worlds with
+    /// incomplete coverage inside loaded chunks must return None at unknown cells.
+    fn raw_fluid_block(&self, position: BlockPos) -> Option<&Block> {
+        self.loaded(position).then(|| self.block(position))
+    }
 
     // CollisionGetter.collidesWithSuffocatingBlock; BlockCollisions.computeNext
     fn collides_with_suffocating_block(&self, bounds: Aabb, context: CollisionContext) -> bool {
@@ -176,7 +313,7 @@ pub trait World {
             let height = if block.resets_fall_distance || block.end_portal_or_gateway {
                 1.0
             } else if block.fluid.kind == FluidKind::Water {
-                block.fluid.height as f64
+                block.fluid.surface_height(self, p) as f64
             } else {
                 return false;
             };
@@ -309,7 +446,7 @@ impl Default for BoxWorld {
             natural_regeneration:true,
             unloaded_chunks:Vec::new(),
             extra_shapes:Vec::new(),
-            air:Block::default()
+            air:Block { fluid_flow: Some(FluidFlowBlock::default()), ..Block::default() }
         }
     }
 }
