@@ -1,0 +1,5 @@
+## port-glide-cosine-exact
+
+Recover the first finite legal-pitch failure from jobs/1.9b-elytra-oracle: pitch 0x42312bde produces angle 0x3fe8bcdfa0000000, Math.cos 0x3fe6e7ab883308cb, StrictMath.cos and Rust cosine 0x3fe6e7ab883308ca. With the staged JVM, measure raw cosine results on a fixed seeded sample and immediate neighbors, including signed symmetry. Independently test one portable candidate or identify the exact runtime dependency and compare its values. Save the executable minimized fixture first. Stop at the cosine primitive; do not touch glide integration.
+
+Write dossier.md with the one-sentence Claim: on its first physical line and runnable reproduce.sh in your new result folder. Use the staged 26.2 jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Prior untracked lab results are available from D:/path-tracing-wt/glm-lab/ via their same paths. Read those only. Save the initial result and script before expanding. Run it, keep raw output and name the evidence type (direct jar invocation, reconstructed arithmetic, or bytecode). No production edits, network, or live game.
