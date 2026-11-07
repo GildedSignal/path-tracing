@@ -42,6 +42,13 @@ impl Pose {
     }
 }
 
+/// Server invulnerableTime and lastHurt, independent of the hurt animation.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HurtCooldown {
+    pub remaining_ticks: i32,
+    pub last_raw_hit: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct PlayerState {
     pub t: u64,
@@ -64,6 +71,7 @@ pub struct PlayerState {
     pub in_lava: bool,
     pub on_climbable: bool,
     pub health: f32,
+    pub hurt_cooldown: HurtCooldown,
     pub food_level: i32,
     pub saturation: f32,
     pub exhaustion: f32,
@@ -131,6 +139,7 @@ impl Default for PlayerState {
             in_lava: false,
             on_climbable: false,
             health: 20.0,
+            hurt_cooldown: HurtCooldown::default(),
             food_level: 20,
             saturation: 5.0,
             exhaustion: 0.0,
