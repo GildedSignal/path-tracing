@@ -12,6 +12,9 @@ import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.world.entity.Entity;
@@ -23,9 +26,20 @@ import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 import pathtracing.LandingClientTrace;
 import pathtracing.Recorder;
 import pathtracing.Tracks;
+import pathtracing.SprintDiagnostic;
 
 @Mixin(ClientPacketListener.class)
 abstract class ClientPacketListenerMixin {
+    @Inject(method = "handleUpdateAttributes", at = @At("RETURN"))
+    private void ptSprintAttributes(ClientboundUpdateAttributesPacket packet, CallbackInfo ci) {
+        var p = Minecraft.getInstance().player;
+        if (SprintDiagnostic.ENABLED && p != null && packet.getEntityId() == p.getId()) SprintDiagnostic.observe("attributes-packet-return", p);
+    }
+    @Inject(method = "handleSetEntityData", at = @At("RETURN"))
+    private void ptSprintEntityData(ClientboundSetEntityDataPacket packet, CallbackInfo ci) {
+        var p = Minecraft.getInstance().player;
+        if (SprintDiagnostic.ENABLED && p != null && packet.id() == p.getId()) SprintDiagnostic.observe("entity-data-packet-return", p);
+    }
     @Inject(method = "handleSetTime", at = @At("RETURN"))
     private void pathtracing$serverTick(ClientboundSetTimePacket packet, CallbackInfo ci) {
         Tracks.serverTick();

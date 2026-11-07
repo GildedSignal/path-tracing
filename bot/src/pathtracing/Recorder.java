@@ -245,6 +245,7 @@ public final class Recorder {
     }
 
     private static void startTick(Minecraft mc) {
+        if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-start t=" + tick, mc.player);
         if (LandingClientTrace.ENABLED) LandingClientTrace.tickStart();
         applied = null;
         capturingDeparture = output == null && Tracks.captureDeparture() && mc.player != null && mc.level != null;
@@ -297,6 +298,7 @@ public final class Recorder {
     }
 
     private static void endTick(Minecraft mc) {
+        if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-end t=" + tick, mc.player);
         if (LandingClientTrace.ENABLED) LandingClientTrace.tickEnd();
         if ((output == null && !capturingDeparture) || mc.player == null) return;
         var player = mc.player;
