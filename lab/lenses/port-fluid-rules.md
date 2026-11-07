@@ -1,0 +1,5 @@
+# Port lane — fluid state, geometry and propagation
+
+Split fluid contact on the player from the fluid state that changes in the world. Choose one shared 26.2 rule that changes accessibility, such as a falling fluid, a waterlogged face, or a source transition after an edit. Start with a single raw height/flow or scheduled-state witness from the staged jar. Trace exactly what neighboring state it reads, then give a scratch patch only for a reproduced missing delta. Keep any different lava, water or timing behavior explicitly separate.
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. No server start, downloads or source-tree edits. Save a truthful provisional dossier immediately, then save and run the smallest reproduction before expanding. Put any candidate patch in the run folder and apply it only to a scratch copy there. At the end distinguish observed results from leads. Prefer one independently executable delta over an inventory of guesses.

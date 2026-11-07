@@ -1,0 +1,5 @@
+# Port lane — actions, resources and world edits
+
+Choose one decision-relevant vanilla action the Rust law cannot yet predict, from use-item slowdown, breaking progress, placement or a damage/resource boundary. Trace input, legality, state mutation and timing in that order. Start with one runnable raw-state case plus a nearby refused action. Use existing resource event inputs and exactness classes rather than inferring a missing output from a snapshot. If the fix is small, produce a candidate patch with before/after evidence. List which additional actions share that law after the first result exists.
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. No server start, downloads or source-tree edits. Save a truthful provisional dossier immediately, then save and run the smallest reproduction before expanding. Put any candidate patch in the run folder and apply it only to a scratch copy there. At the end distinguish observed results from leads. Prefer one independently executable delta over an inventory of guesses.

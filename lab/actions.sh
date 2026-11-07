@@ -38,7 +38,11 @@ main() {
   # Input is data, never interpolated into a shell program or evaluated.
   [[ ${LAB_LENSES:-} != *$'\n'* && ${LAB_LENSES:-} != *$'\r'* ]] || { echo 'lenses must be space-separated' >&2; exit 2; }
   read -r -a lenses <<< "${LAB_LENSES:-}"
-  (( ${#lenses[@]} >= 1 && ${#lenses[@]} <= 3 )) || { echo 'Choose one to three space-separated lenses' >&2; exit 2; }
+  local max_lenses=3
+  if [[ ${GLM_LOCAL:-} == S43 ]]; then max_lenses=6; fi
+  (( ${#lenses[@]} >= 1 && ${#lenses[@]} <= max_lenses )) || {
+    echo "Choose 1 to $max_lenses space-separated lenses" >&2; exit 2;
+  }
   for lens in "${lenses[@]}"; do
     [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README && -f lab/lenses/$lens.md ]] || {
       echo 'Each lens must name an existing lab/lenses/<lens>.md file' >&2; exit 2;

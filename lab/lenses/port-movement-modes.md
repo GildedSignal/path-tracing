@@ -1,0 +1,5 @@
+# Port lane — player movement modes and vehicle coupling
+
+Inventory the movement dispatch boundaries that alter controls or integration, including equipment, riding, swimming and flight. Start by recovering one executable elytra witness from D:/path-tracing-wt/fixtures/lab/results/local-20261107-1037-1-1-port-elytra-delta if available. If it fails to reproduce, freeze the first failing command and choose one small supported boundary to check. The first deliverable is raw vanilla output and a command that verifies a single state transition. Separately flag where shared movement ends and vehicle or equipment state begins.
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. No server start, downloads or source-tree edits. Save a truthful provisional dossier immediately, then save and run the smallest reproduction before expanding. Put any candidate patch in the run folder and apply it only to a scratch copy there. At the end distinguish observed results from leads. Prefer one independently executable delta over an inventory of guesses.
