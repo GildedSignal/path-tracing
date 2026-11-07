@@ -61,7 +61,21 @@ enum Kind {
     Food,
     Depleted(Resources),
     Refill,
+    AfterRegen(Resources),
+    AfterFood(Resources),
     End(Resources),
+}
+
+impl Kind {
+    fn input(self, player_tick: i32) -> Option<ServerResourceEvent> {
+        Some(match self {
+            Self::Charge(raw) => ServerResourceEvent::Exhaustion(f32::from_bits(raw)),
+            Self::Damage(raw) => ServerResourceEvent::Damage(f32::from_bits(raw)),
+            Self::Regen => ServerResourceEvent::Regeneration(player_tick),
+            Self::Food => ServerResourceEvent::FoodTick,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,8 +85,12 @@ struct Row {
 }
 
 fn parse_trace(text: &str, run: &str) -> Vec<Row> {
+    parse_timeline(text, &format!("resource-v1,{run}"), false)
+}
+
+fn parse_timeline(text: &str, header: &str, corpus: bool) -> Vec<Row> {
     let mut lines = text.lines();
-    assert_eq!(lines.next(), Some(format!("resource-v1,{run}").as_str()), "trace replay name");
+    assert_eq!(lines.next(), Some(header), "resource witness version or identity");
     let rows: Vec<_> = lines.enumerate().map(|(order, line)| {
         let fields: Vec<_> = line.split(',').collect();
         let [sequence, world, player, kind, payload @ ..] = fields.as_slice() else {
@@ -86,8 +104,10 @@ fn parse_trace(text: &str, run: &str) -> Vec<Row> {
             ("damage", [raw]) => Kind::Damage(bits(raw)),
             ("regen", []) => Kind::Regen,
             ("food", []) => Kind::Food,
-            ("depleted", fields) => Kind::Depleted(Resources::read(fields)),
-            ("refill", []) => Kind::Refill,
+            ("depleted", fields) if !corpus => Kind::Depleted(Resources::read(fields)),
+            ("refill", []) if !corpus => Kind::Refill,
+            ("after-regen", fields) if corpus => Kind::AfterRegen(Resources::read(fields)),
+            ("after-food", fields) if corpus => Kind::AfterFood(Resources::read(fields)),
             ("end", fields) => Kind::End(Resources::read(fields)),
             _ => panic!("invalid trace row {line}"),
         };
@@ -108,11 +128,21 @@ fn parse_trace(text: &str, run: &str) -> Vec<Row> {
                 assert_eq!(row.clock, Clock { world: last_food.world + 1, player: last_food.player + 1 },
                     "missing or repeated server tick at event {index}");
                 waiting_for_food = Some(row.clock);
+                if corpus {
+                    assert!(matches!(rows.get(index + 1), Some(Row { clock, kind: Kind::AfterRegen(_) }) if *clock == row.clock),
+                        "missing after-regen checkpoint at event {index}: {row:?}");
+                }
             }
             Kind::Food => {
                 assert_eq!(waiting_for_food.take(), Some(row.clock), "FoodData without matching regeneration at event {index}");
                 last_food = row.clock;
+                if corpus {
+                    assert!(matches!(rows.get(index + 1), Some(Row { clock, kind: Kind::AfterFood(_) }) if *clock == row.clock),
+                        "missing after-food checkpoint at event {index}: {row:?}");
+                }
             }
+            Kind::AfterRegen(_) => assert!(matches!(rows[index - 1].kind, Kind::Regen), "extra after-regen at event {index}"),
+            Kind::AfterFood(_) => assert!(matches!(rows[index - 1].kind, Kind::Food), "extra after-food at event {index}"),
             Kind::Depleted(_) => assert!(matches!(rows[index - 1].kind, Kind::Food) && row.clock == last_food,
                 "depletion must immediately follow FoodData"),
             Kind::Refill => assert_eq!(waiting_for_food, Some(row.clock), "refill outside regeneration"),
@@ -140,13 +170,7 @@ fn replay_trace(rows: &[Row], world: &BoxWorld, phase_shift: i32) -> Checkpoints
     let mut depleted = None;
     let mut refill = None;
     for row in rows {
-        let input = match row.kind {
-            Kind::Charge(raw) => ServerResourceEvent::Exhaustion(f32::from_bits(raw)),
-            Kind::Damage(raw) => ServerResourceEvent::Damage(f32::from_bits(raw)),
-            Kind::Regen => ServerResourceEvent::Regeneration(row.clock.player + phase_shift),
-            Kind::Food => ServerResourceEvent::FoodTick,
-            _ => continue,
-        };
+        let Some(input) = row.kind.input(row.clock.player + phase_shift) else { continue };
         let (food, saturation) = (state.food_level, state.saturation);
         apply_server_resource_event(&mut state, world, input);
         match row.kind {
@@ -208,6 +232,50 @@ pub(super) fn verify_landing_resources(
     let predicted = replay_trace(&rows, world, 0);
     compare(&predicted, &rows).unwrap_or_else(|failure| panic!("{run}: {failure}"));
     println!("{run}: server resource checkpoints {predicted:?}");
+}
+
+#[allow(dead_code)] // Used by the standalone terrain verifier.
+pub(super) fn verify_corpus_resources(
+    text: &str, run: &str, identity: (&str, &str), world: &BoxWorld, client_start: &PlayerState,
+    damage: &[(i64, i32, u32)], fences: [(i64, i32); 2],
+) {
+    let (recipient, entity) = identity;
+    let rows = parse_timeline(text, &format!("resource-v2,{run},{recipient},{entity}"), true);
+    let first = rows[0];
+    let last = rows.last().unwrap();
+    assert_eq!([(first.clock.world, first.clock.player), (last.clock.world, last.clock.player)], fences,
+        "{run}: resource and motion fences disagree");
+    assert!(last.clock.player > first.clock.player, "{run}: empty server resource interval");
+    let Kind::Start(initial) = first.kind else { unreachable!() };
+    let mut state = initial.initial_state();
+    assert_eq!((state.health.to_bits(), state.food_level, state.saturation.to_bits(), state.food_tick_timer),
+        (20.0f32.to_bits(), 20, 20.0f32.to_bits(), 0), "{run}: unsupported server start resources");
+    assert!((0.0..=40.0).contains(&state.exhaustion), "{run}: invalid initial exhaustion");
+    assert_eq!((state.health.to_bits(), state.food_level), (client_start.health.to_bits(), client_start.food_level),
+        "{run}: initial client health or food differs from server");
+    let mut expected_damage = damage.iter();
+    let mut checkpoints = 0;
+    for (index, row) in rows.iter().enumerate().skip(1) {
+        if let Kind::Charge(raw) | Kind::Damage(raw) = row.kind {
+            let value = f32::from_bits(raw);
+            assert!(value.is_finite() && value >= 0.0, "{run}: invalid amount at event {index}: {row:?}");
+        }
+        if let Kind::Damage(raw) = row.kind {
+            assert_eq!(expected_damage.next(), Some(&(row.clock.world, row.clock.player, raw)),
+                "{run}: unproven server damage at event {index}: {row:?}");
+        }
+        if let Some(input) = row.kind.input(row.clock.player) {
+            apply_server_resource_event(&mut state, world, input);
+        } else if let Kind::AfterRegen(expected) | Kind::AfterFood(expected) | Kind::End(expected) = row.kind {
+            Resources::observed(&state).compare(expected, &format!("event {index}"), row.clock)
+                .unwrap_or_else(|failure| panic!("{run}: {failure}"));
+            checkpoints += 1;
+        }
+        assert!(state.health > 0.0 && state.food_level > 6,
+            "{run}: unsupported resource eligibility at event {index}: {row:?}");
+    }
+    assert_eq!(expected_damage.next(), None, "{run}: witnessed landing damage absent from resource timeline");
+    println!("{run}: {checkpoints} ordered server resource checkpoints, {} events, sealed {:?}", rows.len(), Resources::observed(&state));
 }
 
 fn check_controls(rows: &[Row], world: &BoxWorld) {
@@ -329,4 +397,34 @@ fn authoritative_damage_between_regeneration_and_food() {
     world.natural_regeneration = true;
     let rows = parse_trace(trace, "damage");
     compare(&replay_trace(&rows, &world, 0), &rows).unwrap();
+}
+
+#[test]
+fn corpus_refuses_missing_events_and_checkpoints() {
+    let header = "resource-v2,run,player,7";
+    let events = [
+        "109,19,start,41a00000,20,41a00000,00000000,0",
+        "110,20,regen",
+        "110,20,after-regen,41a00000,20,41a00000,00000000,0",
+        "110,20,charge,3d4ccccd",
+        "110,20,food",
+        "110,20,after-food,41a00000,20,41a00000,3d4ccccd,0",
+        "110,20,end,41a00000,20,41a00000,3d4ccccd,0",
+    ];
+    let verify = |omit| {
+        let mut text = format!("{header}\n");
+        for (index, event) in events.iter().enumerate().filter(|(index, _)| Some(*index) != omit).enumerate() {
+            text.push_str(&format!("{index},{}\n", event.1));
+        }
+        let mut world = BoxWorld::default();
+        world.difficulty = 2;
+        world.natural_regeneration = true;
+        let start = PlayerState { health: 20.0, food_level: 20, ..PlayerState::default() };
+        verify_corpus_resources(&text, "run", ("player", "7"), &world, &start, &[], [(109, 19), (110, 20)]);
+    };
+    verify(None);
+    for (omit, diagnostic) in [(3, "event 4 Clock"), (5, "missing after-food checkpoint")] {
+        let error = std::panic::catch_unwind(|| verify(Some(omit))).unwrap_err();
+        assert!(error.downcast_ref::<String>().unwrap().contains(diagnostic));
+    }
 }

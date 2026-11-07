@@ -58,8 +58,12 @@ fn pose(value: &str) -> Pose {
 }
 
 fn speed_modifiers(object: &Object<'_>) -> Vec<SpeedModifier> {
+    speed_modifiers_from(object.required("speedModifiers"))
+}
+
+fn speed_modifiers_from(raw: &str) -> Vec<SpeedModifier> {
     let mut modifiers: Vec<SpeedModifier> = Vec::new();
-    for tuple in array(object.required("speedModifiers")) {
+    for tuple in array(raw) {
         let fields = array(tuple);
         assert_eq!(fields.len(), 3, "speedModifiers needs [id, amount, operation]");
         let id = fields[0].strip_prefix('"').and_then(|s| s.strip_suffix('"'))

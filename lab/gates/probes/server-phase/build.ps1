@@ -1,10 +1,12 @@
 param(
     [Parameter(Mandatory)][string]$Server,
-    [Parameter(Mandatory)][string]$Output
+    [Parameter(Mandatory)][string]$Output,
+    [string]$ClientLib
 )
 $ErrorActionPreference = 'Stop'
 $tree = (Resolve-Path -LiteralPath "$PSScriptRoot/../../../..").Path
 . "$tree/scripts/common.ps1"
+if (-not $ClientLib) { $ClientLib = "$tree/bot/lib" }
 $null = New-Item -ItemType Directory -Path $Output -Force
 $classes = Join-Path $Output 'classes'
 $null = New-Item -ItemType Directory -Path $classes
@@ -13,7 +15,7 @@ $dependencies = @(
     "$Libraries/net/fabricmc/fabric-loader/$LoaderVersion/fabric-loader-$LoaderVersion.jar"
     (Get-ChildItem "$Libraries/net/fabricmc/sponge-mixin" -Recurse -Filter '*.jar').FullName
     (Get-ChildItem "$Server/libraries" -Recurse -Filter '*.jar').FullName
-    (Get-ChildItem "$tree/bot/lib" -Filter '*.jar').FullName
+    (Get-ChildItem -LiteralPath $ClientLib -Filter '*.jar').FullName
 )
 $sources = (Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.java').FullName
 & "$Jdk/javac.exe" --release 25 -proc:none -cp ($dependencies -join ';') -d $classes $sources

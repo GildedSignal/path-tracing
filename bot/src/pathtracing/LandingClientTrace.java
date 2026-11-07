@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.HexFormat;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -16,6 +17,8 @@ import org.slf4j.LoggerFactory;
 public final class LandingClientTrace {
     public static final boolean ENABLED = "1".equals(System.getenv("PATHTRACING_LANDING_PROBE"))
         && "bot".equals(System.getProperty("pathtracing.role"));
+    public static final boolean CORPUS = ENABLED && "1".equals(System.getenv("PATHTRACING_TERRAIN_CORPUS"))
+        && Files.isRegularFile(java.nio.file.Path.of(System.getProperty("pathtracing.rig", "."), "terrain-corpus.disposable"));
     private static final HexFormat HEX = HexFormat.of();
     private static Connection connection;
     private static long moves;
@@ -102,6 +105,34 @@ public final class LandingClientTrace {
             + "," + bits(before) + "," + bits(after));
         before = null;
         after = null;
+    }
+
+    public static void unexpected(String kind) {
+        if (CORPUS && rows != null) row("unsupported," + replayTick + "," + kind);
+    }
+
+    public static void ownEntityPacket(int id, String kind) {
+        var player = Minecraft.getInstance().player;
+        if (player != null && player.getId() == id) unexpected(kind);
+    }
+
+    public static void blockUpdate(BlockPos pos) {
+        if (CORPUS && rows != null) row("block-update," + replayTick + "," + pos.getX() + "," + pos.getY() + "," + pos.getZ());
+    }
+
+    public static void chunkUpdate(int x, int z) {
+        if (CORPUS && rows != null) row("chunk-update," + replayTick + "," + x + "," + z);
+    }
+
+    static void checkPlayer(Minecraft mc, int tick) {
+        if (rows == null) return;
+        var player = mc.player;
+        if (!player.isAlive() || player.getFoodData().getFoodLevel() <= 6 || player.isPassenger()
+            || player.isFallFlying() || player.getAbilities().flying || player.isUsingItem()
+            || player.noPhysics || player.isSpectator() || player.getAbilities().instabuild
+            || !player.getActiveEffects().isEmpty()) {
+            row("unsupported," + tick + ",player movement state");
+        }
     }
 
     private static boolean ours(ClientboundSetEntityMotionPacket packet) {

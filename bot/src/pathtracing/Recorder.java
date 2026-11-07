@@ -16,6 +16,7 @@ import java.util.List;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
@@ -47,6 +48,8 @@ public final class Recorder {
     private static JsonObject departureRow;
     private static JsonObject pendingDeparture;
     private static boolean capturingDeparture;
+    private static JsonArray startSpeedModifiers;
+    private static int startTicksFrozen;
 
     static void register() {
         ClientTickEvents.START_CLIENT_TICK.register(Recorder::startTick);
@@ -283,6 +286,11 @@ public final class Recorder {
             if (LandingClientTrace.ENABLED) {
                 LandingClientTrace.replayStart(name, tick, mc.player.tickCount, mc.level.tickRateManager().tickrate());
             }
+            if (LandingClientTrace.CORPUS) {
+                LandingClientTrace.checkPlayer(mc, tick);
+                startSpeedModifiers = TraceJson.speedModifiers(mc.player.getAttribute(Attributes.MOVEMENT_SPEED));
+                startTicksFrozen = mc.player.getTicksFrozen();
+            }
             replay.get(tick).apply(mc);
         }
         applied = TickInput.capture(mc);
@@ -335,6 +343,15 @@ public final class Recorder {
             out.addProperty("minorHorizontalCollision", player.minorHorizontalCollision);
             out.addProperty("swimming", player.isSwimming());
             out.addProperty("crouching", player.isCrouching());
+        }
+        if (LandingClientTrace.CORPUS && replaying()) {
+            out.add("startSpeedModifiers", startSpeedModifiers);
+            out.addProperty("startTicksFrozen", startTicksFrozen);
+            out.addProperty("underwater", player.isUnderWater());
+            out.addProperty("eyeInWater", player.isEyeInFluid(FluidTags.WATER));
+            out.addProperty("inPowderSnow", player.isInPowderSnow);
+            out.addProperty("wasInPowderSnow", player.wasInPowderSnow);
+            TraceJson.number(out, "speed", player.getSpeed());
         }
         TraceJson.number(out, "health", player.getHealth());
         out.addProperty("foodLevel", player.getFoodData().getFoodLevel());

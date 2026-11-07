@@ -12,6 +12,8 @@ import net.minecraft.world.level.GameType;
 public final class ResourceTrace {
     static final boolean ENABLED = "1".equals(System.getenv("PATHTRACING_RESOURCE_PROBE"))
         && Files.isRegularFile(Path.of("..", "resource-pair.disposable"));
+    static final boolean CORPUS = ENABLED && "1".equals(System.getenv("PATHTRACING_TERRAIN_CORPUS"))
+        && Files.isRegularFile(Path.of("..", "terrain-corpus.disposable"));
     private static final HexFormat HEX = HexFormat.of();
     private static ResourceTrace active;
     private final ServerPlayer player;
@@ -27,7 +29,9 @@ public final class ResourceTrace {
     private ResourceTrace(ServerPlayer player, String run) {
         this.player = player;
         this.run = run;
-        rows = new StringBuilder("resource-v1," + run + "\n");
+        rows = new StringBuilder(CORPUS
+            ? "resource-v2," + run + "," + player.getUUID() + "," + player.getId() + "\n"
+            : "resource-v1," + run + "\n");
     }
 
     static void start(ServerPlayer player, String run) {
@@ -49,16 +53,22 @@ public final class ResourceTrace {
         }
         trace.snapshot("end");
         active = null;
+        trace.write(".csv");
+    }
+
+    private void write(String suffix) {
         try {
             var directory = Files.createDirectories(Path.of("pathtracing-phase"));
-            Files.writeString(directory.resolve(run + ".csv"), trace.rows, StandardOpenOption.CREATE_NEW);
+            Files.writeString(directory.resolve(run + suffix), rows, StandardOpenOption.CREATE_NEW);
         } catch (IOException failure) {
             throw new IllegalStateException("Cannot write resource trace for " + run, failure);
         }
     }
 
     static void cancel() {
+        var trace = active;
         active = null;
+        if (CORPUS && trace != null) trace.write(".resources.partial.csv");
     }
 
     public static void charge(Object food, float amount) {
@@ -84,6 +94,10 @@ public final class ResourceTrace {
 
     public static void afterRegeneration(ServerPlayer player) {
         var trace = active;
+        if (CORPUS && trace != null && trace.player == player) {
+            trace.snapshot("after-regen");
+            return;
+        }
         if (trace != null && trace.player == player && trace.depleted && !trace.refilled
             && player.getFoodData().getSaturationLevel() > trace.beforeSaturation) {
             trace.row("refill");
@@ -105,6 +119,10 @@ public final class ResourceTrace {
         var trace = active;
         if (trace == null || trace.player != player) return;
         trace.inFoodTick = false;
+        if (CORPUS) {
+            trace.snapshot("after-food");
+            return;
+        }
         if (trace.depleted) return;
         var food = player.getFoodData();
         if (food.getSaturationLevel() < trace.beforeSaturation || food.getFoodLevel() < trace.beforeFood) {

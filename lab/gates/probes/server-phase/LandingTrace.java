@@ -75,6 +75,7 @@ public final class LandingTrace {
             throw new IllegalStateException("Landing capture already active, invalid name, or pending hurtMarked");
         }
         var trace = new LandingTrace(player, run);
+        if (ResourceTrace.CORPUS) ResourceTrace.start(player, run);
         trace.event("start," + run + "," + trace.identity + "," + player.level().tickRateManager().tickrate());
         active = trace;
         player.connection.send(trace.startFence);
@@ -85,6 +86,7 @@ public final class LandingTrace {
         if (trace == null || trace.sealed || !trace.run.equals(run) || trace.player.isRemoved()) {
             throw new IllegalStateException("No matching landing capture for " + run);
         }
+        if (ResourceTrace.CORPUS) ResourceTrace.stop(run);
         trace.event("end," + run + "," + trace.identity + "," + trace.pending);
         trace.sealed = true;
         trace.player.connection.send(trace.endFence);

@@ -6,7 +6,11 @@ param(
   [string]$Jar,
   [ValidateSet('peaceful', 'normal')][string]$ResourceDifficulty,
   [string]$ResourceProbeJar,
-  [ValidateSet(20, 200)][int]$LandingRate
+  [ValidateSet(20, 200)][int]$LandingRate,
+  [ValidateSet('Preflight','Audit','Full')][string]$CorpusMode,
+  [string]$CorpusTarget,
+  [string]$CorpusReferenceServer,
+  [string]$CorpusLauncher
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
@@ -21,15 +25,34 @@ $powershell = Join-Path $PSHOME 'powershell.exe'
 $scripts = Join-Path $PSScriptRoot '..\..\scripts'
 $botDir = Join-Path $Rig 'clients\bot'
 $fixtures = Join-Path $PSScriptRoot '..\fixtures'
-$landing = $PSBoundParameters.ContainsKey('LandingRate')
+$corpus = [bool]$CorpusMode
+$landing = $PSBoundParameters.ContainsKey('LandingRate') -or $corpus
+$corpusJob = Join-Path $PSScriptRoot '../../jobs/1.6g-terrain-corpus'
+if ($corpus) {
+  foreach ($key in @('Courses','Runs','Ticks','Seed','LandingRate','ResourceDifficulty')) {
+    if ($PSBoundParameters.ContainsKey($key)) { throw "Corpus mode fixes $key in the manifest." }
+  }
+  if (-not $Jar -or -not $ResourceProbeJar -or -not $CorpusTarget -or -not $CorpusReferenceServer -or
+      -not (Test-Path -LiteralPath $CorpusLauncher -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'terrain-corpus.disposable') -PathType Leaf)) {
+    throw 'Corpus capture requires its disposable marker, built bot and probe jars, verifier target and reference server.'
+  }
+  if ($ServerPort -in @(25565,25566,25575,25576) -or $RconPort -in @(25565,25566,25575,25576)) {
+    throw 'Corpus capture requires a port pair separate from the play and reference rigs.'
+  }
+  . "$corpusJob/manifest.ps1"
+  $manifest = Get-TerrainManifest $CorpusMode
+  $Runs = $manifest.Runs; $Ticks = $manifest.Ticks; $Seed = $manifest.Seed
+  $captureRate = $manifest.Rate
+} else { $captureRate = $LandingRate }
 if ($landing) {
   if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
       -not (Test-Path -LiteralPath (Join-Path $Rig 'landing-motion.disposable') -PathType Leaf) -or
       -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
     throw 'Landing capture requires a marked disposable copy and its own port pair.'
   }
-  if ($ResourceDifficulty -or -not $ResourceProbeJar -or -not $Jar -or $Runs -ne 1 -or
-      $Ticks -ne 400 -or $Seed -ne 1 -or ($Courses -join ',') -cne 'edges,full-blocks,ice') {
+  if (-not $corpus -and ($ResourceDifficulty -or -not $ResourceProbeJar -or -not $Jar -or $Runs -ne 1 -or
+      $Ticks -ne 400 -or $Seed -ne 1 -or ($Courses -join ',') -cne 'edges,full-blocks,ice')) {
     throw 'Frozen landing capture requires -Courses edges,full-blocks,ice -Runs 1 -Ticks 400 -Seed 1, -Jar and -ResourceProbeJar.'
   }
   $fixtures = Join-Path $result 'capture'
@@ -62,6 +85,7 @@ $comparableEnds = 0
 $resourceProbe = $null
 $previousProbeOptIn = $env:PATHTRACING_RESOURCE_PROBE
 $previousLandingOptIn = $env:PATHTRACING_LANDING_PROBE
+$previousCorpusOptIn = $env:PATHTRACING_TERRAIN_CORPUS
 
 function Cleanup([string]$Name, [scriptblock]$Action) {
   try { & $Action } catch { Note "$Name cleanup failed: $($_.Exception.Message)" }
@@ -181,8 +205,12 @@ function Seal-Landing([string]$Run) {
   $server = Join-Path $Rig "server/pathtracing-phase/$Run.server-motion.csv"
   $resources = Join-Path $Rig "server/pathtracing-phase/$Run.csv"
   try {
-    try { Resource-Command "ptphase resources stop $Run" "Resource capture saved $Run" }
-    finally { Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run" }
+    if ($corpus) {
+      Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run"
+    } else {
+      try { Resource-Command "ptphase resources stop $Run" "Resource capture saved $Run" }
+      finally { Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run" }
+    }
     $deadline = [Diagnostics.Stopwatch]::StartNew()
     while (-not (Test-Path -LiteralPath $client -PathType Leaf) -or
            -not (Test-Path -LiteralPath $server -PathType Leaf)) {
@@ -200,6 +228,12 @@ function Seal-Landing([string]$Run) {
     if (Test-Path -LiteralPath $resources -PathType Leaf) {
       Copy-Item -LiteralPath $resources -Destination (Join-Path $result "$Run.resources.csv")
     }
+  }
+}
+function Set-CaptureRate([int]$Rate) {
+  $reply = Require (Rcon "tick rate $Rate") 'Set capture tick rate'
+  if ($reply.Text.Trim() -cnotmatch ('^Set the target tick rate to ' + $Rate + '(?:\.0)? per second$')) {
+    throw "Capture rate $Rate refused. See $($reply.File)."
   }
 }
 function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$World, $Player, $ServerStart, $ServerEnd, $LastTick) {
@@ -252,7 +286,7 @@ function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$W
 }
 
 try {
-  $available = @(Get-FixtureCourses)
+  $available = @(if ($corpus) { $manifest.Courses } else { Get-FixtureCourses })
   $requested = @($Courses | Where-Object { $_ } | ForEach-Object { $_.Split(',') })
   if ($requested.Count -eq 0) { $selected = $available }
   else {
@@ -280,8 +314,10 @@ try {
       throw 'Resource capture requires an idle disposable rig.'
     }
     $properties = @(Get-Content -LiteralPath (Join-Path $Rig 'server/server.properties'))
-    foreach ($setting in @("server-port=$ServerPort", "rcon.port=$RconPort", 'server-ip=127.0.0.1',
-        'enable-rcon=true', 'level-name=world', 'online-mode=false')) {
+    $required = @("server-port=$ServerPort", "rcon.port=$RconPort", 'server-ip=127.0.0.1',
+        'enable-rcon=true', 'level-name=world', 'online-mode=false')
+    if ($corpus) { $required += 'view-distance=4', 'simulation-distance=4' }
+    foreach ($setting in $required) {
       $key = $setting.Split('=')[0] + '='
       $values = @($properties | Where-Object { $_.StartsWith($key) })
       if ($values.Count -ne 1 -or $values[0] -cne $setting) { throw "Disposable rig requires $setting." }
@@ -299,6 +335,10 @@ try {
     $resourceProbe = $probeTarget
     $env:PATHTRACING_RESOURCE_PROBE = '1'
     if ($landing) { $env:PATHTRACING_LANDING_PROBE = '1' }
+    if ($corpus) {
+      $env:PATHTRACING_TERRAIN_CORPUS = '1'
+      Note "Server probe SHA256: $((Get-FileHash -LiteralPath $probeTarget -Algorithm SHA256).Hash)."
+    }
   }
   Note "Rig: $Rig; courses: $($selected.Name -join ', '); Runs=$Runs; Ticks=$Ticks; Seed=$Seed."
   $serverOpen = Test-Port $ServerHost $ServerPort
@@ -322,7 +362,9 @@ try {
   if (-not (Test-Path -LiteralPath $options)) { $exitCode = 3; throw 'Missing bot options; run scripts\setup.ps1.' }
   Save-Artifact $options
   $lines = @(Get-Content -LiteralPath $options)
-  foreach ($setting in @('autoJump:false', 'toggleSprint:false', 'toggleCrouch:false', 'sprintWindow:0')) {
+  $required = @('autoJump:false', 'toggleSprint:false', 'toggleCrouch:false', 'sprintWindow:0')
+  if ($corpus) { $required += 'renderDistance:4', 'simulationDistance:12', 'overrideWidth:480', 'overrideHeight:270', 'maxFps:260', 'enableVsync:false' }
+  foreach ($setting in $required) {
     $values = @($lines | Where-Object { $_ -cmatch ('^' + $setting.Split(':')[0] + ':') })
     if ($values.Count -ne 1 -or $values[0] -cne $setting) { $exitCode = 3; throw "Bot options must contain exactly $setting." }
   }
@@ -330,16 +372,16 @@ try {
   $online = @(Wait-Rcon)
   Assert-Absent
   if ($BotName -notin $online -and @(Bot-Processes).Count -eq 0) {
-    $launcher = Join-Path $scripts 'launch-client.ps1'
+    $launcher = if ($corpus) { $CorpusLauncher } else { Join-Path $scripts 'launch-client.ps1' }
     $arguments = @{ Role = 'bot' }
     if ($landing) {
       $parameters = (Get-Command $launcher).Parameters
-      if ($LandingRate -eq 200 -and (-not $parameters.ContainsKey('FollowTickRate') -or
-          -not $parameters.ContainsKey('FullTickDemand'))) { throw 'Integrate the lab client clock before the 200 TPS capture.' }
+      if ($captureRate -gt 20 -and (-not $parameters.ContainsKey('FollowTickRate') -or
+          -not $parameters.ContainsKey('FullTickDemand'))) { throw 'Integrate the lab client clock before accelerated capture.' }
       if ($parameters.ContainsKey('FollowTickRate')) {
-        $arguments.FollowTickRate = if ($LandingRate -eq 200) { 'true' } else { 'false' }
+        $arguments.FollowTickRate = if ($captureRate -gt 20) { 'true' } else { 'false' }
       }
-      if ($LandingRate -eq 200) { $arguments.FullTickDemand = 'true' }
+      if ($captureRate -gt 20) { $arguments.FullTickDemand = 'true' }
     }
     $null = Require (Invoke-Script $launcher $arguments 30 'bot') 'Bot launch'
   }
@@ -366,7 +408,8 @@ try {
     }
     Resource-Command 'gamerule natural_health_regeneration true' 'Gamerule natural_health_regeneration is now set to: true'
     Resource-Command 'gamerule spawn_mobs false' 'Gamerule spawn_mobs is now set to: false'
-    $null = Require (Rcon "tick rate $LandingRate") 'Set landing tick rate'
+    if ($corpus) { Set-CaptureRate 20 }
+    else { $null = Require (Rcon "tick rate $LandingRate") 'Set landing tick rate' }
   }
 
   foreach ($course in $selected) {
@@ -386,13 +429,20 @@ try {
       Start-Sleep -Seconds 2
       $probe = Join-Path $botDir "pathtracing\fixtures\${prefix}_${name}_ready.world.jsonl"
       try {
-        $null = Export-World "${prefix}_${name}_ready" $course.Min $course.Max -Readiness
+        if ($corpus) {
+          $preMin = @($course.Min[0] - 3; $course.Min[1]; $course.Min[2] - 3)
+          $preMax = @($course.Max[0] + 3; $course.Max[1] + 3; $course.Max[2] + 3)
+          $null = Export-World "${prefix}_${name}_ready" $preMin $preMax
+        } else {
+          $null = Export-World "${prefix}_${name}_ready" $course.Min $course.Max -Readiness
+        }
         $marker = $course.Marker -join ','
-        $seen = @(Get-Content -LiteralPath $probe | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
+        $seen = @(Get-Content -LiteralPath $probe | Where-Object { $_.Contains('"block":"minecraft:gold_block"') } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
           $_.kind -eq 'block' -and ($_.at -join ',') -eq $marker -and $_.block -eq 'minecraft:gold_block'
         })
         if ($seen.Count -ne 1) { throw 'Client readiness export did not see the final course marker.' }
       } finally {
+        if ($corpus) { Save-Artifact "$probe.tmp" }
         foreach ($readyPath in @($probe, "$probe.tmp")) {
           Cleanup 'Readiness export' { if (Test-Path -LiteralPath $readyPath) { Remove-Item -LiteralPath $readyPath } }
         }
@@ -412,6 +462,8 @@ try {
         if ($ResourceDifficulty) {
           New-ResourceInputs $inputPath $course.Start
           Prepare-ResourceStart
+        } elseif ($corpus -and $name -eq 'mixed-seam') {
+          New-TerrainMixedInputs $inputPath $course.Start $i
         } elseif ($name -eq 'corner') {
           $null = Require (Invoke-Script (Join-Path $PSScriptRoot 'corner-inputs.ps1') @{
             Name = $runName; Ticks = $Ticks; Start = $course.Start
@@ -422,14 +474,24 @@ try {
           }) 'Generate inputs'
         }
         # Preserve the last angles exactly and release every key for twenty recorded ticks.
-        $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
-        $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
-        Add-Content -LiteralPath $inputPath -Value $tail -Encoding ASCII
+        if ($corpus) { Add-TerrainRestTail $inputPath $Ticks }
+        else {
+          $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
+          $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
+          Add-Content -LiteralPath $inputPath -Value $tail -Encoding ASCII
+        }
         if ($landing) {
           Copy-Item -LiteralPath $inputPath -Destination (Join-Path $result "$runName.inputs.jsonl")
         } else { Save-Artifact $inputPath }
         Assert-Absent
+        if ($corpus) {
+          Resource-Command "effect give $BotName minecraft:saturation 1 20 true" "Applied effect Saturation to $BotName"
+          Start-Sleep -Seconds 2
+        }
         $serverStart = Restore-Start "$runName-start" $course.Start
+        if ($corpus -and ($serverStart.foodLevel -ne 20 -or [single]$serverStart.foodSaturationLevel -ne 20)) {
+          throw 'Corpus start requires full food and saturation before the replay fence.'
+        }
         $activeRecording = $path
         $settleReply = Bot "replay $runName $runName wait" ("Settled ${runName};") $timeout
         if ($settleReply.Text -match '(?i)Aborted') { $activeRecording = $null }
@@ -437,7 +499,8 @@ try {
         $serverSettled = Server-Snapshot "$runName-settled"
         Require-StableResources $serverStart $serverSettled
         if ($landing) {
-          Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName"
+          if ($corpus) { Set-CaptureRate $captureRate }
+          else { Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName" }
           Resource-Command "ptlanding start $BotName $runName" "Landing capture started $runName"
         }
         if ($ResourceDifficulty) {
@@ -447,12 +510,16 @@ try {
         try {
           $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
           if ($landing) { $null = Require $replayReply 'Replay' }
+        } catch {
+          if ($corpus) { Note $_.Exception.Message }
+          throw
         } finally {
           if ($landing) {
             Save-Artifact $path
             Seal-Landing $runName
           }
         }
+        if ($corpus) { Set-CaptureRate 20 }
         if ($replayReply.Text -match '(?i)Aborted') { $activeRecording = $null }
         $null = Require $replayReply 'Replay'
         $activeRecording = $null
@@ -484,7 +551,16 @@ try {
           $min += [int][Math]::Floor($bounds.Minimum) - 3
           $max += [int][Math]::Floor($bounds.Maximum) + 3
         }
+        if ($corpus) { $min[1] = [Math]::Max($min[1], $course.Min[1]) }
         $world = Export-World $runName $min $max
+        if ($corpus) {
+          $verified = Require (Invoke-Script "$corpusJob/verify.ps1" @{
+            Mode = $CorpusMode; Capture = $result; Course = $name; Run = $i
+            Target = $CorpusTarget; ReferenceServer = $CorpusReferenceServer
+          } 120) 'Corpus verification'
+          $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; $($verified.File)." })
+          continue
+        }
         if ($landing) {
           $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; raw capture awaiting 1.6f verification." })
           continue
@@ -500,7 +576,9 @@ try {
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message })
         if ($exitCode -eq 3 -or $landing) { throw }
       } finally {
+        if ($corpus) { Cleanup 'Restore stock tick rate' { Set-CaptureRate 20 } }
         if ($ResourceDifficulty -or $landing) { Cleanup 'Cancel resource capture' { $null = Require (Rcon 'ptphase resources cancel') 'Cancel probe' } }
+        if ($corpus) { Save-Artifact (Join-Path $Rig "server/pathtracing-phase/$runName.resources.partial.csv") }
         if ($landing) {
           Cleanup 'Cancel landing capture' { $null = Require (Rcon 'ptlanding cancel') 'Cancel probe' }
           Save-Artifact (Join-Path $Rig "server/pathtracing-phase/$runName.server-motion.partial.csv")
@@ -544,6 +622,7 @@ finally {
       Cleanup 'Remove resource probe' { Remove-Item -LiteralPath $resourceProbe }
       $env:PATHTRACING_RESOURCE_PROBE = $previousProbeOptIn
       if ($landing) { $env:PATHTRACING_LANDING_PROBE = $previousLandingOptIn }
+      if ($corpus) { $env:PATHTRACING_TERRAIN_CORPUS = $previousCorpusOptIn }
     }
     try { Exit-Rig } catch { Note "Lock release failed: $($_.Exception.Message)" }
   }
@@ -552,7 +631,9 @@ finally {
   $success = $completed -and $selected.Count -gt 0 -and $kept -eq ([long]$selected.Count * $Runs) -and
     @($notes | Where-Object { $_ -match 'failed:|Timed out|Refusing|online' }).Count -eq 0
   if ($success) { $exitCode = 0 }
-  $overall = if ($exitCode -eq 0) { 'Overall: PASS' } else { 'Overall: FAIL' }
+  $overall = if ($corpus) {
+    if ($exitCode -eq 0) { "${CorpusMode}: PASS (capture and replay only)" } else { "${CorpusMode}: REFUSED" }
+  } elseif ($exitCode -eq 0) { 'Overall: PASS' } else { 'Overall: FAIL' }
   $body = @('# L0 fixture recording', '', "UTC $stamp", "Rig $Rig", "Runs $Runs; ticks $Ticks; seed base $Seed.",
     "Recordings kept $kept; rejected $rejected.", '',
     'Each course is a 32x32 enclosed patch at x=4096+128*courseIndex,z=4096 on the lab superflat.',
@@ -576,7 +657,11 @@ finally {
   if ($ResourceDifficulty) {
     $body += "1.5h $ResourceDifficulty case. Raw server resource trace and its recording and world are in pair/full-blocks for the independent Rust gate."
   }
-  if ($landing) {
+  if ($corpus) {
+    $body = @("# 1.6g $CorpusMode", '', "UTC $stamp", "Rig $Rig",
+      "Normal difficulty; configured rate $captureRate; seed base $Seed; $recordTicks replay ticks.",
+      'A kept case has verified movement, packet provenance and ordered resources.')
+  } elseif ($landing) {
     $body = @('# 1.6f raw landing capture', '', "UTC $stamp", "Rig $Rig",
       "Normal difficulty; configured rate $LandingRate; seed base $Seed; $recordTicks replay ticks.",
       'PASS here means capture completed. The dedicated verifier adjudicates the evidence.')

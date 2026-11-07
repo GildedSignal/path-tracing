@@ -114,15 +114,17 @@ final class WorldExporter {
             world.addProperty("difficulty", level.getDifficulty().getId());
             world.addProperty("naturalRegeneration", naturalRegeneration);
             world.addProperty("fastLava", level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA));
+            if (LandingClientTrace.CORPUS) {
+                world.add("min", coordinates(request.min()));
+                world.add("max", coordinates(request.max()));
+            }
             writer.write(world.toString()); writer.write('\n');
             for (BlockPos pos : BlockPos.betweenClosed(request.min(), request.max())) {
                 BlockState state = level.getBlockState(pos);
                 if (state.isAir()) continue;
                 JsonObject out = new JsonObject();
                 out.addProperty("kind", "block");
-                JsonArray at = new JsonArray();
-                at.add(pos.getX()); at.add(pos.getY()); at.add(pos.getZ());
-                out.add("at", at);
+                out.add("at", coordinates(pos));
                 out.addProperty("block", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
                 out.addProperty("state", state.toString());
                 out.add("boxes", boxes(state.getCollisionShape(level, pos, CollisionContext.empty()).toAabbs()));
@@ -151,6 +153,12 @@ final class WorldExporter {
                 writer.write(out.toString()); writer.write('\n');
                 count++;
             }
+            if (LandingClientTrace.CORPUS) {
+                JsonObject end = new JsonObject();
+                end.addProperty("kind", "worldEnd");
+                end.addProperty("blocks", count);
+                writer.write(end.toString()); writer.write('\n');
+            }
         } finally {
             player.setItemInHand(InteractionHand.MAIN_HAND, mainHand);
             player.input.keyPresses = input;
@@ -161,6 +169,12 @@ final class WorldExporter {
         }
         Files.move(temporary(request.path()), request.path());
         return "Exported " + request.name() + ": " + count + " blocks.";
+    }
+
+    private static JsonArray coordinates(BlockPos pos) {
+        JsonArray at = new JsonArray();
+        at.add(pos.getX()); at.add(pos.getY()); at.add(pos.getZ());
+        return at;
     }
 
     private static void properties(JsonObject out, BlockState state) {
