@@ -39,7 +39,7 @@ main() {
   [[ ${LAB_LENSES:-} != *$'\n'* && ${LAB_LENSES:-} != *$'\r'* ]] || { echo 'lenses must be space-separated' >&2; exit 2; }
   read -r -a lenses <<< "${LAB_LENSES:-}"
   local max_lenses=3
-  if [[ ${GLM_LOCAL:-} == S43 ]]; then max_lenses=12; fi
+  if [[ ${GLM_LOCAL:-} == S43 ]]; then max_lenses=24; fi
   (( ${#lenses[@]} >= 1 && ${#lenses[@]} <= max_lenses )) || {
     echo "Choose 1 to $max_lenses space-separated lenses" >&2; exit 2;
   }
