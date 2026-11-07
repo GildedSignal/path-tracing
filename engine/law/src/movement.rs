@@ -777,11 +777,8 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
                     eyes[a]=true;
                 }
                 heights[a]=heights[a].max(top-state.bounding_box().min.y);
-                let flow=if heights[a]<0.4 {
-                    f.flow.scale(heights[a])
-                } else {
-                    f.flow
-                };
+                let flow=f.current(world, [x, y, z]);
+                let flow=if heights[a]<0.4 { flow.scale(heights[a]) } else { flow };
                 currents[a]=currents[a].plus(flow);
                 counts[a]+=1;
             }

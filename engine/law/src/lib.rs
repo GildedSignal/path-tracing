@@ -36,6 +36,7 @@ pub use world::{
     CollisionContext,
     ContactDamage,
     Fluid,
+    FluidFlowBlock,
     FluidKind,
     GroundedContact,
     Inside,

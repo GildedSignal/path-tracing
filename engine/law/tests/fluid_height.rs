@@ -1,9 +1,10 @@
-use law::{Block, BoxWorld, Fluid, FluidKind, Input, PlayerState, Vec3, World, tick};
+use law::{Block, BoxWorld, Fluid, FluidFlowBlock, FluidKind, Input, PlayerState, Vec3, World, tick};
 
 fn cell(kind: FluidKind, raw_amount: u8) -> Block {
     Block {
         air: false,
-        fluid: Fluid { kind, raw_amount: Some(raw_amount), ..Fluid::default() },
+        fluid: Fluid { kind, raw_amount: Some(raw_amount), raw_falling: Some(false), ..Fluid::default() },
+        fluid_flow: Some(FluidFlowBlock::default()),
         ..Block::default()
     }
 }
