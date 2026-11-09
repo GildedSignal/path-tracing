@@ -16,7 +16,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Phase 0, done.** `main` is the one line: the law, the recorder, the tracks, and the 100× clock with its guard above 2000 TPS. Every offline suite is green.
   - The live clock gate passed on `48d2deb`: 2000 TPS movement identical on three courses, 12,000 sustained ticks identical with zero corrections, 101× active, 4000 refused by the guard.
   - Merged branches, worktrees, build folders and finished jobs are deleted, locally and on GitHub. The original L0 pairs are in `D:\path-tracing-evidence\l0-original-pairs`.
-- **Phase 1.** GPT has 6% of its weekly usage left (S55): Claude sub-agents build, one at a time, with GLM lanes alongside. Done (S59): the lab wiki (`lab/wiki/`, compiled after each batch). To build: run records with worst margins (AGENTS.md).
+- **Phase 1.** GPT is out until 13 November, 13:29 (weekly limit, hit at 23:30 on 9 November): Claude sub-agents build, one at a time, with GLM lanes alongside. Done (S59): the lab wiki (`lab/wiki/`, compiled after each batch). To build: run records with worst margins (AGENTS.md).
   - **Done: law speed (1.1).** Under 1 µs per tick on all four bench cases (`cargo run --release --bin bench` from `engine/`), about 55×, replays identical, judged MERGE.
   - **Done: footprints and the pattern key (1.2)** ([footprints.md](footprints.md)): no randomness and no clock in the law; the key covers one orientation (turns aren't bit-exact); a lookup takes 2–4 µs.
   - **1.3 L0 (merged `0e0e531`):** the sprint flag and pose are server-driven inputs. Full blocks, slabs, step-ups and 3 ceilings runs pass. **Open:** ceilings run 4 is a server correction that depends on packet timing; corrections become recorded server events (S62), being implemented. The last 9 courses haven't run.
@@ -28,6 +28,7 @@ This file holds the state of the build, what is in flight and what comes next. I
     - Reproduced, for Phase 3: terrain-only c is 19.81 blocks/s (blue ice under a 2.0-block ceiling); six elite techniques proven with T values.
     - Leads: use-item slowdown; three tracks (`pillarhops`, `icemegajump`, `icecorner`) whose harness didn't finish.
   - **GLM `local-20261109-1653` and `-2151`** (all in [lab/wiki](../lab/wiki/index.md)): the falling-block update contract restated; slime's 26.2 restitution (the law already has it); sneaking in scaffolding keeps descending (Phase 4); placement replaceability (Phase 4). Leads: honey's side slide, three more tracks. About 18 lanes use one GLM window.
+  - **Anomalies (open):** (1) the archived full-blocks server-saturation check fails identically on main and `wt/segments` (bits 1100480512 vs 1101004800), after movement passes. (2) The GLM speed-of-light window counts 199 displacements over a divisor of 200, so 19.810930 blocks/s is off by 1/200. Its true value matters for Phase 3's bounds.
 
 ## Roadmap (approved 9 November, S48)
 
