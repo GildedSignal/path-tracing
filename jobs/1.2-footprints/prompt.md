@@ -12,3 +12,10 @@
 **Must not.** Change movement results. Touch `bot/`.
 
 **Done means.** The final message gives the adapter's API, the randomness inputs, the key's definition and its test results.
+
+**Also (the law-speed judge's follow-ups).** The fast paths from job 1.1 are tested only indirectly. Add three cheap differential tests, each answering one question fast (AGENTS.md, "Tests answer fast"):
+- On small random `BoxWorld`s (regions with precedence, overlapping overrides, unloaded chunks, shapes reaching outside their cell), do `visit_collisions`, `no_collision` and the suffocation query equal the default full-scan `collisions`?
+- Does `tick` equal the same tick on a world whose `has_fluid` and `has_inside_effects` are forced true?
+- Does `ShapeView::collide`'s single-box path equal the general path?
+
+Each must fail when you plant the obvious mutant in its fast path; say so in the report.
