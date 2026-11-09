@@ -16,7 +16,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Phase 0, done.** `main` is the one line: the law, the recorder, the tracks, and the 100× clock with its guard above 2000 TPS. Every offline suite is green.
   - The live clock gate passed on `48d2deb`: 2000 TPS movement identical on three courses, 12,000 sustained ticks identical with zero corrections, 101× active, 4000 refused by the guard.
   - Merged branches, worktrees, build folders and finished jobs are deleted, locally and on GitHub. The original L0 pairs are in `D:\path-tracing-evidence\l0-original-pairs`.
-- **Phase 1.** GPT has 6% of its weekly usage left (S55): Claude sub-agents build, one at a time, with GLM lanes alongside. To build next (S59): the lab wiki (lab/glm.md) and run records with worst margins (AGENTS.md).
+- **Phase 1.** GPT has 6% of its weekly usage left (S55): Claude sub-agents build, one at a time, with GLM lanes alongside. Done (S59): the lab wiki (`lab/wiki/`, compiled after each batch). To build: run records with worst margins (AGENTS.md).
   - **Done: law speed (1.1).** Under 1 µs per tick on all four bench cases (`cargo run --release --bin bench` from `engine/`), about 55×, replays identical, judged MERGE.
   - **Done: footprints and the pattern key (1.2)** ([footprints.md](footprints.md)): no randomness and no clock in the law; the key covers one orientation (turns aren't bit-exact); a lookup takes 2–4 µs.
   - **1.3 L0 (Terra, `wt/l0-close`):** sprint flag and sprint modifier made independent. The saved witness now replays all 420 rows; the old derivation fails at tick 204. A fresh live capture and the frozen verdict remain.
