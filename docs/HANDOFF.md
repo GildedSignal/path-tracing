@@ -21,8 +21,12 @@ This file holds the state of the build, what is in flight and what comes next. I
   - **1.3 L0 (Terra, `wt/l0-close`):** sprint flag and sprint modifier made independent. The saved witness now replays all 420 rows; the old derivation fails at tick 204. A fresh live capture and the frozen verdict remain.
   - **2.1a world reader (Terra, `wt/world`):** inflate, region, NBT, snapshot and probe drafted. It found that block tags must come from the jar's resources (an unbound tag marks ladders as not climbable). Verification remains.
   - **Swarm 0 (Terra, `wt/swarm-0`):** server-side `ServerPlayer` bots, packed together. Median ms per tick at 20 TPS: 0.64 for 1 bot, 0.99 for 10, 6.8 for 100 (p99 15.1); all three sustain 100 TPS. That's about 65 µs per bot, twice the naive Fermi guess. So at 1,000 bots the server alone falls below 20 TPS, and creation slowed around 700. **One mind and lazy bots therefore move to the start of Phase 2.** The 1,000-bot and dispersed cells remain (`D:\path-tracing-evidence\swarm-0-20261109-d`).
-  - **GLM run `local-20261109-1523`:** six ground-layer lanes; results land in `lab\results\local-20261109-1523-*`.
-  - **Lost in the cleanup:** the 7 November GLM run folders (ignored files in deleted worktrees). Reproduced results were already in the law; check `git status --ignored` before removing a worktree.
+  - **GLM run `local-20261109-1523` (in `lab\results`, local only):** three lanes reproduced.
+    - The swimming gate lacks the passenger and flight terms. Integrate it first, for Phase 3's swim gait.
+    - Falling blocks are pinned: an edit schedules a tick at game time + 2 (Phase 4).
+    - Knockback-capable hits rewrite velocity (mobs, later).
+
+    The fluid lane left a lead with a patch (the falling column after an edit). Block laws and actions left nothing. The 7 November run folders were lost in the cleanup: check `git status --ignored` before removing a worktree.
 
 ## Roadmap (approved 9 November, S48)
 
@@ -43,7 +47,7 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 
    Flight: his track runs replayed offline at ≥ 10⁴× real time. Kill: no path below about 5 µs means the `World` interface is wrong.
 2. **One mind in the server, v0.**
-   - Design: a Fabric server mod hosts the Rust engine in-process through Java 25's foreign-function API. Bots are real `ServerPlayer`s, and world changes stream to the engine once. This revises the 4 November "separate process" decision, so it needs Julien's yes.
+   - Design: [server.md](server.md) (draft): bots that don't observe each other, world changes streamed once, lazy bots, the engine in-process. It needs the Designer's red-team and Julien's yes.
    - Build: the deviation stream (every server-owned outcome predicted and compared, each mismatch a witness for GLM triage).
    - [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md), rewritten to this design: 0, 1, 100 and 1,000 bots.
    - A sandbox server at 100× for R&D.
