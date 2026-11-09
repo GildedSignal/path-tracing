@@ -3,8 +3,10 @@
 Start both clients through scripts/launch-client.ps1. In yours, `/track new <name>` (names: [a-z0-9-]+).
 Right-click A's block, then a different B block with your stick. Sneak + right-click cancels.
 Green particles mark A, red particles mark B, within render distance in your client.
-Use `/track list`, `/track best <name>`, `/track delete <name>`, `/track cancel` and `/track exit`.
-Standing on A enters human track mode: save your whole inventory and game mode before changing either.
+Use `/track list`, `/track best <name>`, `/track delete <name>`, `/track cancel`, `/track exit` and `/track restore`.
+Standing on A checks and saves the server's inventory and game mode before changing either.
+Close inventory screens and put away cursor items and crafting ingredients before entering.
+If the client and server disagree or a stack cannot be restored exactly, entry stops and chat explains why.
 The first entry saves your inventory minus every stick as `lab/tracks/<name>.kit.json` and tells you.
 Kits retain all main/hotbar, armour and offhand slots, selected hotbar slot and complete item data (SNBT in JSON).
 `/track kit <name>` replaces a kit from your current inventory minus sticks; refused during a run or track mode.
@@ -18,9 +20,9 @@ Run rows include wallNanos, wallStartNanos, wallStopNanos; game-time difference 
 Death, dimension change, cancel or falling 64 blocks below the lower endpoint discards the run.
 Finish, abandonment, `/track cancel` or `/track exit` restores your saved inventory and mode; death waits for respawn.
 Restoration uses creative slot packets, then your saved mode; each step waits for server confirmation.
-The session is `lab/tracks/.session-<player>.json`; delete it only after a verified restore.
+The session is `lab/tracks/.session-<player>.json`. The mod deletes it only after checking every slot and the selected slot against the server.
 Joining with a session recovers it automatically and reports recovery in chat; completed runs are saved first.
-Mode/refill commands and server verification require op permission. Failure retains the session; use `/track exit` or rejoin.
+Mode/refill commands and server verification require op permission. A restore mismatch reports the first differing slot in chat and keeps the session. Use `/track restore` to retry.
 Each human run stores `kitSha256` over canonical kit JSON (sorted keys, compact UTF-8, no newline) and `gameMode`.
 If tracks share A, the alphabetically first arms. `/track new` refuses during a run or track mode.
 Send `/msg PathBot track run <name>`; enable local vanilla RCON in the rig's server/server.properties.

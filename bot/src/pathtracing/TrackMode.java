@@ -5,12 +5,14 @@ import java.util.function.Consumer;
 
 /** Human-only transaction. The session is durable before the first server mutation. */
 final class TrackMode {
-    enum State { IDLE, ALIVE, CREATIVE, INVENTORY, TARGET, REFILL, VERIFY, READY, FAILED }
+    enum State { IDLE, CAPTURE, ALIVE, CREATIVE, INVENTORY, TARGET, REFILL, VERIFY, READY, FAILED }
     record Observation(TrackInventory inventory, String mode, boolean full) { }
     interface Port {
         TrackInventory inventory();
         String mode();
         boolean alive();
+        void checkEntry();
+        void checkRestorable(TrackInventory inventory);
         void command(String command);
         void apply(TrackInventory inventory);
         void confirm(TrackInventory inventory);
@@ -60,19 +62,45 @@ final class TrackMode {
         port.say("Track " + name + " kit replaced (sticks removed).");
     }
 
-    void enter(String name) throws IOException {
+    void enter(String name) {
         if (active()) throw new IllegalStateException("Already in track mode.");
-        TrackInventory before = port.inventory();
-        kit = store.readKit(name);
-        if (kit == null) {
-            kit = before.withoutSticks();
-            store.writeKit(name, kit);
-            port.say("Track " + name + " kit saved from your inventory (sticks removed).");
+        state = State.CAPTURE;
+        deadline = now + 200;
+        int request = ++generation;
+        try {
+            port.checkEntry();
+            port.query(observed -> capture(request, name, observed), reason -> queryFailed(request, reason));
+        } catch (RuntimeException failure) { fail(failure.getMessage()); }
+    }
+
+    private void capture(int request, String name, Observation observed) {
+        if (request != generation || state != State.CAPTURE) return;
+        try {
+            port.checkEntry();
+            TrackInventory before = observed.inventory();
+            String difference = port.inventory().difference(before);
+            if (difference != null) {
+                fail("Client and server inventory differ. " + difference);
+                return;
+            }
+            if (!port.mode().equals(observed.mode())) {
+                fail("Client and server game modes differ.");
+                return;
+            }
+            port.checkRestorable(before);
+            kit = store.readKit(name);
+            if (kit == null) {
+                kit = before.withoutSticks();
+                store.writeKit(name, kit);
+                port.say("Track " + name + " kit saved from your inventory (sticks removed).");
+            } else port.checkRestorable(kit);
+            TrackStore.Session saved = new TrackStore.Session(before, observed.mode());
+            store.writeSession(player, saved);
+            session = saved;
+            prepare(false);
+        } catch (IOException | RuntimeException failure) {
+            fail(failure.getMessage());
         }
-        TrackStore.Session saved = new TrackStore.Session(before, port.mode());
-        store.writeSession(player, saved);
-        session = saved;
-        prepare(false);
     }
 
     void rearm() {
@@ -88,10 +116,15 @@ final class TrackMode {
         prepare(true);
     }
 
-    void exit() throws IOException {
-        if (restoring && state != State.FAILED) return;
+    boolean exit() throws IOException {
+        if (restoring && state != State.FAILED) return true;
+        if (state == State.CAPTURE) {
+            generation++;
+            state = State.IDLE;
+        }
         if (session == null) session = store.readSession(player);
         if (session != null) prepare(true);
+        return session != null;
     }
 
     private void prepare(boolean restore) {
@@ -141,18 +174,23 @@ final class TrackMode {
     }
 
     private void queryFailed(int request, String reason) {
-        if (request == generation && (state == State.INVENTORY || state == State.VERIFY)) fail(reason);
+        if (request == generation && (state == State.CAPTURE || state == State.INVENTORY || state == State.VERIFY)) fail(reason);
     }
 
     private void acceptInventory(int request, Observation observed) {
         if (request != generation || state != State.INVENTORY) return;
         try {
-            if (!observed.mode().equals("creative") || !target.equals(observed.inventory())) {
-                fail("Server refused the exact inventory while in creative.");
+            String difference = target.difference(observed.inventory());
+            if (difference != null) {
+                fail("Server inventory differs after applying slots. " + difference);
                 return;
             }
-            port.confirm(target);
+            if (!observed.mode().equals("creative")) {
+                fail("Server did not confirm creative mode.");
+                return;
+            }
             if (!restoring) {
+                port.confirm(target);
                 port.command("effect give @s minecraft:instant_health 1 10 true");
                 port.command("effect give @s minecraft:saturation 1 20 true");
             }
@@ -165,11 +203,18 @@ final class TrackMode {
     private void complete(int request, Observation observed) {
         if (request != generation || state != State.VERIFY) return;
         try {
-            if (!targetMode.equals(observed.mode()) || !target.equals(observed.inventory()) || (!restoring && !observed.full())) {
-                fail("Server did not confirm the inventory, game mode and full health/food/saturation.");
+            String difference = target.difference(observed.inventory());
+            if (difference != null) {
+                fail("Server inventory differs after switching game mode. " + difference);
+                return;
+            }
+            if (!targetMode.equals(observed.mode()) || (!restoring && !observed.full())) {
+                fail("Server did not confirm the target game mode or the kit's refill.");
                 return;
             }
             if (restoring) {
+                // The creative write marks the remote slot, so the server need not echo it.
+                port.confirm(observed.inventory());
                 store.deleteSession(player);
                 session = null;
                 state = State.IDLE;
@@ -182,7 +227,12 @@ final class TrackMode {
 
     void fail(String reason) {
         generation++;
+        if (state == State.CAPTURE) {
+            state = State.IDLE;
+            port.say("Track mode could not start: " + reason);
+            return;
+        }
         state = State.FAILED;
-        port.say("Track mode stopped: " + reason + " Saved session retained; use /track exit or rejoin to recover.");
+        port.say("Track mode stopped: " + reason + " Saved session retained. Use /track restore to retry.");
     }
 }
