@@ -13,7 +13,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 **The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The whole-project roadmap below is approved (S48). **Phase 0 is under way.**
 
 - **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + `wt/world`, `wt/law`, `wt/raw-fluid-export`, `wt/glm-lab`, `wt/tracks` and `main`, all clean merges. Rust: 81 tests pass. Bot track tests pass (the mixin audit learned local capture, `f0bcea2`). Terra job [0.2](../jobs/0.2-consolidate/prompt.md) is verifying the remaining self-tests (`test-run-gate-1.2` exits 1). Then `main` fast-forwards to `wt/engine`.
-- **The 100× clock** (`wt/clock`, `388a1bc`): a Sonnet judge is reviewing it. It conflicts with `wt/engine` in `bot/pathtracing.mixins.json` and `Recorder.java`; the integrator merges it after the verdict.
+- **The 100× clock** (`wt/clock`, `388a1bc`): the Sonnet judge passed it as MERGE WITH FIXES. Its report was run on uncommitted code, so the gate gets rerun on the merged HEAD. The bot follows `/tick rate` by default through the launcher, 2000 TPS is the only verified ceiling, and a guard for recordings above it is needed. After 0.2, the integrator starts `git merge wt/clock`, and Terra job [0.3](../jobs/0.3-clock-merge/prompt.md) resolves the conflicts and adds the guard.
 - **Docs.** Being rewritten to the framework: AGENTS (team with Terra), representation, engine, ladder, README.
 - **Deletions** wait for Julien's OK on the list (Phase 0.3).
 
@@ -77,13 +77,7 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 
 **Parallel lanes:** Phase 0 first. Then Phase 1's lanes together (two GPT jobs plus GLM). The integrator writes the specs for 2.1 and 3.1 during Phase 1, and they're red-teamed. Then Phases 2 and 3 build side by side.
 
-**Rules that keep it converging:**
-- every phase flies;
-- no job without a consumer;
-- seal only what can't be corrected (SR-71);
-- ladders climb until they fail, never re-running green for comfort;
-- Fermi floors on the scoreboard;
-- text budgets.
+The rules that keep it converging are in [AGENTS.md](../AGENTS.md): flights, no job without a consumer, SR-71, ladders that climb until they fail.
 
 ## Scoreboard
 
