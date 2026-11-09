@@ -340,6 +340,28 @@ impl SharedCollider {
 }
 
 impl ShapeView<'_> {
+    pub(crate) fn owned(self) -> VoxelShape {
+        match self.offset {
+            Some(offset) => self.shape.moved(offset),
+            None => self.shape.clone(),
+        }
+    }
+
+    pub(crate) fn grid_cells(self) -> Vec<(Aabb, bool)> {
+        let mut cells = Vec::new();
+        let [nx, ny, nz] = self.sizes();
+        for x in 0..nx {
+            for y in 0..ny {
+                for z in 0..nz {
+                    let bounds = Aabb::new(self.coord(0, x), self.coord(1, y), self.coord(2, z),
+                        self.coord(0, x+1), self.coord(1, y+1), self.coord(2, z+1));
+                    cells.push((bounds, self.is_full([x, y, z])));
+                }
+            }
+        }
+        cells
+    }
+
     pub(crate) fn shared(self)->SharedCollider { SharedCollider { shape:self.shape.clone(),offset:self.offset } }
     pub fn coord(self, axis: usize, index: usize) -> f64 {
         let c = self.shape.coords[axis][index];
@@ -541,4 +563,36 @@ pub fn input_vector(input: Vec3, acceleration: f32, yaw: f32) -> Vec3 {
     let s = math::sin(r) as f64;
     let c = math::cos(r) as f64;
     Vec3::new(v.x*c-v.z*s, v.y, v.z*c+v.x*s)
+}
+
+#[cfg(test)]
+mod fast_path_tests {
+    use super::*;
+
+    #[test]
+    fn single_box_collide_equals_general_path() {
+        let shape = VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)]);
+        let general = VoxelShape(std::sync::Arc::new(ShapeData {
+            coords: shape.coords.clone(), full: shape.full.clone(), empty: shape.empty,
+            block: shape.block, within_cell: shape.within_cell, single: false,
+        }));
+        let mut random = 0x12345678u64;
+        for trial in 0..96 {
+            random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let origin = [0.0, 1.0e4, 1.0e6, 3.0e7][trial%4];
+            let offset = Vec3::new(origin, -origin, origin);
+            let p = Vec3::new(origin+((random>>16)%33) as f64/8.0-2.0,
+                -origin+((random>>24)%33) as f64/8.0-2.0, origin+((random>>32)%33) as f64/8.0-2.0);
+            let bodies = [Aabb::player(p, 1.8),
+                Aabb::new(origin-0.6, -origin, origin+0.1, origin-1.0e-7, -origin+0.5, origin+0.7),
+                Aabb::new(origin+1.0-1.0e-7, -origin, origin+0.1, origin+1.6, -origin+0.5, origin+0.7),
+                Aabb::new(origin-0.6, -origin+0.5-1.0e-7, origin, origin-0.1, -origin+1.8, origin+0.6)];
+            for body in bodies { for axis in [Axis::X, Axis::Y, Axis::Z] {
+                for distance in [-4.0, -0.1, -1.0e-7, -1.0e-8, -0.0, 0.0, 1.0e-8, 1.0e-7, 0.1, 4.0] {
+                    assert_eq!(shape.at(offset).collide(axis, body, distance).to_bits(),
+                        general.at(offset).collide(axis, body, distance).to_bits(), "trial {trial} {axis:?} {body:?} {distance}");
+                }
+            } }
+        }
+    }
 }

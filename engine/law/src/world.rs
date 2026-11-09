@@ -302,6 +302,17 @@ impl CollisionContext {
 pub trait World {
     fn block(&self, position: BlockPos) -> &Block;
 
+    fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
+    /// The block's row in the one static generated model table, when the world has it.
+    /// Pattern keys cache cell digests by it; the law never reads it.
+    fn model_id(&self, _position: BlockPos) -> Option<u16> { None }
+    fn fluid_block(&self, position: BlockPos) -> &Block { self.block(position) }
+
+    /// Observation only. These cells remain dependencies when a fast path skips them.
+    fn observe_region(&self, _query: crate::footprint::Query, _lo: BlockPos, _hi: BlockPos) {}
+    /// Conservative body worldtube, including motion when inside hooks are absent.
+    fn observe_sweep(&self, _from: Aabb, _to: Aabb) {}
+
     /// Conservative certificates: false proves these law hooks are absent.
     fn has_fluid(&self)->bool {true}
     fn has_inside_effects(&self)->bool {true}
@@ -358,7 +369,7 @@ pub trait World {
         }
         let inside_point = from.plus(movement.scale(0.001));
         crate::blocks::traverse_blocks(from, to, |p| {
-            let block = self.block(p);
+            let block = self.hook_block(p);
             let height = if block.resets_fall_distance || block.end_portal_or_gateway {
                 1.0
             } else if block.fluid.kind == FluidKind::Water {
@@ -416,6 +427,8 @@ pub trait World {
     }
 
     // BlockState.getCollisionShape; PowderSnowBlock.getCollisionShape
+    // Overrides must depend only on the block at position and context. Neighbor
+    // state belongs in explicit World reads so recorders can see dependencies.
     fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> &VoxelShape {
         let block = self.block(position);
         let above = context.feet_y > position[1] as f64 + 1.0 - 1.0e-5f32 as f64;

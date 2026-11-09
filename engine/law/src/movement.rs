@@ -65,6 +65,7 @@ fn tick_movement(
         unimplemented!("LocalPlayer.itemUseSpeedMultiplier");
     }
     let start = state.position;
+    let start_box = state.bounding_box();
     state.movement_this_tick = None;
     state.yaw = input.yaw;
     state.pitch = input.pitch;
@@ -76,7 +77,7 @@ fn tick_movement(
     state.swimming = if state.swimming {
         state.sprinting && state.in_water
     } else {
-        state.sprinting && state.underwater && world.block(block_pos(state.position)).fluid.kind == FluidKind::Water
+        state.sprinting && state.underwater && world.fluid_block(block_pos(state.position)).fluid.kind == FluidKind::Water
     };
     state.crouching = !state.swimming && fits(state, world, Pose::Crouching) &&
     (state.shift_key_down || !fits(state, world, Pose::Standing));
@@ -129,14 +130,17 @@ fn tick_movement(
         movement
     };
     let collision = travel(state, world, movement);
+    world.observe_sweep(start_box, state.bounding_box());
     let contact = apply_block_effects(state, world, start);
     // InsideBlockEffectType.FREEZE
     if state.in_powder_snow && !state.leather_boots {
         state.ticks_frozen = (state.ticks_frozen + 1).min(140);
     }
+    let before_pose = state.bounding_box();
     state.position.x = state.position.x.clamp(-29999999.0, 29999999.0);
     state.position.z = state.position.z.clamp(-29999999.0, 29999999.0);
     update_pose(state, world);
+    world.observe_sweep(before_pose, state.bounding_box());
     state.on_climbable = climbable(state, world);
     movement_exhaustion(state, state.position.minus(start));
     food_tick(state, world);
@@ -259,7 +263,7 @@ fn on_pos(state: &PlayerState, world: &impl World, offset: f32) -> BlockPos {
         if offset <= 1.0e-5f32 {
             return p;
         }
-        let b = world.block(p);
+        let b = world.hook_block(p);
         if offset as f64 <= 0.5 && b.fence || b.wall_or_gate {
             return p;
         }
@@ -272,8 +276,8 @@ fn on_pos(state: &PlayerState, world: &impl World, offset: f32) -> BlockPos {
 
 // Entity.getBlockJumpFactor
 fn jump_factor(state: &PlayerState, world: &impl World) -> f32 {
-    let here = world.block(block_pos(state.position)).jump_factor;
-    let below = world.block(on_pos(state, world, 0.500001)).jump_factor;
+    let here = world.hook_block(block_pos(state.position)).jump_factor;
+    let below = world.hook_block(on_pos(state, world, 0.500001)).jump_factor;
     if here as f64 == 1.0 {
         below
     } else {
@@ -283,12 +287,12 @@ fn jump_factor(state: &PlayerState, world: &impl World) -> f32 {
 
 // Entity.getBlockSpeedFactor
 fn speed_factor(state: &PlayerState, world: &impl World) -> f32 {
-    let b = world.block(block_pos(state.position));
+    let b = world.hook_block(block_pos(state.position));
     if b.water_block {
         return b.speed_factor;
     }
     if b.speed_factor as f64 == 1.0 {
-        world.block(on_pos(state, world, 0.500001)).speed_factor
+        world.hook_block(on_pos(state, world, 0.500001)).speed_factor
     } else {
         b.speed_factor
     }
@@ -314,8 +318,8 @@ fn jump_from_ground(state: &mut PlayerState, world: &impl World) {
 // LivingEntity.onClimbable; LivingEntity.trapdoorUsableAsLadder
 fn climbable(state: &PlayerState, world: &impl World) -> bool {
     let p = block_pos(state.position);
-    let b = world.block(p);
-    b.climbable || b.open_trapdoor_facing.is_some_and(|f| world.block([p[0], p[1]-1, p[2]]).ladder_facing == Some(f))
+    let b = world.hook_block(p);
+    b.climbable || b.open_trapdoor_facing.is_some_and(|f| world.hook_block([p[0], p[1]-1, p[2]]).ladder_facing == Some(f))
 }
 
 // LivingEntity.handleOnClimbable
@@ -325,7 +329,7 @@ fn handle_climbable(state: &mut PlayerState, world: &impl World) {
         state.velocity.x = state.velocity.x.clamp(-0.15f32 as f64, 0.15f32 as f64);
         state.velocity.z = state.velocity.z.clamp(-0.15f32 as f64, 0.15f32 as f64);
         state.velocity.y = state.velocity.y.max(-0.15f32 as f64);
-        if state.velocity.y < 0.0 && !world.block(block_pos(state.position)).scaffolding && state.shift_key_down {
+        if state.velocity.y < 0.0 && !world.hook_block(block_pos(state.position)).scaffolding && state.shift_key_down {
             state.velocity.y = 0.0;
         }
     }
@@ -341,7 +345,7 @@ fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option
         } else {
             0.06
         };
-        if look_y <= 0.0 || state.input.jump || world.block(block_pos(Vec3::new(state.position.x, state.position.y+1.0-0.1, state.position.z))).fluid.kind != FluidKind::Empty {
+        if look_y <= 0.0 || state.input.jump || world.fluid_block(block_pos(Vec3::new(state.position.x, state.position.y+1.0-0.1, state.position.z))).fluid.kind != FluidKind::Empty {
             state.velocity.y += (look_y - state.velocity.y) * factor;
         }
     }
@@ -356,7 +360,7 @@ fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option
 fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
     let below = on_pos(state, world, 0.500001);
     let f = if state.on_ground {
-        math::modified_friction(world.block(below).friction, state.friction_modifier)
+        math::modified_friction(world.hook_block(below).friction, state.friction_modifier)
     } else {
         1.0
     };
@@ -685,7 +689,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     if !state.in_water {
         update_fluid(state, world);
     }
-    let block=world.block(on_pos(state, world, 0.2));
+    let block=world.hook_block(on_pos(state, world, 0.2));
     check_fall_damage(state, block, moved.y);
     if wanted.y.abs()>0.0 && state.vertical_collision || state.horizontal_collision {
         let mut bounce=if state.shift_key_down {
@@ -790,10 +794,13 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
     state.in_lava=false;
     state.eye_in_water=false;
     state.underwater=false;
+    world.observe_region(crate::footprint::Query::Fluid, lo, hi);
     if !world.has_fluid() {return;}
-    for z in ((lo[2]-1)>>4)..=((hi[2]+1)>>4) {
-        for x in ((lo[0]-1)>>4)..=((hi[0]+1)>>4) {
-            if !world.loaded([x*16, lo[1], z*16]) {
+    // Level.hasChunksAt over the chunks of these columns, asked cell by cell: a chunk is
+    // loaded exactly when its cells are, and the reads stay relative to the body.
+    for z in lo[2]-1..=hi[2]+1 {
+        for x in lo[0]-1..=hi[0]+1 {
+            if !world.loaded([x, lo[1], z]) {
                 return;
             }
         }
@@ -807,7 +814,7 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
     for x in lo[0]..=hi[0] {
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {
-                let f=world.block([x, y, z]).fluid;
+                let f=world.fluid_block([x, y, z]).fluid;
                 let a=match f.kind {
                     FluidKind::Empty=>continue,
                     FluidKind::Water=>0,
@@ -863,7 +870,7 @@ fn contains_fluid(world: &impl World, b: Aabb) -> bool {
     for x in lo[0]..=hi[0] {
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {
-                if world.block([x, y, z]).fluid.kind!=FluidKind::Empty {
+                if world.fluid_block([x, y, z]).fluid.kind!=FluidKind::Empty {
                     return true;
                 }
             }
@@ -890,7 +897,7 @@ pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Optio
     if state.no_physics || !state.on_ground {
         return None;
     }
-    let block = world.block(on_pos(state, world, 0.2));
+    let block = world.hook_block(on_pos(state, world, 0.2));
     if block.slime && state.velocity.y.abs()<0.1 && !state.shift_key_down {
         let f=0.4+state.velocity.y.abs()*0.2;
         state.velocity=state.velocity.multiply(Vec3::new(f, 1.0, f));
@@ -907,6 +914,8 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
         return None;
     }
     let contact = apply_grounded_step(state, world);
+    let swept = state.bounding_box().expand(start.minus(state.position));
+    world.observe_region(crate::footprint::Query::Hooks, block_pos(swept.min), block_pos(swept.max));
     if !world.has_inside_effects() {return contact;}
     let delta=state.position.minus(start);
     let mut visited=crate::blocks::SeenBlocks::new();
@@ -944,7 +953,7 @@ visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
             return false;
         }
         last_step=step;
-        let block=world.block(p);
+        let block=world.hook_block(p);
         if block.air {
             return true;
         }
@@ -976,7 +985,7 @@ visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
 
 // WebBlock.entityInside; PowderSnowBlock.entityInside; HoneyBlock.entityInside
 fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _intersects: bool) {
-    let block=world.block(p);
+    let block=world.hook_block(p);
     if let Some(multiplier)=block.stuck_multiplier {
         stuck(state, multiplier);
     }
@@ -985,7 +994,7 @@ fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _inter
         },
         Inside::Cobweb=>stuck(state, Vec3::new(0.25, 0.05f32 as f64, 0.25)),
         Inside::PowderSnow=>{
-            if world.block(block_pos(state.position)).inside==Inside::PowderSnow {
+            if world.hook_block(block_pos(state.position)).inside==Inside::PowderSnow {
                 stuck(state, Vec3::new(0.9f32 as f64, 1.5, 0.9f32 as f64));
             }
             state.in_powder_snow=true;
@@ -1043,6 +1052,7 @@ pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server
 }
 
 /// Ordered inputs at the authoritative server resource boundaries.
+#[derive(Clone, Debug)]
 pub enum ServerResourceEvent {
     Exhaustion(f32),
     /// Observed health debit. Any observed exhaustion is supplied separately.

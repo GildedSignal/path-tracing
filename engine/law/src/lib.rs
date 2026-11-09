@@ -1,4 +1,6 @@
 pub mod mining;
+pub mod footprint;
+pub mod pattern;
 mod attributes;
 pub use attributes::{SpeedModifier, SpeedOperation};
 mod movement;

@@ -4,7 +4,7 @@ mod nbt;
 mod region;
 mod snapshot;
 pub use region::{BlockState, WorldReader, DEFAULT_CACHE_BYTES};
-pub use snapshot::{WorldSnapshot, model};
+pub use snapshot::{WorldSnapshot, model, model_table};
 use std::{fmt, path::PathBuf};
 
 #[derive(Debug)]

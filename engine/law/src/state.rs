@@ -189,4 +189,51 @@ impl PlayerState {
     pub fn bounding_box(&self) -> Aabb {
         Aabb::player(self.position, self.pose.height())
     }
+
+    /// Every field as raw bits, floats included: two states are the same exactly
+    /// when these are. Exhaustive, so a new field must be added here.
+    pub fn bits(&self) -> Vec<u64> {
+        let PlayerState {
+            t, input, position, velocity, yaw, pitch, on_ground, horizontal_collision,
+            vertical_collision, vertical_collision_below, minor_horizontal_collision,
+            sprinting, no_physics, shift_key_down, pose, fall_distance, in_water, in_lava,
+            on_climbable, health, hurt_cooldown, food_level, saturation, exhaustion,
+            food_tick_timer, remaining_fire_ticks, no_jump_delay, stuck_speed_multiplier,
+            movement_this_tick, main_supporting_block, on_ground_no_blocks, crouching,
+            swimming, underwater, eye_in_water, was_eye_in_water, water_height, lava_height,
+            in_powder_snow, was_in_powder_snow, ticks_frozen, leather_boots,
+            movement_speed_base, speed_modifiers, speed, jump_strength, gravity,
+            step_height, friction_modifier, air_drag_modifier, water_movement_efficiency,
+            movement_efficiency, sneaking_speed, safe_fall_distance, fall_damage_multiplier,
+            bounciness, fall_flying, riding, boat, effects, flying, using_item,
+        } = self;
+        let mut bits = vec![*t, input.yaw.to_bits() as u64, input.pitch.to_bits() as u64,
+            yaw.to_bits() as u64, pitch.to_bits() as u64, *pose as u64,
+            hurt_cooldown.remaining_ticks as u64, hurt_cooldown.last_raw_hit.to_bits() as u64,
+            *food_level as u64, *food_tick_timer as u64, *remaining_fire_ticks as u64,
+            *no_jump_delay as u64, *ticks_frozen as u64];
+        for value in [input.forward, input.back, input.left, input.right, input.jump, input.sneak,
+            input.sprint, *on_ground, *horizontal_collision, *vertical_collision, *vertical_collision_below,
+            *minor_horizontal_collision, *sprinting, *no_physics, *shift_key_down, *in_water, *in_lava,
+            *on_climbable, *on_ground_no_blocks, *crouching, *swimming, *underwater, *eye_in_water,
+            *was_eye_in_water, *in_powder_snow, *was_in_powder_snow, *leather_boots, *fall_flying,
+            *riding, *boat, *effects, *flying, *using_item] { bits.push(value as u64); }
+        for value in [health, saturation, exhaustion, speed, step_height, friction_modifier,
+            air_drag_modifier, water_movement_efficiency, movement_efficiency, sneaking_speed] {
+            bits.push(value.to_bits() as u64);
+        }
+        for value in [fall_distance, water_height, lava_height, movement_speed_base, jump_strength,
+            gravity, safe_fall_distance, fall_damage_multiplier, bounciness] { bits.push(value.to_bits()); }
+        for v in [position, velocity, stuck_speed_multiplier] { bits.extend([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]); }
+        bits.push(movement_this_tick.is_some() as u64);
+        if let Some(v) = movement_this_tick { bits.extend([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]); }
+        bits.push(main_supporting_block.is_some() as u64);
+        if let Some(p) = main_supporting_block { bits.extend(p.map(|v| v as u64)); }
+        bits.push(speed_modifiers.len() as u64);
+        for modifier in speed_modifiers {
+            bits.push(modifier.id.len() as u64); bits.extend(modifier.id.bytes().map(u64::from));
+            bits.extend([modifier.amount.to_bits(), modifier.operation as u64]);
+        }
+        bits
+    }
 }

@@ -47,6 +47,8 @@ fn lookup(state: &BlockState) -> Result<u16, String> {
         .collect::<Option<Vec<_>>>().and_then(|values| map.slots.get(values.join(",").as_str()).map(|&slot| ids[slot]))
         .ok_or_else(|| format!("state unknown to the 26.2 table of {}", state.name))
 }
+/// The shared model table, indexed by model id. Every admitted state maps to one row.
+pub fn model_table() -> &'static [Block] { &models().blocks }
 /// The law's model of a block state, or the reason the generated rule refuses it.
 pub fn model(state: &BlockState) -> Result<&'static Block, String> {
     lookup(state).map(|id| &models().blocks[id as usize])
@@ -174,6 +176,7 @@ impl World for WorldSnapshot {
         &self.models.blocks[self.cells[index(self.min,self.widths,p)] as usize]
     }
     fn loaded(&self, p: BlockPos) -> bool { self.assert_covered(p); true }
+    fn model_id(&self, p: BlockPos) -> Option<u16> { self.assert_covered(p); Some(self.cells[index(self.min,self.widths,p)]) }
     fn min_y(&self) -> i32 { -64 }
     fn difficulty(&self) -> u8 { self.difficulty }
     fn natural_regeneration(&self) -> bool { self.natural_regeneration }
