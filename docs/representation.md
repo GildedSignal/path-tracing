@@ -63,7 +63,7 @@ A **word** is a feedback program: keys, aim and item use chosen from what the bo
 - resources used and produced;
 - obligations (edits still to undo).
 
-**Five roles, one record:** an edge for the search; a certificate, valid while its footprint is unchanged; a cache entry keyed by its footprint's contents, so it is reused wherever the pattern recurs; a worldtube, for coordination; a training example, later. Words are stored as generators, never as their output (ES 6).
+**Five roles, one record:** an edge for the search; a certificate, valid while its footprint is unchanged; a cache entry: proposals keyed by the class of state the law reads, each certified by a replay keyed by its footprint's contents (vocabulary.md, section 2); a worldtube, for coordination; a training example, later. Words are stored as generators, never as their output (ES 6).
 
 **Kinds:** gaits (repeat on uniform ground); transitions (link gaits across steps, edges, gaps); operators (use a tool).
 
