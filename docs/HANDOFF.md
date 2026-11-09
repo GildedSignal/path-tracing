@@ -116,4 +116,4 @@ Launch: `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or the reference rig. Julien's own server may take a mod that keeps behaviour vanilla, once a need shows up (S55).
 - **No Fable** (usage credits).
 - **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata.
-- **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1.
+- **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1, but write game files as ASCII: its `-Encoding UTF8` adds a BOM, `options.txt` then resets to defaults, and the accessibility screen blocks quick play (9 November).
