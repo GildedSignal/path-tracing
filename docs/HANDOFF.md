@@ -10,17 +10,15 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## Now (9 November)
 
-**The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The whole-project roadmap below is approved (S48). **Phase 0 is under way.**
+**The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The roadmap below is approved (S48). **Phase 0 is done; Phase 1 is under way.**
 
-- **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + world, law, raw-fluid-export, glm-lab, tracks and `main`. Every offline suite is green (job 0.2, `cf8d015`).
-- **The clock** (`wt/clock`, judged MERGE WITH FIXES): the merge has started in `wt/engine`, and Terra job [0.3](../jobs/0.3-clock-merge/prompt.md) is resolving it and adding the guard above 2000 TPS. Then the integrator reruns the full-demand gate on the merged HEAD under the rig lock, and `main` fast-forwards to `wt/engine`.
-- **Phase 1 started early, where files don't overlap:** Terra job [1.1](../jobs/1.1-law-speed/prompt.md), law speed, on `wt/law-speed` (`D:\path-tracing-wt\law-speed`).
-- **Cleanup done (S49):**
-  - Merged branches and their worktrees deleted, along with 76 GLM and Codex worktrees.
-  - D:'s per-job build folders deleted; `D:\path-tracing-target` keeps the shared target and the L0 reduction source.
-  - The GPT queue, the GLM GitHub workflow, port-plan.md and finished job folders removed.
-  - The original L0 pairs preserved in `D:\path-tracing-evidence\l0-original-pairs`.
-  - Left for when `wt/engine` lands: its own finished job folders, `wt/l0` and `wt/clock`, and the `origin/wt/*` branches (deleted after `main` is pushed).
+- **Phase 0, done.** `main` is the one line: the law, the recorder, the tracks, and the 100× clock with its guard above 2000 TPS. Every offline suite is green.
+  - The live clock gate passed on `48d2deb`: 2000 TPS movement identical on three courses, 12,000 sustained ticks identical with zero corrections, 101× active, 4000 refused by the guard.
+  - Merged branches, worktrees, build folders and finished jobs are deleted, locally and on GitHub. The original L0 pairs are in `D:\path-tracing-evidence\l0-original-pairs`.
+- **Phase 1.**
+  - **Done: law speed (1.1).** Under 1 µs per tick on all four bench cases (`cargo run --release --bin bench` from `engine/`), about 55×, replays identical, judged MERGE.
+  - **Running:** Sol [1.2](../jobs/1.2-footprints/prompt.md), footprints and determinism plus the judge's differential tests, on `wt/footprints`; Terra [2.1a](../jobs/2.1a-region-reader/prompt.md), the world reader, on `wt/world`.
+  - **Next:** [1.3](../jobs/1.3-l0-close/prompt.md), closing L0, then the GLM ground-layer lanes.
 
 ## Roadmap (approved 9 November, S48)
 
@@ -107,17 +105,12 @@ Each row shows its gap to its Fermi floor, in orders of magnitude.
 
 ## When a job ends
 
-1. Read `jobs/<id>/last.md`, then `git -C <worktree> status`.
-2. Commit on its branch with `Built-by: <model>`.
-3. A Sonnet judge reviews it in a fresh context.
-4. Fixes come as a new job.
-
-Launch a job with `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1-terra`. The prompt is read from `jobs/<id>/prompt.md` in this checkout.
+Launch: `.scriptsgpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1-terra` (the prompt is `jobs/<id>/prompt.md` in this checkout; `-Resume <id>` continues a session). When it ends: read `jobs/<id>/last.md` and `git -C <worktree> status`, commit with `Built-by: <model>`, have a Sonnet judge review it in a fresh context, and send fixes back as a new job.
 
 ## Traps
 
 - **Disk:** C: has about 8 GB free. The toolchain, builds and lab worlds go on D:.
-- **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot.
+- **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot. Never build or run GPT jobs during a live clock gate: CPU contention makes the client lag and the server correct it (9 November).
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
 - **No Fable** (usage credits).
 - **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata. **Rig:** `PATHTRACING_ROOT=D:path-tracing-lab`, port 25566, gates under PowerShell 5.1.
