@@ -46,7 +46,7 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
    - [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md), rewritten to this design: 0, 1, 100 and 1,000 bots.
    - A sandbox server at 100× for R&D.
 
-   Flight: Julien sees 100, then 1,000, bots as players.
+   Flight: Julien sees 10–50 bots as players (S53). The chunk-ticking wall for lone bots waits for Phase 5 (server.md, "Chunks").
 3. **The vocabulary on legs, and the first flight.**
    - The word record, red-teamed and then frozen in `docs/vocabulary.md`.
    - The word compiler: gaits, transitions, compound words, a cache keyed by pattern.

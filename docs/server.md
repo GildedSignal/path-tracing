@@ -103,5 +103,5 @@ This keeps the 4 November default ("the engine as a separate Rust process").
 
 ## Flight and kill
 
-- **Flight:** Julien joins and sees 100 bots, then 1,000, walking scripted routes as players, at 20 TPS with p99 under 50 ms per tick.
+- **Flight:** Julien joins and sees 10–50 bots (S53), packed and spread out, walking scripted routes as players, at 20 TPS with p99 under 50 ms per tick. The chunk-ticking wall for lone bots (Chunks, above) is kept in mind for Phase 5, not solved now.
 - **Kill:** if the savings leave the server above about 30 µs per active bot (through the packet path), or above about 1 MB per bot, or lazy bots can't materialize without a visible correction, the boundary is wrong. Re-derive it.
