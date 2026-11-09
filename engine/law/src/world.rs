@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use crate::{
     math,
     Aabb,
@@ -7,6 +7,32 @@ use crate::{
     VoxelShape
 };
 pub type BlockPos = [i32; 3];
+
+/// Sparse overrides with a conservative extent maintained on insertion.
+/// Iteration order never defines collision order: queries still visit z, y, x.
+#[derive(Clone, Debug, Default)]
+pub struct BlockMap {
+    entries: HashMap<BlockPos, Block>,
+    bounds: Option<(BlockPos, BlockPos)>,
+    unbounded: bool,
+    fluids: bool,
+    inside_effects: bool,
+}
+impl BlockMap {
+    pub fn insert(&mut self, p: BlockPos, block: Block) -> Option<Block> {
+        self.unbounded |= !block.collision_within_cell();
+        self.fluids |= block.fluid.kind != FluidKind::Empty;
+        self.inside_effects |= block.has_inside_effects();
+        let (lo,hi)=self.bounds.get_or_insert((p,p));
+        for a in 0..3 { lo[a]=lo[a].min(p[a]); hi[a]=hi[a].max(p[a]); }
+        self.entries.insert(p,block)
+    }
+    pub fn get(&self, p: &BlockPos) -> Option<&Block> {
+        let (lo,hi)=self.bounds?;
+        if (0..3).any(|a| p[a]<lo[a] || p[a]>hi[a]) { return None; }
+        self.entries.get(p)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FluidKind {
@@ -223,6 +249,11 @@ impl Default for Block {
     }
 }
 impl Block {
+    fn has_inside_effects(&self)->bool { self.inside!=Inside::None || self.stuck_multiplier.is_some() || self.fluid.kind!=FluidKind::Empty }
+    fn collision_within_cell(&self)->bool {
+        std::iter::once(&self.shape).chain(self.above_shape.iter()).chain(self.below_shape.iter()).chain(self.sneak_shape.iter())
+            .all(|shape|shape.within_cell())
+    }
     fn flow_properties(&self, position: BlockPos) -> FluidFlowBlock {
         self.fluid_flow.unwrap_or_else(|| {
             panic!("raw fluid current needs block predicates at {position:?}")
@@ -268,6 +299,25 @@ impl CollisionContext {
 pub trait World {
     fn block(&self, position: BlockPos) -> &Block;
 
+    /// Conservative certificates: false proves these law hooks are absent.
+    fn has_fluid(&self)->bool {true}
+    fn has_inside_effects(&self)->bool {true}
+
+    fn collision_cell_bounds(&self, _bounds:Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> { Some((lo,hi)) }
+
+    /// Visit potentially occupied cells in the original z/y/x order. Omitting a
+    /// cell certifies its collision shape is empty and it cannot suffocate.
+    fn visit_collision_cells(&self, _bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)->bool) -> bool {
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    if !visit([x,y,z]) { return false; }
+                }
+            }
+        }
+        true
+    }
+
     /// Raw fluid queries need known cells, including known air. Worlds with
     /// incomplete coverage inside loaded chunks must return None at unknown cells.
     fn raw_fluid_block(&self, position: BlockPos) -> Option<&Block> {
@@ -278,27 +328,23 @@ pub trait World {
     fn collides_with_suffocating_block(&self, bounds: Aabb, context: CollisionContext) -> bool {
         let lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
         let hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
-        for z in lo[2]-1..=hi[2]+1 {
-            for y in lo[1]-1..=hi[1]+1 {
-                for x in lo[0]-1..=hi[0]+1 {
-                    let p = [x, y, z];
+        !self.visit_collision_cells(bounds,lo.map(|v|v-1),hi.map(|v|v+1), |p| {
+                    let [x,y,z]=p;
                     if !self.loaded(p) || !self.block(p).suffocating {
-                        continue;
+                        return true;
                     }
                     let shape = self.collision_shape(p, context);
                     let offset = Vec3::new(x as f64, y as f64, z as f64);
                     let intersects = if shape.is_block() {
                         bounds.intersects(Aabb { min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0)) })
                     } else {
-                        shape.moved(offset).intersects(bounds)
+                        shape.at(offset).intersects(bounds)
                     };
                     if intersects {
-                        return true;
+                        return false;
                     }
-                }
-            }
-        }
-        false
+                    true
+        })
     }
 
     // BlockGetter.clip; ClipContext.Block.FALLDAMAGE_RESETTING; ClipContext.Fluid.WATER; VoxelShape.clip
@@ -356,22 +402,35 @@ pub trait World {
         Vec::new()
     }
 
+    /// Compatibility for worlds implementing the owned extra-collider API.
+    /// Runtime worlds override this to lend their existing shapes directly.
+    fn visit_extra_collisions(&self, bounds: Aabb, context: CollisionContext,
+        mut visit: impl FnMut(crate::shapes::ShapeView<'_>) -> bool) -> bool {
+        for shape in self.extra_collisions(bounds, context) {
+            if !visit(shape.view()) { return false; }
+        }
+        true
+    }
+
     // BlockState.getCollisionShape; PowderSnowBlock.getCollisionShape
-    fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> VoxelShape {
+    fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> &VoxelShape {
         let block = self.block(position);
         let above = context.feet_y > position[1] as f64 + 1.0 - 1.0e-5f32 as f64;
         if block.inside == Inside::PowderSnow {
             if context.fall_distance > 2.5 {
-                return VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]);
+                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+                return SHAPE.get_or_init(|| VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]));
             }
             if context.leather_boots && above && !context.descending {
-                return Block::full().shape;
+                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+                return SHAPE.get_or_init(|| Block::full().shape);
             }
-            return VoxelShape::default();
+            static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+            return SHAPE.get_or_init(VoxelShape::default);
         }
         if above && context.descending {
             if let Some(state) = &block.sneak_shape {
-                return state.clone();
+                return state;
             }
         }
         if let Some(state) = if above {
@@ -380,9 +439,9 @@ pub trait World {
             &block.below_shape
         }
         {
-            return state.clone();
+            return state;
         }
-        block.shape.clone()
+        &block.shape
     }
 
     // Entity.collectCollidersIgnoringWorldBorder; BlockCollisions.computeNext
@@ -398,17 +457,21 @@ pub trait World {
                         continue;
                     }
                     let local = self.collision_shape(pos, context);
+                    if local.is_empty() {
+                        continue;
+                    }
                     let offset = Vec3::new(x as f64, y as f64, z as f64);
-                    let shape = local.moved(offset);
-                    let intersects = if local.is_block() {
-                        bounds.intersects(Aabb {
+                    if local.is_block() {
+                        if bounds.intersects(Aabb {
                             min:offset, max:offset.plus(Vec3::new(1.0, 1.0, 1.0))
-                        })
+                        }) {
+                            result.push(local.moved(offset));
+                        }
                     } else {
-                        shape.intersects(bounds)
-                    };
-                    if intersects {
-                        result.push(shape);
+                        let shape = local.moved(offset);
+                        if shape.intersects(bounds) {
+                            result.push(shape);
+                        }
                     }
                 }
             }
@@ -418,13 +481,33 @@ pub trait World {
 
     // CollisionGetter.noCollision
     fn no_collision(&self, bounds: Aabb, context: CollisionContext) -> bool {
-        self.collisions(bounds, context).is_empty()
+        self.visit_collisions(bounds, context, |_| false)
+    }
+
+    /// Ordered, borrowed counterpart of collisions. False means the visitor stopped.
+    fn visit_collisions(&self, bounds: Aabb, context: CollisionContext,
+        mut visit: impl FnMut(crate::shapes::ShapeView<'_>) -> bool) -> bool {
+        if !self.visit_extra_collisions(bounds, context, &mut visit) { return false; }
+        let lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        self.visit_collision_cells(bounds,lo.map(|v|v-1),hi.map(|v|v+1), |pos| {
+                    let [x,y,z]=pos;
+                    if !self.loaded(pos) { return true; }
+                    let local = self.collision_shape(pos, context);
+                    if local.is_empty() { return true; }
+                    let offset = Vec3::new(x as f64,y as f64,z as f64);
+                    let shape = local.at(offset);
+                    let intersects = if local.is_block() {
+                        bounds.intersects(Aabb { min:offset, max:offset.plus(Vec3::new(1.0,1.0,1.0)) })
+                    } else { shape.intersects(bounds) };
+                    !intersects || visit(shape)
+        })
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct BoxWorld {
-    pub blocks: BTreeMap<BlockPos, Block>,
+    pub blocks: BlockMap,
     pub regions: Vec<(BlockPos, BlockPos, Block)>,
     pub minimum_y: i32,
     pub fast_lava: bool,
@@ -438,7 +521,7 @@ impl Default for BoxWorld {
     // Level.getMinY; Level.getDifficulty; GameRules.NATURAL_HEALTH_REGENERATION
     fn default() -> Self {
         Self {
-            blocks:BTreeMap::new(),
+            blocks:BlockMap::default(),
             regions:Vec::new(),
             minimum_y:-64,
             fast_lava:false,
@@ -462,6 +545,56 @@ impl BoxWorld {
     }
 }
 impl World for BoxWorld {
+    fn has_fluid(&self)->bool {
+        self.blocks.fluids || self.regions.iter().any(|(_,_,b)|b.fluid.kind!=FluidKind::Empty)
+    }
+    fn has_inside_effects(&self)->bool {
+        self.blocks.inside_effects || self.regions.iter().any(|(_,_,b)|b.has_inside_effects())
+    }
+    fn collision_cell_bounds(&self,bounds:Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> {
+        let tight_lo=block_pos(bounds.min);
+        let tight_hi=block_pos(bounds.max);
+        let mut result:Option<(BlockPos,BlockPos)>=None;
+        let mut include=|mut min:BlockPos,mut max:BlockPos,within:bool| {
+            for a in 0..3 {
+                min[a]=min[a].max(lo[a]);max[a]=max[a].min(hi[a]);
+                if within { min[a]=min[a].max(tight_lo[a]);max[a]=max[a].min(tight_hi[a]); }
+            }
+            if (0..3).any(|a|min[a]>max[a]) { return; }
+            let (rlo,rhi)=result.get_or_insert((min,max));
+            for a in 0..3 { rlo[a]=rlo[a].min(min[a]);rhi[a]=rhi[a].max(max[a]); }
+        };
+        if let Some((min,max))=self.blocks.bounds { include(min,max,!self.blocks.unbounded); }
+        for (min,max,block) in &self.regions { include(*min,*max,block.collision_within_cell()); }
+        result
+    }
+
+    fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)->bool) -> bool {
+        let Some((lo,hi))=self.collision_cell_bounds(bounds,lo,hi) else {return true;};
+        let tight_lo=block_pos(bounds.min);
+        let tight_hi=block_pos(bounds.max);
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                let mut left=hi[0];
+                let mut right=lo[0];
+                let mut occupied=false;
+                let mut include = |mut min: BlockPos,mut max: BlockPos,within:bool| {
+                    if within {
+                        for a in 0..3 { min[a]=min[a].max(tight_lo[a]);max[a]=max[a].min(tight_hi[a]); }
+                    }
+                    if y>=min[1] && y<=max[1] && z>=min[2] && z<=max[2] && min[0]<=hi[0] && max[0]>=lo[0] {
+                        left=left.min(min[0].max(lo[0])); right=right.max(max[0].min(hi[0])); occupied=true;
+                    }
+                };
+                if let Some((min,max))=self.blocks.bounds { include(min,max,!self.blocks.unbounded); }
+                for (min,max,block) in &self.regions { include(*min,*max,block.collision_within_cell()); }
+                if occupied {
+                    for x in left..=right { if !visit([x,y,z]) { return false; } }
+                }
+            }
+        }
+        true
+    }
     // Level.hasChunkAt
     fn loaded(&self, p: BlockPos) -> bool {
         !self.unloaded_chunks.contains(&[p[0]>>4, p[2]>>4])
@@ -490,6 +623,14 @@ impl World for BoxWorld {
     // Level.getEntityCollisions; WorldBorder.getCollisionShape
     fn extra_collisions(&self, bounds: Aabb, _context: CollisionContext) -> Vec<VoxelShape> {
         self.extra_shapes.iter().filter(|state|state.intersects(bounds)).cloned().collect()
+    }
+
+    fn visit_extra_collisions(&self, bounds: Aabb, _context: CollisionContext,
+        mut visit: impl FnMut(crate::shapes::ShapeView<'_>) -> bool) -> bool {
+        for shape in &self.extra_shapes {
+            if shape.intersects(bounds) && !visit(shape.view()) { return false; }
+        }
+        true
     }
 
     // BlockGetter.getBlockState

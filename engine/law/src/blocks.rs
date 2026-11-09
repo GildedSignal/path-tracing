@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use crate::{
     math,
     shapes::axis_step_order,
@@ -8,6 +7,31 @@ use crate::{
     BlockPos,
     Vec3
 };
+
+// Membership only: traversal order comes from the law, never from this set.
+// Inline storage covers the body footprint without allocating tree nodes.
+pub(crate) struct SeenBlocks {
+    inline: [BlockPos;32],
+    len: usize,
+    overflow: Vec<BlockPos>,
+}
+pub(crate) trait BlockSet { fn insert(&mut self,p:BlockPos)->bool; }
+impl BlockSet for SeenBlocks {
+    fn insert(&mut self,p:BlockPos)->bool { SeenBlocks::insert(self,p) }
+}
+#[cfg(test)]
+impl BlockSet for std::collections::BTreeSet<BlockPos> {
+    fn insert(&mut self,p:BlockPos)->bool { std::collections::BTreeSet::insert(self,p) }
+}
+impl SeenBlocks {
+    pub fn new()->Self { Self { inline:[[0;3];32],len:0,overflow:Vec::new() } }
+    pub fn insert(&mut self,p:BlockPos)->bool {
+        if self.inline[..self.len].contains(&p) || self.overflow.contains(&p) { return false; }
+        if self.len<self.inline.len() { self.inline[self.len]=p;self.len+=1; }
+        else { self.overflow.push(p); }
+        true
+    }
+}
 
 // BlockPos.betweenCornersInDirection; BlockPos$7.computeNext
 fn between_corners(a: BlockPos, b: BlockPos, direction: Vec3, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
@@ -83,7 +107,7 @@ pub fn for_each_intersected(from: Vec3, to: Vec3, bounds: Aabb, mut visit: impl 
         return true;
     }
     let initial = bounds.moved(movement.scale(-1.0));
-    let mut seen = BTreeSet::new();
+    let mut seen = SeenBlocks::new();
     if !between_corners(block_pos(initial.min), block_pos(initial.max), movement, |p| {
         if !visit(p, 0) {
             return false;

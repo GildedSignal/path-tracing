@@ -1,7 +1,6 @@
 use crate::{
     math,
     shapes::{
-        collide_with_shapes,
         input_vector,
         axis_step_order
     },
@@ -519,14 +518,54 @@ fn back_off(state: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
 }
 
 // Entity.collide; Entity.collectCandidateStepUpHeights
+fn collide_in_world(world: &impl World, bounds: Aabb, context: CollisionContext, wanted: Vec3, b: Aabb) -> Vec3 {
+    // Inline storage is independent of terrain complexity. If it fills, stream
+    // the arbitrary-size query instead; no shape or result allocation is needed.
+    let mut colliders: [Option<crate::shapes::SharedCollider>;32] = std::array::from_fn(|_|None);
+    let mut len=0;
+    let complete=world.visit_collisions(bounds,context,|shape| {
+        if len==colliders.len() { return false; }
+        colliders[len]=Some(shape.shared()); len+=1; true
+    });
+    if complete {
+        if len==0 { return wanted; }
+        let mut result=Vec3::default();
+        for axis in axis_step_order(wanted) {
+            let mut d=wanted.get(axis);
+            if d==0.0 { continue; }
+            let moved=b.moved(result);
+            for shape in colliders[..len].iter().flatten() {
+                if d.abs()<1.0e-7 { d=0.0; break; }
+                d=shape.view().collide(axis,moved,d);
+            }
+            result=result.with(axis,d);
+        }
+        return result;
+    }
+    let mut result = Vec3::default();
+    let mut any = false;
+    for axis in axis_step_order(wanted) {
+        let mut d = wanted.get(axis);
+        if d == 0.0 { continue; }
+        let moved = b.moved(result);
+        world.visit_collisions(bounds, context, |shape| {
+            any = true;
+            if d.abs() < 1.0e-7 { d=0.0; return false; }
+            d = shape.collide(axis, moved, d);
+            true
+        });
+        result = result.with(axis,d);
+    }
+    if any { result } else { wanted }
+}
+
 fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
     let b = state.bounding_box();
     let context = CollisionContext::of(state);
-    let shapes = world.collisions(b.expand(v), context);
     let result = if v.length_sqr() == 0.0 {
         v
     } else {
-        collide_with_shapes(v, b, &shapes)
+        collide_in_world(world, b.expand(v), context, v, b)
     };
     let landed = v.y != result.y && v.y < 0.0;
     let height = if cfg!(feature="mutant-step-up") {
@@ -544,26 +583,29 @@ fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
         if !landed {
             bounds = bounds.expand(Vec3::new(0.0, -1.0e-5f32 as f64, 0.0));
         }
-        let shapes = world.collisions(bounds, context);
         let previous_y = result.y as f32;
-        let mut candidates = Vec::new();
-        for shape in &shapes {
-            for y in &shape.coords[1] {
-                let candidate = (y-base.min.y) as f32;
+        let mut last: Option<f32> = None;
+        loop {
+            let mut next: Option<f32> = None;
+            world.visit_collisions(bounds, context, |shape| {
+            for i in 0..shape.shape.coords[1].len() {
+                let candidate = (shape.coord(1,i)-base.min.y) as f32;
                 if candidate < 0.0 || candidate == previous_y {
                     continue;
                 }
                 if candidate > height {
                     break;
                 }
-                if !candidates.contains(&candidate) {
-                    candidates.push(candidate);
+                if last.is_some_and(|v| candidate == v || candidate.total_cmp(&v).is_le()) { continue; }
+                if next.is_none_or(|v| candidate.total_cmp(&v).is_lt()) {
+                    next=Some(candidate);
                 }
             }
-        }
-        candidates.sort_by(f32::total_cmp);
-        for candidate in candidates {
-            let stepped = collide_with_shapes(Vec3::new(v.x, candidate as f64, v.z), base, &shapes);
+            true
+            });
+            let Some(candidate) = next else { break; };
+            last=Some(candidate);
+            let stepped = collide_in_world(world, bounds, context, Vec3::new(v.x, candidate as f64, v.z), base);
             if stepped.horizontal_sqr() > result.horizontal_sqr() {
                 return stepped.minus(Vec3::new(0.0, b.min.y-base.min.y, 0.0));
             }
@@ -584,12 +626,13 @@ fn supporting_block(state: &mut PlayerState, world: &impl World, moved: Vec3) {
     let find = |bounds: Aabb| {
         let lo = block_pos(bounds.min);
         let hi = block_pos(bounds.max);
+        let (lo,hi)=world.collision_cell_bounds(bounds,lo.map(|v|v-1),hi.map(|v|v+1))?;
         let mut best: Option<(f64, BlockPos)> = None;
-        for x in lo[0]-1..=hi[0]+1 {
-            for y in lo[1]-1..=hi[1]+1 {
-                for z in lo[2]-1..=hi[2]+1 {
+        for x in lo[0]..=hi[0] {
+            for y in lo[1]..=hi[1] {
+                for z in lo[2]..=hi[2] {
                     let p=[x, y, z];
-                    if !world.collision_shape(p, CollisionContext::of(state)).moved(Vec3::new(x as f64, y as f64, z as f64)).intersects(bounds) {
+                    if !world.collision_shape(p, CollisionContext::of(state)).at(Vec3::new(x as f64, y as f64, z as f64)).intersects(bounds) {
                         continue;
                     }
                     let d=Vec3::new(x as f64+0.5, y as f64+0.5, z as f64+0.5).minus(state.position).length_sqr();
@@ -747,6 +790,7 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
     state.in_lava=false;
     state.eye_in_water=false;
     state.underwater=false;
+    if !world.has_fluid() {return;}
     for z in ((lo[2]-1)>>4)..=((hi[2]+1)>>4) {
         for x in ((lo[0]-1)>>4)..=((hi[0]+1)>>4) {
             if !world.loaded([x*16, lo[1], z*16]) {
@@ -863,8 +907,9 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
         return None;
     }
     let contact = apply_grounded_step(state, world);
+    if !world.has_inside_effects() {return contact;}
     let delta=state.position.minus(start);
-    let mut visited=std::collections::BTreeSet::new();
+    let mut visited=crate::blocks::SeenBlocks::new();
     let mut budget=16;
     let mut from=start;
     if let Some(original) = state.movement_this_tick.filter(|_| delta.length_sqr()>0.0) {
@@ -888,7 +933,7 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
 fn inside_segment(state: &mut PlayerState, world: &impl World, from: Vec3, to: Vec3,
-visited: &mut std::collections::BTreeSet<BlockPos>, budget: i32) -> i32 {
+visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
     let bounds=Aabb::player(to, state.pose.height()).deflate(1.0e-5f32 as f64);
     let large=from.minus(to).length_sqr()>(1.0-1.0e-5f32 as f64)*(1.0-1.0e-5f32 as f64);
     let body=Aabb::player(from, state.pose.height());
@@ -904,7 +949,7 @@ visited: &mut std::collections::BTreeSet<BlockPos>, budget: i32) -> i32 {
             return true;
         }
         let offset=Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
-        let inside=block.inside_shape.as_ref().is_none_or(|shape| body.collided_along(movement, &shape.moved(offset)));
+        let inside=block.inside_shape.as_ref().is_none_or(|shape| body.collided_along_view(movement, shape.at(offset)));
         let fluid_inside = block.fluid.kind != FluidKind::Empty && body.collided_along(movement,
             &VoxelShape::boxes(&[Aabb::new(offset.x, offset.y, offset.z,
                 offset.x+1.0, (p[1] as f32+block.fluid.surface_height(world, p)) as f64, offset.z+1.0)]));

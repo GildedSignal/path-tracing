@@ -172,6 +172,10 @@ impl Aabb {
 
     // AABB.collidedAlongVector
     pub fn collided_along(self, movement: Vec3, shape: &VoxelShape) -> bool {
+        self.collided_along_view(movement, shape.view())
+    }
+
+    pub(crate) fn collided_along_view(self, movement: Vec3, shape: ShapeView<'_>) -> bool {
         let center = self.min.plus(self.max).scale(0.5);
         let end = center.plus(movement);
         let inflation = self.max.minus(self.min).scale(0.5).minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7));
@@ -183,8 +187,8 @@ impl Aabb {
                         continue;
                     }
                     let bounds = Aabb {
-                        min: Vec3::new(shape.coords[0][x], shape.coords[1][y], shape.coords[2][z]).minus(inflation),
-                        max: Vec3::new(shape.coords[0][x+1], shape.coords[1][y+1], shape.coords[2][z+1]).plus(inflation),
+                        min: Vec3::new(shape.coord(0,x), shape.coord(1,y), shape.coord(2,z)).minus(inflation),
+                        max: Vec3::new(shape.coord(0,x+1), shape.coord(1,y+1), shape.coord(2,z+1)).plus(inflation),
                     };
                     if bounds.contains(center) || bounds.contains(end) || bounds.clip(center, end).is_some() {
                         return true;
@@ -201,10 +205,27 @@ impl Aabb {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct VoxelShape {
+#[derive(Clone, Debug)]
+pub struct VoxelShape(std::sync::Arc<ShapeData>);
+
+#[derive(Debug, Default)]
+pub struct ShapeData {
     pub coords: [Vec<f64>; 3],
-    full: Vec<bool>
+    full: Vec<bool>,
+    empty: bool,
+    block: bool,
+    within_cell: bool,
+    single: bool,
+}
+impl std::ops::Deref for VoxelShape {
+    type Target=ShapeData;
+    fn deref(&self)->&ShapeData { &self.0 }
+}
+impl Default for VoxelShape {
+    fn default()->Self {
+        static EMPTY: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(|| VoxelShape(std::sync::Arc::new(ShapeData { empty:true,within_cell:true,..ShapeData::default() }))).clone()
+    }
 }
 impl VoxelShape {
     // Shapes.create; Shapes.or; BitSetDiscreteVoxelShape
@@ -219,11 +240,15 @@ impl VoxelShape {
             c.sort_by(f64::total_cmp);
             c.dedup();
         }
-        let mut shape = Self {
+        let mut shape = ShapeData {
             coords,
-            full: Vec::new()
+            full: Vec::new(),
+            empty: true,
+            block: false,
+            within_cell: false,
+            single: false,
         };
-        let [nx, ny, nz] = shape.sizes();
+        let [nx, ny, nz] = std::array::from_fn(|a| shape.coords[a].len().saturating_sub(1));
         for x in 0..nx {
             for y in 0..ny {
                 for z in 0..nz {
@@ -234,7 +259,11 @@ impl VoxelShape {
                 }
             }
         }
-        shape
+        shape.empty=!shape.full.iter().any(|v|*v);
+        shape.block=shape.coords.iter().all(|c|c.as_slice()==[0.0,1.0]) && shape.full.as_slice()==[true];
+        shape.within_cell=shape.empty || shape.coords.iter().all(|c|c.first().is_some_and(|v|*v>=0.0) && c.last().is_some_and(|v|*v<=1.0));
+        shape.single=shape.coords.iter().all(|c|c.len()==2) && shape.full.as_slice()==[true];
+        Self(std::sync::Arc::new(shape))
     }
 
     // DiscreteVoxelShape.getSize
@@ -244,15 +273,30 @@ impl VoxelShape {
 
     // VoxelShape.isEmpty
     pub fn is_empty(&self) -> bool {
-        !self.full.iter().any(|b| *b)
+        self.empty
     }
 
     // VoxelShape.move
     pub fn moved(&self, v: Vec3) -> Self {
-        Self {
-            coords: std::array::from_fn(|a| self.coords[a].iter().map(|c| c + [v.x, v.y, v.z][a]).collect()),
-            full: self.full.clone()
-        }
+        let coords: [Vec<f64>;3] = std::array::from_fn(|a| self.coords[a].iter().map(|c| c + [v.x,v.y,v.z][a]).collect());
+        let block=coords.iter().all(|c|c.as_slice()==[0.0,1.0]) && self.full.as_slice()==[true];
+        let within_cell=self.empty || coords.iter().all(|c|c.first().is_some_and(|v|*v>=0.0) && c.last().is_some_and(|v|*v<=1.0));
+        Self(std::sync::Arc::new(ShapeData {
+            coords,
+            full: self.full.clone(),
+            empty: self.empty,
+            block,
+            within_cell,
+            single: self.single,
+        }))
+    }
+
+    pub fn view(&self) -> ShapeView<'_> {
+        ShapeView { shape: self, offset: None }
+    }
+
+    pub fn at(&self, offset: Vec3) -> ShapeView<'_> {
+        ShapeView { shape: self, offset: Some(offset) }
     }
 
     // DiscreteVoxelShape.isFullWide
@@ -261,13 +305,63 @@ impl VoxelShape {
         p[0] < nx && p[1] < ny && p[2] < nz && self.full[(p[0]*ny + p[1])*nz + p[2]]
     }
 
-    // VoxelShape.findIndex
-    fn find_index(&self, axis: usize, value: f64) -> i32 {
-        self.coords[axis].partition_point(|c| value >= *c) as i32 - 1
+    // VoxelShape.collideX
+    pub fn collide(&self, axis: Axis, b: Aabb, distance: f64) -> f64 {
+        self.view().collide(axis, b, distance)
     }
 
-    // VoxelShape.collideX
-    pub fn collide(&self, axis: Axis, b: Aabb, mut distance: f64) -> f64 {
+    // Shapes.block
+    pub fn is_block(&self) -> bool {
+        self.block
+    }
+
+    pub(crate) fn within_cell(&self)->bool { self.within_cell }
+
+    // Shapes.joinIsNotEmpty; BooleanOp.AND
+    pub fn intersects(&self, bounds: Aabb) -> bool {
+        self.view().intersects(bounds)
+    }
+}
+
+/// A borrowed shape with lazy world coordinates. Add the offset to each plane,
+/// just as VoxelShape.move does; subtracting it from the body changes rounding.
+#[derive(Clone, Copy, Debug)]
+pub struct ShapeView<'a> {
+    pub shape: &'a VoxelShape,
+    offset: Option<Vec3>,
+}
+
+pub(crate) struct SharedCollider {
+    shape: VoxelShape,
+    offset: Option<Vec3>,
+}
+impl SharedCollider {
+    pub fn view(&self)->ShapeView<'_> { ShapeView {shape:&self.shape,offset:self.offset} }
+}
+
+impl ShapeView<'_> {
+    pub(crate) fn shared(self)->SharedCollider { SharedCollider { shape:self.shape.clone(),offset:self.offset } }
+    pub fn coord(self, axis: usize, index: usize) -> f64 {
+        let c = self.shape.coords[axis][index];
+        match self.offset { Some(v) => c + [v.x,v.y,v.z][axis], None => c }
+    }
+
+    fn sizes(self) -> [usize;3] { self.shape.sizes() }
+    fn is_empty(self) -> bool { self.shape.is_empty() }
+    fn is_full(self, p: [usize;3]) -> bool { self.shape.is_full(p) }
+
+    fn find_index(self, axis: usize, value: f64) -> i32 {
+        // Same binary partition and comparisons as the materialized planes.
+        let mut lo = 0;
+        let mut hi = self.shape.coords[axis].len();
+        while lo < hi {
+            let mid = lo + (hi-lo)/2;
+            if value >= self.coord(axis,mid) { lo=mid+1; } else { hi=mid; }
+        }
+        lo as i32 - 1
+    }
+
+    pub fn collide(self, axis: Axis, b: Aabb, mut distance: f64) -> f64 {
         if self.is_empty() {
             return distance;
         }
@@ -278,6 +372,25 @@ impl VoxelShape {
         let u = (a + 1) % 3;
         let v = (a + 2) % 3;
         let axes = [Axis::X, Axis::Y, Axis::Z];
+        if self.shape.single {
+            for side in [u,v] {
+                if b.min.get(axes[side])+1.0e-7 >= self.coord(side,1)
+                    || !(b.max.get(axes[side])-1.0e-7 >= self.coord(side,0)) {
+                    return distance;
+                }
+            }
+            let delta=if distance>0.0 {
+                if b.max.get(axis)-1.0e-7 >= self.coord(a,0) {return distance;}
+                self.coord(a,0)-b.max.get(axis)
+            } else {
+                if !(b.min.get(axis)+1.0e-7 >= self.coord(a,1)) {return distance;}
+                self.coord(a,1)-b.min.get(axis)
+            };
+            if distance>0.0 {
+                if delta>=-1.0e-7 {distance=distance.min(delta);}
+            } else if delta<=1.0e-7 {distance=distance.max(delta);}
+            return distance;
+        }
         let sizes = self.sizes();
         let lo_u = self.find_index(u, b.min.get(axes[u])+1.0e-7).max(0) as usize;
         let hi_u = (self.find_index(u, b.max.get(axes[u])-1.0e-7)+1).min(sizes[u] as i32).max(0) as usize;
@@ -298,9 +411,9 @@ impl VoxelShape {
                     p[v] = k;
                     if self.is_full(p) {
                         let delta = if distance > 0.0 {
-                            self.coords[a][i as usize] - b.max.get(axis)
+                            self.coord(a, i as usize) - b.max.get(axis)
                         } else {
-                            self.coords[a][i as usize+1] - b.min.get(axis)
+                            self.coord(a, i as usize+1) - b.min.get(axis)
                         };
                         if distance > 0.0 {
                             if delta >= -1.0e-7 {
@@ -322,22 +435,17 @@ impl VoxelShape {
         distance
     }
 
-    // Shapes.block
-    pub fn is_block(&self) -> bool {
-        self.coords.iter().all(|c| c.as_slice()==[0.0, 1.0]) && self.full.as_slice()==[true]
-    }
-
     // Shapes.joinIsNotEmpty; BooleanOp.AND
-    pub fn intersects(&self, bounds: Aabb) -> bool {
+    pub fn intersects(self, bounds: Aabb) -> bool {
         if self.is_empty() {
             return false;
         }
         let axes=[Axis::X, Axis::Y, Axis::Z];
-        let indices: [Vec<usize>; 3]=std::array::from_fn(|a| overlap_indices(&self.coords[a], bounds.min.get(axes[a]), bounds.max.get(axes[a])));
-        for x in &indices[0] {
-            for y in &indices[1] {
-                for z in &indices[2] {
-                    if self.is_full([*x, *y, *z]) {
+        let indices: [std::ops::Range<usize>; 3]=std::array::from_fn(|a| overlap_range(self, a, bounds.min.get(axes[a]), bounds.max.get(axes[a])));
+        for x in indices[0].clone() {
+            for y in indices[1].clone() {
+                for z in indices[2].clone() {
+                    if self.is_full([x, y, z]) {
                         return true;
                     }
                 }
@@ -348,26 +456,28 @@ impl VoxelShape {
 }
 
 // IndirectMerger.<init>; IndirectMerger.forMergedIndexes
-fn overlap_indices(first: &[f64], lower: f64, upper: f64) -> Vec<usize> {
+fn overlap_range(shape: ShapeView<'_>, axis: usize, lower: f64, upper: f64) -> std::ops::Range<usize> {
     if upper-lower < 1.0e-7 {
-        return Vec::new();
+        return 0..0;
     }
     let second=[lower, upper];
     let mut i=0;
     let mut j=0;
     let mut previous=f64::NAN;
-    let mut merged: Vec<(i32, i32)>=Vec::new();
-    while i<first.len() || j<second.len() {
-        let first_done=i>=first.len();
+    let mut pending: Option<(i32,i32)> = None;
+    let mut range = 0..0;
+    let len = shape.shape.coords[axis].len();
+    while i<len || j<second.len() {
+        let first_done=i>=len;
         let second_done=j>=second.len();
-        let take_first=!first_done && (second_done || first[i]<second[j]+1.0e-7);
+        let take_first=!first_done && (second_done || shape.coord(axis,i)<second[j]+1.0e-7);
         let coordinate;
         if take_first {
             i+=1;
             if j==0 || second_done {
                 continue;
             }
-            coordinate=first[i-1];
+            coordinate=shape.coord(axis,i-1);
         } else {
             j+=1;
             if i==0 || first_done {
@@ -377,14 +487,19 @@ fn overlap_indices(first: &[f64], lower: f64, upper: f64) -> Vec<usize> {
         }
         let pair=(i as i32-1, j as i32-1);
         if previous>=coordinate-1.0e-7 {
-            *merged.last_mut().unwrap()=pair;
+            pending=Some(pair);
         } else {
-            merged.push(pair);
+            if let Some((a,0)) = pending {
+                if a >= 0 {
+                    if range.is_empty() { range.start=a as usize; }
+                    range.end=a as usize+1;
+                }
+            }
+            pending=Some(pair);
             previous=coordinate;
         }
     }
-    merged.iter().take(merged.len().saturating_sub(1))
-    .filter_map(|&(a, b)| (a>=0 && b==0).then_some(a as usize)).collect()
+    range
 }
 
 // Entity.collideWithShapes; Shapes.collide
