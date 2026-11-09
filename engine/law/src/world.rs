@@ -357,21 +357,24 @@ pub trait World {
     }
 
     // BlockState.getCollisionShape; PowderSnowBlock.getCollisionShape
-    fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> VoxelShape {
+    fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> &VoxelShape {
         let block = self.block(position);
         let above = context.feet_y > position[1] as f64 + 1.0 - 1.0e-5f32 as f64;
         if block.inside == Inside::PowderSnow {
             if context.fall_distance > 2.5 {
-                return VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]);
+                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+                return SHAPE.get_or_init(|| VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]));
             }
             if context.leather_boots && above && !context.descending {
-                return Block::full().shape;
+                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+                return SHAPE.get_or_init(|| Block::full().shape);
             }
-            return VoxelShape::default();
+            static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+            return SHAPE.get_or_init(VoxelShape::default);
         }
         if above && context.descending {
             if let Some(state) = &block.sneak_shape {
-                return state.clone();
+                return state;
             }
         }
         if let Some(state) = if above {
@@ -380,9 +383,9 @@ pub trait World {
             &block.below_shape
         }
         {
-            return state.clone();
+            return state;
         }
-        block.shape.clone()
+        &block.shape
     }
 
     // Entity.collectCollidersIgnoringWorldBorder; BlockCollisions.computeNext
@@ -398,17 +401,21 @@ pub trait World {
                         continue;
                     }
                     let local = self.collision_shape(pos, context);
+                    if local.is_empty() {
+                        continue;
+                    }
                     let offset = Vec3::new(x as f64, y as f64, z as f64);
-                    let shape = local.moved(offset);
-                    let intersects = if local.is_block() {
-                        bounds.intersects(Aabb {
+                    if local.is_block() {
+                        if bounds.intersects(Aabb {
                             min:offset, max:offset.plus(Vec3::new(1.0, 1.0, 1.0))
-                        })
+                        }) {
+                            result.push(local.moved(offset));
+                        }
                     } else {
-                        shape.intersects(bounds)
-                    };
-                    if intersects {
-                        result.push(shape);
+                        let shape = local.moved(offset);
+                        if shape.intersects(bounds) {
+                            result.push(shape);
+                        }
                     }
                 }
             }
