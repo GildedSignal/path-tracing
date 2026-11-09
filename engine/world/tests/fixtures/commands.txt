@@ -1,0 +1,62 @@
+# full-blocks
+fill 4096 -64 4096 4127 -45 4127 air
+fill 4096 -64 4096 4127 -61 4127 stone
+fill 4096 -60 4096 4096 -46 4127 stone
+fill 4127 -60 4096 4127 -46 4127 stone
+fill 4097 -60 4096 4126 -46 4096 stone
+fill 4097 -60 4127 4126 -46 4127 stone
+fill 4096 -45 4096 4127 -45 4127 stone
+fill 4097 -61 4102 4126 -61 4126 grass_block
+fill 4104 -61 4102 4110 -61 4126 dirt
+fill 4116 -61 4102 4122 -61 4126 cobblestone
+setblock 4112 -45 4112 gold_block
+# slabs-stairs
+fill 4224 -64 4096 4255 -45 4127 air
+fill 4224 -64 4096 4255 -61 4127 stone
+fill 4224 -60 4096 4224 -46 4127 stone
+fill 4255 -60 4096 4255 -46 4127 stone
+fill 4225 -60 4096 4254 -46 4096 stone
+fill 4225 -60 4127 4254 -46 4127 stone
+fill 4224 -45 4096 4255 -45 4127 stone
+fill 4225 -60 4102 4254 -60 4103 stone_slab[type=bottom]
+fill 4225 -60 4104 4254 -60 4104 stone_stairs[facing=south,half=bottom]
+fill 4225 -60 4106 4254 -60 4107 stone_slab[type=bottom]
+fill 4225 -60 4108 4254 -60 4108 stone_stairs[facing=south,half=bottom]
+fill 4225 -60 4110 4254 -60 4111 stone_slab[type=bottom]
+fill 4225 -60 4112 4254 -60 4112 stone_stairs[facing=south,half=bottom]
+fill 4225 -60 4114 4254 -60 4115 stone_slab[type=bottom]
+fill 4225 -60 4116 4254 -60 4116 stone_stairs[facing=south,half=bottom]
+fill 4225 -60 4118 4254 -60 4119 stone_slab[type=bottom]
+fill 4225 -60 4120 4254 -60 4120 stone_stairs[facing=south,half=bottom]
+fill 4225 -60 4122 4254 -60 4123 stone_slab[type=bottom]
+fill 4225 -60 4124 4254 -60 4124 stone_stairs[facing=south,half=bottom]
+setblock 4240 -45 4112 gold_block
+# step-ups
+fill 4352 -64 4096 4383 -45 4127 air
+fill 4352 -64 4096 4383 -61 4127 stone
+fill 4352 -60 4096 4352 -46 4127 stone
+fill 4383 -60 4096 4383 -46 4127 stone
+fill 4353 -60 4096 4382 -46 4096 stone
+fill 4353 -60 4127 4382 -46 4127 stone
+fill 4352 -45 4096 4383 -45 4127 stone
+fill 4354 -60 4102 4355 -60 4126 stone_slab[type=bottom]
+fill 4356 -60 4102 4357 -60 4126 stone
+fill 4360 -60 4102 4361 -60 4126 stone_slab[type=bottom]
+fill 4362 -60 4102 4363 -60 4126 stone
+fill 4366 -60 4102 4367 -60 4126 stone_slab[type=bottom]
+fill 4368 -60 4102 4369 -60 4126 stone
+fill 4372 -60 4102 4373 -60 4126 stone_slab[type=bottom]
+fill 4374 -60 4102 4375 -60 4126 stone
+fill 4378 -60 4102 4379 -60 4126 stone_slab[type=bottom]
+fill 4380 -60 4102 4381 -60 4126 stone
+setblock 4368 -45 4112 gold_block
+# ceilings
+fill 4480 -64 4096 4511 -45 4127 air
+fill 4480 -64 4096 4511 -61 4127 stone
+fill 4480 -60 4096 4480 -46 4127 stone
+fill 4511 -60 4096 4511 -46 4127 stone
+fill 4481 -60 4096 4510 -46 4096 stone
+fill 4481 -60 4127 4510 -46 4127 stone
+fill 4480 -45 4096 4511 -45 4127 stone
+fill 4481 -58 4102 4510 -58 4126 stone
+setblock 4496 -45 4112 gold_block
