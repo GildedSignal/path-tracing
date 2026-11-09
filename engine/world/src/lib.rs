@@ -4,7 +4,7 @@ mod nbt;
 mod region;
 mod snapshot;
 pub use region::{BlockState, WorldReader, DEFAULT_CACHE_BYTES};
-pub use snapshot::WorldSnapshot;
+pub use snapshot::{WorldSnapshot, model};
 use std::{fmt, path::PathBuf};
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub enum LoadError {
     MissingChunk { x: i32, z: i32 },
     VersionMismatch { chunk: [i32; 2], expected: i32, found: i32 },
     CacheTooSmall { needed: usize, limit: usize },
-    Unmodeled { position: [i32; 3], state: BlockState },
+    Unmodeled { position: [i32; 3], state: BlockState, reason: String },
     At { position: [i32; 3], source: Box<LoadError> },
 }
 impl LoadError {
@@ -30,7 +30,7 @@ impl fmt::Display for LoadError {
             Self::MissingChunk { x, z } => write!(f, "missing generated chunk ({x}, {z})"),
             Self::VersionMismatch { chunk, expected, found } => write!(f, "chunk {chunk:?} DataVersion {found} differs from level.dat DataVersion {expected}"),
             Self::CacheTooSmall { needed, limit } => write!(f, "chunk cache needs {needed} bytes; fixed limit is {limit}"),
-            Self::Unmodeled { position, state } => write!(f, "unmodeled block state at {position:?}: {state}"),
+            Self::Unmodeled { position, state, reason } => write!(f, "unmodeled block state at {position:?}: {state} ({reason})"),
             Self::At { position, source } => write!(f, "at {position:?}: {source}"),
         }
     }

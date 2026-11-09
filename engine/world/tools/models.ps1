@@ -13,6 +13,17 @@ Push-Location $Build
 try {
     & "$java/java.exe" -cp $classpath ModelTable "$PSScriptRoot/../data"
     if ($LASTEXITCODE -ne 0) { throw 'ModelTable generation failed' }
+    # One state per family the 2.1b rule admitted, for the bit-exact shape test.
+    $states = @('minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]',
+        'minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]',
+        'minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]',
+        'minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]',
+        'minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]',
+        'minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]',
+        'minecraft:white_carpet', 'minecraft:mud', 'minecraft:stone_pressure_plate[powered=true]',
+        'minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]')
+    & "$java/java.exe" -cp $classpath ModelTable --shapes "$PSScriptRoot/../tests/fixtures/shapes.txt" @states
+    if ($LASTEXITCODE -ne 0) { throw 'ModelTable shapes failed' }
 } finally { Pop-Location }
 Get-FileHash $jar -Algorithm SHA256
 

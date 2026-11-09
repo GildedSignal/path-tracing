@@ -300,7 +300,7 @@ impl VoxelShape {
     }
 
     // DiscreteVoxelShape.isFullWide
-    fn is_full(&self, p: [usize; 3]) -> bool {
+    pub fn is_full(&self, p: [usize; 3]) -> bool {
         let [nx, ny, nz] = self.sizes();
         p[0] < nx && p[1] < ny && p[2] < nz && self.full[(p[0]*ny + p[1])*nz + p[2]]
     }

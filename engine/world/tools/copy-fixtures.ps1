@@ -3,16 +3,29 @@ $ErrorActionPreference = 'Stop'
 $fixtures = Join-Path $PSScriptRoot '../tests/fixtures'
 $destination = "$fixtures/world"
 $regions = "$destination/dimensions/minecraft/overworld/region"
-# The chunks the tests read: the superflat and cache tests in r.0.0, the four courses in r.8.8.
-$keep = @{
-    'r.0.0.mca' = @(@(0,0),@(1,0),@(2,0),@(1,1))
-    'r.8.8.mca' = foreach ($x in 256,257,264,265,272,273,280,281) { foreach ($z in 256,257) { ,@($x,$z) } }
+# The chunks the tests read: the superflat and cache tests in r.0.0, the four courses in r.8.8,
+# and Julien's tracks (lab/tracks), each box from A to B widened by 4 in x and z and by 3 in y.
+$keep = [ordered]@{
+    'r.0.0.mca' = [Collections.Generic.List[object]]@(@(0,0),@(1,0),@(2,0),@(1,1))
+    'r.8.8.mca' = [Collections.Generic.List[object]]@(foreach ($x in 256,257,264,265,272,273,280,281) { foreach ($z in 256,257) { ,@($x,$z) } })
+}
+$boxes = Get-ChildItem "$PSScriptRoot/../../../lab/tracks/*.json" | Where-Object { $_.Name -notlike '*.kit.json' } | Sort-Object Name | ForEach-Object {
+    $t = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+    $min = foreach ($i in 0..2) { [Math]::Min($t.A[$i],$t.B[$i]) - @(4,3,4)[$i] }
+    $max = foreach ($i in 0..2) { [Math]::Max($t.A[$i],$t.B[$i]) + @(4,3,4)[$i] }
+    foreach ($cz in ($min[2] -shr 4)..($max[2] -shr 4)) { foreach ($cx in ($min[0] -shr 4)..($max[0] -shr 4)) {
+        $region = "r.$($cx -shr 5).$($cz -shr 5).mca"
+        if (-not $keep.Contains($region)) { $keep[$region] = [Collections.Generic.List[object]]::new() }
+        if (-not ($keep[$region] | Where-Object { $_[0] -eq $cx -and $_[1] -eq $cz })) { $keep[$region].Add(@($cx,$cz)) }
+    }}
+    "$($_.BaseName) $($min -join ' ') $($max -join ' ')"
 }
 if (-not $TrimOnly) {
     New-Item -ItemType Directory -Force $regions,"$destination/data/minecraft" | Out-Null
+    $boxes | Set-Content "$fixtures/tracks.txt" -Encoding ASCII
     # Source files are only read. Neither this script nor the Rust tests open them for writing.
-    foreach ($relative in @('level.dat','data/minecraft/game_rules.dat','data/minecraft/world_gen_settings.dat',
-        'dimensions/minecraft/overworld/region/r.0.0.mca','dimensions/minecraft/overworld/region/r.8.8.mca')) {
+    foreach ($relative in @('level.dat','data/minecraft/game_rules.dat','data/minecraft/world_gen_settings.dat') +
+        @($keep.Keys | ForEach-Object { "dimensions/minecraft/overworld/region/$_" })) {
         Copy-Item -LiteralPath (Join-Path $SourceWorld $relative) -Destination (Join-Path $destination $relative)
     }
     # Run main's course definitions unmodified; course-source.txt names the blob.
@@ -41,7 +54,9 @@ foreach ($name in $keep.Keys) {
         $out[$slot] = [byte](($at -shr 16) -band 255); $out[$slot+1] = [byte](($at -shr 8) -band 255)
         $out[$slot+2] = [byte]($at -band 255); $out[$slot+3] = [byte]$count
         for ($i = 0; $i -lt 4; $i++) { $out[4096+$slot+$i] = $in[4096+$slot+$i] }
-        $out.AddRange([byte[]]$in[($sector*4096)..(($sector+$count)*4096-1)])
+        $out.AddRange([byte[]]$in[($sector*4096)..([Math]::Min(($sector+$count)*4096,$in.Length)-1)])
+        # A source file may end inside its last sector; keep every copied chunk sector-aligned.
+        $out.AddRange([byte[]]::new((4096 - $out.Count % 4096) % 4096))
     }
     [IO.File]::WriteAllBytes($path, $out.ToArray())
 }

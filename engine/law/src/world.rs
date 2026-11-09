@@ -209,6 +209,8 @@ pub struct Block {
     pub wall_or_gate: bool,
     pub resets_fall_distance: bool,
     pub end_portal_or_gateway: bool,
+    /// A hook that changes only the world when the player touches the block (a plate, a tripwire, a button).
+    pub world_hook: bool,
     pub air: bool,
 }
 impl Default for Block {
@@ -244,6 +246,7 @@ impl Default for Block {
             wall_or_gate: false,
             resets_fall_distance: false,
             end_portal_or_gateway: false,
+            world_hook: false,
             air: true
         }
     }

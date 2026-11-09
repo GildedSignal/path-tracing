@@ -118,11 +118,12 @@ fn fixed_cache_bound_evicts_and_reloads() {
 }
 #[test]
 fn snapshot_refuses_an_unmodeled_real_state() {
-    let error=WorldSnapshot::load(fixture(),[10,-58,2],[10,-58,2]).err().expect("fences are outside the supported model families");
-    assert!(matches!(error,world::LoadError::Unmodeled {position:[10,-58,2],..}));
+    let error=WorldSnapshot::load(fixture(),[29,-55,89],[29,-55,89]).err().expect("bubble columns push the player from entityInside");
+    assert!(matches!(&error,world::LoadError::Unmodeled {position:[29,-55,89],reason,..} if reason=="hook entityInside BubbleColumnBlock"));
     let message=error.to_string();
-    assert!(message.contains("minecraft:cherry_fence"));
-    assert!(message.contains("waterlogged=false"));
+    assert!(message.contains("minecraft:bubble_column[drag=true]"));
+    assert!(message.contains("(hook entityInside BubbleColumnBlock)"));
+    assert!(WorldSnapshot::load(fixture(),[10,-58,2],[10,-58,2]).is_ok(),"a cherry fence keeps its arms in its state");
 }
 #[test]
 fn probe_point_range_and_failure() {
