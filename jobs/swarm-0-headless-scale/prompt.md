@@ -22,3 +22,11 @@
 ## Continuation
 
 The reference rig (`D:\path-tracing-lab`) and `D:\path-tracing-evidence` are now writable for this job: take the rig lock and run the matrix as specified.
+
+## Continuation 2 (9 November, after the Designer's red-team of docs/server.md)
+
+The cells already measured (0, 1, 10, 100 dense, in `D:\path-tracing-evidence\swarm-0-20261109-d`) call `doTick()`, so the server runs Mojang's movement for the bot (`travel`). That is the rejected design. Phase 2 sends movement as client packets (docs/server.md, "Movement"). Re-measure through that path:
+- Each bot submits, per tick, `ServerboundPlayerInputPacket` and `ServerboundMovePlayerPacket` (position from the same scripted loop) to its `ServerGamePacketListenerImpl`, at the packet phase before the level tick. The probe calls the listener's `tick()` instead of `doTick()`, and answers every teleport with `ServerboundAcceptTeleportationPacket`.
+- Apply the two cheap savings as vanilla settings, not patches: each bot's `WAYPOINT_RECEIVE_RANGE` attribute is 0; bots are left out of the tracking candidate list at `ChunkMap.tick` (a mixin there is acceptable for this probe).
+- Cells: 1, 100 and 1,000 bots, dense, plus 100 and 1,000 dispersed. Report ms per tick (min, median, p90, p99, max), resident memory per bot, teleports and "moved wrongly" counts per bot, and the share by component (`Profile.java`: packet handling, movement re-run, tracking, chunks, mobs, the rest).
+- Answer fast: one run per cell, no other cells.

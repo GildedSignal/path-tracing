@@ -1,10 +1,10 @@
 # One mind in the server (Phase 2 spec, draft)
 
-Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door: the Designer red-teams it, Julien approves it, and then it freezes.
+Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door. The Designer red-teamed it on 9 November ("freeze with changes"); those changes are folded in below. The decisions marked **Julien** need his ruling before it freezes.
 
-## What the numbers say
+## What the numbers say, and what they don't
 
-Swarm 0 (9 November, `D:\path-tracing-evidence\swarm-0-20261109-d`): server-side `ServerPlayer` bots with an in-process connection, packed together, scripted walking.
+Swarm 0 (9 November, `D:\path-tracing-evidence\swarm-0-20261109-d`): server-side `ServerPlayer` bots on an in-process sink connection, packed together.
 
 | Bots | Server ms per tick at 20 TPS (median / p99) |
 |---:|---|
@@ -13,57 +13,73 @@ Swarm 0 (9 November, `D:\path-tracing-evidence\swarm-0-20261109-d`): server-side
 | 10 | 0.99 / 2.20 |
 | 100 | 6.8 / 15.1 |
 
-That's about 65 µs per bot. At 1,000 bots the server alone needs about 65 ms per tick, below 20 TPS; creation already slowed near 700. The 1,000-bot and dispersed cells are still to run.
+- **This measures the rejected design.** The prototype calls `doTick()`, which runs Mojang's movement on the server (`travel`). It never goes through `handleMovePlayer`. So about 65 µs per bot is the cost of server-side movement, not of the boundary below.
+- **Memory:** about 2.5 MB resident per bot (1,751 → 1,994 MiB from 1 to 100 bots). At 10⁴ bots that's about 25 GB on a 31 GB machine.
+- **Next measurement:** Swarm 0 again, through the packet path, with the cost split by component (`Profile.java`). Until then the 30 µs kill threshold has no data behind it.
 
-The Fermi floor (representation.md) is about 3 ms per tick at 10⁴ bots, with one mind and lazy bots. So the server mod, not the planner, decides scale, and its three savings come first.
+The Fermi floor (representation.md) is about 3 ms per tick at 10⁴ bots, with one mind and lazy bots. The server mod, not the planner, decides scale.
 
-## The three savings (all in the server mod)
+## The savings (all in the server mod)
 
-1. **Bots don't observe.** A bot's connection sends nothing, and bots are excluded from entity tracking as viewers, because the engine already knows every bot's state. This removes the n² term in dense crowds. Real players still see every bot normally.
-2. **World changes reach the engine once.** A block-change and entity hook in the server streams tick-stamped deltas into the engine's own world (the snapshot from 2.1a, updated in place), not once per bot.
-3. **Lazy bots.** A bot executing a certified word is not ticked by the server. Its state is the word evaluated at the current tick. It's materialized and ticked normally when:
-   - a real player could see it (tracking range);
-   - a delta touches its word's footprint;
-   - its word ends, or a decision is due.
+1. **Bots don't observe.** Game logic is safe here: tracking only sends packets (only `WitherBoss` overrides `startSeenByPlayer`, for its boss bar). Mob targeting, despawn, spawning, sleep and phantoms read `level.players()` and positions, never tracking. So:
+   - **The tracking candidate list holds real players only,** filtered at `ChunkMap.tick`. Rejecting bots later, inside `updatePlayer`, still pays O((entities + bots) · moved bots).
+   - **Each bot's `WAYPOINT_RECEIVE_RANGE` is 0** (a vanilla attribute). Otherwise the locator bar is a second n² term (`ServerWaypointManager.updatePlayer` loops over every transmitter).
+   - Real players still see every bot normally.
+2. **World changes reach the engine once.** A block-change and entity hook streams tick-stamped deltas into the engine's own world (the 2.1a snapshot, updated in place), not once per bot.
+3. **Player queries go through a spatial index.** `Mob.checkDespawn` calls `getNearestPlayer` for every mob every tick, `PlayerSensor` sorts every player, and `NaturalSpawner` scans them all: O(mobs × players). The index keeps vanilla's list-order tie-breaks, behind a differential gate.
+4. **Bot persistence in bulk.** `PlayerList.saveAll` writes three files per player on the server thread every 6,000 ticks (every 3 s of wall time at 100×). The engine saves bots in bulk instead.
+5. **Lazy bots** (below).
 
-   Materializing must never show a real client a correction or a teleport: a bot inside a real player's tracking range is always ticked.
+## Movement: the engine speaks the vanilla client's packets
 
-## Movement: who computes it
+- **Engine → server, per bot per tick:** the vanilla client's serverbound sequence: `PlayerInput`, `PlayerCommand` (sprint, fall-flying), `MovePlayer` or `MoveVehicle`, `AcceptTeleportation`, `PlayerLoaded`, `ClientTickEnd`, keep-alive replies. The packets are injected at the vanilla packet phase, before the level tick. The mod calls the listener's `tick()` at the vanilla point; the sink connection isn't in `ServerConnectionListener`, so nothing else would.
+- **The server validates them as for any client.** `handleMovePlayer` re-runs `ServerPlayer.move` with its own shift state and collisions, rejects horizontal error² > 0.0625, ignores vertical error within ±0.5, and calls `jumpFromGround` itself. Its speed check is skipped when the tick rate isn't normal, and 100× is harmless as long as one packet arrives per tick.
+- **The server is a weak judge** (it accepts errors up to 0.25 blocks). **The judge stays the client:** the lab client audits sampled words at 100×.
+- **Every server `teleport()` of a bot enters the deviation stream.** A correction is an anomaly with a witness.
+- **Server-owned outcomes are nature:** damage, food, block updates, fluids, entities, pickups. The engine predicts them every tick for active bots, and each mismatch is an anomaly (engine.md, "How the law grows").
+- **The alternative,** the server running Mojang's movement for bots, was rejected. The client-only parts (input conversion, the sprint latch, push-out) would differ from the real client, and then nothing judges movement.
 
-- **The default: the engine's law.** The engine computes each active bot's movement (bit-exact to the client, the L0 class) and submits it through the server's normal player-movement handler, as a real client would. The server validates it as it does for any client.
-- **The judge stays the client.** The lab client audits sampled words at 100×.
-- **Server-owned outcomes are nature:** damage, food, block updates, fluids, entities, pickups. The engine predicts them every tick for active bots, and each mismatch is an anomaly with a witness, the **deviation stream** (engine.md, "How the law grows").
-- **The alternative,** the server running Mojang's common movement code for bots, was rejected. The client-only parts (input conversion, the sprint latch, push-out) would differ from the real client, and then nothing judges movement.
+## The self channel (server → engine, per bot)
 
-## Hosting the engine
+A bot never sees its own packets, so "the connection sends nothing" would freeze it: after a `teleport()` the server ignores every move until the matching `AcceptTeleportation`, and resends every 20 ticks. The engine therefore receives, per bot:
+- teleports, with their ids;
+- impulses: explosions and `SetEntityMotion` (through `hurtMarked`);
+- respawn and dimension change (each needs a `PlayerLoaded` reply);
+- health, food, inventory, attributes, effects;
+- keep-alive.
 
-**Recommended: in-process.** The engine is a Rust `cdylib` loaded by the server mod through Java 25's foreign-function API. The same crate also builds standalone for the offline fast loop.
-- **It buys:** no second process, protocol or lifecycle; deltas and inputs cross as function calls with shared buffers; one clock.
-- **It costs:**
-  - A Rust panic must never cross into the JVM: every entry point catches unwinding and returns an error, and the mod then drops the engine's bots to scripted idle instead of crashing the server.
-  - Debugging spans two runtimes.
-- **The alternative is a separate process over shared memory.** It isolates crashes, and the cost per tick is microseconds. Either way the engine keeps its own world, so in-process saves less than it might seem. It wins on simplicity, not on speed.
+## Lazy bots
 
-This revises the "engine as a separate Rust process" default of 4 November, and needs Julien's yes.
+A bot executing a certified word skips the server's tick, and its state is the word evaluated at the current tick. Skipping the tick drops a lot (`ServerPlayer.tick`, `Player.tick`, `FoodData.tick`, stats, cooldowns, pickups, pushing, `Entity.move`'s vibrations and `stepOn`/`fallOn`). So:
+- **(a) Positions are written every tick** (`absSnapTo`, plus `ChunkMap.move` on a section change). Chunk tickets, mobs, spawning and despawn never act on a ghost.
+- **(b) Lazy only on a quiet footprint:** the word's footprint, widened by listener and interaction radii, holds no hooked block, no game-event listener (sculk) and no entity.
+- **(c) Materializing writes a state record:** food with its tick timer and exhaustion, effects, cooldowns, air, fire, freeze and portal timers, `tickCount`, stats.
+- **(d) A frozen gate:** lazy-then-materialized equals ticked-throughout, on the saved player NBT and the fields in (c).
+- **(e) Visibility covers every channel** a real client receives: tracking, waypoints, sounds, block changes. A bot visible on any channel is ticked. **Julien** decides whether bots transmit on the locator bar (a transmit range of 0 hides them there).
+- At the 1,000-bot flight Julien sees every bot, so laziness saves nothing there. At 30 µs per active bot that's 30 ms per tick: fine at 20 TPS, and about 330 bots fit at 100 TPS.
+
+## Hosting the engine: a separate process
+
+**The engine runs as its own process,** over shared memory, pipelined one tick ahead (the engine is anytime). If it disconnects, the bots drop to scripted idle.
+- **Why not in-process** (the 9 November draft): a fault `catch_unwind` can't catch (abort, stack overflow, out of memory, a double panic, an access violation in unsafe, SIMD or GPU-driver code) would kill the JVM mid-save. Region writes aren't atomic, so Julien's world could be lost: that is ruin, not a price. And Windows locks a loaded DLL, so every engine rebuild would mean a server restart, which slows the feedback loop.
+- **It costs little:** the engine keeps its own world either way, so in-process bought only simplicity.
+- **What would flip it back:** a measured handoff at 2,000 TPS that can't be pipelined and costs more than about 5% of the 0.5 ms tick.
+
+This keeps the 4 November default ("the engine as a separate Rust process").
 
 ## Interfaces (frozen with the spec)
 
-- **Server → engine, each tick:**
-  - the tick number;
-  - world deltas (position, new state);
-  - per active bot, the server-owned outcomes it predicted (for the deviation stream);
-  - per real player, position and tracking range (for laziness);
-  - commands.
-- **Engine → server, each tick:**
-  - per active bot, its movement and inputs (move, look, use, attack, hotbar);
-  - per lazy bot, nothing until it's materialized.
-- **Determinism:** the server's randomness is recorded, and enters the engine as input (job 1.2).
+- **Server → engine, each tick:** the tick number; world deltas; the self channel per bot; per bot, the server-owned outcomes (for the deviation stream); per real player, position and every visibility range; commands.
+- **Engine → server, each tick:** per active bot, its serverbound packet sequence; per lazy bot, its position only.
+- **Determinism:** the server's randomness is recorded and enters the engine as input (job 1.2).
+
+## Decisions for Julien
+
+1. **Bot chunk loading.** `DistanceManager.addPlayer` gives every bot a loading ticket at the server's view distance. 10⁴ dispersed bots at view distance 12 means up to 6×10⁶ chunk loads; even the whole 10k × 10k area is about 3.9×10⁵ chunks, roughly 12–39 GB. Either bots get a reduced radius (game logic near a lone bot then differs from vanilla: crops, vines), or vanilla behaviour holds and dispersed bots cap near 10³.
+2. **The sleep vote and phantoms.** `SleepStatus` counts every non-spectator player, so bots block skipping the night. Each bot's `TIME_SINCE_REST` also spawns phantoms.
+3. **The locator bar.** Whether bots show on it (Lazy bots, (e)).
 
 ## Flight and kill
 
 - **Flight:** Julien joins and sees 100 bots, then 1,000, walking scripted routes as players, at 20 TPS with p99 under 50 ms per tick.
-- **Kill:** if the three savings leave the server above about 30 µs per active bot, or lazy bots can't materialize without a visible correction, the boundary is wrong. Re-derive it.
-
-## Open
-
-- **Chunk loading by dispersed bots.** Should a lone lazy bot keep chunks ticking? Vanilla would, because a player loads chunks. Not loading them changes game logic near the bot (crops, vines), so the default is vanilla behaviour, and its cost is what the dispersed Swarm 0 cells measure.
+- **Kill:** if the savings leave the server above about 30 µs per active bot (through the packet path), or above about 1 MB per bot, or lazy bots can't materialize without a visible correction, the boundary is wrong. Re-derive it.
