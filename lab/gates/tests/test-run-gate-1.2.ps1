@@ -2,7 +2,7 @@
 # Real generators/comparators/checkers remain in use. No game or live rig command is invoked.
 param([string[]]$Case)
 $ErrorActionPreference = 'Stop'
-$Case = @($Case | ForEach-Object { $_.Split(',') })
+$Case = @(if ($Case) { $Case | ForEach-Object { $_.Split(',') } })
 $caseCount = 0
 $gateDir = Split-Path -Parent $PSScriptRoot
 $sandbox = Join-Path $gateDir ('results\stub-tests-' + [Guid]::NewGuid().ToString('N'))
