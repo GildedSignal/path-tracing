@@ -74,7 +74,13 @@ A **word** is a feedback program: keys, aim and item use chosen from what the bo
 - New words come from gaps, from R&D, and from LLM proposals (farms, hubs). The law verifies them; use keeps them.
 - The record is frozen in `vocabulary.md` (Phase 3.1).
 
-*Killed if:* a pattern-cache hit rate below about 50% on natural terrain, or a narrow word that fails within its width under the measured noise.
+**The cache's unit is the segment, not the word** (Designer, 9 November).
+- A segment runs from one event to the next: a gait cycle, a transition, or an operator. A long word is a chain of interned segment ids, as in Hashlife, with costs summed in (min, +).
+- Why: a whole-word key on natural terrain matches with probability about 0.9 per column, so a 30-block word matches with about 0.9⁶⁰ ≈ 0.2%, and one changed block would void the whole word. Per segment, plains give about 10⁵–10⁶ distinct patterns, which a swarm's warm cache covers.
+- Aim is continuous, so words take a discrete set of aims; otherwise the key is never consulted.
+- A coarse tier is reserved: model classes merged where replay shows they behave the same (short grass and air, say), always confirmed by replay, and split on the first mismatch. Found, not given; filled after measuring.
+
+*Killed if:* a pattern-cache hit rate below about 50% on natural terrain, measured per segment and weighted by ticks, with refused keys (hook gaps) counted apart from misses. Or a narrow word fails within its width under the measured noise.
 
 ## 4. A tool is a law input you carry
 
