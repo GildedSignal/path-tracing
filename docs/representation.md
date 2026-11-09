@@ -38,6 +38,12 @@ Each place is looked at with the coarsest grain whose error cannot change the de
 
 - **A bot's state** at the planning grain is: which word it is in, its phase in that word's cycle, and where the word sits on the walkable surface. Straight motion is then a constant plus a counter.
 - **The world's state** is which words exist where.
+- **Programs plus scars** (ES `shipmem`, S59). Everything is stored as an exact program plus sparse scars, each scar an exact difference from the program, never an average ("NO ELITE style").
+  - The world is `worldgen(seed)` plus its edits.
+  - A swarm on a mission is the mission's program plus each bot's deviations.
+  - A bot inside a word is (word, phase): the word's per-cycle increments live once in the shared cache, as in ES's cycle memo.
+  - Departures on a grid and formations on a lattice cost about 0 bits per bot; random ones cost about 14. So missions emit programs.
+- **Memory follows distinctions** (ES's H_live). The number of new distinctions per second (edits, deviations, new patterns), not the bot count, decides what fits.
 - **The planner's coordinate is T itself:** wavefronts are lines of equal T, and every route goes down T. Building T is the work; following it is free (the clay mug, principle 7).
 - **Why the vocabulary is small** (S46): every regime has drag (air, water, ground friction, boats, elytra), so every regime settles to a steady motion. A sprint-jump is a 12-tick cycle at 7.127 m/s; an elytra glide at fixed pitch settles to one speed and one sink rate; a boat on ice settles to its top speed.
   - Words are few per regime, and regimes add rather than multiply.
@@ -103,6 +109,8 @@ Consequences:
 | Merging: Nerode, Birkhoff | states with the same futures merge; motion settles onto attractors |
 | Bounds: A*; delete relaxation; the light cone | the medium is optimistic, words are feasible; refine only where the gap could change a decision; pruning only by proof |
 | Events: kinetic data structures | time advances when a certificate breaks, not every tick |
+| Bit-parallel (min, +) (ES) | the light cone spreads by shift and OR over occupancy bitmaps: one step for 64 cells per operation |
+| The allocator: one queue ordered by slack (ES 12) | each bot's next decision deadline against the compute it needs; idle time precomputes words and recompresses; first-move latency at p99 is its measure |
 
 **The far field** (multipoles, a tracked request) is the medium's bounds or landmark distances. The gap between lower and upper bound is the stated error. Min-plus has no general low-rank expansion (the subcubic-equivalence wall, foundations research), so compression comes from bounds, refined where the gap could change a decision.
 
@@ -122,6 +130,10 @@ Bots always join a server Julien fully controls, and he sees them as real player
 - **Coupling only where footprints meet.** Reservations exist only for scarce things (one bucket, a one-wide passage), with priority to the least slack.
 - **Ant behaviour without ant code.** Planned routes form a demand field (stigmergy). Build if the total T saved beats the cost (the threshold). Congestion raises T (negative feedback). Claims stop duplication.
 - **Lazy bots.** A bot on a certified path isn't ticked until something can see or touch it, or it reaches a decision.
+- **Two evaluation orders, chosen by a dimensionless number** (ES, S59): events per cell per light-crossing, a Knudsen-like number, not a category of object.
+  - **Sparse** (≪ 1): certificates, the causal frontier and the slack queue, on the CPU. This covers lone and lazy bots.
+  - **Dense** (near 1): cells in lockstep, on SIMD or the GPU. This covers crowds pushing each other, fights and mob swarms, where certificates break every tick and stop paying.
+  - Both give the same bits. The GPU stays unqualified until a measured crossover exists (ES fermi.md).
 - *Killed if:* server ms per tick per bot stays above its floor once lazy bots exist.
 
 ## 8. Missions, restoration, prices

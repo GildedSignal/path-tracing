@@ -16,7 +16,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Phase 0, done.** `main` is the one line: the law, the recorder, the tracks, and the 100× clock with its guard above 2000 TPS. Every offline suite is green.
   - The live clock gate passed on `48d2deb`: 2000 TPS movement identical on three courses, 12,000 sustained ticks identical with zero corrections, 101× active, 4000 refused by the guard.
   - Merged branches, worktrees, build folders and finished jobs are deleted, locally and on GitHub. The original L0 pairs are in `D:\path-tracing-evidence\l0-original-pairs`.
-- **Phase 1.** GPT has 6% of its weekly usage left (S55), so Claude sub-agents build, one at a time, with GLM lanes alongside. Each GPT job's work is committed as WIP on its branch, and its prompt carries its continuation.
+- **Phase 1.** GPT has 6% of its weekly usage left (S55): Claude sub-agents build, one at a time, with GLM lanes alongside. To build next (S59): the lab wiki (lab/glm.md) and run records with worst margins (AGENTS.md).
   - **Done: law speed (1.1).** Under 1 µs per tick on all four bench cases (`cargo run --release --bin bench` from `engine/`), about 55×, replays identical, judged MERGE.
   - **1.2 footprints (Sol, `wt/footprints`):** nearly done. Recording adapter, randomness inventory, draft pattern key, and the judge's differential tests, whose mutants are caught. Its docs (`docs/footprints.md`) and the Designer's red-team of the key remain.
   - **1.3 L0 (Terra, `wt/l0-close`):** sprint flag and sprint modifier made independent. The saved witness now replays all 420 rows; the old derivation fails at tick 204. A fresh live capture and the frozen verdict remain.
@@ -51,8 +51,8 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 3. **The vocabulary on legs, and the first flight.**
    - The word record, red-teamed and then frozen in `docs/vocabulary.md`.
    - The word compiler: gaits, transitions, compound words, a cache keyed by pattern.
-   - The medium and fields: the light cone, relaxed bounds, landmarks as the far field.
-   - The executor.
+   - The medium and fields: the light cone (bit-parallel, ES), relaxed bounds, landmarks as the far field.
+   - The executor and the allocator: one queue ordered by slack; a bot is (word, phase) (ES, S59).
 
    Rungs: R1–R3, R-retarget, his tracks, R-scale, R-far 10³, and the rediscovery count starts. Flight: the bot races his tracks. Kill: words per regime ≫ 10³, or a pattern-cache hit rate under about 50% on natural terrain.
 4. **Tools as carried inputs.**
@@ -67,7 +67,7 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
    - Reservations only for scarce things.
    - A demand threshold for infrastructure.
    - Obligations that pass between bots.
-   - Congestion; lazy bots in the server.
+   - Congestion; lazy bots in the server; sparse versus dense evaluation, chosen by events per cell per light-crossing; a swarm as its mission program plus scars (ES, S59).
 
    Rungs: 20 bots get a portal where 1 bot doesn't; a shared bucket crossing; a rolling bridge cleaned up by the last bot; 10³ and 10⁴ bots.
 6. **Economy and building.**
@@ -83,8 +83,6 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 
 **Parallel lanes:** Phase 0 first. Then Phase 1's lanes together (two GPT jobs plus GLM). The integrator writes the specs for 2.1 and 3.1 during Phase 1, and they're red-teamed. Then Phases 2 and 3 build side by side.
 
-The rules that keep it converging are in [AGENTS.md](../AGENTS.md): flights, no job without a consumer, SR-71, ladders that climb until they fail.
-
 ## Scoreboard
 
 Rows begin with Phase 1:
@@ -92,7 +90,8 @@ Rows begin with Phase 1:
 - first-move latency at p99;
 - cost per bot, and server ms per tick at N bots;
 - deviation rate per capability;
-- words per regime, and the pattern-cache hit rate;
+- words per regime, and the pattern-cache hit rate, from superflat to random terrain (ES's degradation benchmark);
+- distinctions created per second (ES's H_live), the memory driver at scale;
 - rediscovery count;
 - feedback-loop time.
 

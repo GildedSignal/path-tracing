@@ -42,6 +42,10 @@ No Fable (Julien, 4 November).
 - **Jobs that keep stopping.** A job that stops twice on its own failure goes back to the integrator for a new spec.
 - **Julien's words.** His turns go verbatim into `docs/reference/`, and the register in PRINCIPLES.md cites them; models never reword them. For a new idea, think and talk with him first, and build when he says so.
 - **Tests answer fast** (S49). A test exists to answer one question as fast as possible. A test that tries too much hunts for something that isn't there, or that will turn up later anyway: diminishing returns. Normal tick tests stay; exhaustive sweeps don't. Iteration beats perfection.
+- **Run records, merge door, component state** (ES method, S59):
+  - Every run (check, gate, bench, flight, lab run) writes a record: inputs for exact replay, each invariant's worst margin, and every refusal. A new worst margin or a refusal goes to the anomaly list in HANDOFF.
+  - A merge prints its net lines; growth needs a `Bought:` line in the commit saying what it buys.
+  - A component's state comes from facts. A sketch exists only on a branch. A flying component is on main. A load-bearing one has dependents or a frozen gate. A frozen one has a hash in a spec. Investment follows the state.
 - **Cleanup once per phase** (S49), as the phase's last step, never in between: delete merged branches, worktrees, build folders, finished job folders, and any check whose result is now a regression test; make the docs true. First move any tool that code still references (oracles, corpora) to `oracles/`, and check `git status --ignored`. Done more often, it's busy work. Done less often, it bloats.
 - **Pace.** No time estimates. Progress is the scoreboard: T, cost and scale. Every phase ends in a flight he can use.
 - **Publishing.** `GildedSignal/path-tracing` is public (S21). The integrator pushes `main`; builders never push. No secret, password, token or game jar is ever committed.
