@@ -11,17 +11,20 @@
 - [port-entity-rules](port-entity-rules.md) — reproduced: 2; last 2026-11-09
 - [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 1; last 2026-11-09
 - [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
-- [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1; last 2026-11-09
+- [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
-- [step-up-reachability](step-up-reachability.md) — no dossier: 1, rate-limited: 1; last 2026-11-09
-- [track-designer](track-designer.md) — lead: 1, rate-limited: 1; last 2026-11-09
-- [trial-honey-slide-cap](trial-honey-slide-cap.md) — rate-limited: 1; last 2026-11-09
-- [trial-scaffolding-descend](trial-scaffolding-descend.md) — rate-limited: 1; last 2026-11-09
-- [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) — rate-limited: 1; last 2026-11-09
+- [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1; last 2026-11-09
+- [track-designer](track-designer.md) — lead: 2, rate-limited: 1; last 2026-11-09
+- [trial-honey-slide-cap](trial-honey-slide-cap.md) — lead: 1, rate-limited: 1; last 2026-11-09
+- [trial-scaffolding-descend](trial-scaffolding-descend.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
+- [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 
 ## Reproduced results
 
+- 2026-11-09 [port-place-replaceability](port-place-replaceability.md) (local-20261109-2151-1-5-port-place-replaceability): In vanilla 26.2, when the clicked block is replaceable — `BlockState.canBeReplaced(BlockPlaceContext)`, resolving through `BlockBehaviour.canBeReplaced(BlockState, BlockPlaceContext)` = definition flag `state.canBeReplaced()` && (held stack empty || held stack is not this block's own item) — a Bl...
+- 2026-11-09 [trial-scaffolding-descend](trial-scaffolding-descend.md) (local-20261109-2151-1-4-trial-scaffolding-descend): In Mojang 26.2 (staged client jar) a sneaking Player with negative vertical velocity is held at y=0.0 on a ladder but keeps descending at the staged ceiling max(y, -0.15000000596046448) blocks/tick inside scaffolding, because LivingEntity.handleOnClimbable skips the hold only when the feet block...
+- 2026-11-09 [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) (local-20261109-2151-1-2-trial-slime-rebound-threshold): In Minecraft 26.2 the slime rebound is no longer the classic exact velocity negation — on a vertical landing, `net.minecraft.world.entity.Entity.restituteMovementAfterCollisions` (called from `Entity.move()` offset 598) sets vy' = ((e − vy)·f)·b with b = 1.0 (living) or 0.8f (non-living), e = (ac...
 - 2026-11-09 [port-update-order](port-update-order.md) (local-20261109-1653-1-1-port-update-order): In 26.2 the falling-block update is two independent laws — a shared scheduling contract (trigger = `getGameTime()+delay` stamped with a monotonic per-level sub-tick counter, per-chunk queues keyed `(type,pos)` where the **first** schedule wins, execution as a `(priority, subTickOrder)` merge unde...
 - 2026-11-09 [elite-techniques](elite-techniques.md) (local-20261109-1554-1-7-elite-techniques): Six elite movement techniques (ceiling tap-jumping, ice+ceiling tunnels, post-takeoff 45-degree strafe, edge-timed takeoff, slab-stair grinding, and the jump-timing law behind them) are proven under the 26.2 movement law with measured T values, and two popular claims about 45-degree strafe are sh...
 - 2026-11-09 [speed-of-light](speed-of-light.md) (local-20261109-1554-1-6-speed-of-light): at law commit 9fb267f, no existing-terrain movement the Rust law can simulate beats sprint-jumping on blue ice under a 2.0-block ceiling — steady **19.810930 blocks/s**, peak single tick **21.414538** — so the 19.9 candidate is confirmed as the terrain-only c (the law puts it at 19.81, marginally...
