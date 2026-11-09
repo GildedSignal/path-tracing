@@ -1,6 +1,7 @@
 # How we work
 
-**Read [docs/PRINCIPLES.md](docs/PRINCIPLES.md) first.** It holds the goal and Julien's philosophy, and they are always on. Then read [docs/representation.md](docs/representation.md), the framework, and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
+**Read [docs/PRINCIPLES.md](docs/PRINCIPLES.md) first.** It holds the goal and Julien's philosophy, and they are always on.
+Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
 - [docs/engine.md](docs/engine.md) for the law and the engine's contract;
 - [docs/ladder.md](docs/ladder.md) for the rungs and the scoreboard.
 
