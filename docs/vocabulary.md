@@ -1,6 +1,6 @@
-# The vocabulary: the word record (Phase 3.1, draft 2)
+# The vocabulary: the word record (Phase 3.1, frozen 9 November)
 
-The word is the one object (representation.md, section 3): an edge for the search, a certificate, a cache entry, a worldtube and a training datum. This spec fixes its record. It is a one-way door, so the Designer red-teams it and Julien reviews it before it freezes.
+The word is the one object (representation.md, section 3): an edge for the search, a certificate, a cache entry, a worldtube and a training datum. This spec fixes its record. Frozen on 9 November (S60), after the Designer's two red-teams and Julien's review. It changes only by a new version.
 - **Draft 1** (9 November) keyed segments on the exact start bits. The Designer showed that food, exhaustion and position never repeat, so the hit rate on natural terrain would be about 0% by construction.
 - **Draft 2** takes the Designer's seven changes.
 
