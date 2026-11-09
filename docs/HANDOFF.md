@@ -41,7 +41,7 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 
    Flight: his track runs replayed offline at ≥ 10⁴× real time. Kill: no path below about 5 µs means the `World` interface is wrong.
 2. **One mind in the server, v0.**
-   - Design: [server.md](server.md) (draft, red-teamed 9 November): bots that don't observe, world changes streamed once, a spatial index for player queries, bulk persistence, the vanilla client's packets, a self channel, lazy bots on quiet footprints, the engine as a separate process. Three decisions are Julien's: bot chunk loading, the sleep vote and phantoms, the locator bar.
+   - Design: [server.md](server.md) (draft, red-teamed 9 November): bots that don't observe, world changes streamed once, a spatial index for player queries, bulk persistence, the vanilla client's packets, a self channel, lazy bots on quiet footprints, the engine as a separate process. Julien ruled (S52): bots are players (one sleeper, phantoms kept, on the locator bar). Chunk memory follows the area covered; it freezes after the packet-path re-measure.
    - Build: the deviation stream (every server-owned outcome predicted and compared, each mismatch a witness for GLM triage).
    - [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md), rewritten to this design: 0, 1, 100 and 1,000 bots.
    - A sandbox server at 100× for R&D.

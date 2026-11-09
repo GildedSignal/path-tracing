@@ -1,6 +1,6 @@
 # One mind in the server (Phase 2 spec, draft)
 
-Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door. The Designer red-teamed it on 9 November ("freeze with changes"); those changes are folded in below. The decisions marked **Julien** need his ruling before it freezes.
+Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door. The Designer red-teamed it on 9 November ("freeze with changes"); those changes are folded in below, with Julien's rulings (S52). It freezes after the packet-path Swarm 0 re-measure.
 
 ## What the numbers say, and what they don't
 
@@ -55,7 +55,7 @@ A bot executing a certified word skips the server's tick, and its state is the w
 - **(b) Lazy only on a quiet footprint:** the word's footprint, widened by listener and interaction radii, holds no hooked block, no game-event listener (sculk) and no entity.
 - **(c) Materializing writes a state record:** food with its tick timer and exhaustion, effects, cooldowns, air, fire, freeze and portal timers, `tickCount`, stats.
 - **(d) A frozen gate:** lazy-then-materialized equals ticked-throughout, on the saved player NBT and the fields in (c).
-- **(e) Visibility covers every channel** a real client receives: tracking, waypoints, sounds, block changes. A bot visible on any channel is ticked. **Julien** decides whether bots transmit on the locator bar (a transmit range of 0 hides them there).
+- **(e) Visibility covers every channel** a real client receives: tracking, waypoints, sounds, block changes. A bot visible through tracking, sounds or block changes is ticked. Bots do appear on the locator bar (S52). It carries only positions, and (a) writes those every tick, so the locator bar alone doesn't force a tick.
 - At the 1,000-bot flight Julien sees every bot, so laziness saves nothing there. At 30 µs per active bot that's 30 ms per tick: fine at 20 TPS, and about 330 bots fit at 100 TPS.
 
 ## Hosting the engine: a separate process
@@ -73,11 +73,29 @@ This keeps the 4 November default ("the engine as a separate Rust process").
 - **Engine → server, each tick:** per active bot, its serverbound packet sequence; per lazy bot, its position only.
 - **Determinism:** the server's randomness is recorded and enters the engine as input (job 1.2).
 
-## Decisions for Julien
+## Bots are players (Julien, S52)
 
-1. **Bot chunk loading.** `DistanceManager.addPlayer` gives every bot a loading ticket at the server's view distance. 10⁴ dispersed bots at view distance 12 means up to 6×10⁶ chunk loads; even the whole 10k × 10k area is about 3.9×10⁵ chunks, roughly 12–39 GB. Either bots get a reduced radius (game logic near a lone bot then differs from vanilla: crops, vines), or vanilla behaviour holds and dispersed bots cap near 10³.
-2. **The sleep vote and phantoms.** `SleepStatus` counts every non-spectator player, so bots block skipping the night. Each bot's `TIME_SINCE_REST` also spawns phantoms.
-3. **The locator bar.** Whether bots show on it (Lazy bots, (e)).
+"they are a player unless it really causes an issue". So:
+- **Sleep:** one sleeper skips the night, through the vanilla sleeping-percentage game rule (0, so one sleeper suffices). Bots then never block the night.
+- **Phantoms** stay: they're natural mobs.
+- **The locator bar** shows bots.
+
+## Chunks: memory follows the area covered, not the bot count
+
+- **The rule in 26.2 (javap):**
+  - Every player holds a `PLAYER_LOADING` ticket at the *server's* view distance, one value for everyone (`ChunkMap.setServerViewDistance → updatePlayerTickets`).
+  - A player's own render distance only decides what is sent to it (`getPlayerViewDistance` in `updateChunkTracking`).
+  - The `PLAYER_SIMULATION` ticket, at simulation distance, decides what ticks.
+- **The Fermi numbers.** Julien's server: view distance 12, simulation distance 10.
+  - A lone player loads (2·12+1)² = 625 chunks, of which 441 tick.
+  - A loaded overworld chunk is about 30–100 KB in the JVM: block palettes for its non-empty sections, light at 4 KB per section, heightmaps and object overhead.
+  - So a lone player costs about 20–60 MB, and nearby players share theirs.
+- **The bound is the area.** 10⁴ bots can't load more than the area they spread over. A 10k × 10k region is about 3.9×10⁵ chunks, 12–39 GB, and that's reached from about 900 evenly spread bots on. Bots on missions cluster (bases, farms, mines), so the real number is the area of the world where bots are at once.
+- **Ways to save that keep the game vanilla:**
+  1. **Measure the per-chunk KB** in the dispersed Swarm 0 cells (Swarm 0, continuation 2). The 30–100 KB range is a guess.
+  2. **The 184-chunk ring between simulation distance (10) and view distance (12) doesn't tick.** It's held only to be sent to clients, and bots aren't sent chunks (they don't observe). A bot could load to simulation distance plus a one-chunk border, which is 29% less per lone bot. Nothing in that ring is simulated, but vanilla's behaviour at the edge (fluids or mobs reaching an unloaded chunk instead of a loaded, frozen one) could differ. So it ships only after a differential gate shows no change at the edge.
+  3. **Lowering `simulation-distance` in server.properties** is vanilla, but it also changes what ticks around Julien. It's his call, and not proposed.
+- **What doesn't help:** a smaller render distance requested by the bot's client (it changes only what's sent).
 
 ## Flight and kill
 
