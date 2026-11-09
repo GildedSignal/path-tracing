@@ -1,3 +1,4 @@
+pub mod mining;
 mod attributes;
 pub use attributes::{SpeedModifier, SpeedOperation};
 mod movement;
