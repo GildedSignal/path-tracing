@@ -26,10 +26,10 @@ $full = Join-Path $dir 'full-prompt.md'
 
 $env:PATHTRACING_ROOT = $Rig
 # The sandbox cannot read %LOCALAPPDATA%: builds use the staged copy (scripts\stage-deps.ps1), and the
-# staged copy, the Rust homes and the shared cargo target dir are opened to the job.
+# staged copy, the Rust homes, the shared cargo target dir, the reference rig (its lock and disposable worlds) and the evidence folder are opened to the job. Julien's own world (server in this checkout) is not.
 $env:PATHTRACING_DEPS = 'D:\path-tracing-deps\data'
 $env:RUSTUP_HOME = 'D:\rust\rustup'; $env:CARGO_HOME = 'D:\rust\cargo'
-$roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target']"
+$roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target','D:/path-tracing-lab','D:/path-tracing-evidence']"
 # A writable root must already exist; the sandbox cannot create it.
 New-Item -ItemType Directory -Force 'D:\path-tracing-target' | Out-Null
 # A resumed session must keep its worktree, writable roots and report file, or it loses write access (job 1.1).
