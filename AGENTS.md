@@ -28,7 +28,7 @@ No Fable (Julien, 4 November).
 
 ## Rules
 
-- **How many at once.** One Claude sub-agent, plus up to two GPT jobs (Sol or Terra; only one while Astra runs), in dependency order, never on the same files. GLM has no slot limit (S47).
+- **How many at once.** One Claude sub-agent, plus up to four GPT Terra jobs (S50), of which Sol may take up to two (only one GPT job while Astra runs), in dependency order, never on the same files. GLM has no slot limit (S47).
 - **The integrator orchestrates.** It writes specs and prompts, reads verdicts and decides. Builders build, judges judge, runners run.
 - **Resuming.** A stopped agent resumes: SendMessage for Claude, `codex exec resume` for GPT. GPT can't write git metadata, so the integrator commits its work with `Built-by:`.
 - **Prompts.** Each prompt starts with PRINCIPLES' "goal" and "philosophy" sections, verbatim, followed by its job file `jobs/<id>/prompt.md`, which gives the inputs, the output, the gate and what the job must not touch.
