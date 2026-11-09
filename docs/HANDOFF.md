@@ -8,42 +8,29 @@ This file holds the state of the build, what is in flight and what comes next. I
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
 2. Run `git status --short` and `git log -8 --oneline`.
 
-## Now (5 November, 15:00)
+## Now (6 November)
 
 **Milestone 1 is ready: Julien can race his tracks.** `wt/tracks` (1.7, 1.7b) is merged into `main` (`794e2fe`), the mod is rebuilt and installed in both clients, and a live smoke test passed (a hand-written straight track; the bot finished in 87 ticks with the placeholder planner, run line and recording written; test files removed). His tracks and run times live in `lab/tracks/` and are committed as the human baseline; recordings are ignored.
 
-**While Claude's weekly usage is out (from 5 November, 15:20)**
-- **GPT hit its usage limit at 16:00; it resets at 19:06.** Job 1.8 stopped partway (its changes stay in `wt/clock`). The queue is reordered: 1.7e (an item lost after a track, S38), 1.7d (track names), 1.8, 2.1a. Julien double-clicks `Run queue.cmd` after 19:06.
-- **GPT queue.** `Run queue.cmd` runs `jobs/queue.txt`: 1.8 (client clock, `wt/clock`) and 2.1a (region reader, `wt/world`). It never runs more than 2 GPT jobs at once, and commits each finished job on its own branch, unjudged. `Stop GPT.cmd` stops them. After a shutdown, run the queue again: finished jobs are skipped. Job 1.6c is committed on wt/fixtures (822b068). It flags one issue to fix first: it applied "hooks are unmodeled" literally, so slime, hay and beds now export inside=unmodeled although the law models their landing, and the reader rejects those fixtures. The exporter must mark only hooks the law does not model. Job 1.7c (the track kit) is complete: merged into main (e098a09), 394 + 101 offline checks and 24 audited injections, jar installed in both clients. Not yet tried live: Julien is the first to test it. Always check last.md before committing a job.
-- **On return, in order:**
-  1. Commit 1.6c and 1.7c.
-  2. Merge 1.7c into `main` and smoke-test the kit live (Julien is waiting for it).
-  3. Run a Sonnet judge on each queued job.
-  4. Merge `wt/fixtures`, then record the fixtures live, then L0.
-- **GLM now runs on this PC** (5 November, 16:50). GitHub's runner got "Connection error" twice (runs 42038557893 and 42043226109, no dossiers). omp v18.16.0 for Windows (SHA-256 verified) is in D:\path-tracing-deps\omp, and scripts\glm-local.ps1 runs lenses through lab/actions.sh. Julien starts the deep research with Run GLM research.cmd (lens foundations-primary, S42). Results land in lab\results\local-*: check the anchors with its reproduce.sh, then read the dossier. Re-run the earlier six lenses the same way.
-- **GLM.** Run 42038557893 failed: every call got "Connection error" from omp on GitHub's runner, with the new key. That is a network failure: the same key and endpoint work from this PC, and this morning's run did reach Z.ai (error 1113). Run 42043226109 (`speed-of-light`, `track-designer`, `elite-techniques`) was dispatched at 15:15. If it fails the same way, Z.ai is probably refusing GitHub's network: run the lenses on this PC instead (`lab/run.sh` under Git Bash, with the key from `Get-GlmKey`).
+- **Supervised jobs.** Julien wants to oversee the prepared work. The track kit (1.7c) is merged (`e098a09`) and installed. The inventory-loss fix (1.7e) is on `wt/tracks` (`7ded970`), with a live round trip on the reference rig. Track labels (1.7d) and the region reader (2.1a) are queued. Run one builder at a time.
+- **Representation and pathfinding are open.** Julien is thinking through them. Codex owns the port, lab bugs, and swarm runtime work. Julien prioritizes the full port, then one headless bot. Use scripted controls for runtime tests.
+- **GLM port probes.** The `local-20261107-2245` batch formally reproduced runtime pair push, scheduled-tick ties, mining target switch and larger damage inside cooldown. The cosine checker reproduced the numerical difference despite a lead grade. Six new probes are running as `local-20261107-2310` on `wt/glm-lab` (`c3d5337`).
 
 **Julien's double-clicks** (README): `Play.cmd`, `Play with bot.cmd`, `Set GLM key.cmd`. The L0 courses are built in the superflat at x = 4096 + 128·i, with teleport buttons at spawn and on each roof (`scripts\place-teleports.ps1`; it sources `lab/gates/courses.ps1`, which on `main` is still 1.6's version until `wt/fixtures` merges).
 
-**Running** (if the session was restarted, check `jobs/<id>/log.jsonl` timestamps and relaunch by hand with `.\scripts\gpt.ps1 -Job <id> -Worktree <path>`):
-- GPT job **1.6c** on `wt/fixtures`: the 1.6b judge's findings ("ready with fixes", `jobs/1.6b-fixture-fixes/judge.md`). An outer corner so the axis tie can be caught, runs ending at rest, a stable start state, server-driven state recorded per tick, the obsolete reader patch deleted.
-- GPT job **1.7c** on `wt/tracks` (fast-forwarded to `main`): the track kit (S34). Survival with the kit on A, his inventory and creative back at B, crash recovery. When it lands, merge it into `main`, rebuild both clients, then a smoke test. `play.ps1` sets `keep_inventory` on each start.
-- GLM run 42038557893 (below).
-
-**Queued:** job **1.8** (`jobs/1.8-client-clock/prompt.md`, the client clock), once `wt/fixtures` is merged, in a worktree cut from `main`.
-
 | Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
 |---|---|---|
-| `wt/law` (`law`) | jobs 1.5 to 1.5e committed (`9fc0842`; 56 tests, four mutant builds). Server-driven state is input, `movementSpeedBase`, end-of-run replay; the axis-tie mutant now fails the outer-corner test at tick 22 | after 1.6c: record fixtures live, then L0 |
-| `wt/fixtures` (`fixtures`) | job 1.6b committed (`684946e`), judged "ready with fixes" | job **1.6c** running. Then merge into `main` (conflicts expected in the recorder, since `main` now has the tracks), then `record-fixtures.ps1` live, then L0 by a fresh judge |
+| `wt/law` (`law`) | Grounded contact verified against standing vanilla traces (`2712dc1`). Mining clock and target switch committed at `b63ecfd` after the JVM comparison and mutant. | Live mining packet and tick ordering, and crouched and 2,000 TPS damage checks. |
+| `wt/world` (`world`) | Raw current committed at `01c78f8`; ordered pair push committed at `a28f2de`. App Terra raw snapshot bridge is `2a50493` on `wt/raw-fluid-export`. Its offline and saved mixed replays passed. | Ordered entity world producer and live raw client capture. |
+| `wt/l0` (`fixtures`) | [1.6g](../jobs/1.6g-l0-authoritative-corpus/prompt.md) committed (`1d7dedf`). Mixed terrain passed at both rates. Full first refused at step-ups seed 17, tick 204 speed. | App Terra built a sprint flag and attribute provenance probe. The isolated one-case reduction runs from `D:/path-tracing-target/sprint-diagnostic-source-20261107T231317`. The frozen full verdict remains refused. |
+| `wt/clock` (`clock`) | 1.8 live gate passed with the L0 recorder (`820f55b`); report `lab/gates/results/20261106T1243013521080Z-clock/report.md` in the worktree | 1.8c committed (388a1bc). Focused lab passed 2,000 TPS movement and measured 100× active client throughput. 4,000 TPS stress hit vanilla corrections. Cross-family review before merge |
 | `main` | recorder (gate 1.2 passed live), GLM harness, tracks (1.7, 1.7b) | — |
 
-- **L0's planted faults:** the axis tie gets the scripted corner course (1.6b). The step-up fault (+1 ulp) looks unreachable with vanilla blocks (GLM lens `step-up-reachability` settles it); if so, the red-team replaces it at L0's freeze, which repairs the control and doesn't weaken the gate.
-- **GLM:** working since 14:44 on 5 November, with Julien's new key. The first run (42008039888) had failed with Z.ai error 1113 on the old key's account. `Set GLM key.cmd` stores the key and tests it, but its copy to the Actions secret didn't take on his run (cause unknown); `scripts\set-glm-key.ps1 -Sync` fixed it. **Run 42038557893 is running** (dispatched 14:45): `hook-catalogue`, `step-up-reachability` and `elytra-law`, 60 minutes each.
-  - When it ends, `gh run download 42038557893 -R GildedSignal/path-tracing`; read only the `DONE` lines and the reproduced results.
-  - Next batch: `speed-of-light`, `track-designer`, `elite-techniques` (S33).
+- **L0's planted faults:** all four existing mutants fail at their intended live movement witnesses using `lab/gates/check-l0-controls.ps1`. The step-up witness uses a half slab and a vanilla step height one ULP below the slab. Evidence is under `lab/gates/results/20261106T1237131737162Z-l0-controls` in `wt/l0`.
+- **L0 preflight:** the sprint fix made all three original pairs movement-exact. The normal-difficulty full-blocks rerun also matched server resources. The peaceful full-blocks end saturation still differs. The passive probe confirmed that peaceful refills follow the server player's own tick phase. Preserve the original pairs. L0 stays open.
+- **Accelerated terrain preflight:** raw recordings replayed independently using server-authoritative start saturation. See `D:/path-tracing-evidence/20261106T1256280752904Z-terrain-replay/results.csv` for exact matches and unqualified end snapshots. The edge course's motion packet also occurs at the stock rate, tracked as [1.6e](../jobs/1.6e-landing-motion/prompt.md).
 - **GLM harness:** `.github/workflows/glm-lab.yml`, started only by hand. Dispatch: `gh workflow run glm-lab.yml -R GildedSignal/path-tracing -f lenses="<names>" -f minutes=60`. Results come back as the artifact `glm-lab-results`.
-- **Integrator left from 1.1:** the lab server on D: (port 25566) with fixture worlds; `/tick rate` in the gate runner, which needs job 1.8 first. The superflat server is running and ours to use (S29).
+- **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, `PATHTRACING_SERVER_PORT=25566` on `wt/l0` and `wt/clock`. Run gate scripts with Windows PowerShell 5.1. Use the clock candidate only on the isolated rig until reviewed.
 - **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`, then a Sonnet judge in a fresh context (one Claude sub-agent at a time), then fixes as a new job.
 - **Done:** the philosophy log; toolchain (1.0); lab hygiene (1.1, apart from the above); recorder and dumper (1.2, gate passed live, report `lab/gates/evidence/gate-1.2-20261105.md`, evidence on `D:\path-tracing-evidence`); prior art (1.4); the Rust law ported and fixed (1.5 to 1.5c); ES's testing method; the one-liner audit; least-time claims 13 and 14; GLM's harness.
 ## The roadmap (approved 4 November; one sub-agent per family at a time)
@@ -104,6 +91,8 @@ Empty until the first flight. Each row will show the goal, the value now, and th
 | Request | Owner | Where it lands | State |
 |---|---|---|---|
 | Multipoles (FMM) for how T acts at a distance (S6; about ten times in ES, never built there) | Opus designer, at Phase 4's design | far influence as a compact summary with a stated remainder bound, beside the exact portal tables | not started; never deferred "until the prerequisites", and every rung reports cost against N from the first flight |
+| Hundreds of bots on one local server with shared work (S18, S35–S36, 6 November) | Codex integrator | swarm runtime and bot server, with the vanilla lab as reference | [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md) measures scripted bots spread out and packed together. Share world reads and expose tick-stamped changes for later invalidation. |
+| 100× reference iteration | Codex integrator | [1.8b clock](../jobs/1.8b-clock-100x/prompt.md) | The standard and focused matrices match stock movement. [1.8c](../jobs/1.8c-clock-demand/prompt.md) qualified 100× active client throughput with the frame clamp disabled. Live report in the clock worktree at lab/gates/results/20261106T1810018200214Z-clock-full-demand/report.md. |
 
 ## Proposals awaiting Julien
 
