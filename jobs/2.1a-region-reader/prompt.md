@@ -2,7 +2,7 @@
 
 **Why.** The planner runs as its own Rust process and must know the static world without asking the game (the approved plan, Phase 2.1: "a region-file reader for static worlds"). The movement law (`engine/law`) reads blocks through its `World` trait; this job gives it a real world behind that trait.
 
-**Branch.** `wt/world`, cut from `wt/law` (`9fc0842`). Do not commit; the queue runner commits. If the worktree already has uncommitted changes from an interrupted run of this job, continue from them. Cargo settings as in job 1.5b. Stable Rust, **no external crates** (the sandbox has no network): write the decompression yourself.
+**Branch.** `wt/world`, cut from `main` after Phase 0 (the consolidated engine line). Do not commit; the queue runner commits. If the worktree already has uncommitted changes from an interrupted run of this job, continue from them. Cargo settings as in job 1.5b. Stable Rust, **no external crates** (the sandbox has no network): write the decompression yourself.
 
 ## Build
 
