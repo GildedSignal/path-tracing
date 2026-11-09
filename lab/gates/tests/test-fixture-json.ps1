@@ -1,10 +1,10 @@
-# Compile a smoke check against the unmodified wt/law parser copied into ignored scratch output.
+# Compile a smoke check against the committed law parser (HEAD) copied into ignored scratch output.
 param([string]$Rustc = 'D:\rust\rustup\toolchains\stable-x86_64-pc-windows-gnu\bin\rustc.exe')
 $ErrorActionPreference = 'Stop'
 $scratch = Join-Path $PSScriptRoot ('..\results\json-smoke-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Force $scratch
-$parser = & git -C (Join-Path $PSScriptRoot '..\..\..') show wt/law:engine/law/tests/support/json.rs
-if ($LASTEXITCODE) { throw 'Cannot read wt/law JSON parser.' }
+$parser = & git -C (Join-Path $PSScriptRoot '..\..\..') show HEAD:engine/law/tests/support/json.rs
+if ($LASTEXITCODE) { throw 'Cannot read the law JSON parser at HEAD.' }
 [IO.File]::WriteAllLines((Join-Path $scratch 'json.rs'), [string[]]$parser, [Text.UTF8Encoding]::new($false))
 $source = @'
 mod json;
@@ -38,7 +38,7 @@ fn main() {
     assert!(end.boolean("atRest"));
     assert_eq!(end.number("serverTickOffset"), 4.0);
     assert_eq!(end.number("foodTickTimer"), 0.0);
-    println!("PASS hand-written export block through wt/law Object, numeric boxes and raw float/vector parsing");
+    println!("PASS hand-written export block through the law parser Object, numeric boxes and raw float/vector parsing");
 }
 '@
 [IO.File]::WriteAllText((Join-Path $scratch 'main.rs'), $source, [Text.UTF8Encoding]::new($false))

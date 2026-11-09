@@ -82,6 +82,7 @@ public final class Recorder {
 
     static Path recordTrack(Minecraft mc, Path directory, String track) throws IOException {
         if (active()) throw new IllegalStateException("A recording or replay is already running.");
+        requireQualifiedClock(mc);
         JsonObject metadata = TickInput.holdSettings(mc);
         if (departureRow == null || departureInitial == null
             || departureRow.get("tickCount").getAsInt() != mc.player.tickCount) {
@@ -117,6 +118,7 @@ public final class Recorder {
     }
 
     private static void open(Minecraft mc, String runName, Path path) throws IOException {
+        requireQualifiedClock(mc);
         JsonObject metadata = TickInput.holdSettings(mc);
         metadata.addProperty("type", "recording");
         if (Files.exists(path)) throw new java.nio.file.FileAlreadyExistsException(path.toString(), null, "Output already exists");
@@ -207,6 +209,7 @@ public final class Recorder {
         boolean wasReplay = replaying();
         boolean complete = clean && (!wasReplay || tick == replay.size());
         if (wasReplay && LandingClientTrace.ENABLED) LandingClientTrace.replayEnd(name, tick, complete);
+        if (wasReplay) ClockAudit.finish(tick, complete);
         replay = null;
         start = null;
         awaitStart = false;
@@ -284,6 +287,7 @@ public final class Recorder {
             }
         }
         if (replaying()) {
+            if (tick == 0) ClockAudit.begin(name);
             if (LandingClientTrace.ENABLED) {
                 LandingClientTrace.replayStart(name, tick, mc.player.tickCount, mc.level.tickRateManager().tickrate());
             }
@@ -391,6 +395,16 @@ public final class Recorder {
             writer.write(pendingDeparture.toString());
             writer.write('\n');
             pendingDeparture = null;
+        }
+    }
+
+    private static void requireQualifiedClock(Minecraft mc) {
+        if (mc.level != null && ClockQualification.exceedsCeiling(
+            Boolean.getBoolean("pathtracing.followTickRate"), mc.level.tickRateManager().runsNormally(),
+            mc.level.tickRateManager().tickrate())) {
+            String message = "Recording refused: client follows a tick rate above the verified 2000 TPS ceiling.";
+            Bot.reply(mc, message);
+            throw new IllegalStateException(message);
         }
     }
 

@@ -1,11 +1,19 @@
 # Sends server commands over RCON (localhost only) and prints the replies.
 #   .\rcon.ps1 "time set noon" "fill 0 -60 0 10 -58 10 stone"
-param([Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Commands)
+[CmdletBinding(PositionalBinding = $false)]
+param(
+  [Parameter(Mandatory, ValueFromRemainingArguments)][string[]]$Commands,
+  [ValidateRange(1, 60000)][int]$SocketTimeoutMilliseconds
+)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 
 $password = ((Get-Content "$Rig\server\server.properties") -match '^rcon\.password=' -replace '^rcon\.password=', '')
 $client = [Net.Sockets.TcpClient]::new($ServerHost, $RconPort)
+if ($SocketTimeoutMilliseconds) {
+  $client.ReceiveTimeout = $SocketTimeoutMilliseconds
+  $client.SendTimeout = $SocketTimeoutMilliseconds
+}
 $stream = $client.GetStream()
 $reader = [IO.BinaryReader]::new($stream)
 
