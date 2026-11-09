@@ -25,7 +25,8 @@ This file holds the state of the build, what is in flight and what comes next. I
   - **GLM `local-20261109-1554` (nine lanes, 24% of the 5-hour quota):**
     - Reproduced, for Terra's next batch: the exporter classifies no `stepOn`, so magma never burns on exported terrain (patch, suite green); the source-conversion rule `getNewLiquid` has no producer (the checker says the patch over-converts falling amount-8 neighbours: fix that first); rider support for boats (Phase 4); the elytra start and the movement-mode inventory (26 checks).
     - Reproduced, for Phase 3: terrain-only c is 19.81 blocks/s (blue ice under a 2.0-block ceiling); six elite techniques proven with T values.
-    - Leads: use-item slowdown (harness incomplete); the falling-block update contract needs restating before it becomes law; three tracks (`pillarhops`, `icemegajump`, `icecorner`) whose harness didn't finish.
+    - Leads: use-item slowdown; three tracks (`pillarhops`, `icemegajump`, `icecorner`) whose harness didn't finish.
+  - **GLM `local-20261109-1653`:** the falling-block update contract, restated and reproduced (first schedule wins per position and type). Seven checkers died on GLM's 5-hour limit (HTTP 429), so their "lead" grades mean nothing; they rerun at 20:33. About 18 lanes use one GLM window.
 
 ## Roadmap (approved 9 November, S48)
 
