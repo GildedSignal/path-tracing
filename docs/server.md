@@ -96,6 +96,10 @@ This keeps the 4 November default ("the engine as a separate Rust process").
   2. **The 184-chunk ring between simulation distance (10) and view distance (12) doesn't tick.** It's held only to be sent to clients, and bots aren't sent chunks (they don't observe). A bot could load to simulation distance plus a one-chunk border, which is 29% less per lone bot. Nothing in that ring is simulated, but vanilla's behaviour at the edge (fluids or mobs reaching an unloaded chunk instead of a loaded, frozen one) could differ. So it ships only after a differential gate shows no change at the edge.
   3. **Lowering `simulation-distance` in server.properties** is vanilla, but it also changes what ticks around Julien. It's his call, and not proposed.
 - **What doesn't help:** a smaller render distance requested by the bot's client (it changes only what's sent).
+- **CPU, not memory, binds lone bots** (Fermi, 9 November):
+  - A ticking chunk costs about 2–5 µs per tick: random ticks in its few reactive sections, a spawn attempt, and the weather checks.
+  - 441 chunks is then about 1–2 ms per tick for each lone bot, so roughly 25–50 lone bots fit in the 50 ms tick at 20 TPS. Dense bots share their chunks.
+  - The dispersed Swarm 0 cells test this. The floor is event-driven world ticking: each reactive block's next change drawn once, the same distribution at a cost per event, not per chunk. It's an idea for Julien, not yet a plan.
 
 ## Flight and kill
 
