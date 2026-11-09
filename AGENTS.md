@@ -38,6 +38,8 @@ No Fable (Julien, 4 November).
 - **His repeated requests.** A request Julien makes twice becomes a tracked item in HANDOFF with an owner.
 - **Jobs that keep stopping.** A job that stops twice on its own failure goes back to the integrator for a new spec.
 - **Julien's words.** His turns go verbatim into `docs/reference/`, and the register in PRINCIPLES.md cites them; models never reword them. For a new idea, think and talk with him first, and build when he says so.
+- **Tests answer fast** (S49). A test exists to answer one question as fast as possible. A test that tries too much hunts for something that isn't there, or that will turn up later anyway: diminishing returns. Normal tick tests stay; exhaustive sweeps don't. Iteration beats perfection.
+- **Cleanup once per phase** (S49), as the phase's last step, never in between: delete merged branches, worktrees, build folders, finished job folders, and any check whose result is now a regression test; make the docs true. Done more often, it's busy work. Done less often, it bloats.
 - **Pace.** No time estimates. Progress is the scoreboard: T, cost and scale. Every phase ends in a flight he can use.
 - **Publishing.** `GildedSignal/path-tracing` is public (S21). The integrator pushes `main`; builders never push. No secret, password, token or game jar is ever committed.
 

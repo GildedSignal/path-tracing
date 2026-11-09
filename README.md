@@ -7,48 +7,30 @@ the way.
 
 ## Philosophy
 
-- **Run the law ahead.** Port the Minecraft rules that affect decisions to Rust. Given a world state and
-  candidate controls, the engine should predict motion, resource costs and world changes. The goal is to
-  evaluate many possible futures in the time a client takes to execute one.
-- **Let capabilities shape the route.** Momentum, terrain and the bot's toolkit determine which moves are
-  possible and what they cost. A bucket can open a route by changing the world. The planner should be able
-  to discover that sequence by composing legal actions.
-- **Reuse work across futures.** Share terrain, block rules and unchanged predictions. When something
-  changes, recompute only the predictions that depend on it.
-- **Use vanilla as the judge.** Compare player motion tick by tick with the vanilla client and check
-  server-owned outcomes against the server. Once a case passes, push a boundary harder or combine mechanics
-  that can interfere with each other. Reduce failures to the first divergent event and keep the replay.
+- **One law at three grains.** Mojang's code and the server are nature and the judge. The law is the
+  generative structure that reproduces them: the tick recurrence, **words** (feedback programs that run from
+  one event to the next) and the **medium** (travel time per region).
+- **A tool is a law input you carry.** A bucket carries a water block, a pearl a teleporter. Its value is
+  how much it lowers travel time where it's used, so creative moves fall out of the representation.
+- **Compute scales with what's new,** not with bots × ticks: words are compiled once per distinct situation,
+  reused wherever the pattern recurs, and recomputed only when their footprint changes.
+- **One mind in the server.** Bots are real players on the server, driven by one engine, cooperating through
+  shared fields and missions that end only when the world is restored.
 
-Read the [project principles](docs/PRINCIPLES.md), [engine contract](docs/engine.md) and
-[test ladder](docs/ladder.md) for the full design and verification rules.
+Read [the framework](docs/representation.md), [the principles](docs/PRINCIPLES.md), [the engine](docs/engine.md)
+and [the ladder](docs/ladder.md).
 
 ## Current work
 
-This branch contains the local two-client lab, course recorder and a straight-line placeholder planner.
-The [Rust port branch](https://github.com/GildedSignal/path-tracing/tree/wt/l0) contains movement and collision
-work, resource replay and tests against vanilla. The [clock branch](https://github.com/GildedSignal/path-tracing/tree/wt/clock)
-contains the opt-in lab client that measured 100× active tick throughput on the focused replay workload.
-That is a faster way to check predictions. The Rust engine's target is the throughput needed to compare
-many futures before the next decision.
-
-## Future directions
-
-1. **Finish the port.** Extend coverage across movement modes, block and entity interactions, fluids,
-   scheduled updates, tools and resources. Group cases by the rule they exercise and test how those rules
-   compose in mixed terrain. See the [port plan](https://github.com/GildedSignal/path-tracing/blob/wt/l0/docs/port-plan.md).
-2. **Run one headless bot.** Drive a server-visible player through the normal movement path and compare
-   scripted runs with the vanilla reference. Use that result to measure the cost of scaling to 100 bots
-   that share a world view.
-3. **Develop the representation and planner.** Find ways to reuse reachability and motion predictions
-   when goals, terrain or tools change. Judge routes by total server ticks, including the work to plan,
-   execute and restore. The [representation notes](docs/representation.md) are a draft.
+The roadmap and its state are in [HANDOFF](docs/HANDOFF.md): Phase 0 consolidates the Rust law, the recorder,
+the tracks and the 100× clock into one line, then Phase 1 makes the law fast and gives it the world.
 
 ## Run
 
 Double-click in this folder:
 - **`Play.cmd`**: the server and your client.
 - **`Play with bot.cmd`**: the server, the bot on your second monitor, and your client.
-- **`Run queue.cmd`**: runs the GPT build jobs listed in `jobs\queue.txt`, one after another. Safe to run again after a shutdown. **`Stop GPT.cmd`** stops them.
+- **`Stop GPT.cmd`**: stops every running GPT build job.
 - **`Set GLM key.cmd`**: paste a new Z.ai key into a hidden dialog. It is stored encrypted for your account, copied to the GitHub Actions secret, then checked once with Z.ai.
 
 At spawn, the **Courses** button (4 blocks north) takes you onto the roof of the first test course. Each roof has **Spawn** and **Next** buttons. The courses are closed boxes: press F3+N to switch to spectator and fly in, and F3+N again to press buttons. `scripts\place-teleports.ps1` rebuilds the courses and the buttons.

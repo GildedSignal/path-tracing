@@ -15,7 +15,12 @@ This file holds the state of the build, what is in flight and what comes next. I
 - **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + `wt/world`, `wt/law`, `wt/raw-fluid-export`, `wt/glm-lab`, `wt/tracks` and `main`, all clean merges. Rust: 81 tests pass. Bot track tests pass (the mixin audit learned local capture, `f0bcea2`). Terra job [0.2](../jobs/0.2-consolidate/prompt.md) is verifying the remaining self-tests (`test-run-gate-1.2` exits 1). Then `main` fast-forwards to `wt/engine`.
 - **The 100× clock** (`wt/clock`, `388a1bc`): the Sonnet judge passed it as MERGE WITH FIXES. Its report was run on uncommitted code, so the gate gets rerun on the merged HEAD. The bot follows `/tick rate` by default through the launcher, 2000 TPS is the only verified ceiling, and a guard for recordings above it is needed. After 0.2, the integrator starts `git merge wt/clock`, and Terra job [0.3](../jobs/0.3-clock-merge/prompt.md) resolves the conflicts and adds the guard.
 - **Docs.** Being rewritten to the framework: AGENTS (team with Terra), representation, engine, ladder, README.
-- **Deletions** wait for Julien's OK on the list (Phase 0.3).
+- **Cleanup done (S49):**
+  - Merged branches and their worktrees deleted, along with 76 GLM and Codex worktrees.
+  - D:'s per-job build folders deleted; `D:\path-tracing-target` keeps the shared target and the L0 reduction source.
+  - The GPT queue, the GLM GitHub workflow, port-plan.md and finished job folders removed.
+  - The original L0 pairs preserved in `D:\path-tracing-evidence\l0-original-pairs`.
+  - Left for when `wt/engine` lands: its own finished job folders, `wt/l0` and `wt/clock`, and the `origin/wt/*` branches (deleted after `main` is pushed).
 
 ## Roadmap (approved 9 November, S48)
 
@@ -115,6 +120,5 @@ Launch a job with `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-s
 - **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot.
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
 - **No Fable** (usage credits).
-- **Codex sandbox:** it can't read `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`) and can't write git metadata.
-- **Server stdin:** commands sent before the world loads fail (README).
+- **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata. **Rig:** `PATHTRACING_ROOT=D:path-tracing-lab`, port 25566, gates under PowerShell 5.1.
 - **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1.
