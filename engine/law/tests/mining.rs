@@ -91,7 +91,7 @@ fn step_text(step: Result<MiningStep, MiningRefusal>) -> String {
 }
 
 #[test]
-#[ignore = "run jobs/1.9g-mining-progress/run.ps1 against the pinned JVM oracle"]
+#[ignore = "run oracles/1.9g-mining-progress/run.ps1 against the pinned JVM oracle"]
 fn mining_progress_matches_jvm() {
     let path = env::var_os("MINING_ORACLE").expect("MINING_ORACLE must name the JVM rows");
     let rows = fs::read_to_string(path).unwrap();

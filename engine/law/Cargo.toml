@@ -12,5 +12,5 @@ mutant-fluid-wall-above = []
 
 [[example]]
 name = "fluid-flow-oracle"
-path = "../../jobs/1.9e-fluid-flow-oracle/compare.rs"
+path = "../../oracles/1.9e-fluid-flow-oracle/compare.rs"
 

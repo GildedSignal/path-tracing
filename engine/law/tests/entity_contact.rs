@@ -13,7 +13,7 @@ fn direct_runtime_witness_bits_and_guards() {
 
 #[test]
 fn direct_mojang_oracle() {
-    let path = std::env::var("ENTITY_CONTACT_ORACLE").unwrap_or_else(|_| format!("{}/../../jobs/1.9i-entity-contact/oracle.txt", env!("CARGO_MANIFEST_DIR")));
+    let path = std::env::var("ENTITY_CONTACT_ORACLE").unwrap_or_else(|_| format!("{}/../../oracles/1.9i-entity-contact/oracle.txt", env!("CARGO_MANIFEST_DIR")));
     let data = std::fs::read_to_string(path).unwrap();
     let mut count=0;
     for line in data.lines() {

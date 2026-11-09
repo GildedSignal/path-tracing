@@ -90,7 +90,7 @@ foreach ($role in 'player', 'bot') {
     $set += @{
       fullscreen = 'false'; renderDistance = '10'; simulationDistance = '8'; maxFps = '60'
       pauseOnLostFocus = 'false'; inactivityFpsLimit = '"minimized"'; soundCategory_master = '0.0'
-      # Recordings hold explicit inputs only: no option may move the bot by itself (jobs/1.5-law).
+      # Recordings hold explicit inputs only: no option may move the bot by itself (job 1.5, in git history).
       autoJump = 'false'; toggleSprint = 'false'; toggleCrouch = 'false'; sprintWindow = '0'
     }
   }

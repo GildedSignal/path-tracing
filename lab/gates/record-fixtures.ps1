@@ -27,7 +27,7 @@ $botDir = Join-Path $Rig 'clients\bot'
 $fixtures = Join-Path $PSScriptRoot '..\fixtures'
 $corpus = [bool]$CorpusMode
 $landing = $PSBoundParameters.ContainsKey('LandingRate') -or $corpus
-$corpusJob = Join-Path $PSScriptRoot '../../jobs/1.6g-terrain-corpus'
+$corpusJob = Join-Path $PSScriptRoot '../../oracles/1.6g-terrain-corpus'
 if ($corpus) {
   foreach ($key in @('Courses','Runs','Ticks','Seed','LandingRate','ResourceDifficulty')) {
     if ($PSBoundParameters.ContainsKey($key)) { throw "Corpus mode fixes $key in the manifest." }

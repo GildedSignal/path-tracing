@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "pathtracing_contact_witness",
+  "version": "1.0.0",
+  "name": "Path tracing contact damage witness",
+  "environment": "server",
+  "entrypoints": {"server": ["pathtracing.contact.ContactTrace"]},
+  "mixins": ["contact.mixins.json"],
+  "depends": {"fabricloader": ">=0.19.5", "minecraft": "26.2", "java": ">=25"}
+}
