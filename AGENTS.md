@@ -26,6 +26,8 @@
 
 No Fable (Julien, 4 November).
 
+**While GPT is nearly out of weekly usage (S55, 9 November):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
+
 ## Rules
 
 - **How many at once.** One Claude sub-agent, plus up to four GPT Terra jobs (S50), of which Sol may take up to two (only one GPT job while Astra runs), in dependency order, never on the same files. GLM has no slot limit (S47).

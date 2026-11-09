@@ -4,7 +4,6 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## First ten minutes
 
-0. Read "Now" below.
 1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then [representation.md](representation.md) (the framework), then this file.
 2. Run `git status --short`, `git log -8 --oneline` and `git worktree list`.
 
@@ -12,15 +11,17 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 **The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The roadmap below is approved (S48). **Phase 0 is done; Phase 1 is under way.**
 
+**The near goal (S55): about 5 bots with pathfinding and swarm behaviour working very well, before any serious optimization.** "Vanilla in behaviour, not pure vanilla": improve with our own changes, or find mods as needs show up. Don't invent scale problems. So the critical path is: world reader, then L0, then the planner (Phase 3), then 5 bots on the server. Swarm 0 and the scale work are parked.
+
 - **Phase 0, done.** `main` is the one line: the law, the recorder, the tracks, and the 100× clock with its guard above 2000 TPS. Every offline suite is green.
   - The live clock gate passed on `48d2deb`: 2000 TPS movement identical on three courses, 12,000 sustained ticks identical with zero corrections, 101× active, 4000 refused by the guard.
   - Merged branches, worktrees, build folders and finished jobs are deleted, locally and on GitHub. The original L0 pairs are in `D:\path-tracing-evidence\l0-original-pairs`.
-- **Phase 1.** GPT hit its usage limit at about 15:46, after an hour of four parallel jobs; it resets at 19:24. Each job's work is committed as WIP on its branch. Resume each as a **fresh** job (the prompt carries its continuation), not with `-Resume`, which proved unreliable.
+- **Phase 1.** GPT has 6% of its weekly usage left (S55), so Claude sub-agents build, one at a time, with GLM lanes alongside. Each GPT job's work is committed as WIP on its branch, and its prompt carries its continuation.
   - **Done: law speed (1.1).** Under 1 µs per tick on all four bench cases (`cargo run --release --bin bench` from `engine/`), about 55×, replays identical, judged MERGE.
   - **1.2 footprints (Sol, `wt/footprints`):** nearly done. Recording adapter, randomness inventory, draft pattern key, and the judge's differential tests, whose mutants are caught. Its docs (`docs/footprints.md`) and the Designer's red-team of the key remain.
   - **1.3 L0 (Terra, `wt/l0-close`):** sprint flag and sprint modifier made independent. The saved witness now replays all 420 rows; the old derivation fails at tick 204. A fresh live capture and the frozen verdict remain.
-  - **2.1a world reader (Terra, `wt/world`):** inflate, region, NBT, snapshot and probe drafted. It found that block tags must come from the jar's resources (an unbound tag marks ladders as not climbable). Verification remains.
-  - **Swarm 0 (Terra, `wt/swarm-0`):** server-side `ServerPlayer` bots, packed together. Median ms per tick at 20 TPS: 0.64 for 1 bot, 0.99 for 10, 6.8 for 100 (p99 15.1); all three sustain 100 TPS. That measured server-side movement, the rejected design (Designer, 9 November): continuation 2 re-measures through the client-packet path, with costs by component. **One mind and lazy bots therefore move to the start of Phase 2.** The 1,000-bot and dispersed cells remain (`D:\path-tracing-evidence\swarm-0-20261109-d`).
+  - **2.1a world reader (`wt/world`; an Opus builder since 9 November, evening):** inflate, region, NBT, snapshot and probe drafted. It found that block tags must come from the jar's resources (an unbound tag marks ladders as not climbable). Verification remains.
+  - **Swarm 0 (`wt/swarm-0`, parked by S55):** server-side `ServerPlayer` bots, packed together. Median ms per tick at 20 TPS: 0.64 for 1 bot, 0.99 for 10, 6.8 for 100 (p99 15.1); all three sustain 100 TPS. That measured server-side movement, the rejected design (Designer, 9 November): continuation 2 re-measures through the client-packet path, with costs by component. **One mind and lazy bots therefore move to the start of Phase 2.** The 1,000-bot and dispersed cells remain (`D:\path-tracing-evidence\swarm-0-20261109-d`).
   - **GLM `local-20261109-1523` (`lab\results`, local):** three lanes reproduced: the swimming gate's missing passenger and flight terms (integrate first, for Phase 3); falling blocks ticking at game time + 2 (Phase 4); knockback rewriting velocity (mobs). The fluid lane left a lead with a patch. The 7 November runs were lost in the cleanup: check `git status --ignored` before removing a worktree.
   - **GLM `local-20261109-1554` (nine lanes, 24% of the 5-hour quota):**
     - Reproduced, for Terra's next batch: the exporter classifies no `stepOn`, so magma never burns on exported terrain (patch, suite green); the source-conversion rule `getNewLiquid` has no producer (the checker says the patch over-converts falling amount-8 neighbours: fix that first); rider support for boats (Phase 4); the elytra start and the movement-mode inventory (26 checks).
@@ -44,7 +45,6 @@ Every phase ends in a **flight**, something Julien uses in the game, and has a *
 2. **One mind in the server, v0.**
    - Design: [server.md](server.md) (draft, red-teamed 9 November): bots that don't observe, world changes streamed once, a spatial index for player queries, bulk persistence, the vanilla client's packets, a self channel, lazy bots on quiet footprints, the engine as a separate process. Julien ruled (S52): bots are players (one sleeper, phantoms kept, on the locator bar). Chunk memory follows the area covered; it freezes after the packet-path re-measure.
    - Build: the deviation stream (every server-owned outcome predicted and compared, each mismatch a witness for GLM triage).
-   - [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md), rewritten to this design: 0, 1, 100 and 1,000 bots.
    - A sandbox server at 100× for R&D.
 
    Flight: Julien sees 10–50 bots as players (S53). The chunk-ticking wall for lone bots waits for Phase 5 (server.md, "Chunks").
@@ -114,7 +114,7 @@ Launch: `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1
 
 - **Disk:** C: has about 8 GB free. The toolchain, builds and lab worlds go on D:.
 - **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot. Never build or run GPT jobs during a live clock gate: CPU contention makes the client lag and the server correct it (9 November).
-- **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
+- **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or the reference rig. Julien's own server may take a mod that keeps behaviour vanilla, once a need shows up (S55).
 - **No Fable** (usage credits).
 - **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata.
 - **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1.
