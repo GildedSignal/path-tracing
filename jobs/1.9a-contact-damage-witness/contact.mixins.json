@@ -1,7 +1,0 @@
-{
-  "required": true,
-  "package": "pathtracing.contact.mixin",
-  "compatibilityLevel": "JAVA_25",
-  "mixins": ["ContactDispatch", "PlayerObservation"],
-  "injectors": {"defaultRequire": 1}
-}
