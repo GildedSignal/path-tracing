@@ -18,3 +18,7 @@
 **Must not.** Touch `engine/` or `bot/`. Choose a planner or engine hosting. Run on Julien's server, or while he drives the bot.
 
 **Done means.** The final message gives a table of ms per tick by N and layout, the sustained rate, memory, the profile shares, and the one-bot check, plus anything that refused to run and why. Answer it as fast as possible (AGENTS.md, "Tests answer fast"): no sweep beyond this matrix.
+
+## Continuation
+
+The reference rig (`D:\path-tracing-lab`) and `D:\path-tracing-evidence` are now writable for this job: take the rig lock and run the matrix as specified.
