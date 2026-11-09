@@ -22,17 +22,16 @@ This file holds the state of the build, what is in flight and what comes next. I
   - **2.1a world reader (Terra, `wt/world`):** inflate, region, NBT, snapshot and probe drafted. It found that block tags must come from the jar's resources (an unbound tag marks ladders as not climbable). Verification remains.
   - **Swarm 0 (Terra, `wt/swarm-0`):** server-side `ServerPlayer` bots, packed together. Median ms per tick at 20 TPS: 0.64 for 1 bot, 0.99 for 10, 6.8 for 100 (p99 15.1); all three sustain 100 TPS. That's about 65 µs per bot, twice the naive Fermi guess. So at 1,000 bots the server alone falls below 20 TPS, and creation slowed around 700. **One mind and lazy bots therefore move to the start of Phase 2.** The 1,000-bot and dispersed cells remain (`D:\path-tracing-evidence\swarm-0-20261109-d`).
   - **GLM `local-20261109-1523` (`lab\results`, local):** three lanes reproduced: the swimming gate's missing passenger and flight terms (integrate first, for Phase 3); falling blocks ticking at game time + 2 (Phase 4); knockback rewriting velocity (mobs). The fluid lane left a lead with a patch. The 7 November runs were lost in the cleanup: check `git status --ignored` before removing a worktree.
+  - **GLM `local-20261109-1554` (nine lanes, 24% of the 5-hour quota):**
+    - Reproduced, for Terra's next batch: the exporter classifies no `stepOn`, so magma never burns on exported terrain (patch, suite green); the source-conversion rule `getNewLiquid` has no producer (the checker says the patch over-converts falling amount-8 neighbours: fix that first); rider support for boats (Phase 4); the elytra start and the movement-mode inventory (26 checks).
+    - Reproduced, for Phase 3: terrain-only c is 19.81 blocks/s (blue ice under a 2.0-block ceiling); six elite techniques proven with T values.
+    - Leads: use-item slowdown (harness incomplete); the falling-block update contract needs restating before it becomes law; three tracks (`pillarhops`, `icemegajump`, `icecorner`) whose harness didn't finish.
 
 ## Roadmap (approved 9 November, S48)
 
 Every phase ends in a **flight**, something Julien uses in the game, and has a **kill criterion** that re-derives the representation instead of patching it. After Phase 3 the scoreboard reorders the rest, largest gap first.
 
-0. **One line of truth.**
-   - Commit the pending state (done, `51cdba1`).
-   - Consolidate the branches.
-   - Delete what's dead.
-   - Put the scaffolding on a diet: the harness ends smaller than the law it guards.
-   - Rewrite the docs.
+0. **One line of truth** (done): one branch, dead code deleted, the scaffolding on a diet, the docs rewritten.
 1. **The ground.** Lanes in parallel:
    - **law speed:** allocation-free, bit-identical, ≤ 1 µs per tick, from 26–59 µs today (Terra);
    - **footprints and determinism:** randomness as input; the canonical pattern key is red-teamed (Sol);
@@ -116,5 +115,5 @@ Launch: `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1
 - **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot. Never build or run GPT jobs during a live clock gate: CPU contention makes the client lag and the server correct it (9 November).
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
 - **No Fable** (usage credits).
-- **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata. **Rig:** `PATHTRACING_ROOT=D:path-tracing-lab`, port 25566, gates under PowerShell 5.1.
+- **Codex sandbox:** no `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`), no git metadata.
 - **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1.
