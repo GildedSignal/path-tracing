@@ -43,6 +43,43 @@ pub fn tick_with_contact(
     tick_movement(state, world, input).1
 }
 
+fn update_swimming(state: &mut PlayerState, world: &impl World) {
+    state.swimming = if state.flying {
+        false
+    } else if state.swimming {
+        state.sprinting && state.in_water && !state.riding
+    } else {
+        state.sprinting && state.underwater && !state.riding && world.fluid_block(block_pos(state.position)).fluid.kind == FluidKind::Water
+    };
+}
+
+#[cfg(test)]
+mod swimming_witness {
+    use super::*;
+    use crate::{BoxWorld, Fluid};
+    #[test]
+    fn player_and_entity_swimming_transitions() {
+        // Eight direct 26.2 oracle cases, in dossier order.
+        let cases = [
+            (false,false,true,true,false,false,true,true),
+            (false,false,true,true,false,false,false,false),
+            (false,true,true,false,true,false,true,true),
+            (false,true,false,false,true,false,true,false),
+            (true,false,true,true,false,false,true,false),
+            (true,true,true,false,true,false,true,false),
+            (false,true,true,false,true,true,true,false),
+            (false,false,true,true,false,true,true,false),
+        ];
+        for (flying, swimming, sprinting, underwater, in_water, riding, water, expected) in cases {
+            let mut state = PlayerState { flying, swimming, sprinting, underwater, in_water, riding, ..Default::default() };
+            let mut world = BoxWorld::default();
+            if water { let mut block = Block::default(); block.fluid = Fluid { kind: FluidKind::Water, ..Default::default() }; world.blocks.insert(block_pos(state.position), block); }
+            update_swimming(&mut state, &world);
+            assert_eq!(state.swimming, expected, "flying={flying} swimming={swimming} riding={riding}");
+        }
+    }
+}
+
 fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> (Option<(Vec3, Vec3)>, Option<ContactDamage>) {
@@ -74,11 +111,7 @@ fn tick_movement(
     state.was_eye_in_water = state.eye_in_water;
     update_fluid(state, world);
     if state.in_lava { state.fall_distance *= 0.5; }
-    state.swimming = if state.swimming {
-        state.sprinting && state.in_water
-    } else {
-        state.sprinting && state.underwater && world.fluid_block(block_pos(state.position)).fluid.kind == FluidKind::Water
-    };
+    update_swimming(state, world);
     state.crouching = !state.swimming && fits(state, world, Pose::Crouching) &&
     (state.shift_key_down || !fits(state, world, Pose::Standing));
     state.shift_key_down = input.sneak;
@@ -1054,6 +1087,10 @@ pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server
 /// Ordered inputs at the authoritative server resource boundaries.
 #[derive(Clone, Debug)]
 pub enum ServerResourceEvent {
+    /// A resolved LivingEntity.knockback call. `x`, `z` are the direction after the
+    /// server's jitter loop (so x² + z² ≥ 1e-5f): the caller resolves it, since the law
+    /// draws no randomness. `resistance` is the knockback-resistance attribute.
+    Knockback { strength: f64, resistance: f64, x: f64, z: f64 },
     Exhaustion(f32),
     /// Observed health debit. Any observed exhaustion is supplied separately.
     Damage(f32),
@@ -1070,6 +1107,7 @@ pub enum ServerResourceEvent {
 
 pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, event: ServerResourceEvent) {
     match event {
+        ServerResourceEvent::Knockback { strength, resistance, x, z } => knockback(state, strength, resistance, x, z),
         ServerResourceEvent::Exhaustion(amount) => add_exhaustion(state, amount),
         ServerResourceEvent::Damage(amount) => state.health = (state.health - amount).max(0.0),
         ServerResourceEvent::HurtCooldownTick => {
@@ -1089,6 +1127,65 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
         }
         ServerResourceEvent::Regeneration(tick) => server_regeneration(state, world, tick),
         ServerResourceEvent::FoodTick => food_tick(state, world),
+    }
+}
+
+// LivingEntity.knockback; the caller supplies the resolved direction.
+fn knockback(state: &mut PlayerState, strength: f64, resistance: f64, x: f64, z: f64) {
+    let strength = strength * (1.0 - resistance);
+    // dload; dconst_0; dcmpg; ifgt: a NaN strength does not return, as in vanilla.
+    if strength <= 0.0 { return; }
+    debug_assert!(!(x * x + z * z < 1.0e-5f32 as f64), "knockback direction must include server jitter");
+    let impulse = Vec3::new(x, 0.0, z).normalize().scale(strength);
+    let velocity = state.velocity;
+    let y = if state.on_ground {
+        let y = velocity.y / 2.0 + strength;
+        if y.is_nan() { y } else { 0.4f64.min(y) }
+    } else { velocity.y };
+    state.velocity = Vec3::new(velocity.x / 2.0 - impulse.x, y, velocity.z / 2.0 - impulse.z);
+}
+
+// Regression from the 26.2 bytecode (LivingEntity.knockback), not a server oracle:
+// one case per branch. A JarOracle run for numeric oracle values is a GLM lane.
+#[cfg(test)]
+mod knockback_regression {
+    use super::*;
+    use crate::BoxWorld;
+    fn hit(on_ground: bool, velocity: Vec3, strength: f64, resistance: f64, x: f64, z: f64) -> Vec3 {
+        let mut state = PlayerState { on_ground, velocity, ..Default::default() };
+        apply_server_resource_event(&mut state, &BoxWorld::default(), ServerResourceEvent::Knockback { strength, resistance, x, z });
+        state.velocity
+    }
+    const S: f64 = 0.4f32 as f64;
+    #[test]
+    fn grounded_below_the_cap() {
+        let v = hit(true, Vec3::new(0.3, -0.08, 0.2), S, 0.0, 1.0, 0.0);
+        assert_eq!((v.x.to_bits(), v.y.to_bits(), v.z.to_bits()),
+            ((0.3f64 / 2.0 - S).to_bits(), (-0.08f64 / 2.0 + S).to_bits(), (0.2f64 / 2.0).to_bits()));
+    }
+    #[test]
+    fn grounded_at_the_cap() {
+        assert_eq!(hit(true, Vec3::new(0.0, 0.2, 0.0), S, 0.0, 1.0, 0.0).y.to_bits(), 0.4f64.to_bits());
+    }
+    #[test]
+    fn airborne_keeps_vertical() {
+        assert_eq!(hit(false, Vec3::new(0.0, 0.3, 0.0), S, 0.0, 1.0, 0.0).y.to_bits(), 0.3f64.to_bits());
+    }
+    #[test]
+    fn full_resistance_changes_nothing() {
+        let v0 = Vec3::new(0.3, -0.08, 0.2);
+        let v = hit(true, v0, S, 1.0, 1.0, 0.0);
+        assert_eq!((v.x.to_bits(), v.y.to_bits(), v.z.to_bits()), (v0.x.to_bits(), v0.y.to_bits(), v0.z.to_bits()));
+    }
+    #[test]
+    fn diagonal_direction_is_normalized() {
+        let v = hit(false, Vec3::new(0.0, 0.0, 0.0), S, 0.0, 1.0, 1.0);
+        let unit = 1.0f64 / 2.0f64.sqrt();
+        assert_eq!((v.x.to_bits(), v.z.to_bits()), ((0.0 - unit * S).to_bits(), (0.0 - unit * S).to_bits()));
+    }
+    #[test]
+    fn nan_strength_continues_as_in_vanilla() {
+        assert!(hit(true, Vec3::new(0.0, 0.0, 0.0), f64::NAN, 0.0, 1.0, 0.0).x.is_nan());
     }
 }
 
