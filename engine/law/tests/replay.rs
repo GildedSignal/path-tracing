@@ -215,10 +215,58 @@ fn load_block(object: &Object<'_>) -> Block {
     block
 }
 
-fn parse_world(text: &str) -> (BoxWorld, PlayerState, Option<String>) {
-    let mut world = BoxWorld::default();
+fn load_raw(object: &Object<'_>, block: &mut Block) {
+    object.required("fluid");
+    let faces = array(object.required("solidFaces"));
+    assert_eq!(faces.len(), 4, "solidFaces needs four directions");
+    let solid_faces = std::array::from_fn(|i| match faces[i] {
+        "true" => true, "false" => false, _ => panic!("invalid solidFaces"),
+    });
+    block.fluid_flow = Some(FluidFlowBlock { blocks_motion: object.boolean("blocksMotion"), solid_faces });
+    if block.fluid.kind != FluidKind::Empty {
+        let amount: u8 = object.required("rawAmount").parse().expect("invalid rawAmount");
+        assert!((1..=8).contains(&amount), "invalid rawAmount");
+        block.fluid.raw_amount = Some(amount);
+        block.fluid.raw_falling = Some(object.boolean("rawFalling"));
+    }
+}
+struct ReplayWorld {
+    inner: BoxWorld,
+    raw_bounds: Option<(BlockPos, BlockPos)>,
+}
+impl std::ops::Deref for ReplayWorld {
+    type Target = BoxWorld;
+    fn deref(&self) -> &BoxWorld { &self.inner }
+}
+impl std::ops::DerefMut for ReplayWorld {
+    fn deref_mut(&mut self) -> &mut BoxWorld { &mut self.inner }
+}
+impl World for ReplayWorld {
+    fn block(&self, p: BlockPos) -> &Block { self.inner.block(p) }
+    fn loaded(&self, p: BlockPos) -> bool { self.inner.loaded(p) }
+    fn raw_fluid_block(&self, p: BlockPos) -> Option<&Block> {
+        if let Some((min, max)) = self.raw_bounds {
+            if !(0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]) { return None; }
+        }
+        self.inner.raw_fluid_block(p)
+    }
+    fn min_y(&self) -> i32 { self.inner.min_y() }
+    fn fast_lava(&self) -> bool { self.inner.fast_lava() }
+    fn difficulty(&self) -> u8 { self.inner.difficulty() }
+    fn natural_regeneration(&self) -> bool { self.inner.natural_regeneration() }
+    fn extra_collisions(&self, bounds: Aabb, context: CollisionContext) -> Vec<VoxelShape> {
+        self.inner.extra_collisions(bounds, context)
+    }
+}
+
+fn parse_world(text: &str) -> (ReplayWorld, PlayerState, Option<String>) {
+    let mut world = ReplayWorld { inner: BoxWorld::default(), raw_bounds: None };
     let mut state = None;
     let mut server_end = None;
+    let mut raw_cells = std::collections::BTreeSet::new();
+    let mut raw_end = false;
+    let mut saw_block = false;
+    let mut saw_world = false;
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let object = Object::parse(line);
         match object.string("kind") {
@@ -226,9 +274,23 @@ fn parse_world(text: &str) -> (BoxWorld, PlayerState, Option<String>) {
                 assert!(state.is_none(), "duplicate initial player");
                 state = Some(load_state(&object));
             }
-            "block" => world.set(position(object.required("at")), load_block(&object)),
-            "region" => world.fill(position(object.required("min")), position(object.required("max")), load_block(&object)),
+            "block" => {
+                saw_block = true;
+                let p = position(object.required("at"));
+                let mut block = load_block(&object);
+                if let Some((min, max)) = world.raw_bounds {
+                    assert!(!raw_end, "raw block after worldEnd");
+                    assert!((0..3).all(|i| p[i] >= min[i] && p[i] <= max[i]), "raw block outside bounds");
+                    assert!(raw_cells.insert(p), "duplicate raw block {p:?}");
+                    load_raw(&object, &mut block);
+                }
+                world.set(p, block);
+            },
+            "region" => { saw_block = true; assert!(world.raw_bounds.is_none(), "raw regions unsupported"); world.fill(position(object.required("min")), position(object.required("max")), load_block(&object)); },
             "world" => {
+                assert!(world.raw_bounds.is_none(), "duplicate raw world metadata");
+                if object.get("rawFluid").is_some() && object.boolean("rawFluid") { assert!(!saw_block && !saw_world, "raw world metadata must precede blocks"); world.raw_bounds = Some((position(object.required("min")), position(object.required("max")))); }
+                saw_world = true;
                 if object.get("minY").is_some() { world.minimum_y = object.number("minY") as i32; }
                 if object.get("difficulty").is_some() { world.difficulty = object.number("difficulty") as u8; }
                 if object.get("fastLava").is_some() { world.fast_lava = object.boolean("fastLava"); }
@@ -240,6 +302,7 @@ fn parse_world(text: &str) -> (BoxWorld, PlayerState, Option<String>) {
                     }).collect();
                 }
             }
+            "worldEnd" => { if world.raw_bounds.is_some() { assert!(!raw_end, "duplicate worldEnd"); raw_end = true; assert_eq!(object.number("blocks"), raw_cells.len() as f64, "raw worldEnd count"); } },
             "collision" => world.extra_shapes.push(VoxelShape::boxes(&boxes(object.required("boxes")))),
             "serverEnd" => {
                 assert!(server_end.is_none(), "duplicate server end snapshot");
@@ -247,6 +310,11 @@ fn parse_world(text: &str) -> (BoxWorld, PlayerState, Option<String>) {
             }
             value => panic!("unknown fixture kind {value}"),
         }
+    }
+    if let Some((min, max)) = world.raw_bounds {
+        assert!(raw_end, "missing raw worldEnd");
+        let volume = (0..3).map(|i| { assert!(max[i] >= min[i], "invalid raw bounds"); (i64::from(max[i]) - i64::from(min[i]) + 1) as u128 }).product::<u128>();
+        assert_eq!(raw_cells.len() as u128, volume, "incomplete raw coverage");
     }
     (world, state.expect("fixture needs a pre-tick player state"), server_end)
 }
@@ -292,7 +360,7 @@ fn recording_header(object: &Object<'_>) {
     assert_eq!(object.number("sprintWindow"), 0.0, "unsupported double-tap sprint window");
 }
 
-fn replay_text(text: &str, world: &BoxWorld, state: &mut PlayerState) -> (u64, Duration) {
+fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64, Duration) {
     let mut expected_tick = 0;
     let mut previous_tick_count = None;
     let mut elapsed = Duration::ZERO;
@@ -342,7 +410,7 @@ fn assert_server(state: &PlayerState, expected: &Object<'_>) {
     assert_eq!(state.food_tick_timer as f64, expected.number("foodTickTimer"), "server foodTickTimer");
 }
 
-fn check_server_end(state: &mut PlayerState, world: &BoxWorld, expected: &Object<'_>) -> bool {
+fn check_server_end(state: &mut PlayerState, world: &impl World, expected: &Object<'_>) -> bool {
     if expected.get("atRest") != Some("true") {
         println!("server resources skipped: serverEnd atRest is false or unknown");
         return false;
@@ -836,5 +904,45 @@ fn replay_requires_server_driven_fields() {
         })).expect_err("missing input field was accepted");
         let diagnostic = failure.downcast_ref::<String>().expect("panic message");
         assert!(diagnostic.contains(&format!("missing {key}")), "{diagnostic}");
+    }
+}
+
+#[test]
+#[ignore = "run the frozen 1.9h staged-jar gate"]
+fn raw_exporter_oracle() {
+    let dir = PathBuf::from(std::env::var_os("PATHTRACING_RAW_ROWS").expect("raw oracle directory"));
+    for name in ["water", "lava", "wall", "ice", "wet"] {
+        let text = fs::read_to_string(dir.join(format!("{name}.jsonl"))).unwrap();
+        let (world, mut state, _) = parse_world(&text);
+        let bits = fs::read_to_string(dir.join(format!("{name}.bits"))).unwrap();
+        let expected: Vec<u64> = bits.split_whitespace().map(|v| u64::from_str_radix(v,16).unwrap()).collect();
+        let v = world.block([0,0,0]).fluid.current(&world, [0,0,0]);
+        assert_eq!([v.x.to_bits(),v.y.to_bits(),v.z.to_bits()].as_slice(), expected, "{name}");
+        if name == "water" {
+            assert!(v.x > 0.0, "raw gradient must oppose stored flow");
+            tick(&mut state, &world, &Input::default());
+            assert!(state.position.x > 0.5 && state.velocity.x > 0.0, "raw current must drive movement");
+            let legacy = text.lines().filter(|line| !line.contains("worldEnd"))
+                .map(|line| line.replace("\"rawFluid\":true,", ""))
+                .collect::<Vec<_>>().join("\n");
+            let (world, mut state, _) = parse_world(&legacy);
+            tick(&mut state, &world, &Input::default());
+            assert!(state.position.x < 0.5 && state.velocity.x < 0.0, "legacy evaluated current must drive movement");
+        }
+        assert!(world.raw_fluid_block([1,1,1]).is_some(), "known air");
+        assert!(world.raw_fluid_block([2,1,1]).is_none(), "outside coverage");
+        for broken in [
+            text.lines().filter(|l| !l.contains("\"at\":[1,1,1]")).collect::<Vec<_>>().join("\n"),
+            text.replace("\"rawFalling\":false,", ""),
+            text.replacen(if name == "lava" { "\"fluid\":\"lava\"," } else { "\"fluid\":\"water\"," }, "", 1),
+            text.replace("\"blocks\":27", "\"blocks\":26"),
+            text.replace("{\"kind\":\"worldEnd\",\"blocks\":27}", ""),
+            text.replace("{\"kind\":\"worldEnd\",\"blocks\":27}", "{\"kind\":\"worldEnd\",\"blocks\":27}\n{\"kind\":\"worldEnd\",\"blocks\":27}"),
+        ] {
+            assert!(std::panic::catch_unwind(|| parse_world(&broken)).is_err(), "invalid raw input accepted: {name}");
+        }
+        let one = text.lines().find(|l| l.contains("\"at\":[1,1,1]")).unwrap();
+        let duplicate = text.replace(one, &format!("{one}\n{one}"));
+        assert!(std::panic::catch_unwind(|| parse_world(&duplicate)).is_err(), "duplicate raw cell accepted");
     }
 }

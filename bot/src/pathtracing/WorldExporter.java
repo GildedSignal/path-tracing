@@ -14,6 +14,11 @@ import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.IceBlock;
+import net.minecraft.world.level.material.FlowingFluid;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.tags.BlockTags;
@@ -114,14 +119,15 @@ final class WorldExporter {
             world.addProperty("difficulty", level.getDifficulty().getId());
             world.addProperty("naturalRegeneration", naturalRegeneration);
             world.addProperty("fastLava", level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA));
-            if (LandingClientTrace.CORPUS) {
+            if (LandingClientTrace.CORPUS || Boolean.getBoolean("pathtracing.rawFluid")) {
                 world.add("min", coordinates(request.min()));
                 world.add("max", coordinates(request.max()));
             }
+            if (Boolean.getBoolean("pathtracing.rawFluid")) world.addProperty("rawFluid", true);
             writer.write(world.toString()); writer.write('\n');
             for (BlockPos pos : BlockPos.betweenClosed(request.min(), request.max())) {
                 BlockState state = level.getBlockState(pos);
-                if (state.isAir()) continue;
+                if (state.isAir() && !Boolean.getBoolean("pathtracing.rawFluid")) continue;
                 JsonObject out = new JsonObject();
                 out.addProperty("kind", "block");
                 out.add("at", coordinates(pos));
@@ -150,10 +156,11 @@ final class WorldExporter {
                 out.addProperty("fluid", fluid.is(FluidTags.WATER) ? "water" : fluid.is(FluidTags.LAVA) ? "lava" : "empty");
                 TraceJson.number(out, "fluidHeight", fluid.getHeight(level, pos));
                 out.add("flow", TraceJson.vector(fluid.getFlow(level, pos)));
+                if (Boolean.getBoolean("pathtracing.rawFluid")) rawFluid(out, level, pos, state);
                 writer.write(out.toString()); writer.write('\n');
                 count++;
             }
-            if (LandingClientTrace.CORPUS) {
+            if (LandingClientTrace.CORPUS || Boolean.getBoolean("pathtracing.rawFluid")) {
                 JsonObject end = new JsonObject();
                 end.addProperty("kind", "worldEnd");
                 end.addProperty("blocks", count);
@@ -171,6 +178,19 @@ final class WorldExporter {
         return "Exported " + request.name() + ": " + count + " blocks.";
     }
 
+    static void rawFluid(JsonObject out, BlockGetter level, BlockPos pos, BlockState state) {
+        var fluid = state.getFluidState();
+        if (fluid.getType().isSame(Fluids.WATER) || fluid.getType().isSame(Fluids.LAVA)) {
+            out.addProperty("rawAmount", fluid.getAmount());
+            out.addProperty("rawFalling", fluid.getValue(FlowingFluid.FALLING));
+        }
+        out.addProperty("blocksMotion", state.blocksMotion());
+        JsonArray faces = new JsonArray();
+        for (Direction direction : new Direction[]{Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST}) {
+            faces.add(!(state.getBlock() instanceof IceBlock) && state.isFaceSturdy(level, pos, direction));
+        }
+        out.add("solidFaces", faces);
+    }
     private static JsonArray coordinates(BlockPos pos) {
         JsonArray at = new JsonArray();
         at.add(pos.getX()); at.add(pos.getY()); at.add(pos.getZ());
