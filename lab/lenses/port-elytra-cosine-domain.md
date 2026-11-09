@@ -1,0 +1,5 @@
+## port-elytra-cosine-domain
+
+Reuse the exact repro in D:/path-tracing-wt/glm-lab/lab/results/local-20261107-2245-1-2-port-cosine-recover. Generate a deterministic one-million-case sample of legal float pitch bits, include both signs, report signed symmetry and distribution of the default Math.cos versus disabled _dcos and Rust baseline if cheap. Preserve first raw mismatches, expected inputs and exact executable command. This measures whether a compact exact solution is plausible; do not change the runtime or choose a fallback.
+
+Immediately save a provisional one-sentence dossier with Claim: at byte one and a runnable reproduce.sh. Use D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Store all writes in your run folder. Save the first executable output before expanding. Run the reproduction, label bytecode, reconstructed arithmetic and direct runtime evidence distinctly. No networking, live game, source edits or commits.
