@@ -8,12 +8,22 @@ This file covers what the engine is for, the contract it keeps, and how Emergent
 
 The planner has to know what the bot's inputs will do, far faster than the game's 20 ticks a second, and exactly wherever a decision depends on it. That is all the engine is.
 
-A stripped player tick costs roughly 10⁻⁷ s on one core, so speed itself is not the bottleneck. Choosing what to simulate is.
+**Speed.** The port as it stands costs 26–59 µs per player tick on one core of the 7800X3D (median per terrain: flat walking, sprint-jumping, under a ceiling; measured 9 November). That's about 1,000× real time. The cost is allocation: each collision query copies a shape for every one of the ~150 neighbouring cells, air included. The Phase 1 target is ≤ 1 µs, bit-identical, against a Fermi floor of about 0.1–0.3 µs. The bench that regenerates these numbers is a Phase 1 deliverable. Choosing what to simulate stays the larger lever.
 
 ## The law
 
-- **The law is Mojang's 26.2 code** (the unobfuscated client jar). The engine is a Rust port of the parts the planner needs (his choice, S11).
+- **Nature and the judge** are Mojang's 26.2 code and the server. **The law** is the generative structure we write to reproduce them (S46), at three grains: the tick recurrence, words and the medium ([representation.md](representation.md)). The engine is the Rust law (his choice, S11).
 - **The judge is the game itself.** The bot's client runs Mojang's code with no game-logic mods: Lithium and C2ME are removed from it and from the server. The other performance mods stay, because they only render, cache or network.
+- **Seal only what can't be corrected (SR-71).** The law may be loose where the server corrects for free (walking across a field; a cow treated as the cone of where it might be). It must be bit-exact, behind frozen gates, where nothing can correct it afterwards (narrow words: a gap at the jump limit, a clutch).
+
+## How the law grows (S46)
+
+The port covers everything the bot can interact with, and everything that can interact with the bot. Rendering, sound and textures are out. It grows from three sources:
+1. **The ground layer.** The obvious mechanical laws (shapes for every block state, fluids, placement, breaking, item use, entity hitboxes and pushing, damage, effects, boats, elytra). GLM lanes write them, one rule each, read from the bytecode with a witness. An independent GLM checks each, and Terra integrates them in batches.
+2. **Deviations.** Inside the server, every prediction of a server-owned outcome is compared with what the server did. Each mismatch becomes an anomaly with a minimal witness, then a law delta and a regression test.
+3. **Demand.** A new word needs a law that isn't there yet.
+
+Deviations only catch the law's false positives. A law that wrongly says "impossible" never shows up, because the planner never tries it. So the ground layer is checked against the jar directly, and R&D runs candidate words on a sandbox copy of the server.
 - **Arithmetic copies Java exactly.** That means Java's float and double semantics (strict IEEE), `Mth.sin` and `Mth.cos` (a 65,536-entry table), the same order of operations, and never a fused multiply-add.
 
 Exactness classes:

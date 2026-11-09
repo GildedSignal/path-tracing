@@ -4,117 +4,123 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 ## First ten minutes
 
-0. Read "Now" below: it says what is running and what each branch needs next.
-1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then this file.
-2. Run `git status --short` and `git log -8 --oneline`.
+0. Read "Now" below.
+1. Read [PRINCIPLES.md](PRINCIPLES.md), then [AGENTS.md](../AGENTS.md), then [representation.md](representation.md) (the framework), then this file.
+2. Run `git status --short`, `git log -8 --oneline` and `git worktree list`.
 
-## Now (6 November)
+## Now (9 November)
 
-**Milestone 1 is ready: Julien can race his tracks.** `wt/tracks` (1.7, 1.7b) is merged into `main` (`794e2fe`), the mod is rebuilt and installed in both clients, and a live smoke test passed (a hand-written straight track; the bot finished in 87 ticks with the placeholder planner, run line and recording written; test files removed). His tracks and run times live in `lab/tracks/` and are committed as the human baseline; recordings are ignored.
+**The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The whole-project roadmap below is approved (S48). **Phase 0 is under way.**
 
-- **Supervised jobs.** Julien wants to oversee the prepared work. The track kit (1.7c) is merged (`e098a09`) and installed. The inventory-loss fix (1.7e) is on `wt/tracks` (`7ded970`), with a live round trip on the reference rig. Track labels (1.7d) and the region reader (2.1a) are queued. Run one builder at a time.
-- **Representation and pathfinding are open.** Julien is thinking through them. Codex owns the port, lab bugs, and swarm runtime work. Julien prioritizes the full port, then one headless bot. Use scripted controls for runtime tests.
-- **GLM port probes.** The `local-20261107-2245` batch formally reproduced runtime pair push, scheduled-tick ties, mining target switch and larger damage inside cooldown. The cosine checker reproduced the numerical difference despite a lead grade. Six new probes are running as `local-20261107-2310` on `wt/glm-lab` (`c3d5337`).
+- **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + `wt/world`, `wt/law`, `wt/raw-fluid-export`, `wt/glm-lab`, `wt/tracks` and `main`, all clean merges. Rust: 81 tests pass. Bot track tests pass (the mixin audit learned local capture, `f0bcea2`). Terra job [0.2](../jobs/0.2-consolidate/prompt.md) is verifying the remaining self-tests (`test-run-gate-1.2` exits 1). Then `main` fast-forwards to `wt/engine`.
+- **The 100× clock** (`wt/clock`, `388a1bc`): a Sonnet judge is reviewing it. It conflicts with `wt/engine` in `bot/pathtracing.mixins.json` and `Recorder.java`; the integrator merges it after the verdict.
+- **Docs.** Being rewritten to the framework: AGENTS (team with Terra), representation, engine, ladder, README.
+- **Deletions** wait for Julien's OK on the list (Phase 0.3).
 
-**Julien's double-clicks** (README): `Play.cmd`, `Play with bot.cmd`, `Set GLM key.cmd`. The L0 courses are built in the superflat at x = 4096 + 128·i, with teleport buttons at spawn and on each roof (`scripts\place-teleports.ps1`; it sources `lab/gates/courses.ps1`, which on `main` is still 1.6's version until `wt/fixtures` merges).
+## Roadmap (approved 9 November, S48)
 
-| Branch and worktree (`D:\path-tracing-wt\...`) | State | Next |
-|---|---|---|
-| `wt/law` (`law`) | Grounded contact verified against standing vanilla traces (`2712dc1`). Mining clock and target switch committed at `b63ecfd` after the JVM comparison and mutant. | Live mining packet and tick ordering, and crouched and 2,000 TPS damage checks. |
-| `wt/world` (`world`) | Raw current committed at `01c78f8`; ordered pair push committed at `a28f2de`. App Terra raw snapshot bridge is `2a50493` on `wt/raw-fluid-export`. Its offline and saved mixed replays passed. | Ordered entity world producer and live raw client capture. |
-| `wt/l0` (`fixtures`) | [1.6g](../jobs/1.6g-l0-authoritative-corpus/prompt.md) committed (`1d7dedf`). Mixed terrain passed at both rates. Full first refused at step-ups seed 17, tick 204 speed. | App Terra built a sprint flag and attribute provenance probe. The isolated one-case reduction runs from `D:/path-tracing-target/sprint-diagnostic-source-20261107T231317`. The frozen full verdict remains refused. |
-| `wt/clock` (`clock`) | 1.8 live gate passed with the L0 recorder (`820f55b`); report `lab/gates/results/20261106T1243013521080Z-clock/report.md` in the worktree | 1.8c committed (388a1bc). Focused lab passed 2,000 TPS movement and measured 100× active client throughput. 4,000 TPS stress hit vanilla corrections. Cross-family review before merge |
-| `main` | recorder (gate 1.2 passed live), GLM harness, tracks (1.7, 1.7b) | — |
+Every phase ends in a **flight**, something Julien uses in the game, and has a **kill criterion** that re-derives the representation instead of patching it. After Phase 3 the scoreboard reorders the rest, largest gap first.
 
-- **L0's planted faults:** all four existing mutants fail at their intended live movement witnesses using `lab/gates/check-l0-controls.ps1`. The step-up witness uses a half slab and a vanilla step height one ULP below the slab. Evidence is under `lab/gates/results/20261106T1237131737162Z-l0-controls` in `wt/l0`.
-- **L0 preflight:** the sprint fix made all three original pairs movement-exact. The normal-difficulty full-blocks rerun also matched server resources. The peaceful full-blocks end saturation still differs. The passive probe confirmed that peaceful refills follow the server player's own tick phase. Preserve the original pairs. L0 stays open.
-- **Accelerated terrain preflight:** raw recordings replayed independently using server-authoritative start saturation. See `D:/path-tracing-evidence/20261106T1256280752904Z-terrain-replay/results.csv` for exact matches and unqualified end snapshots. The edge course's motion packet also occurs at the stock rate, tracked as [1.6e](../jobs/1.6e-landing-motion/prompt.md).
-- **GLM harness:** `.github/workflows/glm-lab.yml`, started only by hand. Dispatch: `gh workflow run glm-lab.yml -R GildedSignal/path-tracing -f lenses="<names>" -f minutes=60`. Results come back as the artifact `glm-lab-results`.
-- **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, `PATHTRACING_SERVER_PORT=25566` on `wt/l0` and `wt/clock`. Run gate scripts with Windows PowerShell 5.1. Use the clock candidate only on the isolated rig until reviewed.
-- **When a job ends:** read `jobs/<id>/last.md`, then `git -C <worktree> status`, then commit on its branch with `Built-by: gpt-6.1-sol`, then a Sonnet judge in a fresh context (one Claude sub-agent at a time), then fixes as a new job.
-- **Done:** the philosophy log; toolchain (1.0); lab hygiene (1.1, apart from the above); recorder and dumper (1.2, gate passed live, report `lab/gates/evidence/gate-1.2-20261105.md`, evidence on `D:\path-tracing-evidence`); prior art (1.4); the Rust law ported and fixed (1.5 to 1.5c); ES's testing method; the one-liner audit; least-time claims 13 and 14; GLM's harness.
-## The roadmap (approved 4 November; one sub-agent per family at a time)
+0. **One line of truth.**
+   - Commit the pending state (done, `51cdba1`).
+   - Consolidate the branches.
+   - Delete what's dead.
+   - Put the scaffolding on a diet: the harness ends smaller than the law it guards.
+   - Rewrite the docs.
+1. **The ground.** Lanes in parallel:
+   - **law speed:** allocation-free, bit-identical, ≤ 1 µs per tick, from 26–59 µs today (Terra);
+   - **footprints and determinism:** randomness as input; the canonical pattern key is red-teamed (Sol);
+   - **world reader:** [2.1a](../jobs/2.1a-region-reader/prompt.md) (Terra);
+   - **close L0:** step-ups seed 17, tick 204 (Sol);
+   - **the ground layer:** GLM lanes, one Mojang rule each, batched in by Terra.
 
-1. **The law.**
-   - toolchain;
-   - lab hygiene: a vanilla judge, fixture worlds on D:, `PATHTRACING_ROOT`, a rig lock, `/tick rate`;
-   - recorder and dumper in the bot mod (GPT);
-   - catalogue (Haiku);
-   - prior art (Sonnet);
-   - the movement law in Rust (GPT, judged by Sonnet against L0).
-2. **First flight, legs only.**
-   - border-state probe, before any geometry;
-   - bridge and region-file reader;
-   - the bracket;
-   - geometry v0;
-   - search v0;
-   - executor v0 (tick-stamped controls, local re-solve).
+   Flight: his track runs replayed offline at ≥ 10⁴× real time. Kill: no path below about 5 µs means the `World` interface is wrong.
+2. **One mind in the server, v0.**
+   - Design: a Fabric server mod hosts the Rust engine in-process through Java 25's foreign-function API. Bots are real `ServerPlayer`s, and world changes stream to the engine once. This revises the 4 November "separate process" decision, so it needs Julien's yes.
+   - Build: the deviation stream (every server-owned outcome predicted and compared, each mismatch a witness for GLM triage).
+   - [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md), rewritten to this design: 0, 1, 100 and 1,000 bots.
+   - A sandbox server at 100× for R&D.
 
-   Gate: R1–R3, re-targeting, and the scale rung (a baselined red until Phase 4).
-2b. **The brachistochrone (S17, S18):** port the elytra law (GPT, judged against new L0 fixtures, including its `Math.cos` class), then rung R-brach. It enters as law data only. It is the method's first falsifier beyond the legs, run before scaling out.
-3. Movement only, in an unmodified world: every legal way to move (sneak edges, ladders, water, slime, crawling under existing trapdoors). The simplest case of the restoration rule.
-4. Scale: the server observer, portal tables, **multipoles** (a tracked request, see below), Hashlife, local repair, light-cone scheduling.
-5. Edits restored by arrival (S32): the bucket (anything its water breaks repaired), trapdoors opened and put back, silk-touch breaking and rebuilding. Edits as conjugates whose undo lands before T stops.
-6. Momentum ground: ice, slime, soul sand, honey.
-7. Tokens: pearls, food, health, durability.
-8. The moving world: fluids, falling blocks, mobs, redstone.
-9. Risk: edge width under jitter, Monte Carlo, irreversible losses.
-10. Speed: Vulkan, threads, learned ordering that only schedules.
-11. Far travel: boats, the Nether (a portal kit, both portals taken down by arrival, S32), elytra with fireworks. R-far's 10,000-block trip is the named goal (S32).
-12. The benchmark against Baritone and the other bots, on their known failure modes.
+   Flight: Julien sees 100, then 1,000, bots as players.
+3. **The vocabulary on legs, and the first flight.**
+   - The word record, red-teamed and then frozen in `docs/vocabulary.md`.
+   - The word compiler: gaits, transitions, compound words, a cache keyed by pattern.
+   - The medium and fields: the light cone, relaxed bounds, landmarks as the far field.
+   - The executor.
 
-Later, logged only (S32): multiple objectives (gather x wood); an optional human-limits profile (velocities and inputs capped at what Julien can do).
+   Rungs: R1–R3, R-retarget, his tracks, R-scale, R-far 10³, and the rediscovery count starts. Flight: the bot races his tracks. Kill: words per regime ≫ 10³, or a pattern-cache hit rate under about 50% on natural terrain.
+4. **Tools as carried inputs.**
+   - Interaction laws; operator words carrying their obligations.
+   - Discovery pulled by gaps.
+   - A relaxed medium for chains.
+   - An R&D slice on the sandbox.
 
-After the first flight, the scoreboard reorders phases 3–12, furthest gap first.
+   Rungs: R6, R7, R8 (price = T to get another), R-brach, R10, rediscovery, the Baritone benchmark. Kill: ≫ 10³ verifications per gap, or a tool needing new search code.
+5. **The swarm.**
+   - Missions; shared fields.
+   - Reservations only for scarce things.
+   - A demand threshold for infrastructure.
+   - Obligations that pass between bots.
+   - Congestion; lazy bots in the server.
 
-Every capability passes the universal gate: it enters as law and toolkit data, with no new search code.
+   Rungs: 20 bots get a portal where 1 bot doesn't; a shared bucket crossing; a rolling bridge cleaned up by the last bot; 10³ and 10⁴ bots.
+6. **Economy and building.**
+   - Prices as fields; farms as words.
+   - Blueprints as forecasts W(t).
+   - Reach-spot fields; (max, +) scheduling; scaffolding words.
+   - Multiple objectives (S32).
+7. **The cherry.**
+   - Learned ordering (Expert Iteration on logs kept from Phase 3).
+   - The LLM overseer and grounded conversation; LLM-proposed words.
+   - The GPU where profiling points.
+   - The human-limits profile (S32).
 
-## Decisions (Julien, 4 November)
+**Parallel lanes:** Phase 0 first. Then Phase 1's lanes together (two GPT jobs plus GLM). The integrator writes the specs for 2.1 and 3.1 during Phase 1, and they're red-teamed. Then Phases 2 and 3 build side by side.
 
-- Port the law to Rust first. Mojang's code in the bot's client stays the judge.
-- The world must be the same once the bot reaches B (S32, rewording S13 and S14): edits on the way are allowed if restored by arrival, with the identical block and state.
-- GPT takes well-formed tasks and Claude takes those where taste decides. No Fable.
-- He approved the plan's defaults:
-  - T in server ticks, judged against a bracket;
-  - a vanilla judge (no Lithium or C2ME in the bot's client and the server);
-  - fixture worlds on a lab server on D:;
-  - the engine as a separate Rust process;
-  - the GNU toolchain on D:;
-  - Vulkan for integer work.
+**Rules that keep it converging:**
+- every phase flies;
+- no job without a consumer;
+- seal only what can't be corrected (SR-71);
+- ladders climb until they fail, never re-running green for comfort;
+- Fermi floors on the scoreboard;
+- text budgets.
 
 ## Scoreboard
 
-Empty until the first flight. Each row will show the goal, the value now, and the gap in orders of magnitude.
+Rows begin with Phase 1:
+- T over his time, and over the bracket's upper bound;
+- first-move latency at p99;
+- cost per bot, and server ms per tick at N bots;
+- deviation rate per capability;
+- words per regime, and the pattern-cache hit rate;
+- rediscovery count;
+- feedback-loop time.
+
+Each row shows its gap to its Fermi floor, in orders of magnitude.
 
 ## Tracked requests (AGENTS.md: a request made twice gets an owner)
 
-| Request | Owner | Where it lands | State |
-|---|---|---|---|
-| Multipoles (FMM) for how T acts at a distance (S6; about ten times in ES, never built there) | Opus designer, at Phase 4's design | far influence as a compact summary with a stated remainder bound, beside the exact portal tables | not started; never deferred "until the prerequisites", and every rung reports cost against N from the first flight |
-| Hundreds of bots on one local server with shared work (S18, S35–S36, 6 November) | Codex integrator | swarm runtime and bot server, with the vanilla lab as reference | [Swarm 0](../jobs/swarm-0-headless-scale/prompt.md) measures scripted bots spread out and packed together. Share world reads and expose tick-stamped changes for later invalidation. |
-| 100× reference iteration | Codex integrator | [1.8b clock](../jobs/1.8b-clock-100x/prompt.md) | The standard and focused matrices match stock movement. [1.8c](../jobs/1.8c-clock-demand/prompt.md) qualified 100× active client throughput with the frame clamp disabled. Live report in the clock worktree at lab/gates/results/20261106T1810018200214Z-clock-full-demand/report.md. |
+| Request | Owner | Where it lands |
+|---|---|---|
+| Multipoles (FMM) for how T acts at a distance (S6, ten times in ES) | integrator, Phase 3 | the medium's far field: bounds and landmarks, with the gap between lower and upper bound as the stated error |
+| Hundreds, then thousands, of bots with shared work (S18, S35–S36, S44–S45) | integrator, Phase 2 and 5 | one mind in the server |
+| 100× iteration (S32, 6 November, S44) | integrator, Phase 0 and 1 | the clock (`wt/clock`) and the offline fast loop |
 
-## Proposals awaiting Julien
+## When a job ends
 
-**Settled on 5 November (S20):** ES 8 (cathedral for the law and the representation, the SpaceX loop above them); mobs are precomputed.
+1. Read `jobs/<id>/last.md`, then `git -C <worktree> status`.
+2. Commit on its branch with `Built-by: <model>`.
+3. A Sonnet judge reviews it in a fresh context.
+4. Fixes come as a new job.
 
-
-**Open:** the price of consumables (S13, unsure). Until he decides, a command grants a budget, zero by default; health and food are feasibility constraints.
-
-**Settled on 4 November (S13, S14):**
-- **Getting around never modifies the world** (reworded by S32 on 5 November: the world must be the same once the bot reaches B).
-- **Braking** is part of the law.
-- **A block lost to the void** is a spent token.
-- **The red-team's corrections** are folded into [representation.md](representation.md) (approved).
-- **His own A to B runs** are the human baseline in [ladder.md](ladder.md).
+Launch a job with `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1-terra`. The prompt is read from `jobs/<id>/prompt.md` in this checkout.
 
 ## Traps
 
-- **Disk:** C: has about 10 GB free. The toolchain, builds and lab worlds go on D:.
-- **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he is driving the bot.
+- **Disk:** C: has about 8 GB free. The toolchain, builds and lab worlds go on D:.
+- **Shared bot:** the bot's client is shared with Julien's play. Gates take the rig lock and never run while he drives the bot.
 - **Vanilla judge:** Lithium and C2ME change game logic, so they never go into the bot's client or a server.
-- **No Fable:** Fable sub-agents fail on this account (usage credits).
-- **Codex sandbox:** it can't read `%LOCALAPPDATA%`. Builds use the copy that `scripts/stage-deps.ps1` puts in `D:\path-tracing-deps\data` (`PATHTRACING_DEPS`), and `gpt.ps1` opens that folder, `D:\rust` and `D:\path-tracing-target` to the job. Re-stage after a game or JDK update.
-- **Codex path:** the Codex CLI lives inside the Codex app, at `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`, and the hash folder changes with app updates.
-- **Server stdin:** commands piped into the server's stdin before the world has loaded fail (README).
-- **Planning thread:** planning on the client's main thread freezes the bot's window. The bridge moves it out.
+- **No Fable** (usage credits).
+- **Codex sandbox:** it can't read `%LOCALAPPDATA%` (use `scripts/stage-deps.ps1`) and can't write git metadata.
+- **Server stdin:** commands sent before the world loads fail (README).
+- **Reference rig:** `PATHTRACING_ROOT=D:\path-tracing-lab`, port 25566. Run gate scripts with Windows PowerShell 5.1.

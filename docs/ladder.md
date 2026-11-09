@@ -4,7 +4,9 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 
 ## The scoreboard
 
-- **T:** server ticks from the tick in which the server receives the goal command, to the tick in which the bot stands in the goal cell, with every edit restored and every temporary item back in its inventory.
+- **T, per mission** (S46): server ticks from the tick in which the server receives the command to the tick in which the mission is complete, including its cleanup: every edit restored, every temporary item back in an inventory, no item left lying. A trip is a mission of one bot, so for a trip T ends when the bot stands in the goal cell with everything restored. Planning time counts.
+- **Deviation rate** (from Phase 2): mismatches per thousand predicted server-owned outcomes, per capability. It must trend down, and an unexplained anomaly blocks only the claims that depend on it.
+- **Phases and flights:** the rungs below are grouped by the roadmap in [HANDOFF](HANDOFF.md). Every phase ends in a flight Julien uses in the game, and has a kill criterion that is evaluated and logged either way.
 - **The bracket:**
   - LB is the light cone's lower bound for the trip. It is admissible: no run may ever beat it.
   - UB is the best T found by an independent offline search over raw tick controls, never over the planner's own moves.
