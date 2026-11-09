@@ -8,6 +8,10 @@ import net.minecraft.world.phys.Vec3;
 
 /** Decimal values for inspection, raw IEEE bits for the movement judge. */
 final class TraceJson {
+    static boolean sprintSpeedModifier(AttributeInstance attribute) {
+        return attribute.getModifiers().stream().anyMatch(modifier -> modifier.id().toString().equals("minecraft:sprinting"));
+    }
+
     static void number(JsonObject out, String name, double value) {
         out.addProperty(name, value);
         out.addProperty(name + "Bits", String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(value)));

@@ -19,7 +19,7 @@ foreach ($path in @('bot/src/pathtracing/ClockAudit.java', 'bot/src/pathtracing/
   $source | Set-Content -LiteralPath "$client/$path" -Encoding ASCII
 }
 $mixins = Get-Content -LiteralPath "$client/bot/pathtracing.mixins.json" -Raw | ConvertFrom-Json
-$mixins.client += 'MinecraftClockMixin'
+$mixins.client = @($mixins.client | Where-Object { $_ -ne 'MinecraftClockMixin' }) + 'MinecraftClockMixin'
 $mixins | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath "$client/bot/pathtracing.mixins.json" -Encoding ASCII
 & "$client/bot/build.ps1"
 $null = & "$root/lab/gates/probes/server-phase/build.ps1" -Server $reference -Output "$Target/probe" -ClientLib "$client/bot/lib"
@@ -36,6 +36,6 @@ $sources += @(Get-Item -LiteralPath "$root/lab/gates/record-fixtures.ps1", "$roo
   "$client/bot/build/pathtracing.jar", "$client/scripts/launch-client.ps1", "$Target/probe/phase-probe.jar",
   "$Target/terrain-verify.exe", "$reference/versions/26.2/server-26.2.jar")
 $sources += @(Get-ChildItem -LiteralPath "$root/engine/law/src" -File -Recurse)
-$sources.FullName | Get-FileHash | ConvertTo-Json | Set-Content -LiteralPath "$Target/frozen-sha256.json" -Encoding ASCII
+Get-FileHash -LiteralPath $sources.FullName | ConvertTo-Json | Set-Content -LiteralPath "$Target/frozen-sha256.json" -Encoding ASCII
 $reference | Set-Content -LiteralPath "$Target/reference-server.txt" -Encoding UTF8
 "Prepared $Target"

@@ -47,10 +47,16 @@ fn operation_order<'a>(modifiers: impl Iterator<Item = &'a SpeedModifier>) -> Ve
 }
 
 impl PlayerState {
+    // LivingEntity.setSprinting, bytecode 0..35: flag, remove modifier, optional add.
+    pub fn set_sprinting(&mut self, sprinting: bool) {
+        self.sprinting = sprinting;
+        self.sprint_speed_modifier = sprinting;
+    }
+
     // AttributeInstance.calculateValue; LivingEntity.setSprinting; RangedAttribute.sanitizeValue
     pub fn movement_speed_value(&self) -> f64 {
         if self.speed_modifiers.is_empty() {
-            let value = if self.sprinting {
+            let value = if self.sprint_speed_modifier {
                 self.movement_speed_base * (1.0 + 0.3f32 as f64)
             } else {
                 self.movement_speed_base
@@ -63,7 +69,7 @@ impl PlayerState {
             operation: SpeedOperation::AddMultipliedTotal,
         };
         let ordered = |operation| operation_order(
-            self.speed_modifiers.iter().chain(self.sprinting.then_some(&sprint))
+            self.speed_modifiers.iter().chain(self.sprint_speed_modifier.then_some(&sprint))
                 .filter(move |modifier| modifier.operation == operation));
         let mut base = self.movement_speed_base;
         for modifier in ordered(SpeedOperation::AddValue) { base += modifier.amount; }

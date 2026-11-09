@@ -186,7 +186,7 @@ fn update_sprinting(state: &mut PlayerState, input: &Input, slowly: bool) {
     let forward = input.forward && !input.back;
     let possible = state.food_level > 6 && (state.flying || !state.in_water || state.underwater);
     if !state.sprinting && forward && possible && (!slowly || state.underwater) && input.sprint {
-        state.sprinting = true;
+        state.set_sprinting(true);
     }
     if state.sprinting {
         let stop = if state.swimming {
@@ -195,7 +195,7 @@ fn update_sprinting(state: &mut PlayerState, input: &Input, slowly: bool) {
             !possible || !forward || (state.horizontal_collision && !state.minor_horizontal_collision)
         };
         if stop {
-            state.sprinting = false;
+            state.set_sprinting(false);
         }
     }
 }

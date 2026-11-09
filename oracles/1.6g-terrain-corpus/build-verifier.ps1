@@ -6,6 +6,6 @@ $env:RUSTUP_HOME = 'D:/rust/rustup'
 $env:CARGO_MANIFEST_DIR = "$root/engine/law"
 & "$env:CARGO_HOME/bin/cargo.exe" build --offline --release --lib --manifest-path "$root/engine/Cargo.toml" --target-dir $Target
 if ($LASTEXITCODE) { throw 'Cannot build the Rust law.' }
-& "$env:CARGO_HOME/bin/rustc.exe" --edition 2024 --test --extern "law=$Target/release/liblaw.rlib" `
+& "$env:CARGO_HOME/bin/rustc.exe" --edition 2024 --test -C opt-level=3 -C lto=thin -C codegen-units=1 --extern "law=$Target/release/liblaw.rlib" `
   "$PSScriptRoot/../1.6f-landing-motion/verify.rs" -o "$Target/terrain-verify.exe"
 if ($LASTEXITCODE) { throw 'Cannot build the terrain verifier.' }

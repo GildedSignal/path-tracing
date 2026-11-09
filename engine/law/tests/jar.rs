@@ -112,6 +112,7 @@ fn jar_movement_speed_attribute_order() {
         let mut state = law::PlayerState {
             movement_speed_base: from_hex(header[0]),
             sprinting: header[1] == "true",
+            sprint_speed_modifier: header[1] == "true",
             ..law::PlayerState::default()
         };
         state.speed_modifiers = modifiers.split(';').filter(|s| !s.is_empty()).map(|entry| {

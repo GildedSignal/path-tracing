@@ -8,7 +8,7 @@ This file covers what the engine is for, the contract it keeps, and how Emergent
 
 The planner has to know what the bot's inputs will do, far faster than the game's 20 ticks a second, and exactly wherever a decision depends on it. That is all the engine is.
 
-**Speed.** The port as it stands costs 26–59 µs per player tick on one core of the 7800X3D (median per terrain: flat walking, sprint-jumping, under a ceiling; measured 9 November). That's about 1,000× real time. The cost is allocation: each collision query copies a shape for every one of the ~150 neighbouring cells, air included. The Phase 1 target is ≤ 1 µs, bit-identical, against a Fermi floor of about 0.1–0.3 µs. The bench that regenerates these numbers is a Phase 1 deliverable. Choosing what to simulate stays the larger lever.
+**Speed.** The law costs about 0.6–0.95 µs per player tick on one core of the 7800X3D: median 590–940 ns across walking, sprint-jumping, under a ceiling and bumpy ground (job 1.1, 9 November; regenerate with `cargo run --release --bin bench` from `engine/`). That's about 5×10⁴ real time, bit-identical, against a Fermi floor of about 0.1–0.3 µs. Before job 1.1 it was 26–59 µs, all of it allocation. Choosing what to simulate stays the larger lever.
 
 ## The law
 

@@ -88,6 +88,9 @@ fn load_state(object: &Object<'_>) -> PlayerState {
     state.position = vector(&object.object("position"));
     state.velocity = vector(&object.object("velocity"));
     state.sprinting = object.boolean("isSprinting");
+    // Archived settled fixtures predate the independent attribute observation.
+    state.sprint_speed_modifier = object.get("sprintSpeedModifier")
+        .map(|_| object.boolean("sprintSpeedModifier")).unwrap_or(state.sprinting);
     state.movement_speed_base = object.f64("movementSpeedBase");
     state.speed_modifiers = speed_modifiers(object);
     if object.get("inputs").is_some() { state.input = input(&object.object("inputs")); }
@@ -329,6 +332,9 @@ fn assert_vector(actual: Vec3, expected: &Object<'_>, name: &str, tick: u64) {
 }
 
 fn assert_tick(state: &PlayerState, expected: &Object<'_>, tick: u64) {
+    if expected.get("sprintSpeedModifier").is_some() {
+        assert_eq!(state.sprint_speed_modifier, expected.boolean("sprintSpeedModifier"), "tick {tick} sprintSpeedModifier");
+    }
     assert_vector(state.position, &expected.object("position"), "position", tick);
     assert_vector(state.velocity, &expected.object("velocity"), "velocity", tick);
     assert_eq!(state.yaw.to_bits(), hex(expected.required("yRotBits"), 8) as u32, "tick {tick} yaw");
@@ -389,6 +395,13 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
             previous_tick_count = Some(count);
         }
         state.speed_modifiers = speed_modifiers(&object);
+        if object.get("startSprinting").is_some() || object.get("startSprintSpeedModifier").is_some() {
+            state.sprinting = object.boolean("startSprinting");
+            state.sprint_speed_modifier = object.boolean("startSprintSpeedModifier");
+        }
+        // Server-driven: the server echoes its pose and shared flags (swimming) between ticks.
+        if object.get("startPose").is_some() { state.pose = pose(object.string("startPose")); }
+        if object.get("startSwimming").is_some() { state.swimming = object.boolean("startSwimming"); }
         state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen");
         let applied = input(&object.object("inputs"));
         let start = Instant::now();
@@ -586,6 +599,30 @@ fn replay_compares_optional_fields() {
             replay_text(&complete_recording(&corrupt, 1), &world, &mut state);
         }));
         assert!(failure.is_err(), "{key} corruption was accepted");
+    }
+}
+
+#[test]
+fn replay_reads_independent_pre_tick_sprint_observations() {
+    let (world, mut state) = stationary_fixture();
+    state.set_sprinting(true);
+    let row = stationary_tick();
+    let row = format!("{},\"startSprinting\":false,\"startSprintSpeedModifier\":true,\"sprintSpeedModifier\":true,\"speedBits\":\"3e051eb9\"}}",
+        &row[..row.len()-1]);
+    replay_text(&complete_recording(&row, 1), &world, &mut state);
+    assert!(!state.sprinting);
+    assert!(state.sprint_speed_modifier);
+    for corrupt in [
+        row.replace("\"startSprinting\":false,", ""),
+        row.replace("\"startSprintSpeedModifier\":true,", ""),
+        row.replace("\"sprintSpeedModifier\":true", "\"sprintSpeedModifier\":false"),
+        row.replace("\"speedBits\":\"3e051eb9\"", "\"speedBits\":\"3e051eb8\""),
+    ] {
+        let (world, mut state) = stationary_fixture();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replay_text(&complete_recording(&corrupt, 1), &world, &mut state);
+        }));
+        assert!(failure.is_err(), "missing input or corrupt output was accepted");
     }
 }
 

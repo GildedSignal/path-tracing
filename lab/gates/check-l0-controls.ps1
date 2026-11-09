@@ -6,6 +6,7 @@ param(
   [Parameter(Mandatory)][string]$Ceiling,
   [Parameter(Mandatory)][string]$SneakEdge,
   [string]$Revision = 'HEAD',
+  [switch]$WorkingTree,
   [string]$RustHome = 'D:\rust'
 )
 $ErrorActionPreference = 'Stop'
@@ -23,9 +24,20 @@ $cases = @(
 )
 $fixtures = Join-Path $result 'lab\fixtures'
 $null = New-Item -ItemType Directory -Path $fixtures -Force
-git -C $root archive --format=zip "--output=$result\engine.zip" $commit engine
+git -C $root archive --format=zip "--output=$result\engine.zip" $commit engine oracles
 if ($LASTEXITCODE) { throw "Cannot archive engine $commit." }
 Expand-Archive -LiteralPath "$result\engine.zip" -DestinationPath $result
+if ($WorkingTree) {
+  # Builders cannot commit git metadata. Freeze the actual tested source by content.
+  $sourceFiles = @(git -C $root ls-files -- engine oracles)
+  foreach ($relative in $sourceFiles) {
+    $destination = Join-Path $result $relative
+    $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination)
+    Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $destination -Force
+  }
+  Get-FileHash -LiteralPath @($sourceFiles | ForEach-Object { Join-Path $result $_ }) |
+    ConvertTo-Json | Set-Content -LiteralPath "$result/engine-source-sha256.json" -Encoding ASCII
+}
 $hashes = foreach ($case in $cases) {
   $source = (Resolve-Path -LiteralPath $case.Source).Path
   $pair = [IO.Path]::ChangeExtension($source, 'world.jsonl')

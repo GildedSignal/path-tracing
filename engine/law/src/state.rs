@@ -63,6 +63,8 @@ pub struct PlayerState {
     pub vertical_collision_below: bool,
     pub minor_horizontal_collision: bool,
     pub sprinting: bool,
+    /// MOVEMENT_SPEED modifier presence; entity-data packets update only `sprinting`.
+    pub sprint_speed_modifier: bool,
     pub no_physics: bool,
     pub shift_key_down: bool,
     pub pose: Pose,
@@ -131,6 +133,7 @@ impl Default for PlayerState {
             vertical_collision_below: false,
             minor_horizontal_collision: false,
             sprinting: false,
+            sprint_speed_modifier: false,
             no_physics: false,
             shift_key_down: false,
             pose: Pose::Standing,
@@ -196,7 +199,7 @@ impl PlayerState {
         let PlayerState {
             t, input, position, velocity, yaw, pitch, on_ground, horizontal_collision,
             vertical_collision, vertical_collision_below, minor_horizontal_collision,
-            sprinting, no_physics, shift_key_down, pose, fall_distance, in_water, in_lava,
+            sprinting, sprint_speed_modifier, no_physics, shift_key_down, pose, fall_distance, in_water, in_lava,
             on_climbable, health, hurt_cooldown, food_level, saturation, exhaustion,
             food_tick_timer, remaining_fire_ticks, no_jump_delay, stuck_speed_multiplier,
             movement_this_tick, main_supporting_block, on_ground_no_blocks, crouching,
@@ -214,7 +217,7 @@ impl PlayerState {
             *no_jump_delay as u64, *ticks_frozen as u64];
         for value in [input.forward, input.back, input.left, input.right, input.jump, input.sneak,
             input.sprint, *on_ground, *horizontal_collision, *vertical_collision, *vertical_collision_below,
-            *minor_horizontal_collision, *sprinting, *no_physics, *shift_key_down, *in_water, *in_lava,
+            *minor_horizontal_collision, *sprinting, *sprint_speed_modifier, *no_physics, *shift_key_down, *in_water, *in_lava,
             *on_climbable, *on_ground_no_blocks, *crouching, *swimming, *underwater, *eye_in_water,
             *was_eye_in_water, *in_powder_snow, *was_in_powder_snow, *leather_boots, *fall_flying,
             *riding, *boat, *effects, *flying, *using_item] { bits.push(value as u64); }

@@ -50,6 +50,10 @@ public final class Recorder {
     private static boolean capturingDeparture;
     private static JsonArray startSpeedModifiers;
     private static int startTicksFrozen;
+    private static boolean startSprinting;
+    private static boolean startSprintSpeedModifier;
+    private static String startPose;
+    private static boolean startSwimming;
 
     static void register() {
         ClientTickEvents.START_CLIENT_TICK.register(Recorder::startTick);
@@ -248,6 +252,14 @@ public final class Recorder {
     }
 
     private static void startTick(Minecraft mc) {
+        if (mc.player != null) {
+            startSprinting = mc.player.isSprinting();
+            startSprintSpeedModifier = TraceJson.sprintSpeedModifier(mc.player.getAttribute(Attributes.MOVEMENT_SPEED));
+            // The server echoes its own pose to this player (ServerEntity.sendDirtyEntityData), and the
+            // packet resizes the box between ticks (Entity.onSyncedDataUpdated -> refreshDimensions).
+            startPose = mc.player.getPose().name();
+            startSwimming = mc.player.isSwimming();
+        }
         if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-start t=" + tick, mc.player);
         if (LandingClientTrace.ENABLED) LandingClientTrace.tickStart();
         applied = null;
@@ -328,6 +340,11 @@ public final class Recorder {
         out.addProperty("gameTime", mc.level.getGameTime());
         out.add("collisionSteps", collisionSteps);
         out.add("speedModifiers", TraceJson.speedModifiers(player.getAttribute(Attributes.MOVEMENT_SPEED)));
+        out.addProperty("startSprinting", startSprinting);
+        out.addProperty("startSprintSpeedModifier", startSprintSpeedModifier);
+        out.addProperty("startPose", startPose);
+        out.addProperty("startSwimming", startSwimming);
+        out.addProperty("sprintSpeedModifier", TraceJson.sprintSpeedModifier(player.getAttribute(Attributes.MOVEMENT_SPEED)));
         out.addProperty("ticksFrozen", player.getTicksFrozen());
         boolean gap = previousTickCount != null && (long) player.tickCount - previousTickCount != 1;
         out.add("inputs", applied.json());

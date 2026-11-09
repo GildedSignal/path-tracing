@@ -226,6 +226,9 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
         (world, Some(bounds))
     } else { (after.as_str(), None) };
     let (world, mut state, _) = parse_world(&format!("{world_text}\n{}", header.required("initialPlayer")));
+    if terrain.is_some() {
+        assert!(initial.get("sprintSpeedModifier").is_some(), "missing initial sprint modifier presence");
+    }
     let client_start = state.clone();
     if terrain.is_some() {
         let expected = numbers(start.required("start"));
@@ -346,6 +349,10 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
         }
         if terrain.is_some() {
             assert!(state.health > 0.0 && state.food_level > 6, "tick {tick}: unsupported replay resource eligibility");
+            state.sprinting = row.boolean("startSprinting");
+            state.sprint_speed_modifier = row.boolean("startSprintSpeedModifier");
+            state.pose = pose(row.string("startPose"));
+            state.swimming = row.boolean("startSwimming");
             let modifiers = row.get("startSpeedModifiers").unwrap_or_else(|| panic!("tick {tick}: missing START speed modifiers"));
             assert_eq!(modifiers, row.required("speedModifiers"), "tick {tick}: unsupported in-tick speed modifier change");
             state.speed_modifiers = speed_modifiers_from(modifiers);
@@ -373,6 +380,7 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
         }
         assert_tick(&state, row, tick);
         if terrain.is_some() {
+            assert_eq!(state.sprint_speed_modifier, row.boolean("sprintSpeedModifier"), "tick {tick}: END sprint modifier");
             assert_eq!(state.ticks_frozen, row.required("ticksFrozen").parse::<i32>().unwrap(), "tick {tick}: END freeze counter");
             assert!(row.get("speedBits").is_some(), "tick {tick}: missing END speed");
             for (flag, predicted) in [("underwater", state.underwater), ("eyeInWater", state.eye_in_water),

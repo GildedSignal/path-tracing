@@ -297,12 +297,54 @@ fn sneak_edge_backoff() {
 }
 
 #[test]
+fn synchronized_sprint_flag_keeps_the_independent_speed_modifier() {
+    let world = floor(0.6, false);
+    let mut state = player();
+    state.set_sprinting(true);
+    // ClientPacketListener.handleSetEntityData -> SynchedEntityData.assignValues:
+    // observed step-ups seed 17, before tick 204: flag=false, modifier=true.
+    state.sprinting = false;
+    tick(&mut state, &world, &Input::default());
+    assert!(!state.sprinting);
+    assert!(state.sprint_speed_modifier);
+    assert_eq!(state.speed.to_bits(), 0x3e051eb9);
+    // The local setter removes/re-adds the modifier even for an unchanged flag.
+    state.set_sprinting(false);
+    assert_eq!((state.movement_speed_value() as f32).to_bits(), 0x3dcccccd);
+    state.sprinting = true;
+    assert!(!state.sprint_speed_modifier);
+    assert_eq!((state.movement_speed_value() as f32).to_bits(), 0x3dcccccd);
+    state.set_sprinting(true);
+    assert_eq!((state.movement_speed_value() as f32).to_bits(), 0x3e051eb9);
+}
+
+#[test]
+fn synchronized_pose_sizes_the_next_move() {
+    // Two blocks of headroom: a crouching jump (1.5 + 0.42) clears it, a standing one (1.8) is clipped.
+    let world = floor(0.6, true);
+    let sneak_jump = Input { sneak: true, jump: true, ..Input::default() };
+    let mut state = player();
+    tick(&mut state, &world, &Input { sneak: true, ..Input::default() });
+    assert_eq!(state.pose, Pose::Crouching);
+    let mut own = state.clone();
+    let (_, own_result) = tick_with_collision(&mut own, &world, &sneak_jump).unwrap();
+    assert_eq!(own_result.y.to_bits(), 0x3fdae147a0000000);
+    // ServerEntity.sendDirtyEntityData echoes the server's lagging STANDING pose; the client's
+    // Entity.onSyncedDataUpdated resizes the box before the move (ceilings seed 28, tick 251).
+    state.pose = Pose::Standing;
+    let (_, synced_result) = tick_with_collision(&mut state, &world, &sneak_jump).unwrap();
+    assert_eq!(synced_result.y.to_bits(), 0x3fc9999a00000000);
+    // Player.tick re-derives the pose only after the move.
+    assert_eq!(state.pose, Pose::Crouching);
+}
+
+#[test]
 fn grounded_travel_uses_current_sprint_modifier() {
     let world = floor(0.6, false);
     let walk_speed = 0.1f32;
     let sprint_speed = (walk_speed as f64 * (1.0 + 0.3f32 as f64)) as f32;
     for sprinting in [true, false] {
-        let mut state = PlayerState { sprinting, ..player() };
+        let mut state = PlayerState { sprinting, sprint_speed_modifier: sprinting, ..player() };
         state.speed = if sprinting { sprint_speed } else { walk_speed };
         let input = Input { forward: !sprinting, left: sprinting, sprint: true, ..Input::default() };
         tick(&mut state, &world, &input);

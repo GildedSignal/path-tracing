@@ -79,6 +79,16 @@ Each tick row has:
 - client `health`, `foodLevel`, `saturationLevel`;
 - `ticksFrozen`, the client's frozen-tick count at END;
 - `speedModifiers`, every client MOVEMENT_SPEED modifier except `minecraft:sprinting`, read at END;
+- `startSprinting` and `startSprintSpeedModifier`, the sprint flag and the presence of the
+  `minecraft:sprinting` modifier read at START, and `sprintSpeedModifier`, its presence at END. They are
+  independent: `ClientPacketListener.handleSetEntityData` sets the flag without `LivingEntity.setSprinting`,
+  so the law reads the START pair as server-driven input (docs/engine.md). `initialPlayer` also carries
+  `sprintSpeedModifier`;
+- `startPose`, the pose at START. The server echoes its own, lagging pose to the player
+  (`ServerEntity.sendDirtyEntityData`), and the packet resizes the box between ticks
+  (`Entity.onSyncedDataUpdated` -> `refreshDimensions`), so the law reads it as server-driven input;
+- `startSwimming`, the swimming shared flag at START, echoed the same way in the flags byte that carries
+  the sprint flag; `updateSwimming` reads it before deriving the next value;
 - optional `anomaly`: an array of packets, in handler order, preserving multiple anomalies per tick.
 
 `collisionSteps` observes each vanilla `Entity.collide` request and result, with raw vector bits only,

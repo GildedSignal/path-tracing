@@ -18,9 +18,7 @@ foreach ($line in Get-Content -LiteralPath "$PSScriptRoot/movement-controls.tsv"
   $paths[$name] = "$base.jsonl"
 }
 # The archived controls are adjudicated against the same law as the corpus.
-git -C $root diff --quiet HEAD -- engine/law/src engine/law/Cargo.toml
-if ($LASTEXITCODE) { throw 'The movement law must be in the selected revision before running the frozen mutant gate.' }
-& "$root/lab/gates/check-l0-controls.ps1" @paths
+& "$root/lab/gates/check-l0-controls.ps1" @paths -WorkingTree
 
 $edges20 = Join-Path $ClockEvidence '20261106T1257229131311Z-fixtures/l0_20261106T1257229131311Z_edges_1.jsonl'
 $edges200 = Join-Path $ClockEvidence '20261106T1249512984107Z-fixtures/l0_20261106T1249512984107Z_edges_1.jsonl'

@@ -95,7 +95,17 @@ function Bot([string]$Text, [string]$WaitFor, [int]$Seconds = 30, [string]$FailO
 function Bot-Processes {
   # The launcher puts the role in an argument file, not in javaw's command line.
   $argPath = (Join-Path $botDir 'launch.args').Replace('\', '/')
-  @(Get-CimInstance Win32_Process -Filter "Name = 'javaw.exe' OR Name = 'java.exe'" | Where-Object {
+  try {
+    $java = @(Get-CimInstance Win32_Process -Filter "Name = 'javaw.exe' OR Name = 'java.exe'" -ErrorAction Stop)
+  } catch {
+    # Restricted runners may enumerate processes but cannot query WMI command lines.
+    # Any Java process is conservatively a competing bot; never start alongside it.
+    return @(Get-Process -Name javaw,java -ErrorAction SilentlyContinue | Where-Object {
+      -not ($started.ContainsKey('server') -and $_.Id -eq $started.server.Id -and
+        $_.StartTime.ToUniversalTime().Ticks -eq $started.server.StartTicks)
+    })
+  }
+  @($java | Where-Object {
     $line = ([string]$_.CommandLine).Replace('\', '/')
     $line.IndexOf($argPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
       $line -match '(?:^|\s)-Dpathtracing\.role=bot(?:\s|$)'
