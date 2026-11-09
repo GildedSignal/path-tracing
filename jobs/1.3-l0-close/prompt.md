@@ -7,3 +7,10 @@
 **Must not.** Weaken L0, its mutants or its comparison fields. Add tolerances. Run live gates without the rig lock, or while Julien drives the bot.
 
 **Done means.** The final message gives each divergence, its rule, the fix, and the final verdict with the distribution it prints.
+
+## Continuation (your diagnosis is accepted)
+
+Proceed with the fix you described. The rig (`D:\path-tracing-lab`) and the evidence folder are now writable for this job.
+- In the law, the sprint flag and the sprint speed modifier are independent state. The local sprint setter updates both. A synchronized flag (entity data) changes only the flag. This is the "server-driven" exactness class in engine.md: what the server sends is an input, never simulated.
+- Extend the recorder's fixture schema with the pre-tick sprint flag and the sprint modifier's presence, which it doesn't record today, then re-record L0's corpus under the rig lock. Adding an input field isn't weakening the gate: the pass line, mutants and comparison fields stay as frozen.
+- Then the frozen L0 verdict. Report each new first divergence with its rule as before, until L0 passes or a refusal falls outside the contract.
