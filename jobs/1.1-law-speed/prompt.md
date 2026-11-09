@@ -17,3 +17,12 @@
 **Must not.** Change any movement result. Add a tolerance. Touch `bot/`.
 
 **Done means.** The final message gives the before-and-after distributions, every change, and what the profile says the next hot spot is.
+
+## Continuation (after the first pass, committed as `bed67f3`)
+
+The first pass gave 4–8× (sprint-jump 33.8 → 6.0 µs). The target is still ≤ 1 µs, and a bit-identical replay is part of the gate.
+
+- **Recordings are now in this worktree** under `lab/fixtures/` (corner, full-blocks, slime: the original L0 pairs), so the replay test runs. One mismatch is known and pre-existing: the peaceful full-blocks end saturation. Show the replay outcome is identical before (`bed67f3^`) and after your changes, field for field; don't try to fix that mismatch.
+- **Next allocations to remove,** as you found: translated shapes (`moved()`) and result vectors in collision queries. Collide in local coordinates or with offsets instead of building shapes. Reuse buffers. Look at `BoxWorld`'s `BTreeMap` and linear region lookup too.
+- **Profile without new tools:** add temporary counters or timers around the tick's phases (collisions, suffocation and push-out, inside-block visits, attributes and food) in the bench build, report the share of each, and remove the counters afterwards.
+- Stop when the median is ≤ 1 µs on all four cases, or when the profile shows the remaining cost is in the law's arithmetic itself. Then say which, with numbers.
