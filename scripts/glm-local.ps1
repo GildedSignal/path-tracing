@@ -25,5 +25,10 @@ $env:GITHUB_OUTPUT = Join-Path $temp 'output.txt'
 $env:PATH = "$omp;$env:PATH"
 Set-Location $Root
 Write-Host "$(Get-Date -Format HH:mm) GLM run $env:GITHUB_RUN_ID started: $Lenses ($Minutes minutes each). Close this window to stop it."
-try { & $bash lab/actions.sh } finally { Remove-Item Env:ZAI_API_KEY -ErrorAction SilentlyContinue }
+try {
+  & $bash lab/actions.sh
+  $batchExit = $LASTEXITCODE
+  & "$PSScriptRoot\lab-wiki.ps1" -Results (Join-Path $Root 'lab\results')
+  if ($batchExit -ne 0) { throw "GLM batch exited $batchExit; available results were compiled." }
+} finally { Remove-Item Env:ZAI_API_KEY -ErrorAction SilentlyContinue }
 Write-Host "$(Get-Date -Format HH:mm) Finished. Results: lab\results\$env:GITHUB_RUN_ID-*"

@@ -73,6 +73,7 @@ main() {
 ## This run
 Run id: $id. Lens: $lens. Author budget: $minutes minutes.
 Repository: $PWD
+Read lab/wiki/index.md and lab/wiki/$lens.md first. Do not re-ask questions graded reproduced or falsified; build on the leads.
 Your only writable folder: $out/
 Write $out/dossier.md, starting with exactly "Claim: " and a one-sentence claim.
 Include the evidence, exact commands, falsifier, limits, and whether work.patch is needed.
@@ -103,6 +104,7 @@ PROMPT
 
 ## This check
 Run id: $id. Repository: $PWD. Budget: $checker_minutes minutes.
+Read lab/wiki/index.md and lab/wiki/$lens.md first. Do not re-ask questions graded reproduced or falsified; build on the leads.
 Run folder: $out/. Reproduction script: $out/reproduce.sh. Patch: $out/work.patch.
 Author exit status: $author_status (nonzero means incomplete; do not hide it).
 Run the reproduction yourself and try independent adversarial cases. Apply work.patch only if the dossier requires it.
