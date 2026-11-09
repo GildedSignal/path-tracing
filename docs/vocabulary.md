@@ -1,93 +1,105 @@
-# The vocabulary: the word record (Phase 3.1, draft)
+# The vocabulary: the word record (Phase 3.1, draft 2)
 
-The word is the one object (representation.md, section 3): an edge for the search, a certificate, a cache entry, a worldtube and a training datum. This spec fixes its record. It is a one-way door: the Designer red-teams it, Julien reviews it, and then it freezes. Draft of 9 November.
+The word is the one object (representation.md, section 3): an edge for the search, a certificate, a cache entry, a worldtube and a training datum. This spec fixes its record. It is a one-way door, so the Designer red-teams it and Julien reviews it before it freezes.
+- **Draft 1** (9 November) keyed segments on the exact start bits. The Designer showed that food, exhaustion and position never repeat, so the hit rate on natural terrain would be about 0% by construction.
+- **Draft 2** takes the Designer's seven changes.
 
-## 1. Segments, words, compound words
+## 1. Segments and words
 
-- **A segment** is the unit of compilation and of the cache: a feedback program run from one event to the next (section 3). It is keyed by the pattern key (footprints.md, section 3).
-- **A word** is a chain of segment ids, with its cost the sum of theirs in (min, +). Words are what the search and the executor use; segments are what gets stored and shared. This is Hashlife's split: distinct pieces are computed once, and everything larger is references to them.
-- **A compound word** is a chain promoted to one entry because it recurs. It is kept while it shortens the description of the routes actually used by more than it costs to store (minimum description length, ES 24), and pruned otherwise.
-- **Why segments:** a whole-word key matches with probability about 0.9 per terrain column, so a 30-block word matches with about 0.2%, and one changed block voids it (the Designer, 9 November). Per segment, natural terrain gives about 10⁵–10⁶ distinct patterns, which a warm cache covers.
+- **A segment** is the unit of compilation: a feedback program run from one event to the next (section 4).
+- **A word** is a chain of segments, with its cost the sum of theirs in (min, +). Distinct pieces are computed once, and everything larger is references to them, as in Hashlife.
+- **Compound words** (chains promoted because they recur) keep their idea. Their rule (minimum description length, ES 24) waits until search depth calls for it.
+- **Why segments, not words:** a whole-word key matches with probability about 0.9 per terrain column, so a 30-block word matches with about 0.2%. One changed block voids it.
 
-## 2. The segment record
+## 2. Two roles: the class proposes, the replay certifies
 
-| Field | What it holds | Why |
-|---|---|---|
-| `id` | an interned index | references in chains |
-| `program` | the feedback rule (section 4) and its arguments | what the executor runs |
-| `start` | the start state's bits, relative to the start block (footprints.md: `t` left out) | the start class; bit-equal for now |
-| `exit` | the exit event's kind (section 3), the exit state's bits relative to the start block, and the tick it fires | what the next segment must start from |
-| `ticks` | the exact cost | T |
-| `key` | the pattern key and its entry: footprint shape, interned cell ids, translation scope, extra-collider box | reuse anywhere the contents match |
-| `swept` | the cells the body's box passed through, per tick | the worldtube: coordination and reservations |
-| `width` | the start perturbations that still reach the same exit kind and exit class (section 6) | robustness under the server's noise |
-| `uses` | resources consumed and produced | prices |
-| `obligations` | edits the segment leaves to undo, and the world hooks it triggers (pressure plates, tripwires, buttons) | restoration and the deviation stream |
+The cache does two different jobs, kept apart:
+- **The class** (section 3) is the cache key. A hit is a **proposal**: a program, its arguments, the exit kind and a tick range. Quantization lives only here.
+- **The certificate** is the concrete segment, replayed through the law from the bot's real state. Its key is footprints.md's (exact reads, translation scope), unchanged. Nothing reaches the executor without a replay.
+- **Why always replay:** a 12-tick replay costs 1–6 µs, about the same as a 2–4 µs lookup, so skipping it saves nothing. What the cache saves is the **search**: about 54 programs × aims × 12 ticks, roughly 10⁴ ticks or 1–5 ms per decision, comes down to about 20 µs. A wrong proposal costs one replay ("the simulation decides, heuristics schedule", ES 22).
+- **ES's lesson holds:** ES rejected a quantized memo for kicks because re-rounding at every kick is a random walk (ES 13). Here the quantized class only proposes, and the bits come from the replay, so errors never compound.
 
-A movement segment has no resources and no obligations, except world hooks. Operator segments (Phase 4) fill both.
+## 3. The class: the state the law reads
 
-## 3. Events: where segments cut
+- **Recorded like cell reads.** The class holds the state fields the law reads before it writes them, recorded by the same induction as the footprint's cell reads. Fields the law overwrites before reading drop out: the previous input, yaw and pitch, `movement_this_tick` and the `was_*` flags.
+- **Resources leave the key.** Food, saturation, exhaustion, the food timer and health become **guards** (food above 6 throughout, health above 0) plus **deltas** in `uses`. They change every sprint tick, so keying on them would stop gaits repeating and reruns hitting.
+- **Position** is relative to the body's block, quantized to 1/16 block. Exact position keeps adding up and never repeats.
+- **Velocity** is kept on attractor bits where the segment starts on a gait, and on a grid otherwise.
+- **The world part** of the class is the pattern key of the cells the proposal's replay read, the last time it was compiled.
 
-A segment ends at the first event, read from the law's own state after a tick:
-- **ground contact changes:** takeoff (`on_ground` true to false) and landing (false to true);
-- **horizontal collision** starts or ends;
-- **a vertical collision with the ceiling**;
-- **fluid** entered or left (the law's fluid heights);
-- **climbable** entered or left;
-- **pose changes** (crouch, swim);
-- **the program's own switch:** a rule in its table changes;
-- **the steady-state cut:** a gait whose state repeats with period p, cut every p ticks (section 5).
+## 4. Events: one rule
 
-Events are facts of the law's state, never declared per block or per place (ES 4). A segment never spans two events, so the same local situation always produces the same segment.
+A segment ends at the first tick where **any discrete field of the state changes**:
+- the booleans (on ground, collisions, in fluid, climbable, and the others);
+- pose, sprinting, and the supporting block's cell or contents;
+- the program's active row;
+- **or the body's block changes.**
 
-## 4. The program: a feedback rule over contact
+This one rule catches what a list misses: stone to ice, soul sand or honey; step-ups onto carpet, slabs or mud, where `on_ground` stays true; cobwebs and berry bushes; losing sprint; taking damage. The block-change cut keeps segments short. A segment without a bound would bring back the whole-word key (0.9ⁿ). Members of one class that reach different exits are a width question (section 7), not a determinism one.
 
-- **A program** is a small table from contact predicates to inputs. The predicates are the law's state facts: on ground, horizontal collision, in fluid and its height band, climbable, the jump delay at zero, the sprint state. The inputs are the keys (forward, back, left, right, jump, sneak, sprint), the aim, and item use.
-- **The aim comes from a discrete set,** because a continuous aim never repeats and the key would never be consulted. Draft: 16 yaws on the sine table's grid, plus the yaws the elite techniques need (the 45° strafe, run-up aims), and pitch only where a word needs it (looking down for a block).
-- **Arguments are part of the key's start class:** two programs that differ only in an argument are different segments.
-- **Compiling programs:** gaits are the attractors of tiny programs per regime (the 9 November probe: 54 programs, 10–15 attractors per ground type). Transitions come from a local exact search from one gait's exit class to another's start class.
+## 5. The program
 
-## 5. Gaits and the steady state
+- **A program** is a small table from predicates to inputs.
+- **Predicates** are facts of the law's state:
+  - on ground, collisions, in fluid and its height band, climbable, the jump delay at zero, sprinting;
+  - **support ends this tick** (the law's own `can_fall`), for edge-timed takeoffs and neo run-ups;
+  - **ticks since the segment started.** In the air every contact predicate is constant, so mid-air strafe switches, neo jumps and releasing jump at the right tick need it.
+  
+  Predicates are reads, so they enter the class.
+- **Inputs:** the keys, the aim, item use, and **block interaction** (doors, trapdoors, gates, buttons).
+- **Aims** are sine-table indices on a grid of 64 yaws, which loses about 0.1% of heading against about 2% at 16. Narrow segments refine their aim by local search and keep it as an argument. There's no list of named technique aims: a catalogue would block rediscovery (ES 4).
+- **Compiling:** gaits are the attractors of tiny programs per regime (the 9 November probe found 10–15 per ground type). Transitions come from a local exact search between gait classes.
 
-- **A gait** is a program whose state, after warm-up, repeats bit for bit with period p: the exit state of a cycle equals its start state, relative to the start block.
-- **Chaining a gait with itself** is then free: a 100-block run is one segment id repeated, and the bot's state is (segment, phase). That's ES's cycle memo.
-- **Warm-up** segments (from rest to the attractor) are ordinary transitions.
-- **A gait with no event** (walking on flat ground) is cut at its period. If the period is one tick, it's cut every k ticks, where k is the shortest run that crosses a block boundary on every axis it moves along. Open (section 9).
+## 6. Gaits
 
-## 6. Width
+- **A gait is a cycle of classes:** the exit class of its last segment is the start class of its first. This covers the head-hitter, whose period is cut by ceiling events.
+- **A long run** is the cycle repeated, and a bot is (segment, phase), as in ES's cycle memo. Each cycle is still replayed; the class only names what to run.
 
-- **The width is the set of start states** that reach the same exit kind and the same exit class, so the executor can re-anchor on the observed state and still use the segment.
-- **For now the start is bit-equal** and the width is measured, not used for reuse: the compiler replays the segment from perturbed starts (position and velocity, per axis, at the scale of the server's observed noise) and records the largest box that keeps the exit.
-- **Narrow segments** (gaps at the jump limit, clutches, edge back-off) have small widths. They get bit-exact gates (SR-71); wide segments never need them.
-- **Merging start classes** follows the law: states that differ only below `aiStep`'s thresholds have the same future (Nerode; engine.md, ES 6). A wider start class needs the footprint's union over the class (footprints.md, section 3).
+## 7. Width: the price of risk, not a gate
 
-## 7. Chaining: the grammar
+The server's noise isn't a cloud in position. It's a one-tick input delay, port errors (the deviation stream) and entity pushes. Each certified segment records:
+- **delay tolerance:** pass or fail when its inputs arrive one tick late or one tick early;
+- **clearance:** the smallest margin to a collision threshold, read from the collision code during the replay.
 
-- **Segment A then B is valid** when A's exit state equals B's start state, after translating by the exit's block offset, with the shift inside B's scope.
-- **The cost of a chain** is the sum of ticks. Its footprint is the union of its segments' footprints, each shifted.
-- **Order matters only where footprints overlap** (Bernstein's conditions): two bots' segments with disjoint footprints commute, so they're never ordered against each other.
-- **A segment is valid while its footprint's contents are unchanged:** an edit inside a footprint voids that segment only, never the whole word.
+The executor re-anchors at every event by replaying from the observed state, so width prices risk in the search; it doesn't gate reuse. Narrow segments (gaps at the jump limit, clutches, edge back-off) get bit-exact gates (SR-71).
 
-## 8. Lookup, reuse and compilation
+## 8. The record
 
-1. **At a decision,** the planner asks the table for segments that start from the bot's current state (bit-equal start, translated), in this world: `PatternTable::lookup`.
-2. **An exact hit** (shift in scope, extra colliders empty) is reused as recorded, with no replay.
-3. **An inexact hit** (shift out of scope) replays through the law. A replay that matches is reused; one that doesn't is a miss.
-4. **A miss compiles:** gaits first, then the transitions the search needs, each entered into the table.
-5. **The allocator** (one queue ordered by slack, representation.md, section 5) decides what to compile when; idle time compiles ahead along likely routes.
+| Field | What it holds |
+|---|---|
+| class | the read state from section 3, plus the world part |
+| program, arguments | what to run (section 5) |
+| exit | the exit kind (the discrete field that changed) and the tick range seen |
+| cost | ticks, from the replay |
+| width | delay tolerance and clearance (section 7) |
+| `uses` | resources consumed and produced, as deltas, and their guards |
+| `needs` | held but not used up: a pickaxe, a bucket |
+| `writes` | each cell written: before and after, including hook effects (a pressure plate opening a door) |
+| obligations | the writes whose undo is owed: the cell, its state before, and the region the undo can be reached from; its footprint is the undo's, derived when looked at |
+| swept | the union box of the body's path, for reservations; per-tick detail comes from the replay |
 
-## 9. Open (for the red-team)
+## 9. Chaining
 
-1. **The width's definition and measurement:** which perturbations, at what scale, and is the largest box the right shape?
-2. **The steady-state cut** for period-1 gaits: is "every k ticks" right, or should a period-1 gait be one segment of unbounded length, valid while its footprint holds?
-3. **The aim set:** 16 yaws plus named ones, or a grid derived from the sine table's exact values?
-4. **The start class beyond bit-equal:** when to merge by the `aiStep` thresholds, and whether that changes the key.
-5. **The exit class for chaining:** bit-equal exit to start loses chains whose bits differ below any effect. Should chaining use the merged class of question 4?
-6. **Obligations and world hooks:** is "a list of edits to undo" enough for Phase 4's operators (a bucket placed, a block broken), or do obligations need their own footprint?
+- **A then B** when B's proposal applies to A's exit state, and B's replay from that state is certified.
+- **B is keyed against the world after A's writes,** so operator chains (a bucket placed, then the fall) compose.
+- **Order matters only where footprints or write sets overlap** (Bernstein's conditions, with write sets): two bots' segments with disjoint ones commute.
+- **An edit inside a certificate's footprint** voids that segment only.
 
-## 10. Rungs and kill tests
+## 10. Search with this record
 
-- **The pattern-cache hit rate,** per segment and weighted by ticks, with refused keys counted apart, on natural terrain and on the curve from superflat to random terrain (the degradation benchmark). Kill: below about 50% on natural terrain.
+- **Nodes** are concrete states. Expansions are the proposals for the node's class, each certified by replay. The closed set recognizes repeats by class, which is why section 3 merges what the law can't tell apart.
+- **Fermi for a 1,000-block route:** about 300 decisions × 10 proposals × 10 for A*'s overhead × 5 µs ≈ 0.15 s.
+- **The allocator** (one queue ordered by slack, representation.md, section 5) schedules compilation, and idle time compiles ahead.
+
+## 11. Rungs and kill tests
+
+- **The proposal hit rate,** per segment and weighted by ticks, with refused keys counted apart, on natural terrain and along the curve from superflat to random terrain. Kill: below about 50% on natural terrain.
 - **Segments per regime:** kill at ≫ 10³.
-- **Exact reuse:** every exact hit, replayed in a sampled audit, matches bit for bit. A single mismatch is an anomaly that blocks the claim.
-- **The first flight:** the bot races Julien's 18 tracks on chains of these segments. His T is the bar.
+- **Certification:** every reused segment was replayed bit for bit; the audit checks it.
+- **The first flight:** the bot races Julien's 18 tracks on certified chains, with his T as the bar.
+
+## 12. Open
+
+1. Position quantization: is 1/16 block right, or should it come from the law's own thresholds?
+2. The velocity grid off the attractors.
+3. When a gait cycle's class repeats but its bits drift slowly (food, the sine table): is replay per cycle enough, or does the executor need a check per event?
