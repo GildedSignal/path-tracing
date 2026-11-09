@@ -1,0 +1,5 @@
+## port-water-flow-axis
+
+Call FlowingFluid.getFlow for water on one horizontal axis. Reuse the direct-jar bootstrap and BlockGetter pattern in jobs/1.9c-fluid-height/FluidHeightOracle.java. Current cell is level 4, non-falling, with matching flowable fluid at both +/-X neighbors; compare equal amounts against level 1 vs 7. Neutralize Z with equal neighbors. Log the exact queried positions and raw output Vec3 bits. Stop before solid-face fallback and lava. A reversed gradient must flip the nonzero X sign.
+
+Write dossier.md with the one-sentence Claim: on its first physical line and runnable reproduce.sh in your new result folder. Use the staged 26.2 jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Prior untracked lab results are available from D:/path-tracing-wt/glm-lab/ via their same paths. Read those only. Save the initial result and script before expanding. Run it, keep raw output and name the evidence type (direct jar invocation, reconstructed arithmetic, or bytecode). No production edits, network, or live game.

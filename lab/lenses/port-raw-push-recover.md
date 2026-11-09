@@ -1,0 +1,5 @@
+## port-raw-push-recover
+
+Recover PairPush.java from the previous port-direct-pair-push result in D:/path-tracing-wt/glm-lab/lab/results/local-20261107-1548-1-2-port-direct-pair-push. Start by copying just that file to your new run folder, compile against the complete staged server libraries, then run the vanilla Entity.push case below and at the cutoff. Save raw bits and compare with the already checked arithmetic from port-push-threshold. No mutant instrumentation until the unmodified jar invocation passes.
+
+First create dossier.md with an exact Claim: line at byte one and a provisional one-sentence claim. Create reproduce.sh immediately and put only evidence under your run folder. Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and the JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Read previous results without editing them. Run the reproduction and report its exit, raw values and evidence type. No production edits, network or live game.

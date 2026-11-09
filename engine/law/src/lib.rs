@@ -8,11 +8,13 @@ mod state;
 mod world;
 pub use movement::{
     ServerResourceEvent,
+    apply_grounded_step,
     apply_server_resource_event,
     calculate_fall_damage,
     calculate_fall_power,
     tick,
     tick_with_collision,
+    tick_with_contact,
     tick_server_resources
 };
 pub use shapes::{
@@ -22,6 +24,7 @@ pub use shapes::{
     VoxelShape
 };
 pub use state::{
+    HurtCooldown,
     Input,
     PlayerState,
     Pose
@@ -31,8 +34,13 @@ pub use world::{
     BlockPos,
     BoxWorld,
     CollisionContext,
+    ContactDamage,
     Fluid,
+    FluidFlowBlock,
     FluidKind,
+    GroundedContact,
     Inside,
     World
 };
+
+pub mod entity_contact;
