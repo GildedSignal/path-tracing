@@ -105,7 +105,7 @@ Each row shows its gap to its Fermi floor, in orders of magnitude.
 
 ## When a job ends
 
-Launch: `.scriptsgpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1-terra` (the prompt is `jobs/<id>/prompt.md` in this checkout; `-Resume <id>` continues a session). When it ends: read `jobs/<id>/last.md` and `git -C <worktree> status`, commit with `Built-by: <model>`, have a Sonnet judge review it in a fresh context, and send fixes back as a new job.
+Launch: `.\scripts\gpt.ps1 -Job <id> -Worktree <path> -Model gpt-6.1-sol|gpt-6.1-terra` (the prompt is `jobs/<id>/prompt.md` in this checkout; `-Resume <id>` continues a session). When it ends: read `jobs/<id>/last.md` and `git -C <worktree> status`, commit with `Built-by: <model>`, have a Sonnet judge review it in a fresh context, and send fixes back as a new job.
 
 ## Traps
 
