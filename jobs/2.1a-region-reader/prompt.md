@@ -25,3 +25,12 @@
 - `cargo test` passes in `engine/`, including the comparison over 3 or more courses with zero mismatches (or a listed, explained set).
 - `world-probe` works on the copied fixtures.
 - The final message lists every change, the chunk format details you relied on, and every assumption.
+
+## Continuation (the DEFLATE decoder is committed)
+
+The integrator's answers to what you found:
+- **Path.** 26.2 keeps the overworld's regions under `dimensions/minecraft/overworld/region`. Read that path, and fail clearly if the layout differs.
+- **The fallible boundary.** `World::block` stays infallible: it is the hot path of a law that now runs under 1 µs per tick. Loading is where errors live. `WorldSnapshot::load(world_dir, min, max) -> Result<Snapshot, LoadError>` reads every chunk in the box up front. It fails on an unknown or unmodeled block state, a missing chunk or an unsupported compression, and names the position and state. The `World` impl then answers from the loaded snapshot, never guessing.
+- `cargo test` builds again on main (the oracles moved to `oracles/`), and this worktree has that fix.
+
+Continue with the region format, the chunk NBT and palettes, the bounded cache, the snapshot bridge, `world-probe`, and the course comparisons, as specified above.
