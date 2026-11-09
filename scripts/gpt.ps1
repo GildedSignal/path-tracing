@@ -32,9 +32,10 @@ $env:RUSTUP_HOME = 'D:\rust\rustup'; $env:CARGO_HOME = 'D:\rust\cargo'
 $roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target']"
 # A writable root must already exist; the sandbox cannot create it.
 New-Item -ItemType Directory -Force 'D:\path-tracing-target' | Out-Null
-$codexArgs = if ($Resume) { @('exec', 'resume', $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
+# A resumed session must keep its worktree, writable roots and report file, or it loses write access (job 1.1).
+$codexArgs = if ($Resume) { @('exec', 'resume', '-c', $roots, '-c', 'sandbox_mode=workspace-write', '--json', '-o', (Join-Path $dir 'last.md'), $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space.
 $quoted = $codexArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-$p = Start-Process $codex.FullName -ArgumentList $quoted -NoNewWindow -Wait -PassThru `
+$p = Start-Process $codex.FullName -ArgumentList $quoted -WorkingDirectory $Worktree -NoNewWindow -Wait -PassThru `
   -RedirectStandardInput $full -RedirectStandardOutput (Join-Path $dir 'log.jsonl') -RedirectStandardError (Join-Path $dir 'stderr.txt')
 "codex exited with $($p.ExitCode); last message: $(Join-Path $dir 'last.md')"
