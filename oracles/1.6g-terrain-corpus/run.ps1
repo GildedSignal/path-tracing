@@ -67,18 +67,36 @@ $metrics = foreach ($log in $logs) {
   $body = Get-Content -LiteralPath $log.FullName -Raw
   $client = [regex]::Match($body, 'client TPS ([0-9.]+);')
   $offline = [regex]::Match($body, 'offline movement TPS ([0-9.]+);')
-  if (-not $client.Success -or -not $offline.Success) { throw "Missing replay metrics in $($log.FullName)." }
+  $vetoes = [regex]::Match($body, 'server corrections ([0-9]+);')
+  $case = [regex]::Match($body, '_(?<course>[a-z-]+)_(?<run>[0-9]+) \(seed ')
+  if (-not $client.Success -or -not $offline.Success -or -not $vetoes.Success -or -not $case.Success) {
+    throw "Missing replay metrics in $($log.FullName)."
+  }
   [pscustomobject]@{
     Client = [double]::Parse($client.Groups[1].Value, $culture)
     Offline = [double]::Parse($offline.Groups[1].Value, $culture)
     Witness = $log.Name
+    Course = $case.Groups['course'].Value
+    Corrections = [int]$vetoes.Groups[1].Value
   }
 }
 . "$root/lab/gates/courses.ps1"
 . "$PSScriptRoot/manifest.ps1"
 $manifest = Get-TerrainManifest $Mode
 if ($logs.Count -ne ($manifest.Runs * $manifest.Courses.Count)) { throw 'Capture and verifier counts disagree.' }
+# The veto rate (L0, S62): server corrections are recorded server events, never a law mismatch.
+$replayTicks = $manifest.Ticks + 20
+$vetoes = foreach ($group in ($metrics | Group-Object Course | Sort-Object Name)) {
+  $count = ($group.Group | Measure-Object Corrections -Sum).Sum
+  $cases = @($group.Group | Where-Object { $_.Corrections -gt 0 }).Count
+  'Veto rate {0}: {1} corrections in {2}/{3} cases; {4:F2} per 1,000 ticks' -f
+    $group.Name, $count, $cases, $group.Count, (1000.0 * $count / ($group.Count * $replayTicks))
+}
+$total = ($metrics | Measure-Object Corrections -Sum).Sum
 $verdict = @(
+  $vetoes
+  ('Veto rate overall: {0} corrections in {1}/{2} cases; {3:F2} per 1,000 ticks' -f $total,
+    @($metrics | Where-Object { $_.Corrections -gt 0 }).Count, $metrics.Count, (1000.0 * $total / ($metrics.Count * $replayTicks)))
   (Distribution 'Client ticks per recorder wall second' $metrics.Client)
   (Distribution 'Rust movement ticks per wall second' $metrics.Offline)
   ('Gate wall seconds {0:F3}' -f $wall.Elapsed.TotalSeconds)

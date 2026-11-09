@@ -48,7 +48,6 @@ abstract class ClientPacketListenerMixin {
     // RETURN runs after vanilla's main-thread check; HEAD would see each queued packet twice.
     @Inject(method = "handleMovePlayer", at = @At("RETURN"))
     private void pathtracing$position(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
-        LandingClientTrace.unexpected("ClientboundPlayerPositionPacket");
         Recorder.positionPacket(packet);
     }
 

@@ -88,6 +88,15 @@ function Verify-Case($Definition, [int]$Index, [int]$Run) {
     }
     throw "Terrain replay refused $base. Retain this case and its first diagnostic."
   }
+  # Server corrections are recorded server events (L0, S62). Each corrected case also proves
+  # that a corrupted correction refuses.
+  $corrections = [regex]::Match(($replay -join "`n"), 'server corrections ([0-9]+);')
+  if (-not $reduce -and $corrections.Success -and [int]$corrections.Groups[1].Value -gt 0) {
+    $planted = @(& "$Target/terrain-verify.exe" --exact terrain::planted_correction_control --nocapture 2>&1 | ForEach-Object { "$_" })
+    $plantedStatus = $LASTEXITCODE
+    $planted | Where-Object { $_ -like 'Planted correction*' -or $_ -like '*panicked*' }
+    if ($plantedStatus) { throw "Planted correction control failed for $base." }
+  }
   & "$Jdk/java.exe" --class-path $cp "$PSScriptRoot/../1.6f-landing-motion/WireCodec.java" "$base.server-motion.csv" 2>&1 | ForEach-Object { "$_" }
   if ($LASTEXITCODE) { throw "Staged 26.2 codec refused $base.server-motion.csv." }
 }

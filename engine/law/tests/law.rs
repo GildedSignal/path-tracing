@@ -531,3 +531,26 @@ fn corner_course_axis_tie_first_contact() {
     }
     panic!("corner course never made contact");
 }
+
+#[test]
+fn position_packet_absolute_and_relative_fields() {
+    // PositionMoveRotation.calculateAbsolute: an absolute axis is 0.0 + change, so -0.0 becomes +0.0.
+    let mut state = player();
+    state.position = Vec3::new(1.5, 2.0, -3.0);
+    state.velocity = Vec3::new(0.2, -0.1, 0.3);
+    state.yaw = 10.0;
+    state.pitch = 20.0;
+    let packet = PositionPacket {
+        position: Vec3::new(-0.0, 0.5, 4.0),
+        delta: Vec3::new(1.0, 2.0, 3.0),
+        y_rot: 5.0,
+        x_rot: 80.0,
+        relative: PositionRelatives { y: true, x_rot: true, delta_z: true, ..PositionRelatives::default() },
+    };
+    apply_position_packet(&mut state, &packet);
+    assert_eq!(state.position.x.to_bits(), 0.0f64.to_bits());
+    assert_eq!(state.position.y, 2.5);
+    assert_eq!(state.position.z, 4.0);
+    assert_eq!((state.velocity.x, state.velocity.y, state.velocity.z), (1.0, 2.0, 0.3 + 3.0));
+    assert_eq!((state.yaw, state.pitch), (5.0, 90.0));
+}

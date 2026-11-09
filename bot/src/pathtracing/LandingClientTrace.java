@@ -107,6 +107,11 @@ public final class LandingClientTrace {
         after = null;
     }
 
+    // A server correction, applied before recorder row `nextTick` (a recorded server event, L0 S62).
+    public static void correction(int id, int nextTick) {
+        if (rows != null) row("correction," + nextTick + "," + id);
+    }
+
     public static void unexpected(String kind) {
         if (CORPUS && rows != null) row("unsupported," + replayTick + "," + kind);
     }

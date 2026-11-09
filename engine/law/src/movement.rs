@@ -1084,6 +1084,56 @@ pub fn tick_server_resources(state: &mut PlayerState, world: &impl World, server
     food_tick(state, world);
 }
 
+/// A server correction as received: ClientboundPlayerPositionPacket's change and relative flags.
+/// It is a recorded server event (L0, S62): its arrival depends on packet timing against the
+/// server's tick, so the law applies it between ticks and never predicts it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PositionPacket {
+    pub position: Vec3,
+    pub delta: Vec3,
+    pub y_rot: f32,
+    pub x_rot: f32,
+    pub relative: PositionRelatives,
+}
+
+/// Relative flags (net.minecraft.world.entity.Relative). ROTATE_DELTA is outside the contract.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PositionRelatives {
+    pub x: bool, pub y: bool, pub z: bool,
+    pub y_rot: bool, pub x_rot: bool,
+    pub delta_x: bool, pub delta_y: bool, pub delta_z: bool,
+    pub rotate_delta: bool,
+}
+
+// ClientPacketListener.handleMovePlayer (36: setValuesFromPositionPacket with lerp false) and
+// setValuesFromPositionPacket 81-114: setPos, setDeltaMovement, setYRot, setXRot from
+// PositionMoveRotation.calculateAbsolute (0-326). Old position and rotation are not law state.
+pub fn apply_position_packet(state: &mut PlayerState, packet: &PositionPacket) {
+    let r = packet.relative;
+    assert!(!r.rotate_delta, "unsupported ROTATE_DELTA position packet");
+    assert!(!state.riding, "unsupported position packet while riding");
+    let base = |relative: bool, value: f64| if relative { value } else { 0.0 };
+    let position = Vec3::new(
+        base(r.x, state.position.x) + packet.position.x,
+        base(r.y, state.position.y) + packet.position.y,
+        base(r.z, state.position.z) + packet.position.z,
+    );
+    let y_rot = if r.y_rot { state.yaw } else { 0.0 } + packet.y_rot;
+    let x_rot = (if r.x_rot { state.pitch } else { 0.0 } + packet.x_rot).clamp(-90.0, 90.0);
+    let delta = |relative: bool, current: f64, change: f64| if relative { current + change } else { change };
+    let velocity = Vec3::new(
+        delta(r.delta_x, state.velocity.x, packet.delta.x),
+        delta(r.delta_y, state.velocity.y, packet.delta.y),
+        delta(r.delta_z, state.velocity.z, packet.delta.z),
+    );
+    assert!(y_rot.is_finite() && x_rot.is_finite(), "invalid position packet rotation");
+    state.position = position;
+    state.velocity = velocity;
+    state.yaw = y_rot;
+    // Entity.setXRot 19-32: clamp(xRot % 360, -90, 90).
+    state.pitch = (x_rot % 360.0).clamp(-90.0, 90.0);
+}
+
 /// Ordered inputs at the authoritative server resource boundaries.
 #[derive(Clone, Debug)]
 pub enum ServerResourceEvent {

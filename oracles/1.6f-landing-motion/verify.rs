@@ -136,10 +136,16 @@ fn server<'a>(
     Ok((recipient, entity, stream, landings))
 }
 
+/// A server correction as the client trace saw it: the recorder row it lands before, and its id.
+type Correction<'a> = (usize, &'a str);
+
 fn authorize(
     wire: &[Packet<'_>], received: &[Application<'_>], rows: &[Object<'_>],
-    initial_tick: i64, landing_ticks: &[usize],
+    initial_tick: i64, landing_ticks: &[usize], corrections: &[Correction<'_>],
 ) -> Result<(), String> {
+    if let Some(late) = corrections.iter().find(|(tick, _)| *tick >= rows.len()) {
+        return Err(format!("correction outside the recording: {late:?}"));
+    }
     if wire.len() != received.len() {
         return Err(format!("wire/receive count: {} sends, {} receives", wire.len(), received.len()));
     }
@@ -161,17 +167,23 @@ fn authorize(
         }
     }
     for (tick, row) in rows.iter().enumerate() {
+        // Server corrections are recorded server events (L0, S62). Both capture paths must agree.
         let raw = row.get("anomaly");
-        match (raw, received.iter().find(|event| event.tick == tick)) {
-            (None, None) => {}
-            (Some(raw), Some(event)) => {
-                let packets = array(raw);
-                let [packet] = packets.as_slice() else { return Err(format!("tick {tick}: competing anomalies {raw}")) };
-                let packet = Object::parse(packet);
+        let packets: Vec<_> = raw.map(array).unwrap_or_default().into_iter().map(Object::parse).collect();
+        let (teleports, others): (Vec<_>, Vec<_>) = packets.into_iter()
+            .partition(|packet| packet.string("type") == "ClientboundPlayerPositionPacket");
+        let recorded: Vec<_> = teleports.iter().map(|packet| packet.required("id")).collect();
+        let traced: Vec<_> = corrections.iter().filter(|(at, _)| *at == tick).map(|(_, id)| *id).collect();
+        if recorded != traced {
+            return Err(format!("tick {tick}: correction witnesses disagree: recorded {recorded:?}, traced {traced:?}"));
+        }
+        match (others.as_slice(), received.iter().find(|event| event.tick == tick)) {
+            ([], None) => {}
+            ([packet], Some(event)) => {
                 if packet.string("type") != "ClientboundSetEntityMotionPacket" ||
                     packet.required("id") != event.packet.entity ||
                     object_bits(&packet.object("velocity")) != event.packet.vector {
-                    return Err(format!("tick {tick}: unknown correction {raw}"));
+                    return Err(format!("tick {tick}: unknown correction {raw:?}"));
                 }
             }
             _ => return Err(format!("tick {tick}: missing or unknown correction {raw:?}")),
@@ -295,6 +307,7 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
     let mut last_application = None;
     let mut landing_ticks = Vec::new();
     let mut received = Vec::new();
+    let mut corrections: Vec<Correction<'_>> = Vec::new();
     for row in middle {
         match row.as_slice() {
             ["move", ordinal, tick, player_tick, movement @ ..] => {
@@ -331,17 +344,29 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
                     before: bits(&vectors[3..6]), after: bits(&vectors[6..]),
                 });
             }
+            ["correction", tick, id] => {
+                let tick = tick.parse::<usize>().unwrap();
+                assert!(previous_move.1.is_none_or(|movement| movement < tick), "correction precedes move: {row:?}");
+                assert!(corrections.last().is_none_or(|&(last, _)| last <= tick), "correction order: {row:?}");
+                corrections.push((tick, *id));
+            }
             _ => panic!("unexpected client witness row {row:?}"),
         }
     }
     assert_eq!(landing_ticks.len(), landings.len(), "accepted move ordinal missing");
-    authorize(&packets, &received, rows, initial_tick, &landing_ticks).unwrap_or_else(|e| panic!("{run}: {e}"));
+    authorize(&packets, &received, rows, initial_tick, &landing_ticks, &corrections).unwrap_or_else(|e| panic!("{run}: {e}"));
 
     let movement_clock = Instant::now();
     for (t, row) in rows.iter().take(prefix).enumerate() {
         let tick = t as u64;
         assert_eq!(row.required("tickCount").parse::<i64>().unwrap(), initial_tick + t as i64 + 1);
-        if let Some(event) = received.iter().find(|event| event.tick == t) {
+        // Server packets between ticks, in handler order: corrections are recorded server events.
+        for packet in row.get("anomaly").map(array).unwrap_or_default().into_iter().map(Object::parse) {
+            if packet.string("type") == "ClientboundPlayerPositionPacket" {
+                apply_correction(&mut state, &packet, tick);
+                continue;
+            }
+            let event = received.iter().find(|event| event.tick == t).expect("authorized motion");
             let Vec3 { x, y, z } = state.velocity;
             assert_eq!([x.to_bits(), y.to_bits(), z.to_bits()], event.before, "tick {tick}: pre-packet velocity");
             let [x, y, z] = event.packet.vector.map(f64::from_bits);
@@ -391,7 +416,7 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
         }
     }
     if terrain.is_some() && prefix == ticks {
-        println!("{run}: offline movement TPS {:.2};", ticks as f64 / movement_clock.elapsed().as_secs_f64());
+        println!("{run}: offline movement TPS {:.2}; server corrections {};", ticks as f64 / movement_clock.elapsed().as_secs_f64(), corrections.len());
     }
     if prefix < ticks {
         println!("{run}: reduction only, {prefix} exact movement rows");
@@ -409,19 +434,19 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
             terrain::mixed_contacts(&after, &initial, rows);
         }
     }
-    println!("{run}: {ticks} exact movement rows; client TPS {measured:.2}; landings {landing_ticks:?}; motion {received:?}");
+    println!("{run}: {ticks} exact movement rows; client TPS {measured:.2}; landings {landing_ticks:?}; motion {received:?}; corrections {corrections:?}");
     if edges == Some(true) {
         let mut extra = received.clone();
         let mut duplicate = extra[0].clone();
         duplicate.packet.ordinal += 1;
         extra.push(duplicate);
-        let failure = authorize(&packets, &extra, rows, initial_tick, &landing_ticks).unwrap_err();
+        let failure = authorize(&packets, &extra, rows, initial_tick, &landing_ticks, &corrections).unwrap_err();
         assert!(failure.starts_with("wire/receive count"), "{failure}");
         println!("identical extra receive refused: {failure}; planted {:?}", extra.last().unwrap());
 
         let mut shifted = received.clone();
         shifted[0].tick += 1;
-        let failure = authorize(&packets, &shifted, rows, initial_tick, &landing_ticks).unwrap_err();
+        let failure = authorize(&packets, &shifted, rows, initial_tick, &landing_ticks, &corrections).unwrap_err();
         assert!(failure.starts_with("unrepresentable application boundary"), "{failure}");
         println!("shifted application refused: {failure}");
 
@@ -476,19 +501,32 @@ fn offline_landing_refusals() {
         r#"{{"anomaly":[{{"type":"ClientboundSetEntityMotionPacket","id":7,"velocity":{{"xBits":"{zero}","yBits":"{zero}","zBits":"{zero}"}}}}]}}"#
     );
     let rows = [Object::parse("{}"), Object::parse(&raw)];
-    authorize(&packets, std::slice::from_ref(&application), &rows, 100, &[0]).unwrap();
+    authorize(&packets, std::slice::from_ref(&application), &rows, 100, &[0], &[]).unwrap();
 
     let mut extra = application.clone();
     extra.packet.ordinal = 2;
-    assert!(authorize(&packets, &[application.clone(), extra], &rows, 100, &[0])
+    assert!(authorize(&packets, &[application.clone(), extra], &rows, 100, &[0], &[])
         .unwrap_err().starts_with("wire/receive count"));
     let shifted = Application { tick: 2, ..application.clone() };
     let extended = [Object::parse("{}"), Object::parse(&raw), Object::parse("{}")];
-    assert!(authorize(&packets, &[shifted], &extended, 100, &[0])
+    assert!(authorize(&packets, &[shifted], &extended, 100, &[0], &[])
         .unwrap_err().starts_with("unrepresentable application boundary"));
-    let teleport = Object::parse(r#"{"anomaly":[{"type":"ClientboundPlayerPositionPacket"}]}"#);
-    assert!(authorize(&packets, &[application], &[Object::parse("{}"), teleport], 100, &[0])
-        .unwrap_err().contains("unknown correction"));
+    // Corrections are recorded server events (L0, S62): accepted only when the recorder and the
+    // client trace agree on each one's landing row and id.
+    let both = format!(
+        r#"{{"anomaly":[{{"type":"ClientboundPlayerPositionPacket","id":4}},{{"type":"ClientboundSetEntityMotionPacket","id":7,"velocity":{{"xBits":"{zero}","yBits":"{zero}","zBits":"{zero}"}}}}]}}"#
+    );
+    let corrected = [Object::parse("{}"), Object::parse(&both)];
+    authorize(&packets, std::slice::from_ref(&application), &corrected, 100, &[0], &[(1, "4")]).unwrap();
+    for (rows, traced) in [(&corrected, &[][..]), (&corrected, &[(1, "5")][..]), (&rows, &[(1, "4")][..])] {
+        assert!(authorize(&packets, std::slice::from_ref(&application), rows, 100, &[0], traced)
+            .unwrap_err().contains("correction witnesses disagree"));
+    }
+    assert!(authorize(&packets, std::slice::from_ref(&application), &corrected, 100, &[0], &[(1, "4"), (2, "5")])
+        .unwrap_err().starts_with("correction outside the recording"));
+    let teleport = Object::parse(r#"{"anomaly":[{"type":"ClientboundPlayerPositionPacket","id":4}]}"#);
+    assert!(authorize(&packets, &[application], &[Object::parse("{}"), teleport], 100, &[0], &[(1, "4")])
+        .unwrap_err().contains("missing or unknown correction"));
 
     let mut events = events;
     events.swap(2, 3);

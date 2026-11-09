@@ -331,6 +331,44 @@ fn assert_vector(actual: Vec3, expected: &Object<'_>, name: &str, tick: u64) {
     }
 }
 
+fn position_packet(packet: &Object<'_>) -> PositionPacket {
+    let mut relative = PositionRelatives::default();
+    for name in array(packet.required("relatives")) {
+        let flag = match name.trim_matches('"') {
+            "X" => &mut relative.x, "Y" => &mut relative.y, "Z" => &mut relative.z,
+            "Y_ROT" => &mut relative.y_rot, "X_ROT" => &mut relative.x_rot,
+            "DELTA_X" => &mut relative.delta_x, "DELTA_Y" => &mut relative.delta_y, "DELTA_Z" => &mut relative.delta_z,
+            "ROTATE_DELTA" => &mut relative.rotate_delta,
+            other => panic!("unknown relative flag {other}"),
+        };
+        *flag = true;
+    }
+    PositionPacket {
+        position: vector(&packet.object("position")),
+        delta: vector(&packet.object("velocity")),
+        y_rot: packet.f32("yRot"),
+        x_rot: packet.f32("xRot"),
+        relative,
+    }
+}
+
+/// Apply a recorded server correction before `tick`, then require the client's own result and
+/// its acknowledgement (ServerboundAcceptTeleportationPacket and the PosRot that follows) bit for bit.
+fn apply_correction(state: &mut PlayerState, packet: &Object<'_>, tick: u64) {
+    assert_eq!(packet.number("tick"), tick as f64, "tick {tick}: correction landing tick");
+    apply_position_packet(state, &position_packet(packet));
+    let accepted = packet.object("accepted");
+    assert_vector(state.position, &accepted.object("position"), "correction position", tick);
+    assert_vector(state.velocity, &accepted.object("velocity"), "correction velocity", tick);
+    assert_eq!(state.yaw.to_bits(), accepted.f32("yRot").to_bits(), "tick {tick} correction yaw");
+    assert_eq!(state.pitch.to_bits(), accepted.f32("xRot").to_bits(), "tick {tick} correction pitch");
+    let acknowledged = packet.object("acknowledged");
+    assert_eq!(acknowledged.required("id"), packet.required("id"), "tick {tick}: acknowledged teleport id");
+    assert_vector(state.position, &acknowledged.object("position"), "acknowledged position", tick);
+    assert_eq!(state.yaw.to_bits(), acknowledged.f32("yRot").to_bits(), "tick {tick} acknowledged yaw");
+    assert_eq!(state.pitch.to_bits(), acknowledged.f32("xRot").to_bits(), "tick {tick} acknowledged pitch");
+}
+
 fn assert_tick(state: &PlayerState, expected: &Object<'_>, tick: u64) {
     if expected.get("sprintSpeedModifier").is_some() {
         assert_eq!(state.sprint_speed_modifier, expected.boolean("sprintSpeedModifier"), "tick {tick} sprintSpeedModifier");
@@ -386,9 +424,15 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
             ended = true;
             continue;
         }
-        assert!(object.get("anomaly").is_none(), "recording has a correction/push");
         let tick_index = object.number("t");
         assert_eq!(tick_index, expected_tick as f64, "non-contiguous recording");
+        // Server corrections are recorded server events (L0, S62); any other packet refuses.
+        if let Some(raw) = object.get("anomaly") {
+            for packet in array(raw).into_iter().map(Object::parse) {
+                assert_eq!(packet.string("type"), "ClientboundPlayerPositionPacket", "recording has a push or unsupported packet");
+                apply_correction(state, &packet, expected_tick);
+            }
+        }
         if object.get("tickCount").is_some() {
             let count = object.number("tickCount") as i64;
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
@@ -572,12 +616,63 @@ fn replay_rejects_single_bit_difference() {
 }
 
 #[test]
-#[should_panic(expected = "correction/push")]
+#[should_panic(expected = "push or unsupported packet")]
 fn replay_rejects_anomaly() {
     let (world, mut state) = stationary_fixture();
     let recording = stationary_tick();
-    let recording = format!("{},\"anomaly\":[{{\"type\":\"ClientboundPlayerPositionPacket\"}}]}}", &recording[..recording.len()-1]);
+    let recording = format!("{},\"anomaly\":[{{\"type\":\"ClientboundSetEntityMotionPacket\"}}]}}", &recording[..recording.len()-1]);
     replay_text(&complete_recording(&recording, 1), &world, &mut state);
+}
+
+fn correction_json(packet_x: u64, accepted_x: u64) -> String {
+    let zero = "0000000000000000";
+    let v = |x: u64| format!("{{\"x\":{},\"xBits\":\"{x:016x}\",\"y\":0,\"yBits\":\"{zero}\",\"z\":0,\"zBits\":\"{zero}\"}}", f64::from_bits(x));
+    let rot = "\"yRot\":0.0,\"yRotBits\":\"00000000\",\"xRot\":0.0,\"xRotBits\":\"00000000\"";
+    // Grounded: the server snaps back with the settled downward velocity.
+    let falling = format!("{{\"x\":0,\"xBits\":\"{zero}\",\"y\":-0.0784,\"yBits\":\"{:016x}\",\"z\":0,\"zBits\":\"{zero}\"}}", (-0.08 * 0.98f32 as f64).to_bits());
+    format!(concat!("{{\"type\":\"ClientboundPlayerPositionPacket\",\"id\":3,\"tick\":0,\"position\":{p},\"velocity\":{z},{r},",
+        "\"relatives\":[],\"accepted\":{{\"position\":{a},\"velocity\":{z},{r}}},",
+        "\"acknowledged\":{{\"id\":3,\"position\":{a},{r}}}}}"),
+        p = v(packet_x), a = v(accepted_x), z = falling, r = rot)
+}
+
+/// A displaced, moving player is snapped back by a recorded correction before tick 0.
+fn corrected_replay(correction: &str) {
+    let (world, mut state) = stationary_fixture();
+    state.position = Vec3::new(0.25, 0.0, 0.0);
+    state.velocity.x = 0.1;
+    let row = stationary_tick();
+    let row = format!("{},\"anomaly\":[{correction}]}}", &row[..row.len()-1]);
+    replay_text(&complete_recording(&row, 1), &world, &mut state);
+}
+
+#[test]
+fn replay_applies_a_recorded_correction() {
+    corrected_replay(&correction_json(0, 0));
+}
+
+// Planted controls: a corrupted correction must fail, whether the client's result disagrees
+// with the packet or both carry the wrong position into the next tick.
+#[test]
+#[should_panic(expected = "correction position.x")]
+fn replay_refuses_a_correction_the_client_did_not_apply() {
+    corrected_replay(&correction_json(0.5f64.to_bits(), 0));
+}
+
+#[test]
+#[should_panic(expected = "tick 0 position.x")]
+fn replay_refuses_a_corrupted_correction() {
+    let wrong = 0.5f64.to_bits();
+    corrected_replay(&correction_json(wrong, wrong));
+}
+
+#[test]
+#[should_panic(expected = "tick 0 position.x")]
+fn replay_refuses_a_missing_correction() {
+    let (world, mut state) = stationary_fixture();
+    state.position = Vec3::new(0.25, 0.0, 0.0);
+    state.velocity.x = 0.1;
+    replay_text(&complete_recording(&stationary_tick(), 1), &world, &mut state);
 }
 #[test]
 fn replay_compares_optional_fields() {

@@ -11,7 +11,10 @@ mod state;
 mod world;
 pub use movement::{
     ServerResourceEvent,
+    PositionPacket,
+    PositionRelatives,
     apply_grounded_step,
+    apply_position_packet,
     apply_server_resource_event,
     calculate_fall_damage,
     calculate_fall_power,

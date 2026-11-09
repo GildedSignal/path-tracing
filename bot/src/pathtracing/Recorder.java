@@ -20,6 +20,8 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -53,6 +55,8 @@ public final class Recorder {
     private static boolean startSprinting;
     private static boolean startSprintSpeedModifier;
     private static String startPose;
+    private static Integer pendingAccept;
+    private static JsonObject pendingAcknowledgement;
     private static boolean startSwimming;
 
     static void register() {
@@ -438,16 +442,49 @@ public final class Recorder {
         collisionSteps.add(step);
     }
 
+    public static void acceptTeleport(ServerboundAcceptTeleportationPacket packet) {
+        pendingAccept = packet.getId();
+        pendingAcknowledgement = null;
+    }
+
+    public static void acknowledgeMove(ServerboundMovePlayerPacket packet) {
+        if (pendingAccept == null || pendingAcknowledgement != null || !packet.hasPosition() || !packet.hasRotation()) return;
+        JsonObject out = new JsonObject();
+        out.addProperty("id", pendingAccept);
+        out.add("position", TraceJson.vector(new Vec3(packet.getX(0), packet.getY(0), packet.getZ(0))));
+        TraceJson.number(out, "yRot", packet.getYRot(0));
+        TraceJson.number(out, "xRot", packet.getXRot(0));
+        pendingAcknowledgement = out;
+    }
+
+    // RETURN of ClientPacketListener.handleMovePlayer: the client has applied the correction and
+    // sent its acknowledgement. The replay applies it before row `tick` (L0, S62).
     public static void positionPacket(ClientboundPlayerPositionPacket packet) {
+        JsonObject acknowledged = pendingAcknowledgement;
+        Integer accept = pendingAccept;
+        pendingAccept = null;
+        pendingAcknowledgement = null;
         if (output == null && !capturingDeparture) return;
         if (start != null) {
             teleported = true;
             settled = 0;
             return;
         }
+        var player = Minecraft.getInstance().player;
         JsonObject out = new JsonObject();
         out.addProperty("type", "ClientboundPlayerPositionPacket");
         out.addProperty("id", packet.id());
+        out.addProperty("tick", tick);
+        if (player != null) {
+            JsonObject accepted = new JsonObject();
+            accepted.add("position", TraceJson.vector(player.position()));
+            accepted.add("velocity", TraceJson.vector(player.getDeltaMovement()));
+            TraceJson.number(accepted, "yRot", player.getYRot());
+            TraceJson.number(accepted, "xRot", player.getXRot());
+            out.add("accepted", accepted);
+        }
+        if (accept != null && accept == packet.id() && acknowledged != null) out.add("acknowledged", acknowledged);
+        if (LandingClientTrace.ENABLED) LandingClientTrace.correction(packet.id(), tick);
         out.add("position", TraceJson.vector(packet.change().position()));
         out.add("velocity", TraceJson.vector(packet.change().deltaMovement()));
         TraceJson.number(out, "yRot", packet.change().yRot());

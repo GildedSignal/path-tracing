@@ -6,7 +6,7 @@ Place an unchanged job 1.2 recorder file at `<name>.jsonl` and its world descrip
 
 The harness accepts the implementation's optional first-line metadata object with `type` equal to `recording`. When present, `autoJump`, `toggleSprint` and `toggleCrouch` must be false and `sprintWindow` must be zero. Headerless files follow the same assumed options.
 
-Every subsequent line is a post-tick state. `t` starts at zero and is contiguous. Optional `tickCount` must advance by one. Any `anomaly` field fails the replay.
+Every subsequent line is a post-tick state. `t` starts at zero and is contiguous. Optional `tickCount` must advance by one. A `ClientboundPlayerPositionPacket` anomaly is a server correction: replay applies it before that row (`apply_position_packet`) and requires the recorded `accepted` and `acknowledged` values bit for bit (L0, S62). Any other `anomaly` fails the replay.
 
 - Every tick requires `speedModifiers`, the non-sprint MOVEMENT_SPEED modifiers as `[id, amount, operation]` tuples, and integer `ticksFrozen`. These are injected before that tick; the frozen counter never generates speed modifiers. Operations accept vanilla enum names, serialized names, or integer ids 0/1/2. Identifiers use their namespace-qualified form. Empty modifier lists remove the previous supplied modifiers.
 - New recordings supply `startSprinting` and `startSprintSpeedModifier` independently at START, and `sprintSpeedModifier` at END. Entity-data packets can change the flag without changing the attribute. Both START fields must be present together. The terrain corpus requires both, the END observation, and the initial player's `sprintSpeedModifier`; it never infers them from END outputs. Archived controls retain their original schema and criteria.

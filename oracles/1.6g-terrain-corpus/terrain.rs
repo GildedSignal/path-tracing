@@ -157,3 +157,39 @@ fn authoritative_terrain_case() {
         envelope: Bounds(position(min), position(max)), mixed: env("L0_TERRAIN_MIXED") == "true" };
     verify(&file, &env("L0_TERRAIN_RATE"), ticks, None, prefix, Some(&terrain));
 }
+
+/// Planted control (L0, S62): the first recorded correction of this case, moved by one ulp in x,
+/// must make the replay refuse. Run by verify.ps1 on every case that has a correction.
+#[test]
+fn planted_correction_control() {
+    let env = |key| std::env::var(key).unwrap_or_else(|_| panic!("missing {key}"));
+    let file = PathBuf::from(env("L0_TERRAIN_RECORDING"));
+    let text = fs::read_to_string(&file).unwrap();
+    let at = text.find("\"type\":\"ClientboundPlayerPositionPacket\"").expect("no recorded correction to plant");
+    let key = "\"xBits\":\"";
+    let digit = at + text[at..].find(key).unwrap() + key.len() + 15;
+    let flipped = u8::from_str_radix(&text[digit..digit + 1], 16).unwrap() ^ 1;
+    let corrupted = format!("{}{flipped:x}{}", &text[..digit], &text[digit + 1..]);
+    let stem = file.file_stem().unwrap().to_str().unwrap().to_owned();
+    let directory = std::env::temp_dir().join(format!("l0-planted-{}-{stem}", std::process::id()));
+    fs::create_dir_all(&directory).unwrap();
+    for entry in fs::read_dir(file.parent().unwrap()).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        if name.starts_with(&format!("{stem}.")) { fs::copy(&path, directory.join(name)).unwrap(); }
+    }
+    let planted = directory.join(file.file_name().unwrap());
+    fs::write(&planted, corrupted).unwrap();
+    let ticks = env("L0_TERRAIN_TICKS").parse().unwrap();
+    let (min, max) = env("L0_TERRAIN_ENVELOPE").split_once(';').map(|(a, b)| (a.to_owned(), b.to_owned())).unwrap();
+    let terrain = Terrain { pre_world: env("L0_TERRAIN_PRE_WORLD").into(),
+        envelope: Bounds(position(&min), position(&max)), mixed: env("L0_TERRAIN_MIXED") == "true" };
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        verify(&planted, &env("L0_TERRAIN_RATE"), ticks, None, ticks, Some(&terrain));
+    }));
+    fs::remove_dir_all(&directory).unwrap();
+    let message = failure.expect_err("planted correction was accepted");
+    let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(message.contains("correction position.x"), "planted correction failed for another reason: {message}");
+    println!("Planted correction refused: {message}");
+}

@@ -105,8 +105,12 @@ Scalar doubles and ordinary vectors have sibling `<field>Bits` with sixteen lowe
 rotations, health and saturation) use eight. `fallDistance` is a double in 26.2. Raw bits are unsigned
 hex strings without `0x`. The decimal fields remain JSON numbers.
 
-Position anomalies include `type`, teleport `id`, `position`, `velocity`, `yRot`, `xRot` and sorted
-`relatives`. Motion anomalies include `type`, entity `id` and `velocity`. Packet numbers use the
+Position anomalies (server corrections) include `type`, teleport `id`, `position`, `velocity`, `yRot`, `xRot`,
+sorted `relatives`, the row `tick` they land before, `accepted` (the client's position, velocity and rotation
+after `handleMovePlayer`) and `acknowledged` (the id of its `ServerboundAcceptTeleportationPacket` and the
+position and rotation of the PosRot it sends next). The replay applies them as recorded server events
+(L0, S62); the client trace writes `correction,<tick>,<id>` for each.
+Motion anomalies include `type`, entity `id` and `velocity`. Packet numbers use the
 same bit fields. Rotation anomalies include `type`, `yRot`, `xRot`, `relativeY`, `relativeX`.
 Explosion anomalies include `type`, `center`, `playerKnockback`, and are emitted only when the
 packet carries knockback for this client player. Rotation packets also target this client player;
