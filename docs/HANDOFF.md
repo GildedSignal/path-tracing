@@ -12,9 +12,9 @@ This file holds the state of the build, what is in flight and what comes next. I
 
 **The framework is approved** (S44–S48): one law at three grains, a tool as a law input you carry, the word as the one object, one mind inside the server, missions. The whole-project roadmap below is approved (S48). **Phase 0 is under way.**
 
-- **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + `wt/world`, `wt/law`, `wt/raw-fluid-export`, `wt/glm-lab`, `wt/tracks` and `main`, all clean merges. Rust: 81 tests pass. Bot track tests pass (the mixin audit learned local capture, `f0bcea2`). Terra job [0.2](../jobs/0.2-consolidate/prompt.md) is verifying the remaining self-tests (`test-run-gate-1.2` exits 1). Then `main` fast-forwards to `wt/engine`.
-- **The 100× clock** (`wt/clock`, `388a1bc`): the Sonnet judge passed it as MERGE WITH FIXES. Its report was run on uncommitted code, so the gate gets rerun on the merged HEAD. The bot follows `/tick rate` by default through the launcher, 2000 TPS is the only verified ceiling, and a guard for recordings above it is needed. After 0.2, the integrator starts `git merge wt/clock`, and Terra job [0.3](../jobs/0.3-clock-merge/prompt.md) resolves the conflicts and adds the guard.
-- **Docs.** Being rewritten to the framework: AGENTS (team with Terra), representation, engine, ladder, README.
+- **Consolidation.** `wt/engine` (`D:\path-tracing-wt\engine`) = `wt/l0` + world, law, raw-fluid-export, glm-lab, tracks and `main`. Every offline suite is green (job 0.2, `cf8d015`).
+- **The clock** (`wt/clock`, judged MERGE WITH FIXES): the merge has started in `wt/engine`, and Terra job [0.3](../jobs/0.3-clock-merge/prompt.md) is resolving it and adding the guard above 2000 TPS. Then the integrator reruns the full-demand gate on the merged HEAD under the rig lock, and `main` fast-forwards to `wt/engine`.
+- **Phase 1 started early, where files don't overlap:** Terra job [1.1](../jobs/1.1-law-speed/prompt.md), law speed, on `wt/law-speed` (`D:\path-tracing-wt\law-speed`).
 - **Cleanup done (S49):**
   - Merged branches and their worktrees deleted, along with 76 GLM and Codex worktrees.
   - D:'s per-job build folders deleted; `D:\path-tracing-target` keeps the shared target and the L0 reduction source.
