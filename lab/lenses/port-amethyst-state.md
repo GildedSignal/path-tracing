@@ -1,0 +1,3 @@
+# Port delta ? amethyst block state
+
+Use the staged Mojang 26.2 jar and javap at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. Check the existing generic block exporter and Rust shape path against all six cluster facings, with a waterlogged case. Use the actual cluster state shape from the jar, not a hand-written approximation. Exercise a grazing body and the waterlogged boundary. Produce a runnable raw-bit witness. If a small importer or shape mismatch is found, return a candidate.patch in the run folder and reproduce before and after against Mojang. If shapes already agree, prove that and name the separate interaction or update coverage. No rig launches or source-tree edits.

@@ -16,10 +16,14 @@ import java.util.List;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
+import net.minecraft.tags.FluidTags;
 import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.phys.Vec3;
 
 /** START applies controls, END records their result. Packets between ticks belong to the next END. */
 public final class Recorder {
@@ -36,12 +40,16 @@ public final class Recorder {
     private static int settlingTicks;
     private static Integer previousTickCount;
     private static boolean teleported;
+    private static boolean awaitStart;
     private static JsonArray anomalies = new JsonArray();
+    private static JsonArray collisionSteps = new JsonArray();
     private static TrackRecording trackRecording;
     private static JsonObject departureInitial;
     private static JsonObject departureRow;
     private static JsonObject pendingDeparture;
     private static boolean capturingDeparture;
+    private static JsonArray startSpeedModifiers;
+    private static int startTicksFrozen;
 
     static void register() {
         ClientTickEvents.START_CLIENT_TICK.register(Recorder::startTick);
@@ -74,6 +82,7 @@ public final class Recorder {
 
     static Path recordTrack(Minecraft mc, Path directory, String track) throws IOException {
         if (active()) throw new IllegalStateException("A recording or replay is already running.");
+        requireQualifiedClock(mc);
         JsonObject metadata = TickInput.holdSettings(mc);
         if (departureRow == null || departureInitial == null
             || departureRow.get("tickCount").getAsInt() != mc.player.tickCount) {
@@ -109,6 +118,7 @@ public final class Recorder {
     }
 
     private static void open(Minecraft mc, String runName, Path path) throws IOException {
+        requireQualifiedClock(mc);
         JsonObject metadata = TickInput.holdSettings(mc);
         metadata.addProperty("type", "recording");
         if (Files.exists(path)) throw new java.nio.file.FileAlreadyExistsException(path.toString(), null, "Output already exists");
@@ -129,6 +139,10 @@ public final class Recorder {
     }
 
     static void replay(Minecraft mc, String runName, String outName) throws IOException {
+        replay(mc, runName, outName, false);
+    }
+
+    static void replay(Minecraft mc, String runName, String outName, boolean waitForStart) throws IOException {
         if (output != null || replaying()) throw new IllegalStateException("A recording or replay is already running.");
         TickInput.holdSettings(mc);
         Path path = file(mc, "recordings", outName);
@@ -166,6 +180,7 @@ public final class Recorder {
         settled = 0;
         settlingTicks = 0;
         teleported = false;
+        awaitStart = waitForStart;
         Bot.clearFollowPath();
         TickInput.release(mc);
         mc.getConnection().sendCommand("tp @s " + BigDecimal.valueOf(origin[0]).toPlainString()
@@ -179,6 +194,11 @@ public final class Recorder {
         finish(mc, true);
     }
 
+    static void continueReplay() {
+        if (!replaying() || !awaitStart || start != null) throw new IllegalStateException("Replay has not settled.");
+        awaitStart = false;
+    }
+
     private static void abort(Minecraft mc, String reason) {
         if (!active()) return;
         Bot.reply(mc, reason + (trackRecording == null ? " Aborted; partial output remains in " + temporaryPath + "." : " Aborted; track recording discarded."));
@@ -188,8 +208,11 @@ public final class Recorder {
     private static void finish(Minecraft mc, boolean clean) {
         boolean wasReplay = replaying();
         boolean complete = clean && (!wasReplay || tick == replay.size());
+        if (wasReplay && LandingClientTrace.ENABLED) LandingClientTrace.replayEnd(name, tick, complete);
+        if (wasReplay) ClockAudit.finish(tick, complete);
         replay = null;
         start = null;
+        awaitStart = false;
         applied = null;
         anomalies = new JsonArray();
         if (wasReplay) TickInput.release(mc);
@@ -225,12 +248,15 @@ public final class Recorder {
     }
 
     private static void startTick(Minecraft mc) {
+        if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-start t=" + tick, mc.player);
+        if (LandingClientTrace.ENABLED) LandingClientTrace.tickStart();
         applied = null;
         capturingDeparture = output == null && Tracks.captureDeparture() && mc.player != null && mc.level != null;
         if (capturingDeparture) {
             departureInitial = PlayerSnapshot.capture(mc);
             applied = TickInput.capture(mc);
             anomalies = new JsonArray();
+            collisionSteps = new JsonArray();
             return;
         }
         if (output == null) {
@@ -238,12 +264,13 @@ public final class Recorder {
             departureRow = null;
             return;
         }
+        collisionSteps = new JsonArray();
         if (mc.player == null || mc.level == null) {
             abort(mc, "Player or world unavailable at tick " + tick + ".");
             return;
         }
         if (replaying()) {
-            if (start != null) {
+            if (start != null || awaitStart) {
                 TickInput.release(mc);
                 return;
             }
@@ -259,21 +286,36 @@ public final class Recorder {
                 return;
             }
         }
-        if (replaying()) replay.get(tick).apply(mc);
+        if (replaying()) {
+            if (tick == 0) ClockAudit.begin(name);
+            if (LandingClientTrace.ENABLED) {
+                LandingClientTrace.replayStart(name, tick, mc.player.tickCount, mc.level.tickRateManager().tickrate());
+            }
+            if (LandingClientTrace.CORPUS) {
+                LandingClientTrace.checkPlayer(mc, tick);
+                startSpeedModifiers = TraceJson.speedModifiers(mc.player.getAttribute(Attributes.MOVEMENT_SPEED));
+                startTicksFrozen = mc.player.getTicksFrozen();
+            }
+            replay.get(tick).apply(mc);
+        }
         applied = TickInput.capture(mc);
     }
 
     private static void endTick(Minecraft mc) {
+        if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-end t=" + tick, mc.player);
+        if (LandingClientTrace.ENABLED) LandingClientTrace.tickEnd();
         if ((output == null && !capturingDeparture) || mc.player == null) return;
         var player = mc.player;
         if (start != null) {
             settlingTicks++;
             boolean atStart = same(player.getX(), start[0]) && same(player.getY(), start[1]) && same(player.getZ(), start[2]);
             var velocity = player.getDeltaMovement();
-            settled = teleported && atStart && player.onGround() && velocity.x == 0 && velocity.z == 0 ? settled + 1 : 0;
+            settled = teleported && atStart && player.onGround() && velocity.x == 0 && velocity.z == 0
+                && player.getTicksFrozen() == 0 ? settled + 1 : 0;
             if (settled == 5) {
                 start = null;
                 anomalies = new JsonArray();
+                if (awaitStart) Bot.reply(mc, "Settled " + name + "; waiting for rec continue.");
             } else if (settlingTicks >= 200) {
                 abort(mc, "Replay start did not settle within 200 ticks of tp (tick " + settlingTicks + ").");
             }
@@ -283,6 +325,10 @@ public final class Recorder {
         JsonObject out = new JsonObject();
         out.addProperty("t", tick);
         out.addProperty("tickCount", player.tickCount);
+        out.addProperty("gameTime", mc.level.getGameTime());
+        out.add("collisionSteps", collisionSteps);
+        out.add("speedModifiers", TraceJson.speedModifiers(player.getAttribute(Attributes.MOVEMENT_SPEED)));
+        out.addProperty("ticksFrozen", player.getTicksFrozen());
         boolean gap = previousTickCount != null && (long) player.tickCount - previousTickCount != 1;
         out.add("inputs", applied.json());
         out.add("position", TraceJson.vector(player.position()));
@@ -298,6 +344,21 @@ public final class Recorder {
         TraceJson.number(out, "fallDistance", player.fallDistance);
         out.addProperty("isInWater", player.isInWater());
         out.addProperty("onClimbable", player.onClimbable());
+        if (LandingClientTrace.ENABLED) {
+            out.addProperty("verticalCollisionBelow", player.verticalCollisionBelow);
+            out.addProperty("minorHorizontalCollision", player.minorHorizontalCollision);
+            out.addProperty("swimming", player.isSwimming());
+            out.addProperty("crouching", player.isCrouching());
+        }
+        if (LandingClientTrace.CORPUS && replaying()) {
+            out.add("startSpeedModifiers", startSpeedModifiers);
+            out.addProperty("startTicksFrozen", startTicksFrozen);
+            out.addProperty("underwater", player.isUnderWater());
+            out.addProperty("eyeInWater", player.isEyeInFluid(FluidTags.WATER));
+            out.addProperty("inPowderSnow", player.isInPowderSnow);
+            out.addProperty("wasInPowderSnow", player.wasInPowderSnow);
+            TraceJson.number(out, "speed", player.getSpeed());
+        }
         TraceJson.number(out, "health", player.getHealth());
         out.addProperty("foodLevel", player.getFoodData().getFoodLevel());
         TraceJson.number(out, "saturationLevel", player.getFoodData().getSaturationLevel());
@@ -337,8 +398,27 @@ public final class Recorder {
         }
     }
 
+    private static void requireQualifiedClock(Minecraft mc) {
+        if (mc.level != null && ClockQualification.exceedsCeiling(
+            Boolean.getBoolean("pathtracing.followTickRate"), mc.level.tickRateManager().runsNormally(),
+            mc.level.tickRateManager().tickrate())) {
+            String message = "Recording refused: client follows a tick rate above the verified 2000 TPS ceiling.";
+            Bot.reply(mc, message);
+            throw new IllegalStateException(message);
+        }
+    }
+
     private static boolean same(double a, double b) {
         return Double.doubleToRawLongBits(a) == Double.doubleToRawLongBits(b);
+    }
+
+    // Observe the actual collision request after vanilla's sneak/stuck processing.
+    public static void collisionStep(Entity entity, Vec3 requested, Vec3 result) {
+        if ((output == null && !capturingDeparture) || applied == null || entity != Minecraft.getInstance().player) return;
+        JsonObject step = new JsonObject();
+        step.add("requested", TraceJson.vectorBits(requested));
+        step.add("result", TraceJson.vectorBits(result));
+        collisionSteps.add(step);
     }
 
     public static void positionPacket(ClientboundPlayerPositionPacket packet) {
@@ -362,6 +442,7 @@ public final class Recorder {
     }
 
     public static void motionPacket(ClientboundSetEntityMotionPacket packet) {
+        if (LandingClientTrace.ENABLED) LandingClientTrace.motion(packet, tick);
         var player = Minecraft.getInstance().player;
         if ((output == null && !capturingDeparture) || start != null || player == null || packet.id() != player.getId()) return;
         JsonObject out = new JsonObject();

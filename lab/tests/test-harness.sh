@@ -56,11 +56,11 @@ if [[ $prompt == *author-prompt.md ]]; then
   [[ -z ${CARGO_TARGET_DIR:-} ]] || {
     mkdir -p "$TEST_ROOT/barrier"
     touch "$TEST_ROOT/barrier/$id"
-    for ((n=0; n<100; n++)); do
-      [[ $(find "$TEST_ROOT/barrier" -type f | wc -l) == 3 ]] && break
+    for ((n=0; n<300; n++)); do
+      [[ $(find "$TEST_ROOT/barrier" -type f | wc -l) == ${STUB_WORKERS:-3} ]] && break
       sleep 0.1
     done
-    [[ $(find "$TEST_ROOT/barrier" -type f | wc -l) == 3 ]]
+    [[ $(find "$TEST_ROOT/barrier" -type f | wc -l) == ${STUB_WORKERS:-3} ]]
   }
   printf 'staged\n' > protected.txt
   git add protected.txt
@@ -212,6 +212,27 @@ for id in 124-1-{0,1,2}-stub; do
   assert_scrubbed "lab/results/$id"
 done
 printf 'PASS: failed phase preserves completed peers, lead evidence, summary and sanitized upload eligibility\n'
+
+# A local batch has twenty-four simultaneous isolated lanes, with the hosted cap preserved above.
+new_tree local-twenty-four
+mv "$TEST_ROOT/barrier" "$TEST_ROOT/three-worker-barrier"
+export STUB_MODE=normal GITHUB_RUN_ID=125
+: > "$TEST_ROOT/events"
+: > "$GITHUB_OUTPUT"
+: > "$GITHUB_STEP_SUMMARY"
+trial_lenses=$(printf 'stub %.0s' {1..24})
+GITHUB_ACTIONS=false GLM_LOCAL=S43 STUB_WORKERS=24 LAB_LENSES="$trial_lenses" bash lab/actions.sh
+[[ $(grep -c '^author ' "$TEST_ROOT/events") == 24 && $(grep -c '^checker ' "$TEST_ROOT/events") == 24 ]]
+[[ $(awk '/^author /{print $3}' "$TEST_ROOT/events" | sort -u | wc -l) == 24 ]]
+[[ $(grep -c ' | reproduced | ' "$GITHUB_STEP_SUMMARY") == 24 ]]
+grep -qx 'sanitized=true' "$GITHUB_OUTPUT"
+for id in 125-1-{0..23}-stub; do
+  [[ -f lab/results/$id/DONE && -f lab/results/$id/host.log ]]
+  assert_scrubbed "lab/results/$id"
+done
+if GITHUB_ACTIONS=false GLM_LOCAL=S43 LAB_LENSES="$trial_lenses stub" bash lab/actions.sh > "$TEST_ROOT/rejected.log" 2>&1; then exit 1; fi
+grep -q 'Choose 1 to 24 space-separated lenses' "$TEST_ROOT/rejected.log"
+printf 'PASS: twenty-four local isolated lanes and their checker artifacts; twenty-five refused\n'
 
 # Installer tests redirect only the destination in a copy, never changing the real HOME.
 export TEST_INSTALL_HOME="$test_root/install" STUB_CHECKSUM=pass STUB_ARCH=x86_64

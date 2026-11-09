@@ -1,10 +1,10 @@
-# Compile a smoke check against the unmodified wt/law parser copied into ignored scratch output.
+# Compile a smoke check against the committed law parser (HEAD) copied into ignored scratch output.
 param([string]$Rustc = 'D:\rust\rustup\toolchains\stable-x86_64-pc-windows-gnu\bin\rustc.exe')
 $ErrorActionPreference = 'Stop'
 $scratch = Join-Path $PSScriptRoot ('..\results\json-smoke-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Force $scratch
-$parser = & git -C (Join-Path $PSScriptRoot '..\..\..') show wt/law:engine/law/tests/support/json.rs
-if ($LASTEXITCODE) { throw 'Cannot read wt/law JSON parser.' }
+$parser = & git -C (Join-Path $PSScriptRoot '..\..\..') show HEAD:engine/law/tests/support/json.rs
+if ($LASTEXITCODE) { throw 'Cannot read the law JSON parser at HEAD.' }
 [IO.File]::WriteAllLines((Join-Path $scratch 'json.rs'), [string[]]$parser, [Text.UTF8Encoding]::new($false))
 $source = @'
 mod json;
@@ -29,7 +29,16 @@ fn main() {
     assert_eq!(block.f32("fluidHeight"), 0.0);
     assert_eq!(block.string("inside"), "none");
     for axis in ["x", "y", "z"] { assert_eq!(block.object("flow").f64(axis).to_bits(), 0); }
-    println!("PASS hand-written export block through wt/law Object, numeric boxes and raw float/vector parsing");
+    let tick = Object::parse(r#"{"t":0,"ticksFrozen":14,"speedModifiers":[["minecraft:powder_snow",-0.005,0]],"collisionSteps":[{"requested":{"xBits":"3fb999999999999a","yBits":"bfb41205bc01a36e","zBits":"3fb999999999999a"},"result":{"xBits":"3fb999999999999a","yBits":"0000000000000000","zBits":"0000000000000000"}}]}"#);
+    assert_eq!(tick.number("ticksFrozen"), 14.0);
+    assert!(tick.required("collisionSteps").contains("\"xBits\":\"3fb999999999999a\""));
+    assert!(tick.required("speedModifiers").contains("minecraft:powder_snow"));
+    let end = Object::parse(r#"{"kind":"serverEnd","atRest":true,"serverTickOffset":4,"serverTickOffsetMin":4,"serverTickOffsetMax":4,"health":20,"healthBits":"41a00000","foodLevel":20,"saturationLevel":5,"exhaustion":0.75,"foodTickTimer":0}"#);
+    assert_eq!(end.string("kind"), "serverEnd");
+    assert!(end.boolean("atRest"));
+    assert_eq!(end.number("serverTickOffset"), 4.0);
+    assert_eq!(end.number("foodTickTimer"), 0.0);
+    println!("PASS hand-written export block through the law parser Object, numeric boxes and raw float/vector parsing");
 }
 '@
 [IO.File]::WriteAllText((Join-Path $scratch 'main.rs'), $source, [Text.UTF8Encoding]::new($false))

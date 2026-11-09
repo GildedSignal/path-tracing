@@ -44,6 +44,7 @@ final class PlayerSnapshot {
         out.addProperty("leatherBoots", p.getItemBySlot(EquipmentSlot.FEET).is(Items.LEATHER_BOOTS));
         out.addProperty("inPowderSnow", p.isInPowderSnow);
         out.addProperty("wasInPowderSnow", p.wasInPowderSnow);
+        out.addProperty("ticksFrozen", p.getTicksFrozen());
         out.addProperty("onGroundNoBlocks", entity.pathtracing$onGroundNoBlocks());
         out.addProperty("noJumpDelay", ((LivingStateAccess) p).pathtracing$noJumpDelay());
         out.addProperty("foodLevel", p.getFoodData().getFoodLevel());
@@ -58,7 +59,8 @@ final class PlayerSnapshot {
         TraceJson.number(out, "waterMovementEfficiency", (float) p.getAttributeValue(Attributes.WATER_MOVEMENT_EFFICIENCY));
         TraceJson.number(out, "movementEfficiency", (float) p.getAttributeValue(Attributes.MOVEMENT_EFFICIENCY));
         TraceJson.number(out, "sneakingSpeed", (float) p.getAttributeValue(Attributes.SNEAKING_SPEED));
-        TraceJson.number(out, "movementSpeed", p.getAttributeValue(Attributes.MOVEMENT_SPEED));
+        TraceJson.number(out, "movementSpeedBase", p.getAttributeBaseValue(Attributes.MOVEMENT_SPEED));
+        out.add("speedModifiers", TraceJson.speedModifiers(p.getAttribute(Attributes.MOVEMENT_SPEED)));
         TraceJson.number(out, "jumpStrength", p.getAttributeValue(Attributes.JUMP_STRENGTH));
         TraceJson.number(out, "gravity", p.getAttributeValue(Attributes.GRAVITY));
         TraceJson.number(out, "safeFallDistance", p.getAttributeValue(Attributes.SAFE_FALL_DISTANCE));

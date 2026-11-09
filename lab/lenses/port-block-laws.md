@@ -1,0 +1,5 @@
+# Port lane — block collision and contact rules
+
+Group the relevant registry behavior by collision context and executable hooks rather than block names. Compare the exporter and Rust block adapter. Start with one nontrivial contextual shape or landing/inside hook, selected from the registry independently of the named examples. Return a jar-backed fixture that exercises it, with one nearby negative control. If the failure is in generic import or shared law, propose that fix. After the first runnable result, list the other members of the same rule family whose behavior it covers.
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. No server start, downloads or source-tree edits. Save a truthful provisional dossier immediately, then save and run the smallest reproduction before expanding. Put any candidate patch in the run folder and apply it only to a scratch copy there. At the end distinguish observed results from leads. Prefer one independently executable delta over an inventory of guesses.

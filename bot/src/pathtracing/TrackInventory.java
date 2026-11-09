@@ -53,8 +53,27 @@ final class TrackInventory {
     }
 
     boolean sameItems(TrackInventory that) {
-        for (int slot = FIRST; slot < FIRST + SIZE; slot++) if (!slot(slot).equals(that.slot(slot))) return false;
-        return true;
+        return firstDifferentSlot(that) == -1;
+    }
+
+    private int firstDifferentSlot(TrackInventory that) {
+        for (int slot = FIRST; slot < FIRST + SIZE; slot++) if (!slot(slot).equals(that.slot(slot))) return slot;
+        return -1;
+    }
+
+    String difference(TrackInventory actual) {
+        int slot = firstDifferentSlot(actual);
+        if (slot != -1) {
+            String expectedItem = describe(slot(slot));
+            String actualItem = describe(actual.slot(slot));
+            return "Slot " + slot + ": expected " + expectedItem + ", found " + actualItem
+                + (expectedItem.equals(actualItem) ? " (different item data)." : ".");
+        }
+        return selected == actual.selected ? null : "Selected hotbar slot: expected " + selected + ", found " + actual.selected + ".";
+    }
+
+    private static String describe(CompoundTag item) {
+        return item.isEmpty() ? "empty" : item.getStringOr("id", "unknown item") + " x" + item.getIntOr("count", 1);
     }
 
     @Override public int hashCode() { return json().hashCode(); }

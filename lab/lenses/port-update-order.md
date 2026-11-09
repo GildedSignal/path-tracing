@@ -1,0 +1,5 @@
+# Port lane — non-fluid world updates
+
+Trace a single consequential scheduled or neighbor-triggered update from its originating action through the 26.2 server ordering. Choose the earliest unsupported family that can change traversability, such as a falling block, piston or redstone transition. Make a minimal runnable vanilla-derived witness with tick order and observable state changes. Separate the shared scheduling contract from block-specific rules. Report only verified boundaries, and propose a scratch fix only if the oracle can judge it.
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. No server start, downloads or source-tree edits. Save a truthful provisional dossier immediately, then save and run the smallest reproduction before expanding. Put any candidate patch in the run folder and apply it only to a scratch copy there. At the end distinguish observed results from leads. Prefer one independently executable delta over an inventory of guesses.

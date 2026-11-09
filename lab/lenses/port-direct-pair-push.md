@@ -1,0 +1,5 @@
+## port-direct-pair-push
+
+Invoke Entity.push(Entity) directly from the staged jar for two inert probes at y=0 and dz=0, with dx equal to or immediately below the cutoff (double)0.01f. Use the full server libraries classpath approach in jobs/1.9b-elytra-oracle/run.ps1 and its constructor-bypassing entity probe if needed. Capture raw impulses for both and reject a strict comparison mutant. Prior rule evidence is lab/results/local-20261107-1528-1-2-port-push-threshold. Stop at the single call, no ticks or AI.
+
+Write dossier.md with the one-sentence Claim: on its first physical line and runnable reproduce.sh in your new result folder. Use the staged 26.2 jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and JDK at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin. Prior untracked lab results are available from D:/path-tracing-wt/glm-lab/ via their same paths. Read those only. Save the initial result and script before expanding. Run it, keep raw output and name the evidence type (direct jar invocation, reconstructed arithmetic, or bytecode). No production edits, network, or live game.

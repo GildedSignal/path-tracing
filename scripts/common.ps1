@@ -19,8 +19,9 @@ $McVersion     = '26.2'
 $LoaderVersion = '0.19.5'
 
 $ServerHost  = '127.0.0.1'
-$ServerPort  = 25565
-$RconPort    = 25575
+$ServerPort  = if ($env:PATHTRACING_SERVER_PORT) { [int]$env:PATHTRACING_SERVER_PORT } else { 25565 }
+if ($ServerPort -lt 1 -or $ServerPort -gt 65525) { throw 'PATHTRACING_SERVER_PORT must leave room for RCON at port + 10.' }
+$RconPort    = $ServerPort + 10
 $PlayerName  = 'Brain_Forge'
 $BotName     = 'PathBot'
 

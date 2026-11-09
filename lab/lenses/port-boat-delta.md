@@ -1,0 +1,3 @@
+# Port delta ? boat travel
+
+Use the staged Mojang 26.2 server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar and staged javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. The Rust port explicitly refuses boats and riding. Find the smallest complete vanilla update useful to the port: occupied boat acceleration, drag and yaw in still water. Check at least a straight input and a turn, plus the nearest water-to-land or falling boundary as a separate observation. Produce a runnable jar-backed raw-bit corpus with class, method and offsets. Where feasible, return candidate.patch in the run folder with a scratch-only reproduction. Separate boat dynamics from rider placement and packet timing. Leave the rig alone.

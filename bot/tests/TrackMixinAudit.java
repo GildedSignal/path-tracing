@@ -35,9 +35,15 @@ final class TrackMixinAudit {
                             Type[] parameters = Type.getArgumentTypes(handler.desc);
                             boolean returnsVoid = Type.getReturnType(method.desc).equals(Type.VOID_TYPE);
                             String callback = returnsVoid ? "CallbackInfo" : "CallbackInfoReturnable";
-                            require(parameters[parameters.length - 1].getInternalName().endsWith("/" + callback), name + ": incorrect callback for " + selector);
-                            if (parameters.length > 1) {
-                                require(Arrays.equals(Arrays.copyOf(parameters, parameters.length - 1), Type.getArgumentTypes(method.desc)),
+                            // With local capture, the callback follows the target's arguments and captured locals come
+                            // after it; Mixin's CAPTURE_FAILHARD checks those locals against the bytecode at load.
+                            Type[] arguments = Type.getArgumentTypes(method.desc);
+                            boolean capturesLocals = has(annotation, "locals");
+                            int callbackIndex = capturesLocals ? arguments.length : parameters.length - 1;
+                            require(callbackIndex < parameters.length
+                                && parameters[callbackIndex].getInternalName().endsWith("/" + callback), name + ": incorrect callback for " + selector);
+                            if (callbackIndex > 0 || capturesLocals) {
+                                require(Arrays.equals(Arrays.copyOf(parameters, callbackIndex), arguments),
                                     name + ": incorrect captured parameters for " + selector);
                             }
                             require((handler.access & Opcodes.ACC_STATIC) == (method.access & Opcodes.ACC_STATIC), name + ": static mismatch");
@@ -58,7 +64,7 @@ final class TrackMixinAudit {
                 }
             }
         }
-        require(injections == 24, "Expected 24 checked injections, got " + injections);
+        require(injections == 36, "Expected 36 checked injections, got " + injections);
         System.out.println("Verified " + injections + " compiled track injections against Minecraft 26.2.");
     }
 
@@ -82,6 +88,14 @@ final class TrackMixinAudit {
             if (annotation.values.get(index).equals(key)) return annotation.values.get(index + 1);
         }
         throw new AssertionError("Missing annotation key " + key);
+    }
+
+    private static boolean has(AnnotationNode annotation, String key) {
+        if (annotation.values == null) return false;
+        for (int index = 0; index < annotation.values.size(); index += 2) {
+            if (annotation.values.get(index).equals(key)) return true;
+        }
+        return false;
     }
 
     private static void require(boolean condition, String message) {

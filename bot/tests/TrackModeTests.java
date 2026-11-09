@@ -2,6 +2,7 @@ package pathtracing;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.netty.buffer.Unpooled;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,16 +12,21 @@ import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.data.registries.VanillaRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.ItemStackWithSlot;
 import net.minecraft.world.entity.EntityEquipment;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 /** No world, client, connection or game process. Real Mojang codecs plus a controllable server port. */
 final class TrackModeTests {
@@ -35,10 +41,119 @@ final class TrackModeTests {
         registries = VanillaRegistries.createLookup();
         BuiltInRegistries.DATA_COMPONENT_INITIALIZERS.build(registries).forEach(pending -> pending.apply());
         codecs(root.resolve("files"));
+        allItems();
+        entryCapture(root.resolve("entry"));
         transactions(root.resolve("transactions"));
         failures(root.resolve("failures"));
         serverOrdering(root.resolve("server-ordering"));
         System.out.println("Passed " + checks + " inventory and human track-mode checks.");
+    }
+
+    private static void allItems() {
+        var network = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+        List<String> failures = new ArrayList<>();
+        int stacks = 0;
+        for (var item : BuiltInRegistries.ITEM) {
+            var one = new ItemStack(item);
+            for (int count : new int[] {1, one.getMaxStackSize()}) {
+                stacks++;
+                var original = new ItemStack(item, count);
+                var id = BuiltInRegistries.ITEM.getKey(item) + " x" + count;
+                var buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), network);
+                String stage = "save codec";
+                try {
+                    var slots = new ArrayList<>(Collections.nCopies(TrackInventory.SIZE, ItemStack.EMPTY));
+                    slots.set(0, original);
+                    var inventory = TrackInventoryCodec.encode(slots, 0, registries);
+                    stage = "session JSON";
+                    var saved = new TrackStore.Session(inventory, "creative");
+                    var restored = TrackStore.Session.read(JsonParser.parseString(TrackStore.canonical(saved.json())).getAsJsonObject());
+                    var decoded = TrackInventoryCodec.decode(restored.inventory(), registries).getFirst();
+                    if (!ItemStack.matches(original, decoded)) throw new IllegalStateException("Saved stack changed");
+                    stage = "creative packet";
+                    var codec = ServerboundSetCreativeModeSlotPacket.STREAM_CODEC;
+                    codec.encode(buf, new ServerboundSetCreativeModeSlotPacket(TrackInventory.FIRST, decoded));
+                    var received = codec.decode(buf);
+                    if (received.slotNum() != TrackInventory.FIRST || !ItemStack.matches(original, received.itemStack()) || buf.isReadable()) {
+                        throw new IllegalStateException("Decoded packet changed stack or left unread bytes");
+                    }
+                    stage = "server slot validation";
+                    if (!received.itemStack().isItemEnabled(FeatureFlags.DEFAULT_FLAGS)
+                        || (!received.itemStack().isEmpty() && received.itemStack().getCount() > received.itemStack().getMaxStackSize())) {
+                        throw new IllegalStateException("Default server would reject stack");
+                    }
+                } catch (RuntimeException failure) {
+                    failures.add(id + " (" + stage + "): " + failure);
+                } finally {
+                    buf.release();
+                }
+            }
+        }
+        System.out.println("Registry inventory round trips: " + BuiltInRegistries.ITEM.size() + " items, "
+            + stacks + " stacks, " + failures.size() + " failures.");
+        check(failures.isEmpty(), String.join("\n", failures));
+    }
+
+    private static void entryCapture(Path root) throws Exception {
+        var store = store(root);
+        store.writeKit("course", kit);
+        var port = new Server(store);
+        var mode = new TrackMode(store, "human", port);
+        var stacks = new ArrayList<>(TrackInventoryCodec.decode(original, registries));
+        stacks.set(10, new ItemStack(Items.SULFUR_SPIKE, 64));
+        var withSpike = TrackInventoryCodec.encode(stacks, original.selected, registries);
+        port.server = withSpike;
+        port.reply = false;
+        mode.enter("course");
+        check(mode.state() == TrackMode.State.CAPTURE && store.readSession("human") == null
+            && port.commands.isEmpty() && port.applications == 0, "Entry waits for server capture before mutating");
+        port.answer();
+        check(!mode.active() && store.readSession("human") == null && port.server.equals(withSpike),
+            "A stale client cannot overwrite a server-only sulfur spike");
+        check(port.messages.getLast().contains("Slot 15") && port.messages.getLast().contains("minecraft:sulfur_spike"),
+            "Capture disagreement identifies the slot and sulfur spike");
+        port.client = withSpike;
+        port.expectedSaved = withSpike;
+        mode.enter("course");
+        mode.exit();
+        port.answer();
+        check(!mode.active() && store.readSession("human") == null, "Cancelling entry invalidates the capture reply");
+        port.reply = true;
+        mode.enter("course");
+        ready(mode, 1);
+        check(!port.server.equals(withSpike) && store.readSession("human").inventory().equals(withSpike),
+            "An existing kit without the spike leaves the original safe in the session");
+        mode.exit();
+        mode.tick(10);
+        port.reply = false;
+        mode.tick(11);
+        port.server = original;
+        port.answer();
+        check(mode.state() == TrackMode.State.FAILED && store.readSession("human").inventory().equals(withSpike)
+            && port.client.equals(kit), "A spike missing from final readback keeps the session and does not confirm a local copy");
+        check(port.messages.getLast().contains("Slot 15") && port.messages.getLast().contains("minecraft:sulfur_spike")
+            && port.messages.getLast().contains("/track restore"), "Restore failure names the slot, item, and command");
+        port.reply = true;
+        check(mode.exit(), "A saved session can be restored again");
+        mode.tick(12);
+        mode.tick(13);
+        check(!mode.active() && port.server.equals(withSpike) && port.client.equals(withSpike) && store.readSession("human") == null,
+            "Retry restores the spike and deletes the verified session");
+
+        var network = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+        var plainStacks = new ArrayList<>(Collections.nCopies(TrackInventory.SIZE, ItemStack.EMPTY));
+        plainStacks.set(10, new ItemStack(Items.SULFUR_SPIKE, 64));
+        var plain = TrackInventoryCodec.encode(plainStacks, 0, registries);
+        check(TrackInventoryCodec.creativePackets(plain, network, FeatureFlags.DEFAULT_FLAGS).size() == TrackInventory.SIZE,
+            "Default feature flags and the full stack count accept the sulfur spike");
+        var impossible = new TrackInventory(Collections.nCopies(TrackInventory.SIZE, "{id:'minecraft:stick',count:65}"), 0);
+        try {
+            TrackInventoryCodec.creativePackets(impossible, network, FeatureFlags.DEFAULT_FLAGS);
+            throw new AssertionError("Oversized creative stack accepted");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("slot 5") && expected.getMessage().contains("minecraft:stick")
+                && expected.getMessage().contains("maximum count"), "Preflight identifies an oversized stack and its slot");
+        }
     }
 
     private static void check(boolean condition, String message) {
@@ -130,6 +245,7 @@ final class TrackModeTests {
         final TrackStore store;
         TrackInventory client = original;
         TrackInventory server = original;
+        TrackInventory expectedSaved = original;
         String clientMode = "creative";
         String serverMode = "creative";
         boolean alive = true;
@@ -152,6 +268,8 @@ final class TrackModeTests {
         @Override public TrackInventory inventory() { return client; }
         @Override public String mode() { return clientMode; }
         @Override public boolean alive() { return alive; }
+        @Override public void checkEntry() { }
+        @Override public void checkRestorable(TrackInventory inventory) { }
         @Override public void say(String message) { messages.add(message); }
         @Override public void command(String command) {
             savedBeforeMutation();
@@ -165,7 +283,7 @@ final class TrackModeTests {
             }
         }
         void savedBeforeMutation() {
-            try { check(store.readSession("human").inventory().equals(original), "Original inventory is durable before mutation"); }
+            try { check(store.readSession("human").inventory().equals(expectedSaved), "Original inventory is durable before mutation"); }
             catch (IOException failure) { throw new AssertionError(failure); }
         }
         @Override public void apply(TrackInventory value) {
@@ -322,9 +440,9 @@ final class TrackModeTests {
         var port = new Server(store);
         port.clientMode = port.serverMode = "adventure";
         port.acknowledge = false;
-        port.reply = false;
         var mode = new TrackMode(store, "human", port);
         mode.enter("course");
+        port.reply = false;
         mode.tick(1);
         mode.tick(2);
         check(mode.state() == TrackMode.State.CREATIVE && port.applications == 0, "Server mode alone does not allow slots before client sees creative");
@@ -362,12 +480,12 @@ final class TrackModeTests {
             "Refill commands can be acknowledged before instant effects run on a server tick");
         mode.tick(2);
         mode.tick(3);
-        check(mode.state() == TrackMode.State.REFILL && port.queries == 1,
+        check(mode.state() == TrackMode.State.REFILL && port.queries == 2,
             "Client ticks alone cannot verify the refill or arm the run");
         port.full = true;
         mode.serverTick();
         mode.tick(4);
-        check(mode.ready() && port.queries == 2,
+        check(mode.ready() && port.queries == 3,
             "A later server time packet permits one authoritative refill verification");
         mode.exit();
         exited(mode, port, 5);

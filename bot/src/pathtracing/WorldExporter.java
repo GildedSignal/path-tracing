@@ -14,6 +14,11 @@ import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.IceBlock;
+import net.minecraft.world.level.material.FlowingFluid;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.tags.BlockTags;
@@ -32,6 +37,9 @@ import net.minecraft.world.level.block.HoneyBlock;
 import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.PowderSnowBlock;
+import net.minecraft.world.level.block.EndPortalBlock;
+import net.minecraft.world.level.block.EndGatewayBlock;
+import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SlimeBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
@@ -111,15 +119,18 @@ final class WorldExporter {
             world.addProperty("difficulty", level.getDifficulty().getId());
             world.addProperty("naturalRegeneration", naturalRegeneration);
             world.addProperty("fastLava", level.environmentAttributes().getDimensionValue(EnvironmentAttributes.FAST_LAVA));
+            if (LandingClientTrace.CORPUS || Boolean.getBoolean("pathtracing.rawFluid")) {
+                world.add("min", coordinates(request.min()));
+                world.add("max", coordinates(request.max()));
+            }
+            if (Boolean.getBoolean("pathtracing.rawFluid")) world.addProperty("rawFluid", true);
             writer.write(world.toString()); writer.write('\n');
             for (BlockPos pos : BlockPos.betweenClosed(request.min(), request.max())) {
                 BlockState state = level.getBlockState(pos);
-                if (state.isAir()) continue;
+                if (state.isAir() && !Boolean.getBoolean("pathtracing.rawFluid")) continue;
                 JsonObject out = new JsonObject();
                 out.addProperty("kind", "block");
-                JsonArray at = new JsonArray();
-                at.add(pos.getX()); at.add(pos.getY()); at.add(pos.getZ());
-                out.add("at", at);
+                out.add("at", coordinates(pos));
                 out.addProperty("block", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
                 out.addProperty("state", state.toString());
                 out.add("boxes", boxes(state.getCollisionShape(level, pos, CollisionContext.empty()).toAabbs()));
@@ -140,12 +151,20 @@ final class WorldExporter {
                 player.setBoundingBox(bounds);
                 out.add("insideBoxes", boxes(state.getEntityInsideCollisionShape(level, pos, player).toAabbs()));
                 properties(out, state);
+                out.addProperty("suffocating", state.isSuffocating(level, pos));
                 var fluid = state.getFluidState();
                 out.addProperty("fluid", fluid.is(FluidTags.WATER) ? "water" : fluid.is(FluidTags.LAVA) ? "lava" : "empty");
                 TraceJson.number(out, "fluidHeight", fluid.getHeight(level, pos));
                 out.add("flow", TraceJson.vector(fluid.getFlow(level, pos)));
+                if (Boolean.getBoolean("pathtracing.rawFluid")) rawFluid(out, level, pos, state);
                 writer.write(out.toString()); writer.write('\n');
                 count++;
+            }
+            if (LandingClientTrace.CORPUS || Boolean.getBoolean("pathtracing.rawFluid")) {
+                JsonObject end = new JsonObject();
+                end.addProperty("kind", "worldEnd");
+                end.addProperty("blocks", count);
+                writer.write(end.toString()); writer.write('\n');
             }
         } finally {
             player.setItemInHand(InteractionHand.MAIN_HAND, mainHand);
@@ -157,6 +176,25 @@ final class WorldExporter {
         }
         Files.move(temporary(request.path()), request.path());
         return "Exported " + request.name() + ": " + count + " blocks.";
+    }
+
+    static void rawFluid(JsonObject out, BlockGetter level, BlockPos pos, BlockState state) {
+        var fluid = state.getFluidState();
+        if (fluid.getType().isSame(Fluids.WATER) || fluid.getType().isSame(Fluids.LAVA)) {
+            out.addProperty("rawAmount", fluid.getAmount());
+            out.addProperty("rawFalling", fluid.getValue(FlowingFluid.FALLING));
+        }
+        out.addProperty("blocksMotion", state.blocksMotion());
+        JsonArray faces = new JsonArray();
+        for (Direction direction : new Direction[]{Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST}) {
+            faces.add(!(state.getBlock() instanceof IceBlock) && state.isFaceSturdy(level, pos, direction));
+        }
+        out.add("solidFaces", faces);
+    }
+    private static JsonArray coordinates(BlockPos pos) {
+        JsonArray at = new JsonArray();
+        at.add(pos.getX()); at.add(pos.getY()); at.add(pos.getZ());
+        return at;
     }
 
     private static void properties(JsonObject out, BlockState state) {
@@ -173,14 +211,42 @@ final class WorldExporter {
         out.addProperty("air", state.isAir());
         out.addProperty("scaffolding", block instanceof ScaffoldingBlock);
         out.addProperty("slime", block instanceof SlimeBlock);
+        out.addProperty("bed", block instanceof BedBlock);
+        out.addProperty("endPortalOrGateway", block instanceof EndPortalBlock || block instanceof EndGatewayBlock);
         out.addProperty("waterBlock", block instanceof LiquidBlock && state.getFluidState().is(FluidTags.WATER) || block instanceof BubbleColumnBlock);
-        out.addProperty("inside", block instanceof WebBlock ? "cobweb" : block instanceof PowderSnowBlock ? "powderSnow" : block instanceof HoneyBlock ? "honey" : "none");
+        out.addProperty("inside", inside(block));
+        out.addProperty("unsupportedFallOn", unsupportedFallOn(block));
         // These fallOn hooks have no data getter. Values follow their 26.2 bytecode.
-        TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : block instanceof BedBlock ? 0.5F : 1.0F);
+        TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : 1.0F);
         if (block instanceof LadderBlock) out.addProperty("ladderFacing", state.getValue(LadderBlock.FACING).get3DDataValue());
         if (block instanceof TrapDoorBlock && state.getValue(TrapDoorBlock.OPEN)) {
             out.addProperty("openTrapdoorFacing", state.getValue(TrapDoorBlock.FACING).get3DDataValue());
         }
+    }
+
+    private static String inside(Block block) {
+        Class<?> owner = hookOwner(block, "entityInside", BlockBehaviour.class);
+        if (owner == BlockBehaviour.class) return "none";
+        if (owner == WebBlock.class) return "cobweb";
+        if (owner == PowderSnowBlock.class) return "powderSnow";
+        if (owner == HoneyBlock.class) return "honey";
+        return "unmodeled";
+    }
+
+    private static boolean unsupportedFallOn(Block block) {
+        Class<?> owner = hookOwner(block, "fallOn", Block.class);
+        return owner != Block.class && owner != HayBlock.class && owner != HoneyBlock.class
+            && owner != BedBlock.class && owner != SlimeBlock.class && owner != PowderSnowBlock.class;
+    }
+
+    private static Class<?> hookOwner(Block block, String hook, Class<?> base) {
+        // An inherited implementation keeps the classification of its declaring class.
+        for (Class<?> type = block.getClass(); type != base; type = type.getSuperclass()) {
+            for (var method : type.getDeclaredMethods()) {
+                if (method.getName().equals(hook)) return type;
+            }
+        }
+        return base;
     }
 
     private static JsonArray boxes(List<AABB> values) {

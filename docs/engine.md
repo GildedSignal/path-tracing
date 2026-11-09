@@ -144,7 +144,7 @@ All of these come from 26.2. To regenerate them, run `javap -cp <client jar> -c 
 - jump strength 0.42; gravity 0.08; step height 0.6;
 - safe fall distance 3; block interaction range 4.5; sneaking speed 0.3.
 
-**Fall damage** = floor(fall power × the fall-damage multiplier attribute). Hay takes it to 0.2× and a bed to 0.5× (their `fallOn` overrides).
+**Fall damage** = floor(fall power × the block's landing multiplier × the fall-damage multiplier attribute). Hay supplies a 0.2 landing multiplier. A bed halves the fall distance before fall power is calculated.
 
 **`FoodConstants`:**
 - Sprinting needs food above 6.

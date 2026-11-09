@@ -1,9 +1,16 @@
 param(
   [string[]]$Courses,
   [ValidateRange(1, 2147483647)][int]$Runs = 8,
-  [ValidateRange(1, 2147483647)][int]$Ticks = 400,
+  [ValidateRange(1, 2147483627)][int]$Ticks = 400,
   [int]$Seed = 1,
-  [string]$Jar
+  [string]$Jar,
+  [ValidateSet('peaceful', 'normal')][string]$ResourceDifficulty,
+  [string]$ResourceProbeJar,
+  [ValidateSet(20, 200)][int]$LandingRate,
+  [ValidateSet('Preflight','Audit','Full')][string]$CorpusMode,
+  [string]$CorpusTarget,
+  [string]$CorpusReferenceServer,
+  [string]$CorpusLauncher
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\scripts\common.ps1"
@@ -18,8 +25,50 @@ $powershell = Join-Path $PSHOME 'powershell.exe'
 $scripts = Join-Path $PSScriptRoot '..\..\scripts'
 $botDir = Join-Path $Rig 'clients\bot'
 $fixtures = Join-Path $PSScriptRoot '..\fixtures'
+$corpus = [bool]$CorpusMode
+$landing = $PSBoundParameters.ContainsKey('LandingRate') -or $corpus
+$corpusJob = Join-Path $PSScriptRoot '../../jobs/1.6g-terrain-corpus'
+if ($corpus) {
+  foreach ($key in @('Courses','Runs','Ticks','Seed','LandingRate','ResourceDifficulty')) {
+    if ($PSBoundParameters.ContainsKey($key)) { throw "Corpus mode fixes $key in the manifest." }
+  }
+  if (-not $Jar -or -not $ResourceProbeJar -or -not $CorpusTarget -or -not $CorpusReferenceServer -or
+      -not (Test-Path -LiteralPath $CorpusLauncher -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'terrain-corpus.disposable') -PathType Leaf)) {
+    throw 'Corpus capture requires its disposable marker, built bot and probe jars, verifier target and reference server.'
+  }
+  if ($ServerPort -in @(25565,25566,25575,25576) -or $RconPort -in @(25565,25566,25575,25576)) {
+    throw 'Corpus capture requires a port pair separate from the play and reference rigs.'
+  }
+  . "$corpusJob/manifest.ps1"
+  $manifest = Get-TerrainManifest $CorpusMode
+  $Runs = $manifest.Runs; $Ticks = $manifest.Ticks; $Seed = $manifest.Seed
+  $captureRate = $manifest.Rate
+} else { $captureRate = $LandingRate }
+if ($landing) {
+  if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'landing-motion.disposable') -PathType Leaf) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
+    throw 'Landing capture requires a marked disposable copy and its own port pair.'
+  }
+  if (-not $corpus -and ($ResourceDifficulty -or -not $ResourceProbeJar -or -not $Jar -or $Runs -ne 1 -or
+      $Ticks -ne 400 -or $Seed -ne 1 -or ($Courses -join ',') -cne 'edges,full-blocks,ice')) {
+    throw 'Frozen landing capture requires -Courses edges,full-blocks,ice -Runs 1 -Ticks 400 -Seed 1, -Jar and -ResourceProbeJar.'
+  }
+  $fixtures = Join-Path $result 'capture'
+} elseif ($ResourceDifficulty) {
+  if (-not $env:PATHTRACING_ROOT -or $ServerPort -in @(25565, 25566) -or
+      -not (Test-Path -LiteralPath (Join-Path $Rig 'resource-pair.disposable') -PathType Leaf)) {
+    throw 'Resource capture requires a marked disposable copy and its own port pair.'
+  }
+  if (-not $ResourceProbeJar -or $Runs -ne 1 -or $Ticks -ne 80 -or $Seed -ne 1 -or
+      $Courses.Count -ne 1 -or $Courses[0] -cne 'full-blocks') {
+    throw 'Frozen resource pair requires -Courses full-blocks -Runs 1 -Ticks 80 -Seed 1 and -ResourceProbeJar.'
+  }
+  $fixtures = Join-Path $result 'pair'
+} elseif ($ResourceProbeJar) { throw '-ResourceProbeJar requires -ResourceDifficulty.' }
 $prefix = 'l0_' + $stamp
-$timeout = [int][Math]::Min(2147400, [Math]::Ceiling($Ticks / 10.0) + 60)
+$timeout = if ($landing) { 60 } else { [int][Math]::Min(2147400, [Math]::Ceiling($Ticks / 10.0) + 60) }
 $locked = $false
 $exitCode = 1
 $started = @{}
@@ -30,14 +79,75 @@ $outcomes = [Collections.Generic.List[object]]::new()
 $selected = @()
 $activeRecording = $null
 $completed = $false
+$originalGameMode = $null
+$recordTicks = $Ticks + 20
+$comparableEnds = 0
+$resourceProbe = $null
+$previousProbeOptIn = $env:PATHTRACING_RESOURCE_PROBE
+$previousLandingOptIn = $env:PATHTRACING_LANDING_PROBE
+$previousCorpusOptIn = $env:PATHTRACING_TERRAIN_CORPUS
 
-function Export-World([string]$Name, [int[]]$Min, [int[]]$Max) {
+function Cleanup([string]$Name, [scriptblock]$Action) {
+  try { & $Action } catch { Note "$Name cleanup failed: $($_.Exception.Message)" }
+}
+function Axis-TieCollision($Step) {
+  $xb = [string]$Step.requested.xBits; $zb = [string]$Step.requested.zBits
+  if ($xb -cnotmatch '^[0-9a-f]{16}$' -or $zb -cnotmatch '^[0-9a-f]{16}$') { return $false }
+  # Clear exactly the sign bit, retaining all exponent and significand bits.
+  $xm = ([Convert]::ToInt32($xb.Substring(0,1),16) -band 7).ToString('x') + $xb.Substring(1)
+  $zm = ([Convert]::ToInt32($zb.Substring(0,1),16) -band 7).ToString('x') + $zb.Substring(1)
+  $xm -cne '0000000000000000' -and $xm -ceq $zm -and
+    (($xb -cne $Step.result.xBits) -xor ($zb -cne $Step.result.zBits))
+}
+
+function Signed-TickOffset([long]$QueryTime, [long]$ClientTime) {
+  $period = 2147483647L
+  $offset = $QueryTime - ($ClientTime % $period)
+  if ($offset -gt 1073741823) { $offset -= $period }
+  if ($offset -lt -1073741823) { $offset += $period }
+  $offset
+}
+function At-Rest($Row) {
+  $Row.onGround -eq $true -and $null -ne $Row.velocity -and
+    $null -ne $Row.velocity.x -and $null -ne $Row.velocity.z -and
+    [double]$Row.velocity.x -eq 0 -and [double]$Row.velocity.z -eq 0
+}
+function Require-StableResources($First, $Second) {
+  foreach ($field in @('Health', 'foodSaturationLevel', 'foodExhaustionLevel')) {
+    $a = [BitConverter]::ToUInt32([BitConverter]::GetBytes([single]$First.$field), 0)
+    $b = [BitConverter]::ToUInt32([BitConverter]::GetBytes([single]$Second.$field), 0)
+    if ($a -ne $b) { throw "Start resources changed during settle: $field." }
+  }
+  foreach ($field in @('foodLevel', 'foodTickTimer')) {
+    if ($First.$field -ne $Second.$field) { throw "Start resources changed during settle: $field." }
+  }
+}
+function Restore-Start([string]$Name, [string]$Start) {
+  Assert-Absent
+  $null = Require (Rcon ('tp ' + $BotName + ' ' + $Start.Replace(',', ' '))) 'Thaw teleport'
+  $reply = Require (Rcon "attribute $BotName minecraft:max_health get") 'Maximum health query'
+  if ($reply.Text -notmatch '(-?\d+(?:\.\d+)?)\s*$') { throw 'Cannot read maximum health.' }
+  $maximum = [single]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    $state = Server-Snapshot $Name
+    if ([single]$state.Health -eq $maximum -and $state.foodTickTimer -eq 0 -and $state.TicksFrozen -eq 0) { return $state }
+    if ([single]$state.Health -ne $maximum -or $state.foodTickTimer -ne 0) {
+      $null = Require (Rcon "effect give $BotName instant_health") 'Heal bot'
+    }
+    if ($clock.Elapsed.TotalSeconds -ge 60) { throw 'Bot did not reach maximum health, foodTickTimer=0 and ticksFrozen=0.' }
+    Start-Sleep -Milliseconds 100
+    Assert-Absent
+  } while ($true)
+}
+
+function Export-World([string]$Name, [int[]]$Min, [int[]]$Max, [switch]$Readiness) {
   $path = Join-Path $botDir "pathtracing\fixtures\$Name.world.jsonl"
-  $artifacts.Add($path)
+  if (-not $Readiness) { $artifacts.Add($path) }
   $text = 'export ' + $Name + ' ' + (($Min + $Max) -join ' ')
   $null = Require (Bot $text ("Exported ${Name}: \d+ blocks\.") 120) 'Client world export'
   if (-not (Test-Path -LiteralPath $path)) { throw "Export completion has no file: $path" }
-  Save-Artifact $path
+  if (-not $Readiness) { Save-Artifact $path }
   $path
 }
 function Server-Snapshot([string]$Name) {
@@ -45,7 +155,7 @@ function Server-Snapshot([string]$Name) {
   $path = Join-Path $result "$Name.server.json"
   Set-Content -LiteralPath $path -Value $reply.Text -Encoding ASCII
   $state = $reply.Text | ConvertFrom-Json
-  foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'Pos', 'Motion', 'FallDistance')) {
+  foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'foodTickTimer', 'TicksFrozen', 'playerGameType', 'gameTimeBefore', 'gameTimeAfter')) {
     if ($null -eq $state.PSObject.Properties[$field]) { throw "Server snapshot missing $field; see $($reply.File)." }
   }
   $state
@@ -61,25 +171,99 @@ function Server-Resources($Object, $State) {
   Set-Float $Object saturationLevel $State.foodSaturationLevel
   Set-Float $Object exhaustion $State.foodExhaustionLevel
   $Object | Add-Member -NotePropertyName foodLevel -NotePropertyValue ([int]$State.foodLevel) -Force
+  $Object | Add-Member -NotePropertyName foodTickTimer -NotePropertyValue ([int]$State.foodTickTimer) -Force
 }
-function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$World, $Player, $ServerStart, $ServerEnd) {
+function New-ResourceInputs([string]$Path, [string]$Start) {
+  $rows = @('{"start":[' + $Start + ']}')
+  $rows += for ($t = 0; $t -lt 80; $t++) {
+    $jump = if ($t -in @(0, 20, 40)) { 'true' } else { 'false' }
+    '{"t":' + $t + ',"forward":false,"back":false,"left":false,"right":false,"jump":' + $jump +
+      ',"sneak":false,"sprint":false,"yaw":0,"pitch":0}'
+  }
+  $null = New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force
+  $rows | Set-Content -LiteralPath $Path -Encoding ASCII
+}
+function Resource-Command([string]$Command, [string]$Expected) {
+  $reply = Require (Rcon $Command) $Command
+  if ($reply.Text.Trim() -cne $Expected) { throw "Resource command refused. See $($reply.File)." }
+}
+function Prepare-ResourceStart {
+  $display = $ResourceDifficulty.Substring(0,1).ToUpperInvariant() + $ResourceDifficulty.Substring(1)
+  $reply = Require (Rcon "difficulty $ResourceDifficulty") 'Set resource difficulty'
+  if ($reply.Text.Trim() -cnotin @("The difficulty has been set to $display", "The difficulty did not change; it is already set to $display")) {
+    throw "Difficulty refused. See $($reply.File)."
+  }
+  Resource-Command 'gamerule natural_health_regeneration true' 'Gamerule natural_health_regeneration is now set to: true'
+  Resource-Command 'gamerule spawn_mobs false' 'Gamerule spawn_mobs is now set to: false'
+  Resource-Command "effect give $BotName minecraft:saturation 1 20 true" "Applied effect Saturation to $BotName"
+  Resource-Command "effect give $BotName minecraft:hunger 1 38 true" "Applied effect Hunger to $BotName"
+  # Both effects last twenty server ticks. The start snapshot and probe enforce their completion.
+  Start-Sleep -Seconds 2
+}
+function Seal-Landing([string]$Run) {
+  $client = Join-Path $botDir "pathtracing/recordings/$Run.client-motion.csv"
+  $server = Join-Path $Rig "server/pathtracing-phase/$Run.server-motion.csv"
+  $resources = Join-Path $Rig "server/pathtracing-phase/$Run.csv"
+  try {
+    if ($corpus) {
+      Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run"
+    } else {
+      try { Resource-Command "ptphase resources stop $Run" "Resource capture saved $Run" }
+      finally { Resource-Command "ptlanding stop $Run" "Landing capture sealed $Run" }
+    }
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath $client -PathType Leaf) -or
+           -not (Test-Path -LiteralPath $server -PathType Leaf)) {
+      if ($deadline.Elapsed.TotalSeconds -ge 10) { throw "Missing ordered end fence for $Run." }
+      Start-Sleep -Milliseconds 50
+    }
+  } finally {
+    Save-Artifact $client
+    Save-Artifact "$client.tmp"
+    if (-not (Test-Path -LiteralPath $client -PathType Leaf)) {
+      Save-Artifact (Join-Path $botDir "pathtracing/recordings/$Run.client-motion.partial.csv")
+    }
+    Save-Artifact $server
+    Save-Artifact "$server.tmp"
+    if (Test-Path -LiteralPath $resources -PathType Leaf) {
+      Copy-Item -LiteralPath $resources -Destination (Join-Path $result "$Run.resources.csv")
+    }
+  }
+}
+function Set-CaptureRate([int]$Rate) {
+  $reply = Require (Rcon "tick rate $Rate") 'Set capture tick rate'
+  if ($reply.Text.Trim() -cnotmatch ('^Set the target tick rate to ' + $Rate + '(?:\.0)? per second$')) {
+    throw "Capture rate $Rate refused. See $($reply.File)."
+  }
+}
+function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$World, $Player, $ServerStart, $ServerEnd, $LastTick) {
   $directory = Join-Path $fixtures $Course
   $null = New-Item -ItemType Directory -Force -Path $directory
-  $recordTarget = Join-Path $directory "$Course-$Run.jsonl"
-  $worldTarget = Join-Path $directory "$Course-$Run.world.jsonl"
+  $base = if ($ResourceDifficulty) { [IO.Path]::GetFileNameWithoutExtension($Recording) } else { "$Course-$Run" }
+  $recordTarget = Join-Path $directory "$base.jsonl"
+  $worldTarget = Join-Path $directory "$base.world.jsonl"
   foreach ($path in @($recordTarget, $worldTarget, "$recordTarget.tmp", "$worldTarget.tmp")) {
     if (Test-Path -LiteralPath $path) { throw "Fixture output already exists: $path" }
   }
-  # Preserve the full client snapshot in the recording header. Resources used by Rust come
-  # from the pre-replay server queries, with their timing limitation stated in the report.
+  # Health and food influence the client movement law. The server alone owns saturation:
+  # ServerPlayer.doTick sends it when health/food change or saturation crosses zero.
+  # The raw client observation stays in the recording header.
   if ([single]$Player.health -ne [single]$ServerStart.Health -or
-      $Player.foodLevel -ne $ServerStart.foodLevel -or
-      [single]$Player.saturationLevel -ne [single]$ServerStart.foodSaturationLevel) {
+      $Player.foodLevel -ne $ServerStart.foodLevel) {
     throw 'Initial server resources disagree with the settled client snapshot; pre-replay resources cannot initialize this fixture.'
   }
   Server-Resources $Player $ServerStart
-  $end = [pscustomobject]@{ kind = 'serverEnd' }
+  $end = [pscustomobject]@{ kind = 'serverEnd'; atRest = (At-Rest $LastTick) }
   Server-Resources $end $ServerEnd
+  if ($null -eq $LastTick.PSObject.Properties['gameTime']) { throw 'Recording lacks final gameTime.' }
+  # Vanilla time query gametime returns the game time modulo Integer.MAX_VALUE.
+  $offsetMin = Signed-TickOffset $ServerEnd.gameTimeBefore $LastTick.gameTime
+  $offsetMax = Signed-TickOffset $ServerEnd.gameTimeAfter $LastTick.gameTime
+  $end | Add-Member -NotePropertyName serverTickOffsetMin -NotePropertyValue $offsetMin
+  $end | Add-Member -NotePropertyName serverTickOffsetMax -NotePropertyValue $offsetMax
+  $offset = if ($offsetMin -eq $offsetMax) { $offsetMin } else { $null }
+  $end | Add-Member -NotePropertyName serverTickOffset -NotePropertyValue $offset
+  Note "$Course run $Run serverEnd offset: $offset; bracket [$offsetMin,$offsetMax]; atRest: $($end.atRest)."
   $stream = [IO.File]::Open("$worldTarget.tmp", [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
   $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
   try {
@@ -95,13 +279,14 @@ function Keep-Fixture([string]$Course, [int]$Run, [string]$Recording, [string]$W
     $worldPublished = $true
     [IO.File]::Move("$recordTarget.tmp", $recordTarget)
   } catch {
-    if ($worldPublished) { Remove-Item -LiteralPath $worldTarget }
+    if ($worldPublished) { Cleanup 'Publication rollback' { Remove-Item -LiteralPath $worldTarget } }
     throw
   }
+  if ($end.atRest -and $null -ne $offset) { $script:comparableEnds++ }
 }
 
 try {
-  $available = @(Get-FixtureCourses)
+  $available = @(if ($corpus) { $manifest.Courses } else { Get-FixtureCourses })
   $requested = @($Courses | Where-Object { $_ } | ForEach-Object { $_.Split(',') })
   if ($requested.Count -eq 0) { $selected = $available }
   else {
@@ -124,6 +309,37 @@ try {
   }
   Enter-Rig 'record-fixtures'
   $locked = $true
+  if ($ResourceDifficulty -or $landing) {
+    if ((Test-Port $ServerHost $ServerPort) -or (Test-Port $ServerHost $RconPort) -or @(Bot-Processes).Count -gt 0) {
+      throw 'Resource capture requires an idle disposable rig.'
+    }
+    $properties = @(Get-Content -LiteralPath (Join-Path $Rig 'server/server.properties'))
+    $required = @("server-port=$ServerPort", "rcon.port=$RconPort", 'server-ip=127.0.0.1',
+        'enable-rcon=true', 'level-name=world', 'online-mode=false')
+    if ($corpus) { $required += 'view-distance=4', 'simulation-distance=4' }
+    foreach ($setting in $required) {
+      $key = $setting.Split('=')[0] + '='
+      $values = @($properties | Where-Object { $_.StartsWith($key) })
+      if ($values.Count -ne 1 -or $values[0] -cne $setting) { throw "Disposable rig requires $setting." }
+    }
+    $save = Join-Path $Rig ("server/world/players/data/" + (Get-OfflineUuid $BotName) + '.dat')
+    if ((Test-Path -LiteralPath $save) -or (Test-Path -LiteralPath "${save}_old")) {
+      throw 'Resource capture requires a fresh PathBot save in each disposable copy.'
+    }
+    $serverMods = Join-Path $Rig 'server/mods'
+    if (@(Get-ChildItem -LiteralPath $serverMods -Filter 'fabric-api-*.jar').Count -ne 1) {
+      throw 'Install the reference Fabric API in the disposable server mods before recording.'
+    }
+    $probeTarget = Join-Path $serverMods 'phase-probe.jar'
+    [IO.File]::Copy((Resolve-Path -LiteralPath $ResourceProbeJar).Path, $probeTarget)
+    $resourceProbe = $probeTarget
+    $env:PATHTRACING_RESOURCE_PROBE = '1'
+    if ($landing) { $env:PATHTRACING_LANDING_PROBE = '1' }
+    if ($corpus) {
+      $env:PATHTRACING_TERRAIN_CORPUS = '1'
+      Note "Server probe SHA256: $((Get-FileHash -LiteralPath $probeTarget -Algorithm SHA256).Hash)."
+    }
+  }
   Note "Rig: $Rig; courses: $($selected.Name -join ', '); Runs=$Runs; Ticks=$Ticks; Seed=$Seed."
   $serverOpen = Test-Port $ServerHost $ServerPort
   $online = @()
@@ -146,7 +362,9 @@ try {
   if (-not (Test-Path -LiteralPath $options)) { $exitCode = 3; throw 'Missing bot options; run scripts\setup.ps1.' }
   Save-Artifact $options
   $lines = @(Get-Content -LiteralPath $options)
-  foreach ($setting in @('autoJump:false', 'toggleSprint:false', 'toggleCrouch:false', 'sprintWindow:0')) {
+  $required = @('autoJump:false', 'toggleSprint:false', 'toggleCrouch:false', 'sprintWindow:0')
+  if ($corpus) { $required += 'renderDistance:4', 'simulationDistance:12', 'overrideWidth:480', 'overrideHeight:270', 'maxFps:260', 'enableVsync:false' }
+  foreach ($setting in $required) {
     $values = @($lines | Where-Object { $_ -cmatch ('^' + $setting.Split(':')[0] + ':') })
     if ($values.Count -ne 1 -or $values[0] -cne $setting) { $exitCode = 3; throw "Bot options must contain exactly $setting." }
   }
@@ -154,7 +372,18 @@ try {
   $online = @(Wait-Rcon)
   Assert-Absent
   if ($BotName -notin $online -and @(Bot-Processes).Count -eq 0) {
-    $null = Require (Invoke-Script (Join-Path $scripts 'launch-client.ps1') @{ Role = 'bot' } 30 'bot') 'Bot launch'
+    $launcher = if ($corpus) { $CorpusLauncher } else { Join-Path $scripts 'launch-client.ps1' }
+    $arguments = @{ Role = 'bot' }
+    if ($landing) {
+      $parameters = (Get-Command $launcher).Parameters
+      if ($captureRate -gt 20 -and (-not $parameters.ContainsKey('FollowTickRate') -or
+          -not $parameters.ContainsKey('FullTickDemand'))) { throw 'Integrate the lab client clock before accelerated capture.' }
+      if ($parameters.ContainsKey('FollowTickRate')) {
+        $arguments.FollowTickRate = if ($captureRate -gt 20) { 'true' } else { 'false' }
+      }
+      if ($captureRate -gt 20) { $arguments.FullTickDemand = 'true' }
+    }
+    $null = Require (Invoke-Script $launcher $arguments 30 'bot') 'Bot launch'
   }
   $clock = [Diagnostics.Stopwatch]::StartNew()
   $ready = $false
@@ -169,7 +398,19 @@ try {
   if (-not $ready) { $exitCode = 4; throw 'Timed out waiting for PathBot recorder.' }
   $null = Require (Bot 'stop' 'Stopped\.') 'Bot stop'
   Assert-Absent
+  $originalGameMode = [int](Server-Snapshot 'original-mode').playerGameType
+  if ($originalGameMode -notin 0..3) { throw 'Unrecognized original game mode.' }
   $null = Require (Rcon "gamemode survival $BotName") 'Survival mode'
+  if ($landing) {
+    $reply = Require (Rcon 'difficulty normal') 'Set normal difficulty'
+    if ($reply.Text.Trim() -cnotin @('The difficulty has been set to Normal', 'The difficulty did not change; it is already set to Normal')) {
+      throw "Difficulty refused. See $($reply.File)."
+    }
+    Resource-Command 'gamerule natural_health_regeneration true' 'Gamerule natural_health_regeneration is now set to: true'
+    Resource-Command 'gamerule spawn_mobs false' 'Gamerule spawn_mobs is now set to: false'
+    if ($corpus) { Set-CaptureRate 20 }
+    else { $null = Require (Rcon "tick rate $LandingRate") 'Set landing tick rate' }
+  }
 
   foreach ($course in $selected) {
     $name = $course.Name
@@ -186,14 +427,28 @@ try {
       if ($built.Text -match '(?im)unknown|incorrect|not loaded|too many|outside|invalid|error') { throw "Course build refused; see $($built.File)." }
       $null = Require (Rcon ('tp ' + $BotName + ' ' + $course.Start.Replace(',', ' '))) 'Course start teleport'
       Start-Sleep -Seconds 2
-      $probe = Export-World "${prefix}_${name}_ready" $course.Min $course.Max
-      $marker = $course.Marker -join ','
-      $seen = @(Get-Content -LiteralPath $probe | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
-        $_.kind -eq 'block' -and ($_.at -join ',') -eq $marker -and $_.block -eq 'minecraft:gold_block'
-      })
-      if ($seen.Count -ne 1) { throw 'Client readiness export did not see the final course marker.' }
+      $probe = Join-Path $botDir "pathtracing\fixtures\${prefix}_${name}_ready.world.jsonl"
+      try {
+        if ($corpus) {
+          $preMin = @($course.Min[0] - 3; $course.Min[1]; $course.Min[2] - 3)
+          $preMax = @($course.Max[0] + 3; $course.Max[1] + 3; $course.Max[2] + 3)
+          $null = Export-World "${prefix}_${name}_ready" $preMin $preMax
+        } else {
+          $null = Export-World "${prefix}_${name}_ready" $course.Min $course.Max -Readiness
+        }
+        $marker = $course.Marker -join ','
+        $seen = @(Get-Content -LiteralPath $probe | Where-Object { $_.Contains('"block":"minecraft:gold_block"') } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
+          $_.kind -eq 'block' -and ($_.at -join ',') -eq $marker -and $_.block -eq 'minecraft:gold_block'
+        })
+        if ($seen.Count -ne 1) { throw 'Client readiness export did not see the final course marker.' }
+      } finally {
+        if ($corpus) { Save-Artifact "$probe.tmp" }
+        foreach ($readyPath in @($probe, "$probe.tmp")) {
+          Cleanup 'Readiness export' { if (Test-Path -LiteralPath $readyPath) { Remove-Item -LiteralPath $readyPath } }
+        }
+      }
     } catch {
-      if ($exitCode -eq 3) { throw }
+      if ($exitCode -eq 3 -or $landing) { throw }
       for ($i = 1; $i -le $Runs; $i++) { $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message }) }
       continue
     }
@@ -203,23 +458,92 @@ try {
       $artifacts.Add($path)
       try {
         $runSeed = [int]([long]$Seed + [long]$courseIndex * $Runs + $i - 1)
-        $null = Require (Invoke-Script (Join-Path $PSScriptRoot 'new-inputs.ps1') @{
-          Name = $runName; Ticks = $Ticks; Seed = $runSeed; Start = $course.Start
-        }) 'Generate inputs'
-        Save-Artifact (Join-Path $botDir "pathtracing\inputs\$runName.jsonl")
+        $inputPath = Join-Path $botDir "pathtracing\inputs\$runName.jsonl"
+        if ($ResourceDifficulty) {
+          New-ResourceInputs $inputPath $course.Start
+          Prepare-ResourceStart
+        } elseif ($corpus -and $name -eq 'mixed-seam') {
+          New-TerrainMixedInputs $inputPath $course.Start $i
+        } elseif ($name -eq 'corner') {
+          $null = Require (Invoke-Script (Join-Path $PSScriptRoot 'corner-inputs.ps1') @{
+            Name = $runName; Ticks = $Ticks; Start = $course.Start
+          }) 'Generate corner inputs'
+        } else {
+          $null = Require (Invoke-Script (Join-Path $PSScriptRoot 'new-inputs.ps1') @{
+            Name = $runName; Ticks = $Ticks; Seed = $runSeed; Start = $course.Start; SneakPercent = $course.SneakPercent
+          }) 'Generate inputs'
+        }
+        # Preserve the last angles exactly and release every key for twenty recorded ticks.
+        if ($corpus) { Add-TerrainRestTail $inputPath $Ticks }
+        else {
+          $zero = (Get-Content -LiteralPath $inputPath | Select-Object -Last 1).Replace(':true', ':false')
+          $tail = for ($t = $Ticks; $t -lt $recordTicks; $t++) { $zero -replace '"t":\d+', ('"t":' + $t) }
+          Add-Content -LiteralPath $inputPath -Value $tail -Encoding ASCII
+        }
+        if ($landing) {
+          Copy-Item -LiteralPath $inputPath -Destination (Join-Path $result "$runName.inputs.jsonl")
+        } else { Save-Artifact $inputPath }
         Assert-Absent
-        $serverStart = Server-Snapshot "$runName-start"
+        if ($corpus) {
+          Resource-Command "effect give $BotName minecraft:saturation 1 20 true" "Applied effect Saturation to $BotName"
+          Start-Sleep -Seconds 2
+        }
+        $serverStart = Restore-Start "$runName-start" $course.Start
+        if ($corpus -and ($serverStart.foodLevel -ne 20 -or [single]$serverStart.foodSaturationLevel -ne 20)) {
+          throw 'Corpus start requires full food and saturation before the replay fence.'
+        }
         $activeRecording = $path
-        $null = Require (Bot "replay $runName $runName" ("Saved ${runName}: $Ticks ticks\.") $timeout) 'Replay'
+        $settleReply = Bot "replay $runName $runName wait" ("Settled ${runName};") $timeout
+        if ($settleReply.Text -match '(?i)Aborted') { $activeRecording = $null }
+        $null = Require $settleReply 'Replay settle'
+        $serverSettled = Server-Snapshot "$runName-settled"
+        Require-StableResources $serverStart $serverSettled
+        if ($landing) {
+          if ($corpus) { Set-CaptureRate $captureRate }
+          else { Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName" }
+          Resource-Command "ptlanding start $BotName $runName" "Landing capture started $runName"
+        }
+        if ($ResourceDifficulty) {
+          $resourcePath = Join-Path $Rig "server/pathtracing-phase/$runName.csv"
+          Resource-Command "ptphase resources start $BotName $runName" "Resource capture started $runName"
+        }
+        try {
+          $replayReply = Bot 'rec continue' ("Saved ${runName}: $recordTicks ticks\.") $timeout
+          if ($landing) { $null = Require $replayReply 'Replay' }
+        } catch {
+          if ($corpus) { Note $_.Exception.Message }
+          throw
+        } finally {
+          if ($landing) {
+            Save-Artifact $path
+            Seal-Landing $runName
+          }
+        }
+        if ($corpus) { Set-CaptureRate 20 }
+        if ($replayReply.Text -match '(?i)Aborted') { $activeRecording = $null }
+        $null = Require $replayReply 'Replay'
         $activeRecording = $null
-        # First operation after the completion reply. Separate RCON reads are not tick-atomic.
+        if ($ResourceDifficulty) {
+          Resource-Command "ptphase resources stop $runName" "Resource capture saved $runName"
+          if (-not (Test-Path -LiteralPath $resourcePath -PathType Leaf)) { throw 'Missing resource trace.' }
+          Save-Artifact $resourcePath
+        }
+        # First operation after the completion reply; the entity data itself is one tick.
         $serverEnd = Server-Snapshot "$runName-end"
         Save-Artifact $path
         $rows = @(Get-Content -LiteralPath $path | ForEach-Object { $_ | ConvertFrom-Json })
         $player = $rows[0].initialPlayer
         if ($null -eq $player -or $player.kind -ne 'player') { throw 'Recording lacks the pre-input initialPlayer snapshot; install the job 1.6 bot jar.' }
         $ticksRead = @($rows | Where-Object { $null -ne $_.PSObject.Properties['t'] })
-        if ($ticksRead.Count -ne $Ticks) { throw "Expected $Ticks ticks, got $($ticksRead.Count)." }
+        if ($ticksRead.Count -ne $recordTicks) { throw "Expected $recordTicks ticks, got $($ticksRead.Count)." }
+        if ($player.ticksFrozen -ne 0) { throw 'Initial player ticksFrozen is not zero.' }
+        if ($name -eq 'corner') {
+          $ties = @($ticksRead | Where-Object {
+            @($_.collisionSteps | Where-Object { Axis-TieCollision $_ }).Count -gt 0
+          })
+          Note "corner run ${i}: nonzero bit-exact |dx|=|dz| collision exists: $($ties.Count -gt 0); ticks: $($ties.t -join ',')."
+          if ($ties.Count -eq 0) { throw 'corner: no witness with exactly one clipped horizontal axis.' }
+        }
         $positions = @($player.position) + @($ticksRead | ForEach-Object { $_.position })
         $min = @(); $max = @()
         foreach ($axis in @('x', 'y', 'z')) {
@@ -227,20 +551,47 @@ try {
           $min += [int][Math]::Floor($bounds.Minimum) - 3
           $max += [int][Math]::Floor($bounds.Maximum) + 3
         }
+        if ($corpus) { $min[1] = [Math]::Max($min[1], $course.Min[1]) }
         $world = Export-World $runName $min $max
+        if ($corpus) {
+          $verified = Require (Invoke-Script "$corpusJob/verify.ps1" @{
+            Mode = $CorpusMode; Capture = $result; Course = $name; Run = $i
+            Target = $CorpusTarget; ReferenceServer = $CorpusReferenceServer
+          } 120) 'Corpus verification'
+          $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; $($verified.File)." })
+          continue
+        }
+        if ($landing) {
+          $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; raw capture awaiting 1.6f verification." })
+          continue
+        }
         $check = Require (Invoke-Script (Join-Path $PSScriptRoot 'check-recording.ps1') @{ File = $path } $timeout) 'Recording check'
-        Keep-Fixture $name $i $path $world $player $serverStart $serverEnd
+        if ($ResourceDifficulty -and -not (At-Rest $ticksRead[-1])) { throw 'Resource pair must end at rest.' }
+        Keep-Fixture $name $i $path $world $player $serverStart $serverEnd $ticksRead[-1]
+        if ($ResourceDifficulty) {
+          Copy-Item -LiteralPath $resourcePath -Destination (Join-Path $fixtures "$name/$runName.resources.csv")
+        }
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $true; Reason = "Seed $runSeed; $($check.File); export bounds $($min -join ',') to $($max -join ',')." })
       } catch {
         $outcomes.Add([pscustomobject]@{ Course = $name; Run = $i; Kept = $false; Reason = $_.Exception.Message })
-        if ($exitCode -eq 3) { throw }
+        if ($exitCode -eq 3 -or $landing) { throw }
       } finally {
-        if ($activeRecording -and (Test-Path -LiteralPath "$activeRecording.tmp")) {
-          $stop = Require (Bot 'rec stop' ("Saved ${runName}:")) 'Cancel own replay'
-          $activeRecording = $null
+        if ($corpus) { Cleanup 'Restore stock tick rate' { Set-CaptureRate 20 } }
+        if ($ResourceDifficulty -or $landing) { Cleanup 'Cancel resource capture' { $null = Require (Rcon 'ptphase resources cancel') 'Cancel probe' } }
+        if ($corpus) { Save-Artifact (Join-Path $Rig "server/pathtracing-phase/$runName.resources.partial.csv") }
+        if ($landing) {
+          Cleanup 'Cancel landing capture' { $null = Require (Rcon 'ptlanding cancel') 'Cancel probe' }
+          Save-Artifact (Join-Path $Rig "server/pathtracing-phase/$runName.server-motion.partial.csv")
         }
-        Save-Artifact $path
-        Save-Artifact "$path.tmp"
+        Cleanup 'Cancel replay' {
+          if ($activeRecording -and (Test-Path -LiteralPath "$activeRecording.tmp")) {
+            $null = Require (Bot 'rec stop' ("Saved ${runName}:")) 'Cancel own replay'
+          }
+        }
+        $activeRecording = $null
+        Cleanup 'Restore start resources' { $null = Restore-Start "$runName-cleanup" $course.Start }
+        Cleanup 'Recording artifact' { Save-Artifact $path }
+        Cleanup 'Partial recording artifact' { Save-Artifact "$path.tmp" }
       }
     }
   }
@@ -248,11 +599,30 @@ try {
 } catch { Note $_.Exception.Message }
 finally {
   if ($locked) {
+    if ($null -ne $originalGameMode) {
+      Cleanup 'Game mode' { $null = Require (Rcon ("gamemode " + @('survival', 'creative', 'adventure', 'spectator')[$originalGameMode] + " $BotName")) 'Restore game mode' }
+    }
     foreach ($path in $artifacts) {
-      try { Save-Artifact $path; Save-Artifact "$path.tmp" } catch { Note "Artifact cleanup failed: $($_.Exception.Message)" }
+      Cleanup 'Artifact' { Save-Artifact $path }
+      Cleanup 'Partial artifact' { Save-Artifact "$path.tmp" }
     }
     foreach ($role in @('bot', 'server')) {
       try { Stop-Owned $role } catch { Note "Cleanup failed: $($_.Exception.Message)" }
+    }
+    if ($landing) {
+      foreach ($role in @('bot', 'server')) {
+        $directory = if ($role -eq 'bot') { $botDir } else { Join-Path $Rig 'server' }
+        $latest = Join-Path $directory 'logs/latest.log'
+        if (Test-Path -LiteralPath $latest -PathType Leaf) {
+          Cleanup "Save $role game log" { Copy-Item -LiteralPath $latest -Destination (Join-Path $result "$role-latest.log") }
+        }
+      }
+    }
+    if ($resourceProbe) {
+      Cleanup 'Remove resource probe' { Remove-Item -LiteralPath $resourceProbe }
+      $env:PATHTRACING_RESOURCE_PROBE = $previousProbeOptIn
+      if ($landing) { $env:PATHTRACING_LANDING_PROBE = $previousLandingOptIn }
+      if ($corpus) { $env:PATHTRACING_TERRAIN_CORPUS = $previousCorpusOptIn }
     }
     try { Exit-Rig } catch { Note "Lock release failed: $($_.Exception.Message)" }
   }
@@ -261,20 +631,41 @@ finally {
   $success = $completed -and $selected.Count -gt 0 -and $kept -eq ([long]$selected.Count * $Runs) -and
     @($notes | Where-Object { $_ -match 'failed:|Timed out|Refusing|online' }).Count -eq 0
   if ($success) { $exitCode = 0 }
-  $overall = if ($exitCode -eq 0) { 'Overall: PASS' } else { 'Overall: FAIL' }
+  $overall = if ($corpus) {
+    if ($exitCode -eq 0) { "${CorpusMode}: PASS (capture and replay only)" } else { "${CorpusMode}: REFUSED" }
+  } elseif ($exitCode -eq 0) { 'Overall: PASS' } else { 'Overall: FAIL' }
   $body = @('# L0 fixture recording', '', "UTC $stamp", "Rig $Rig", "Runs $Runs; ticks $Ticks; seed base $Seed.",
     "Recordings kept $kept; rejected $rejected.", '',
     'Each course is a 32x32 enclosed patch at x=4096+128*courseIndex,z=4096 on the lab superflat.',
     'Client readiness requires a full loaded-chunk export and receipt of the final gold-block marker after construction.',
-    'Server timing is unaligned. Start resources are queried before replay teleport/settling. End queries start immediately',
-    'after the Saved reply is observed. The seven sequential queries span an unbounded number of server ticks.',
-    'There is no tick-atomic snapshot or measured client/server tick offset. serverEnd is provisional resource evidence.',
+    'Server resources use one atomic data get entity per snapshot, including foodTickTimer.',
+    "serverEnd snapshots with atRest true and a non-null offset: $comparableEnds of $kept.",
+    'Every input sequence ends with 20 zero-input ticks. serverEnd atRest requires onGround and zero horizontal velocity in the last row.',
+    'serverEnd includes signed serverTickOffset from the final recorded gameTime; the reader advances nonnegative offsets as zero-input ticks only with atRest true and a non-null offset.',
+    'Game-time queries bracket the entity read; a bracket spanning ticks has a null offset and must be skipped.',
+    'The client gameTime is the server-synchronized client clock; this is not proof of packet-level tick alignment.',
     'The initialPlayer header retains every client field. The world player line substitutes the pre-replay server resources.',
-    'A run is rejected if initial health, food or saturation disagree with that settled client snapshot.',
-    'No health, hunger, inventory or effect reset is performed. Courses are static snapshots after the replay.',
+    'Before each run and during cleanup, heal as needed and wait for maximum health, foodTickTimer=0 and TicksFrozen=0.',
+    'Replay pauses after settle for a second server snapshot. Every resource field must be bit-identical to the first snapshot before rec continue.',
+    'A run is rejected if initial health or food disagree with the settled client snapshot.',
+    'Saturation is taken from the verified server snapshot. The raw header retains the client observation.',
+    'Courses are static snapshots after the replay.',
     'The water course includes still and flowing water. Bubble columns are omitted because the frozen world schema has no bubble hook.',
-    'Recordings retain their original header and end trailer. The current wt/law replay reader needs end-trailer support.',
+    'Recordings retain their original header and end trailer. Reader integration belongs to job 1.5e.',
     'Seeds are Seed+courseIndex*Runs+run-1 in the courses.ps1 declaration order, stable under course selection.', '')
+  $body += 'Step-up mutant at 0.6f + 1 ulp: no vanilla geometry produces that candidate; equivalent on the game domain. Integrator replaces it at gate freeze.'
+  if ($ResourceDifficulty) {
+    $body += "1.5h $ResourceDifficulty case. Raw server resource trace and its recording and world are in pair/full-blocks for the independent Rust gate."
+  }
+  if ($corpus) {
+    $body = @("# 1.6g $CorpusMode", '', "UTC $stamp", "Rig $Rig",
+      "Normal difficulty; configured rate $captureRate; seed base $Seed; $recordTicks replay ticks.",
+      'A kept case has verified movement, packet provenance and ordered resources.')
+  } elseif ($landing) {
+    $body = @('# 1.6f raw landing capture', '', "UTC $stamp", "Rig $Rig",
+      "Normal difficulty; configured rate $LandingRate; seed base $Seed; $recordTicks replay ticks.",
+      'PASS here means capture completed. The dedicated verifier adjudicates the evidence.')
+  }
   foreach ($course in $selected) {
     $entries = @($outcomes | Where-Object { $_.Course -eq $course.Name })
     $body += "Course $($course.Name) - kept $(@($entries | Where-Object { $_.Kept }).Count); rejected $(@($entries | Where-Object { -not $_.Kept }).Count); not run $($Runs-$entries.Count)."

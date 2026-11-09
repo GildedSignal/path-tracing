@@ -1,0 +1,9 @@
+# 1.9h handoff
+
+Opt in with JVM `-Dpathtracing.rawFluid=true`. The ordinary evaluated exporter is unchanged by default. Raw exports use dense rows within `min`/`max` and `worldEnd`; replay requires one uniquely positioned row per cell, all raw facts, and a matching trailer. A replay-local World wrapper returns unavailable outside the bounds. No Rust law was changed.
+
+Frozen offline gate: `powershell -NoProfile -ExecutionPolicy Bypass -File jobs/1.9h-raw-fluid-export/run.ps1 -Output D:/path-tracing-evidence/raw-fluid-export-20261107-d`. The staged client jar compiled the real exporter `rawFluid` helper; Java rows for water, lava, falling wall above, ice and waterlogged slab matched all 15 Rust current components bit-for-bit. Raw gradient and opposing evaluated controls moved in opposite directions; missing cell, missing fluid, missing falling, wrong/missing/duplicate trailer, duplicate cell and exterior coverage controls passed. Full offline suite passed: 72 tests plus the separate oracle test; five tests ignored in that suite (including L0 corpus, absent in this worktree). Full log: `D:/path-tracing-evidence/raw-fluid-export-20261107-d.log`.
+
+First run failed to compile because the offline BlockGetter lacked getFluidState. The next run's water comparison first differed at x: Rust bff0000000000000, Java 3ff0000000000000; the offline bootstrap had no fluid tags, so the harness mislabeled water empty. The helper and harness now identify water/lava by staged fluid type identity. Later strengthening of the missing-kind control initially mutated no lava row; corrected control passes.
+
+Remaining: live export and replay with the property through the rig lock; this offline seam calls the actual raw-fields exporter helper, not the private client-level write loop. Frozen L0 replay must be run with its corpus on the integrator's branch. No live process, commit or push.

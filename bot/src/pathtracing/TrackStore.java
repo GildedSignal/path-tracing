@@ -142,6 +142,10 @@ final class TrackStore {
             out.addProperty("gameMode", gameMode);
             return out;
         }
+
+        static Session read(JsonObject in) {
+            return new Session(TrackInventory.read(in.getAsJsonObject("inventory")), in.get("gameMode").getAsString());
+        }
     }
 
     private Path sessionFile(String player) {
@@ -152,14 +156,13 @@ final class TrackStore {
     Session readSession(String player) throws IOException {
         Path path = sessionFile(player);
         if (!Files.exists(path)) return null;
-        JsonObject in = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-        return new Session(TrackInventory.read(in.getAsJsonObject("inventory")), in.get("gameMode").getAsString());
+        return Session.read(JsonParser.parseString(Files.readString(path)).getAsJsonObject());
     }
 
     void writeSession(String player, Session session) throws IOException {
         try (var channel = lockChannel(); var lock = channel.lock()) {
             Path path = sessionFile(player);
-            if (Files.exists(path)) throw new IOException("Saved track session exists. Use /track exit to recover it first.");
+            if (Files.exists(path)) throw new IOException("Saved track session exists. Use /track restore to recover it first.");
             durableReplace(path, canonical(session.json()) + "\n");
         }
     }
