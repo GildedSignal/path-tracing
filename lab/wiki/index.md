@@ -3,19 +3,19 @@
 
 ## Lenses
 
-- [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 1; last 2026-11-10
+- [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
 - [hook-catalogue](hook-catalogue.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [item-use-writes](item-use-writes.md) — lead: 1; last 2026-11-10
+- [item-use-writes](item-use-writes.md) — lead: 2; last 2026-11-10
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 2; last 2026-11-10
-- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 2; last 2026-11-09
-- [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 1; last 2026-11-10
+- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 3; last 2026-11-10
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 3; last 2026-11-10
+- [port-fluid-rules](port-fluid-rules.md) — lead: 3, reproduced: 1; last 2026-11-10
 - [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
-- [server-player-readers](server-player-readers.md) — lead: 1; last 2026-11-10
+- [server-player-readers](server-player-readers.md) — lead: 2; last 2026-11-10
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
 - [speed-of-light-window](speed-of-light-window.md) — reproduced: 1; last 2026-11-10
 - [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
@@ -27,6 +27,9 @@
 
 ## Reproduced results
 
+- 2026-11-10 [port-entity-rules](port-entity-rules.md) (local-20261110-1452-1-5-port-entity-rules): In vanilla 26.2 the server rewrites a standing player's velocity deterministically every tick an overlapping pushable entity exists (`ServerPlayer.tick:15 → Player.tick:162 → LivingEntity.tick:178 → aiStep → travel:617 → pushEntities:817 → Level.getPushableEntities → per-entity doPush → Entity.pu...
+- 2026-11-10 [port-block-laws](port-block-laws.md) (local-20261110-1452-1-4-port-block-laws): the exporter's four-context shape table under-samples the jar's collision-context space for `ScaffoldingBlock` — its `SHAPE_UNSTABLE_BOTTOM` branch is gated on `isAbove(SHAPE_BELOW_BLOCK = Shapes.block().move(0,-1,0), pos, ·)`, i.e. on feet above the cell's **bottom** plane (`entityBottom > pos.y...
+- 2026-11-10 [elite-techniques](elite-techniques.md) (local-20261110-1452-1-2-elite-techniques): Under the provisional 26.2 Rust law, backward momentum (bwmm) is falsified as an elite technique on an isolated 1-block-momentum pillar — the max gap and the fastest T are bit-identical with and without backward input (4.0625b resting, 4.6250b with arrival speed, T=12 both families) — while the a...
 - 2026-11-10 [track-designer](track-designer.md) (local-20261110-1056-1-7-track-designer): three new witness-backed parkour tracks under the provisional 26.2 Rust law, each isolating a mechanic no prior track covered — `laddercatch` T=44 (mid-air ladder catch on a 5-air chasm, then a wall-press climb at the law's 0.118/tick), `scaffolddrop` T=40 (scaffolding descent pinning vy at -0.15...
 - 2026-11-10 [port-block-laws](port-block-laws.md) (local-20261110-1056-1-6-port-block-laws): the 26.2 fallOn (landing) family is jar-exact through the whole pipeline — the exporter's hardcoded landing constants match the jar bytecode (offsets cited below), the exported rows import into the Rust law, and a runnable fixture on real exported rows reproduces jar-oracle fall damage for every...
 - 2026-11-10 [speed-of-light-window](speed-of-light-window.md) (local-20261110-1056-1-4-speed-of-light-window): the terrain-only c on this checkout is **19.902885797033985 blocks/s** (exact f64 b/t bits `3fefd838d676daab`, a 3-tick orbit of 2.9854328695550976 blocks under the 2.0-block ceiling; peak single tick unchanged at 21.414538076292047 b/s) — the old run's 19.810930 was exactly its measurement windo...
