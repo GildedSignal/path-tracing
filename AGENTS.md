@@ -27,7 +27,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
-**GPT builds again (S65, 10 November). If it runs out (S55):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
+**While GPT is out of weekly usage (S55; still out on 10 November, back 13 November 13:29):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
 
 ## Rules
 

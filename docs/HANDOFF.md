@@ -39,7 +39,7 @@ This file holds the state of the build, what is in flight and what comes next. I
 2. **The archived full-blocks server-saturation check** fails identically on main and `wt/segments` (bits 1100480512 vs 1101004800), after movement passes.
 3. *Settled 10 November:* the terrain-only c is **19.902886 blocks/s** (a 3-tick orbit on blue ice under a 2.0 ceiling; GLM `local-20261110-1056-1-4`, reproduced). The old 19.810930 divided 199 tick-deltas by 200; `Speeds.java` was right. Phase 3's bounds use this c.
 
-**Open for Julien:** nothing. He approved the plan review on 10 November (S65): it is [scales.md](scales.md), with presence as a tool, the three thin slices before scale work, and R&D's wider objective. GPT is usable again as a sub-agent (S65).
+**Open for Julien:** nothing. He approved the plan review on 10 November (S65): it is [scales.md](scales.md), with presence as a tool, the three thin slices before scale work, and R&D's wider objective. He asked for GPT as a sub-agent (S65), but GPT is still out until 13 November 13:29 (tried 16:52: usage limit).
 
 ## Roadmap (approved 9 November, S48; reordered 10 November, S65)
 
