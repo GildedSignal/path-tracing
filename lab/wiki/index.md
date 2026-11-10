@@ -3,25 +3,35 @@
 
 ## Lenses
 
-- [elite-techniques](elite-techniques.md) — reproduced: 1; last 2026-11-09
+- [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 1; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
 - [hook-catalogue](hook-catalogue.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
+- [item-use-writes](item-use-writes.md) — lead: 1; last 2026-11-10
+- [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 1; last 2026-11-09
+- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 2; last 2026-11-09
-- [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 1; last 2026-11-09
+- [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 1; last 2026-11-10
 - [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
+- [server-player-readers](server-player-readers.md) — lead: 1; last 2026-11-10
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
+- [speed-of-light-window](speed-of-light-window.md) — reproduced: 1; last 2026-11-10
 - [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [track-designer](track-designer.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
+- [track-designer](track-designer.md) — lead: 2, rate-limited: 1, reproduced: 2; last 2026-11-10
 - [trial-honey-slide-cap](trial-honey-slide-cap.md) — lead: 2, rate-limited: 1; last 2026-11-09
 - [trial-scaffolding-descend](trial-scaffolding-descend.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
+- [unloaded-chunk-move](unloaded-chunk-move.md) — reproduced: 1; last 2026-11-10
 
 ## Reproduced results
 
+- 2026-11-10 [track-designer](track-designer.md) (local-20261110-1056-1-7-track-designer): three new witness-backed parkour tracks under the provisional 26.2 Rust law, each isolating a mechanic no prior track covered — `laddercatch` T=44 (mid-air ladder catch on a 5-air chasm, then a wall-press climb at the law's 0.118/tick), `scaffolddrop` T=40 (scaffolding descent pinning vy at -0.15...
+- 2026-11-10 [port-block-laws](port-block-laws.md) (local-20261110-1056-1-6-port-block-laws): the 26.2 fallOn (landing) family is jar-exact through the whole pipeline — the exporter's hardcoded landing constants match the jar bytecode (offsets cited below), the exported rows import into the Rust law, and a runnable fixture on real exported rows reproduces jar-oracle fall damage for every...
+- 2026-11-10 [speed-of-light-window](speed-of-light-window.md) (local-20261110-1056-1-4-speed-of-light-window): the terrain-only c on this checkout is **19.902885797033985 blocks/s** (exact f64 b/t bits `3fefd838d676daab`, a 3-tick orbit of 2.9854328695550976 blocks under the 2.0-block ceiling; peak single tick unchanged at 21.414538076292047 b/s) — the old run's 19.810930 was exactly its measurement windo...
+- 2026-11-10 [place-reach-legality](place-reach-legality.md) (local-20261110-1056-1-3-place-reach-legality): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`), `handleUseItemOn` accepts a block-use packet only after three gates — reach: squared distance from the player's eye (`getEyePosition`) to the **nearest point of the clicked cell's AABB** (`new AABB(blockpos)`, clamped `d...
+- 2026-11-10 [unloaded-chunk-move](unloaded-chunk-move.md) (local-20261110-1056-1-1-unloaded-chunk-move): In Minecraft 26.2 a ServerPlayer's own movement and tick are never gated by its chunk's ticket level (the move packet is accepted and the full entity tick runs even in an INACCESSIBLE chunk), so the lowest level that keeps a player *fully vanilla* is ENTITY_TICKING (31) — below 31 (level 32–33, l...
 - 2026-11-09 [port-action-resources](port-action-resources.md) (local-20261109-2251-1-4-port-action-resources): In Mojang 26.2 the use-item movement slowdown — which the Rust law today refuses to predict (`engine/law/src/movement.rs` panics `unimplemented!("LocalPlayer.itemUseSpeedMultiplier")` on any tick with `using_item: true`) — is exactly `LocalPlayer.modifyInput` (26.2 client jar): after the 0.98 inp...
 - 2026-11-09 [hook-catalogue](hook-catalogue.md) (local-20261109-2251-1-3-hook-catalogue): in Minecraft 26.2's client jar (sha1 `2dc72797acbc1b63fc16a11c4ac393605f453754`), the movement hooks are overridden by 25 block classes for `entityInside` (24 `protected` + `PitcherCropBlock` widened to `public`, overriding `BlockBehaviour.entityInside(BlockState, Level, BlockPos, Entity, InsideB...
 - 2026-11-09 [track-designer](track-designer.md) (local-20261109-2251-1-2-track-designer): three witness-backed parkour tracks under the provisional 26.2 Rust law — `gapchain` T=46 (1x1 pillar chain at the measured 3-air maximum), `icemegajump` T=104 (blue-ice friction accumulation over a 4-air wall gap that an identical all-stone lane provably cannot touch), and `watertunnel` T=204 (p...
