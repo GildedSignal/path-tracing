@@ -5,23 +5,27 @@
 
 - [elite-techniques](elite-techniques.md) — reproduced: 1; last 2026-11-09
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
-- [hook-catalogue](hook-catalogue.md) — lead: 1, rate-limited: 1; last 2026-11-09
-- [port-action-resources](port-action-resources.md) — lead: 2, rate-limited: 1; last 2026-11-09
+- [hook-catalogue](hook-catalogue.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
+- [port-action-resources](port-action-resources.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 1; last 2026-11-09
-- [port-entity-rules](port-entity-rules.md) — reproduced: 2; last 2026-11-09
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 2; last 2026-11-09
 - [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 1; last 2026-11-09
 - [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
-- [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1; last 2026-11-09
-- [track-designer](track-designer.md) — lead: 2, rate-limited: 1; last 2026-11-09
-- [trial-honey-slide-cap](trial-honey-slide-cap.md) — lead: 1, rate-limited: 1; last 2026-11-09
+- [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
+- [track-designer](track-designer.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
+- [trial-honey-slide-cap](trial-honey-slide-cap.md) — lead: 2, rate-limited: 1; last 2026-11-09
 - [trial-scaffolding-descend](trial-scaffolding-descend.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 
 ## Reproduced results
 
+- 2026-11-09 [port-action-resources](port-action-resources.md) (local-20261109-2251-1-4-port-action-resources): In Mojang 26.2 the use-item movement slowdown — which the Rust law today refuses to predict (`engine/law/src/movement.rs` panics `unimplemented!("LocalPlayer.itemUseSpeedMultiplier")` on any tick with `using_item: true`) — is exactly `LocalPlayer.modifyInput` (26.2 client jar): after the 0.98 inp...
+- 2026-11-09 [hook-catalogue](hook-catalogue.md) (local-20261109-2251-1-3-hook-catalogue): in Minecraft 26.2's client jar (sha1 `2dc72797acbc1b63fc16a11c4ac393605f453754`), the movement hooks are overridden by 25 block classes for `entityInside` (24 `protected` + `PitcherCropBlock` widened to `public`, overriding `BlockBehaviour.entityInside(BlockState, Level, BlockPos, Entity, InsideB...
+- 2026-11-09 [track-designer](track-designer.md) (local-20261109-2251-1-2-track-designer): three witness-backed parkour tracks under the provisional 26.2 Rust law — `gapchain` T=46 (1x1 pillar chain at the measured 3-air maximum), `icemegajump` T=104 (blue-ice friction accumulation over a 4-air wall gap that an identical all-stone lane provably cannot touch), and `watertunnel` T=204 (p...
+- 2026-11-09 [step-up-reachability](step-up-reachability.md) (local-20261109-2251-1-0-step-up-reachability): In Mojang 26.2 (client jar `2dc72797acbc1b63fc16a11c4ac393605f453754`), no vanilla block geometry and no deterministic jump/fall arc can distinguish `mutant-step-up` from vanilla: the step-height is consumed by exactly three sites — a float candidate acceptance `h <= maxUpStep` (`Entity.collectCa...
 - 2026-11-09 [port-place-replaceability](port-place-replaceability.md) (local-20261109-2151-1-5-port-place-replaceability): In vanilla 26.2, when the clicked block is replaceable — `BlockState.canBeReplaced(BlockPlaceContext)`, resolving through `BlockBehaviour.canBeReplaced(BlockState, BlockPlaceContext)` = definition flag `state.canBeReplaced()` && (held stack empty || held stack is not this block's own item) — a Bl...
 - 2026-11-09 [trial-scaffolding-descend](trial-scaffolding-descend.md) (local-20261109-2151-1-4-trial-scaffolding-descend): In Mojang 26.2 (staged client jar) a sneaking Player with negative vertical velocity is held at y=0.0 on a ladder but keeps descending at the staged ceiling max(y, -0.15000000596046448) blocks/tick inside scaffolding, because LivingEntity.handleOnClimbable skips the hold only when the feet block...
 - 2026-11-09 [trial-slime-rebound-threshold](trial-slime-rebound-threshold.md) (local-20261109-2151-1-2-trial-slime-rebound-threshold): In Minecraft 26.2 the slime rebound is no longer the classic exact velocity negation — on a vertical landing, `net.minecraft.world.entity.Entity.restituteMovementAfterCollisions` (called from `Entity.move()` offset 598) sets vy' = ((e − vy)·f)·b with b = 1.0 (living) or 0.8f (non-living), e = (ac...
