@@ -83,7 +83,7 @@ On his server vanilla loads 625 chunks around a player and ticks 441, because a 
 | Reinforce what carries flow, let the rest decay | adaptive networks | Physarum, ants |
 
 - **Stigmergy schedules, the field decides.** Ants lock in: a late shortcut was taken in 2 of 18 runs (leads.md), and army ants can circle to death. Their only signal is traffic. Ours is T, recomputed from the law.
-- **Bots are bosons.** Players overlap, so only edits and scarce items exclude, and reservations exist only there. (The entity-cramming cap is a lead to read in the jar.)
+- **Bots are bosons.** Players overlap, so only edits and scarce items exclude, and reservations exist only there. Overlap isn't free, though: every tick two players overlap, `Entity.push` rewrites both velocities (GLM `port-entity-rules`, reproduced 10 November). The law has `push_pair` with no producer; it gets one at slice C. (The entity-cramming cap is a lead to read in the jar.)
 - **Particle in cell** (plasma physics) is the compute pattern: deposit worldtubes on the grid, update the fields, bots read them. Cost is bots plus cells, never bots².
 - **Fields are everything shared; particles are everything individual.** Fields: T per goal, demand, price, risk, presence, and the bracket gap (where the map of possibilities is blurry). Particles: bots, items, obligations, tasks. A multi-leg plan (fetch, then deliver) is a min-plus product of fields that already exist.
 - **A swarm bracket.** Every swarm rung reports makespan over max(critical path, work ÷ bots).
