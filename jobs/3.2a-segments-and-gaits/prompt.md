@@ -20,7 +20,7 @@
 
 ## Test, fast
 
-- **Gaits recur:** a sprint-jump gait on stone and on blue ice under a 2-block ceiling (the head-hitter) is found as a cycle of classes. Its steady speed matches the GLM speed-of-light result: 19.810930 blocks/s on blue ice under a 2.0-block ceiling (`lab/wiki/speed-of-light.md`).
+- **Gaits recur:** a sprint-jump gait on stone and on blue ice under a 2-block ceiling (the head-hitter) is found as a cycle of classes. Its steady speed matches the GLM speed-of-light result: 19.902886 blocks/s on blue ice under a 2.0-block ceiling, a 3-tick orbit (`lab/wiki/speed-of-light-window.md` on `main`; the earlier 19.810930 divided 199 tick-deltas by 200).
 - **Events:** each kind in section 4's rule fires on a minimal fixture: stone to ice, a carpet step-up, entering water, a ceiling bonk, losing sprint.
 - **Proposals hit:** on one of Julien's flat tracks (`stonesimple`), replaying a gait twice from different starting columns gives the same class sequence, and the second run's segments come from table hits.
 - **Bench:** the proposal lookup plus its certifying replay, in µs per segment.
@@ -34,3 +34,7 @@
 ## Done means
 
 The crate, the tests green, and a final message giving the gaits per ground type, the head-hitter's speed, the hit rate on the stonesimple test, and the µs per segment.
+
+## State on 10 November (read first)
+
+The branch `wt/segments` already holds work in progress at commit `3ef1335`: the crate `engine/words` (segment, class, program, gait, table) and a state-read hook in the law (`state_reads.rs`). It was never reported or tested to the end. Start by reading that diff against `main`. First check that the law changes are tagged reads only: the replay and jar suites bit-identical, and `jobs/1.2-footprints/verify.ps1` catching every mutant. Then finish this job's tests. Keep what is sound, rewrite what isn't, and say which in the final message.
