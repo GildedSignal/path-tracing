@@ -37,26 +37,25 @@ This file holds the state of the build, what is in flight and what comes next. I
 **Anomalies (open; each blocks only the claims that depend on it):**
 1. **L0's step-up mutant may be equivalent.** GLM `local-20261109-2251-1-0` (reproduced) claims no vanilla geometry or jump arc can tell `mutant-step-up` from vanilla, yet L0's controls reported every mutant caught. Settle which holds before L0's verdict counts.
 2. **The archived full-blocks server-saturation check** fails identically on main and `wt/segments` (bits 1100480512 vs 1101004800), after movement passes.
-3. **The GLM speed-of-light window** counts 199 displacements over a divisor of 200, so 19.810930 blocks/s is off by 1/200. Phase 3's bounds use c.
+3. *Settled 10 November:* the terrain-only c is **19.902886 blocks/s** (a 3-tick orbit on blue ice under a 2.0 ceiling; GLM `local-20261110-1056-1-4`, reproduced). The old 19.810930 divided 199 tick-deltas by 200; `Speeds.java` was right. Phase 3's bounds use this c.
 
-**Open for Julien:** nothing blocking. He reviews the plan with Fable (S63).
+**Open for Julien:** nothing. He approved the plan review on 10 November (S65): it is [scales.md](scales.md), with presence as a tool, the three thin slices before scale work, and R&D's wider objective. GPT is usable again as a sub-agent (S65).
 
-## Roadmap (approved 9 November, S48)
+## Roadmap (approved 9 November, S48; reordered 10 November, S65)
 
 Every phase ends in a **flight**, something Julien uses in the game, and has a **kill criterion** that re-derives the representation instead of patching it. After Phase 3 the scoreboard reorders the rest, largest gap first.
 
 0. **One line of truth.** Done.
 1. **The ground.** Done except L0 and job 1.5. Flight: the bot's runs on his tracks replayed offline at ≥ 10⁴× real time; his T is the bar (S56). Kill: no path below about 5 µs means the `World` interface is wrong.
 2. **One mind in the server, v0.** [server.md](server.md): bots that don't observe, world changes streamed once, the vanilla client's packets, a self channel, lazy bots on quiet footprints, the engine as a separate process; bots are players (S52). Build the deviation stream and a sandbox server at 100×. Flight: Julien sees 10–50 bots as players (S53). The lone-bot chunk-ticking wall waits for Phase 5.
-3. **The vocabulary on legs, and the first flight.** The record is frozen. The compiler (3.2a): segments, gaits, the class-keyed proposal table. The planner (3.2b): search over certified segments with the bit-parallel light cone and the slack allocator. The executor: re-anchors at every event, prices veto risk (S62). Rungs: R1–R3, R-retarget, his tracks, R-scale, R-far 10³; the rediscovery count starts. Flight: the bot races his tracks. Kill: segments per regime ≫ 10³, or a proposal hit rate under about 50% on natural terrain.
-4. **Tools as carried inputs.** Operator segments with `writes`, `needs` and obligations; discovery pulled by gaps; trimming compound words by deletion (to discuss with him); an R&D slice. Rungs: R6, R7, R8, R-brach, R10, rediscovery, the Baritone benchmark. Kill: ≫ 10³ verifications per gap, or a tool needing new search code.
-5. **The swarm.** Missions as programs plus scars; shared fields; reservations only for scarce things; a demand threshold; obligations that pass; congestion; lazy bots; sparse versus dense evaluation (ES, S59). Rungs: a portal for 20 bots but not 1; a shared bucket crossing; a rolling bridge; 10³ and 10⁴ bots.
-6. **Economy and building.** Prices as fields, farms as words, blueprints as forecasts, (max, +) scheduling, scaffolding words, multiple objectives (S32).
-7. **The cherry.** Learned ordering, the LLM overseer, LLM-proposed words, the GPU where profiling points, the human-limits profile.
+3. **Slice A, the vocabulary on legs, and the first flight.** The record is frozen. The compiler (3.2a): segments, gaits, the class-keyed proposal table. The planner (3.2b): search over certified segments with the bit-parallel light cone and the slack allocator. The executor: re-anchors at every event, prices veto risk (S62). Rungs: R1–R3, R-retarget, his tracks; the rediscovery count starts. Flight: the bot races his tracks. Kill: segments per regime ≫ 10³, or a proposal hit rate under about 50% on natural terrain.
+4. **Slice B, one tool (S65).** R-lego: blocks and one gap past the sprint-jump limit ([ladder.md](ladder.md)). It needs the placement law (pinned in the wiki), operator segments with `writes`, `needs` and obligations, the law read backwards, the archive by effect, the obligation ledger and the discoveries log ([scales.md](scales.md) 4.1, 4.9). Kill: ≫ 10³ verifications per gap, a tool needing search code, or a found word that isn't reused.
+5. **Slice C, five bots sharing one tool on his server (S55, S65).** Server v0 as specified, plus one reservation. Rungs: a shared crossing; a rolling bridge cleaned up by the last bot. Flight: he watches five bots cooperate.
+6. **Then scale, by the scoreboard:** the medium and far field (R-scale, R-far), tube tickets and lazy bots, more tools (R6, R7, R8, R-brach, R10, the Baritone benchmark), the swarm at 10³ and 10⁴, the economy and building ((max, +), reverse demolition, prices as fields), then the cherry (learned ordering, the LLM overseer, the GPU where profiling points, the human-limits profile). The lab proposes words from 3.2a's merge on.
 
 ## Scoreboard
 
-Rows: T over his time and over the bracket's upper bound; first-move latency at p99; cost per bot and server ms per tick at N bots; the deviation rate and the **veto rate** per capability (S62); segments per regime and the proposal hit rate, from superflat to random terrain; distinctions created per second (ES's H_live); the rediscovery count; feedback-loop time. Each row shows its gap to its Fermi floor, in orders of magnitude.
+Rows: T over his time and over the bracket's upper bound; first-move latency at p99; cost per bot and server ms per tick at N bots; the deviation rate and the **veto rate** per capability (S62); the overturn rate per grain (scales.md 4.3); segments per regime and the proposal hit rate, from superflat to random terrain; distinctions created per second (ES's H_live); the rediscovery count; feedback-loop time. Each row shows its gap to its Fermi floor, in orders of magnitude.
 
 ## Tracked requests (AGENTS.md: a request made twice gets an owner)
 
@@ -65,6 +64,7 @@ Rows: T over his time and over the bracket's upper bound; first-move latency at 
 | Multipoles (FMM) for how T acts at a distance (S6, ten times in ES) | integrator, Phase 3 | the medium's far field: bounds and landmarks, with the gap between lower and upper bound as the stated error |
 | Hundreds, then thousands, of bots with shared work (S18, S35–S36, S44–S45) | integrator, Phases 2 and 5 | one mind in the server |
 | 100× iteration (S32, 6 November, S44) | integrator, Phase 1 | the clock, the offline fast loop, job 1.5 |
+| Creativity that arises, stays and compounds, cheaply (S32, S44, S64) | integrator | [scales.md](scales.md) 4.1, with R-lego as its falsifier (slice B) |
 
 ## When a job ends
 

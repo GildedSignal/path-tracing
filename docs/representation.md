@@ -28,7 +28,7 @@ Mojang's code and the server are nature and the judge. **The law** is the genera
 |---|---|---|
 | Tick | the recurrences (friction × 0.91, jump 0.42 + 0.2 along yaw, collision clamps) | verification |
 | Word | the law integrated from one event to the next (section 3) | exact costs, error margins, combinations |
-| Medium | words averaged over a region: ticks per block in each direction, per toolkit class and gait, plus long edges (portals, pearls, ice roads) | arrival-time fields, lower bounds, crowd flows |
+| Medium | words summarized over a region, never averaged: the hull of its gait velocities per toolkit class as the lower bound, a witnessed chain as the upper bound, plus long edges (portals, pearls, ice roads) ([scales.md](scales.md) 4.3) | arrival-time fields, lower bounds, crowd flows |
 
 Each place is looked at with the coarsest grain whose error cannot change the decision (sharp where it matters, blurry elsewhere).
 

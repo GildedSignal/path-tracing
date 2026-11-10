@@ -70,7 +70,7 @@ This keeps the 4 November default ("the engine as a separate Rust process").
 ## Interfaces (frozen with the spec)
 
 - **Server → engine, each tick:** the tick number; world deltas; the self channel per bot; per bot, the server-owned outcomes (for the deviation stream); per real player, position and every visibility range; commands.
-- **Engine → server, each tick:** per active bot, its serverbound packet sequence; per lazy bot, its position only.
+- **Engine → server, each tick:** per active bot, its serverbound packet sequence; per lazy bot, its position only; per bot, its chunk tickets (chunk, level, from tick, to tick) and its presence level (below).
 - **Determinism:** the server's randomness is recorded and enters the engine as input (job 1.2).
 
 ## Bots are players (Julien, S52)
@@ -100,6 +100,14 @@ This keeps the 4 November default ("the engine as a separate Rust process").
   - A ticking chunk costs about 2–5 µs per tick: random ticks in its few reactive sections, a spawn attempt, and the weather checks.
   - 441 chunks is then about 1–2 ms per tick for each lone bot, so roughly 25–50 lone bots fit in the 50 ms tick at 20 TPS. Dense bots share their chunks.
   - The dispersed Swarm 0 cells test this. The floor is event-driven world ticking: each reactive block's next change drawn once, the same distribution at a cost per event, not per chunk. It's an idea for Julien, not yet a plan.
+
+## Tickets and presence (S65; built when the dispersed rung calls)
+
+The meaning is fixed here because the boundary is a one-way door; five bots run on plain player tickets (S55). The reasoning and the Fermi are in [scales.md](scales.md), 4.2.
+- **The worldtube is the ticket.** The engine asks for the chunks under each bot's footprint, ahead of time, at the level the footprint needs: a read needs level 33 (loaded: collisions see the real blocks, nothing ticks); a write, a fluid or a scheduled tick needs 32; a dropped item or another entity's motion needs 31, for as long as the obligation lasts (GLM `unloaded-chunk-move`, reproduced, bytecode only).
+- **Presence is a tool** (S65). By default a traveling bot is a body with its contact set: it holds no player ticket, and the spawners and trackers that read the player list don't see it. The swarm switches presence on where it pays (a farm, a site). Around a human everything is vanilla. This narrows S52 ("bots are players") to where someone can observe them.
+- **Open before the build:** the complete list of sites that read the player list or the player tickets (GLM `server-player-readers`, still a lead).
+- *Killed if:* anything differs inside a human's bubble, or a bot reaches a chunk before it loads (the server then treats the terrain as air).
 
 ## Flight and kill
 

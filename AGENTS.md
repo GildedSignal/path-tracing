@@ -1,7 +1,7 @@
 # How we work
 
 **Read [docs/PRINCIPLES.md](docs/PRINCIPLES.md) first.** It holds the goal and Julien's philosophy, and they are always on.
-Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
+Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, [docs/scales.md](docs/scales.md), every scale under one rule (S65), and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
 - [docs/engine.md](docs/engine.md) for the law and the engine's contract;
 - [docs/ladder.md](docs/ladder.md) for the rungs and the scoreboard.
 
@@ -27,7 +27,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
-**While GPT is nearly out of weekly usage (S55, 9 November):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
+**GPT builds again (S65, 10 November). If it runs out (S55):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
 
 ## Rules
 
