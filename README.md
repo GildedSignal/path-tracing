@@ -22,8 +22,10 @@ and [the ladder](docs/ladder.md).
 
 ## Current work
 
-The roadmap and its state are in [HANDOFF](docs/HANDOFF.md): Phase 0 consolidates the Rust law, the recorder,
-the tracks and the 100× clock into one line, then Phase 1 makes the law fast and gives it the world.
+The roadmap and its state are in [HANDOFF](docs/HANDOFF.md). Phase 1 is nearly done: the law runs at under 1 µs per tick
+and reads real worlds (every block in the 18 test tracks), with footprints and a pattern key. L0, the check against the
+real client, is closing. The word record is frozen ([vocabulary.md](docs/vocabulary.md)), and the word compiler (Phase 3)
+is next, toward about 5 bots with pathfinding racing the tracks.
 
 ## Run
 

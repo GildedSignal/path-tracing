@@ -16,7 +16,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 
 | Role | Who | For |
 |---|---|---|
-| Integrator | Claude Opus 5.5, main session | orchestrates; specs, the word record, adjudication, merges, docs, the register |
+| Integrator | Claude, main session: Fable 5.1 from 10 November (S63), Opus 5.5 before | orchestrates; specs, the word record, adjudication, merges, docs, the register |
 | Designer | Claude Opus 5.5 sub-agent, fresh context | red-teams each one-way door before it freezes |
 | Builder | GPT `gpt-6.1-sol` through `codex exec` | work that needs judgment within a spec |
 | Builder | GPT `gpt-6.1-terra` through `codex exec` (S47) | well-defined work: integration, speed, readers, executors, batches of checked GLM deltas |
@@ -25,7 +25,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 | Runner | Claude Haiku 5.5 | ladder runs, log digests, completeness checks |
 | Lab | GLM 5.3 through omp, as many lanes as its token window sustains (S47) | ground-layer laws, deviation triage, breakers, worst cases, tracks, R&D, primary research, red-teams; only results a machine can check ([lab/glm.md](lab/glm.md)) |
 
-No Fable (Julien, 4 November).
+Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
 **While GPT is nearly out of weekly usage (S55, 9 November):** an Opus sub-agent builds, one at a time. A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
 

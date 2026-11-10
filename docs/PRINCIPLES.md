@@ -165,7 +165,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "Rust port first" | S11 | **Adopted:** Phase 1.5 |
 | "identical block" | S12 | **Adopted:** restoration means the identical block and block state; without Silk Touch, blocks whose drop differs are barriers |
 | GPT as a sub-agent for well-formed tasks, Claude where taste is needed | S12 | **Followed:** AGENTS.md |
-| no Fable | S12 | **Followed:** AGENTS.md |
+| no Fable | S12 | **Superseded** by S63 (Fable orchestrates from 10 November) |
 | "gpt sub-agents can be two max at the same time indenpedently of you and one if astra is being used" | S15 | **Followed:** AGENTS.md |
 | speed fades faster than 32 ticks if you press the opposite key, like a brake | S13 | **Adopted:** the 32 ticks were coasting. Braking (input against the motion) is part of the law and of every local solve; the stopping time is measured in Phase 1 |
 | a block that falls into the void has a price: position yourself to catch it, place it where it can be caught, or lose it for good; the drop is random | S13 | **Adopted:** a lost block is a spent token; recovering it is a cost (time, position); its scatter comes from the server's RNG |
@@ -235,6 +235,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "the computer is all yours"; "the fix looks good" (word record draft 2) | S60 | **Followed:** vocabulary.md frozen; L0's live capture runs (job 1.3) |
 | "we'll have many clients either way no? so it's a learning opportunity" | S61 | **Followed:** job 1.5 (over-capture the recording, pin cores, several clients in parallel) |
 | "now you found the answer yourself good" (server corrections) | S62 | **Followed:** ladder.md, L0's pass line: corrections are recorded server events, counted as the veto rate; veto risk priced in a segment's width (vocabulary v2) |
+| "i'll start a new session with fable ... have it review the plan and look for improvements and then carry the orchestrating" | S63 | **Followed:** AGENTS.md, the team (Fable integrates); HANDOFF rewritten for the handover |
 | the whole plan, "without fake busy work that never converges and scared testing the yield nothing or diminishing return, the goal is to get there fast and its ok to not be perfect"; "we'll need proper documentation"; "You can use as many glms as possible they are not what's limited, you and gpt are more limited"; add "the new gpt terra which is solid especially on well defined tasks" | S47, approved (S48) | **Adopted:** the roadmap in [HANDOFF](HANDOFF.md); GPT `gpt-6.1-terra` joins the team (AGENTS.md) |
 | "We need a rule for after each phase to do a cleanup otherwise we'll have bloat or busy work if we do it too often"; "Make sure the tests are the fastest possible till an answer"; "perfection is slow and beaten by iteration" | S49 | **Followed:** AGENTS.md, "Tests answer fast" and "Cleanup once per phase" |
 
