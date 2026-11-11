@@ -80,7 +80,7 @@ A **word** is a feedback program: keys, aim and item use chosen from what the bo
 - Aim is continuous, so words take a discrete set of aims; otherwise the key is never consulted.
 - A coarse tier is reserved: model classes merged where replay shows they behave the same (short grass and air, say), always confirmed by replay, and split on the first mismatch. Found, not given; filled after measuring.
 
-*Killed if:* a pattern-cache hit rate below about 50% on natural terrain, measured per segment and weighted by ticks, with refused keys (hook gaps) counted apart from misses. Or a narrow word fails within its width under the measured noise.
+*Killed if:* on natural terrain the table certifies no more ticks per µs than the same search without it, its regret exceeds the bracket the class states, or the vocabulary grows as fast as the pieces walked ([vocabulary.md](vocabulary.md), section 11). A hit rate cannot kill it: an empty class would score 100%. Or a narrow word fails within its width under the measured noise.
 
 ## 4. A tool is a law input you carry
 
