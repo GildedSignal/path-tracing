@@ -6,16 +6,16 @@
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
 - [hook-catalogue](hook-catalogue.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [item-use-writes](item-use-writes.md) — lead: 2; last 2026-11-10
+- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 1; last 2026-11-10
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — lead: 2, rate-limited: 1, reproduced: 1; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 3; last 2026-11-10
-- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 3; last 2026-11-10
-- [port-fluid-rules](port-fluid-rules.md) — lead: 3, reproduced: 1; last 2026-11-10
+- [port-block-laws](port-block-laws.md) — lead: 2, reproduced: 3; last 2026-11-10
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 4; last 2026-11-10
+- [port-fluid-rules](port-fluid-rules.md) — lead: 3, reproduced: 2; last 2026-11-10
 - [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
-- [server-player-readers](server-player-readers.md) — lead: 2; last 2026-11-10
+- [server-player-readers](server-player-readers.md) — lead: 3; last 2026-11-10
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
 - [speed-of-light-window](speed-of-light-window.md) — reproduced: 1; last 2026-11-10
 - [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-09
@@ -27,6 +27,9 @@
 
 ## Reproduced results
 
+- 2026-11-10 [port-entity-rules](port-entity-rules.md) (local-20261110-1954-1-3-port-entity-rules): In vanilla 26.2, solid obstruction by entities is a deterministic per-tick position rewrite (`Entity.move:149 → Entity.collide:15` merges the boxes of collidable entities into the same collider list as block shapes, before `collideBoundingBox:40` and again in the step-up retry at offset 224), the...
+- 2026-11-10 [port-fluid-rules](port-fluid-rules.md) (local-20261110-1954-1-2-port-fluid-rules): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the post-edit water-spread law is now pinned end-to-end in bytecode and executable as a scratch port: after a neighbour edit a water cell re-ticks 5 ticks later, spreads down as `water[level=8,falling=true]` one cell per 5...
+- 2026-11-10 [item-use-writes](item-use-writes.md) (local-20261110-1954-1-1-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), 51 classes declare the five Item use-family methods by name — `Item` itself, `ItemStack`, and 49 `Item` subclasses — and 40 of those 51 reach at least one world write (65 catalogued invoke sites: 22 block, 23 entity, 5 entity...
 - 2026-11-10 [port-entity-rules](port-entity-rules.md) (local-20261110-1452-1-5-port-entity-rules): In vanilla 26.2 the server rewrites a standing player's velocity deterministically every tick an overlapping pushable entity exists (`ServerPlayer.tick:15 → Player.tick:162 → LivingEntity.tick:178 → aiStep → travel:617 → pushEntities:817 → Level.getPushableEntities → per-entity doPush → Entity.pu...
 - 2026-11-10 [port-block-laws](port-block-laws.md) (local-20261110-1452-1-4-port-block-laws): the exporter's four-context shape table under-samples the jar's collision-context space for `ScaffoldingBlock` — its `SHAPE_UNSTABLE_BOTTOM` branch is gated on `isAbove(SHAPE_BELOW_BLOCK = Shapes.block().move(0,-1,0), pos, ·)`, i.e. on feet above the cell's **bottom** plane (`entityBottom > pos.y...
 - 2026-11-10 [elite-techniques](elite-techniques.md) (local-20261110-1452-1-2-elite-techniques): Under the provisional 26.2 Rust law, backward momentum (bwmm) is falsified as an elite technique on an isolated 1-block-momentum pillar — the max gap and the fastest T are bit-identical with and without backward input (4.0625b resting, 4.6250b with arrival speed, T=12 both families) — while the a...
