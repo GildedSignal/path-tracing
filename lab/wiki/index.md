@@ -3,6 +3,7 @@
 
 ## Lenses
 
+- [certificate-size](certificate-size.md) — reproduced: 1; last 2026-11-11
 - [class-without-numbers](class-without-numbers.md) — reproduced: 1; last 2026-11-11
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
@@ -10,6 +11,7 @@
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
 - [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 1; last 2026-11-10
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
+- [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
 - [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 5; last 2026-11-11
@@ -22,7 +24,7 @@
 - [server-player-readers](server-player-readers.md) — lead: 3, reproduced: 1; last 2026-11-11
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
 - [speed-of-light-window](speed-of-light-window.md) — reproduced: 1; last 2026-11-10
-- [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 2; last 2026-11-11
+- [step-up-reachability](step-up-reachability.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 3; last 2026-11-11
 - [track-designer](track-designer.md) — lead: 1, rate-limited: 1, reproduced: 4; last 2026-11-11
 - [trial-honey-slide-cap](trial-honey-slide-cap.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
 - [trial-scaffolding-descend](trial-scaffolding-descend.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
@@ -31,6 +33,9 @@
 
 ## Reproduced results
 
+- 2026-11-11 [step-up-reachability](step-up-reachability.md) (local-20261111-1756-1-2-step-up-reachability): in Mojang 26.2 no *geometry* can put a step-up candidate within one float ulp of `0.6f` — the candidate set from block shapes (k/32), shulker peek boxes (`Shulker.getProgressAabb`, the only non-grid Y family in the game), vehicle boxes and all their pairwise differences has 98,871 exact members o...
+- 2026-11-11 [certificate-size](certificate-size.md) (local-20261111-1756-1-1-certificate-size): On the 16 standable tracks × all 54 tiny programs (124,885 walked ticks), removing the body-block cut makes certificates 1.47× longer (2.33 → 3.43 ticks/cert) and cuts the certified-replay cost 22% per tick of motion (5.80 → 4.50 µs/tick; 8.07 → 5.79 µs/tick with the certificate insert) at **equa...
+- 2026-11-11 [l0-powder-snow-freeze](l0-powder-snow-freeze.md) (local-20261111-1756-1-0-l0-powder-snow-freeze): In Mojang 26.2 the powder-snow freeze counter is server-authoritative synched entity data (`Entity.DATA_TICKS_FROZEN`) — the client's only local writer is the `InsideBlockEffectType.FREEZE` lambda (+1, cap 140, inside the move-time pass, never a decrement), while the server also decrements −2/tic...
 - 2026-11-11 [track-designer](track-designer.md) (local-20261111-1108-1-7-track-designer): two new witness-backed parkour tracks under the provisional 26.2 Rust law, each isolating a mechanic no prior shipped track covered — `slimevault` T=28 (slime-block vertical restitution: run off a ledge, land on a pad 8 below at vy=-1.025, rebound at +0.745 onto a goal ledge no jump from the pad...
 - 2026-11-11 [step-up-reachability](step-up-reachability.md) (local-20261111-1108-1-6-step-up-reachability): in Mojang 26.2, no block-geometry step-up candidate can lie within one float ulp of `0.6f` — running the jar's own shape code over all 32366 block states yields exactly 24 distinct collision-shape Y coordinates, all multiples of 1/32, so the candidate set from blocks is {k/32} whose nearest membe...
 - 2026-11-11 [server-player-readers](server-player-readers.md) (local-20261111-1108-1-5-server-player-readers): In the 26.2 server jar (sha1 `86765a5899bd9c96461036a628796b4245715058`), every bytecode site that reads or moves player presence via the listed accessors is **230 sites in 77 classes** — 38 of them decide one of the lens's seven decisions (17 spawning, 12 sleeping, 3 random-ticks, 2 raid, 2 enti...
