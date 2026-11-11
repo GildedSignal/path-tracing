@@ -73,16 +73,10 @@ fn server<'a>(
         end[3..] != ["end", run, recipient, entity, "-1"] {
         return Err(format!("server fence, rate or pending mark: {start:?} / {end:?}"));
     }
-    if let Some(edges) = edges {
-        if chain.len() != 4 * usize::from(edges) {
-            return Err(format!("missing or competing server event: {chain:?}"));
-        }
-    }
     let mut landings = Vec::new();
-    for group in chain.chunks(4) {
-        let [damage, mark, consume, dispatch] = group else {
-            return Err(format!("incomplete server landing chain: {group:?}"));
-        };
+    let mut index = 0;
+    while index < chain.len() {
+        let damage = &chain[index];
         let [_, dw, dp, "damage", "minecraft:fall", amount, floor, ordinal, movement @ ..] = damage.as_slice() else {
             return Err(format!("unsupported server event or incomplete fall: {damage:?}"));
         };
@@ -91,15 +85,30 @@ fn server<'a>(
             !matches!(movement, ["true", "true" | "false", "true", _, _, _]) {
             return Err(format!("missing base fallOn or accepted landing position: {damage:?}"));
         }
+        let Some(mark) = chain.get(index + 1) else { return Err(format!("missing unique fall transition: {damage:?}")) };
         let [mark_id, mw, mp, "mark", "minecraft:fall", "false", "true", "true", marked @ ..] = mark.as_slice()
         else { return Err(format!("missing unique fall transition: {mark:?}")) };
+        index += 2;
+        // 26.2 sendChanges clears hurtMarked (1217) before building the motion packet from the
+        // live getDeltaMovement (ctor offset 6), so any setDeltaMovement between the mark and
+        // the consume is a real velocity write the packet must reflect: last write wins.
+        let mut written = marked;
+        while let Some(next) = chain.get(index) {
+            let [_, ww, wp, "write", value @ ..] = next.as_slice() else { break };
+            if ww < mw || wp < mp { return Err(format!("velocity write precedes its mark: {next:?}")) }
+            written = value;
+            index += 1;
+        }
+        let Some(consume) = chain.get(index) else { return Err(format!("missing hurtMarked consume: {mark:?}")) };
+        let Some(dispatch) = chain.get(index + 1) else { return Err(format!("missing motion dispatch: {consume:?}")) };
         let [consume_id, _, _, "consume", cause, "false", emitted_id, emitted @ ..] = consume.as_slice()
         else { return Err(format!("missing hurtMarked consume: {consume:?}")) };
         if dw != mw || dp != mp || cause != mark_id || emitted_id != entity ||
-            bits(marked) != bits(emitted) || consume[1..3] != dispatch[1..3] ||
+            bits(written) != bits(emitted) || consume[1..3] != dispatch[1..3] ||
             dispatch[3..] != ["dispatch", consume_id, recipient, entity] {
-            return Err(format!("ambiguous consume or dispatch: {group:?}"));
+            return Err(format!("ambiguous consume or dispatch: {damage:?} / {mark:?} / {consume:?} / {dispatch:?}"));
         }
+        index += 2;
         let raw = csv_hex(amount, 8) as u32;
         let move_ordinal = ordinal.parse().unwrap();
         if !(f32::from_bits(raw).is_finite() && f32::from_bits(raw) > 0.0) ||
@@ -108,6 +117,11 @@ fn server<'a>(
         }
         landings.push(Landing { move_ordinal, movement, damage: (dw.parse().unwrap(), dp.parse().unwrap(), raw),
             consume: consume_id.parse().unwrap() });
+    }
+    if let Some(edges) = edges {
+        if landings.len() != usize::from(edges) {
+            return Err(format!("missing or competing server landing: {chain:?}"));
+        }
     }
     let [start, packets @ .., end] = wire else { return Err("missing wire fences".into()) };
     if start.as_slice() != ["0", "start", run, recipient, entity] ||
