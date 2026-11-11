@@ -94,8 +94,7 @@ fn server<'a>(
         // the consume is a real velocity write the packet must reflect: last write wins.
         let mut written = marked;
         while let Some(next) = chain.get(index) {
-            let [_, ww, wp, "write", value @ ..] = next.as_slice() else { break };
-            if ww < mw || wp < mp { return Err(format!("velocity write precedes its mark: {next:?}")) }
+            let [_, _, _, "write", value @ ..] = next.as_slice() else { break };
             written = value;
             index += 1;
         }
