@@ -51,7 +51,7 @@ try {
     Mutant 'fluid-flag' 'law/src/world.rs' 'self.blocks.fluids || self.regions.iter().any(|(_,_,b)|b.fluid.kind!=FluidKind::Empty)' 'false' $hooks
     Mutant 'inside-flag' 'law/src/world.rs' 'self.blocks.inside_effects || self.regions.iter().any(|(_,_,b)|b.has_inside_effects())' 'false' $hooks
     Mutant 'single-box' 'law/src/shapes.rs' 'if self.shape.single {' 'if self.shape.single { return distance; } if self.shape.single {' @('test', '--offline', '-p', 'law', '--lib', 'single_box_collide_equals_general_path')
-    Mutant 'missing-footprint' 'law/src/footprint.rs' '*self.footprint.borrow_mut().reads.entry(position).or_default() |= query as u8;' 'let _ = (position, query);' @('test', '--offline', '-p', 'law', '--test', 'footprints', 'outside_footprint_changes_cannot_alter_tick')
+    Mutant 'missing-footprint' 'law/src/footprint.rs' '*slot |= bits;' 'let _ = (slot, bits);' @('test', '--offline', '-p', 'law', '--test', 'footprints', 'outside_footprint_changes_cannot_alter_tick')
     # The key: a facing that does not turn must lose the found rotations, on test blocks and on Mojang's stairs.
     Mutant 'unturned-facing' 'law/src/pattern.rs' 'fn facing(self, facing: u8) -> u8 {' 'fn facing(self, facing: u8) -> u8 { return facing;' @('test', '--offline', '--workspace', '--test', 'pattern')
     # A cell must be keyed by every answer its queries read: drop the fluid, then the sneak shape.

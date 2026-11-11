@@ -75,10 +75,94 @@ pub struct ResourceRecord {
     pub footprint: Footprint,
 }
 
+/// Cells per axis of the tape's dense window.
+const SPAN: i32 = 16;
+/// The tape's own bit for a swept cell, beside the five `Query` bits.
+const SWEPT: u8 = 128;
+
+/// What a recording holds while the law runs: one byte per cell in a window around the
+/// first cell touched, and a map for the cells beyond it. `Footprint` is its sorted form.
+struct Tape {
+    /// The window's least corner, once a cell has been touched.
+    corner: Option<BlockPos>,
+    /// Indexed (x, y, z), so ascending indices are ascending positions.
+    window: [u8; (SPAN * SPAN * SPAN) as usize],
+    beyond: BTreeMap<BlockPos, u8>,
+    environment: Vec<EnvironmentRead>,
+}
+
+/// Every recorded bit passes here.
+#[inline(always)]
+fn mark(slot: &mut u8, bits: u8) {
+    *slot |= bits;
+}
+
+impl Tape {
+    fn new() -> Self {
+        Self { corner: None, window: [0; (SPAN * SPAN * SPAN) as usize], beyond: BTreeMap::new(), environment: Vec::new() }
+    }
+
+    #[inline]
+    fn cell(&mut self, p: BlockPos, bits: u8) {
+        let corner = *self.corner.get_or_insert(p.map(|v| v - SPAN / 2));
+        let d = [0, 1, 2].map(|a| p[a].wrapping_sub(corner[a]));
+        if d.iter().all(|v| (0..SPAN).contains(v)) {
+            mark(&mut self.window[((d[0] * SPAN + d[1]) * SPAN + d[2]) as usize], bits);
+        } else {
+            mark(self.beyond.entry(p).or_default(), bits);
+        }
+    }
+
+    fn region(&mut self, lo: BlockPos, hi: BlockPos, bits: u8) {
+        if (0..3).any(|a| lo[a] > hi[a]) { return; }
+        let corner = *self.corner.get_or_insert(lo.map(|v| v - SPAN / 2));
+        let inside = |p: BlockPos| (0..3).all(|a| (0..SPAN).contains(&p[a].wrapping_sub(corner[a])));
+        if inside(lo) && inside(hi) {
+            let d = |p: BlockPos, a: usize| (p[a] - corner[a]) as usize;
+            let span = SPAN as usize;
+            for x in d(lo, 0)..=d(hi, 0) {
+                for y in d(lo, 1)..=d(hi, 1) {
+                    let row = (x * span + y) * span;
+                    for slot in &mut self.window[row + d(lo, 2)..=row + d(hi, 2)] { mark(slot, bits); }
+                }
+            }
+        } else {
+            cells(lo, hi, |p| self.cell(p, bits));
+        }
+    }
+
+    /// The sorted form. The window is scanned eight cells at a time.
+    fn footprint(&self, state_reads: StateReads, environment: Vec<EnvironmentRead>) -> Footprint {
+        let mut reads = Vec::new();
+        let mut swept = Vec::new();
+        let mut cell = |p: BlockPos, bits: u8| {
+            if bits & !SWEPT != 0 { reads.push((p, bits & !SWEPT)); }
+            if bits & SWEPT != 0 { swept.push(p); }
+        };
+        if let Some(corner) = self.corner {
+            for (chunk, eight) in self.window.chunks_exact(8).enumerate() {
+                if u64::from_ne_bytes(eight.try_into().unwrap()) == 0 { continue; }
+                for (offset, &bits) in eight.iter().enumerate().filter(|(_, bits)| **bits != 0) {
+                    let index = (chunk * 8 + offset) as i32;
+                    cell([corner[0] + index / (SPAN * SPAN), corner[1] + index / SPAN % SPAN, corner[2] + index % SPAN], bits);
+                }
+            }
+        }
+        // The window comes out sorted, and sorted input builds each tree in one pass.
+        if !self.beyond.is_empty() {
+            for (&p, &bits) in &self.beyond { cell(p, bits); }
+            reads.sort_unstable();
+            swept.sort_unstable();
+        }
+        Footprint { reads: reads.into_iter().collect(), swept: swept.into_iter().collect(), environment, state_reads }
+    }
+}
+
 pub struct RecordingWorld<'a, W> {
     world: &'a W,
-    footprint: RefCell<Footprint>,
-    /// The state fields written since the last `take`.
+    tape: RefCell<Tape>,
+    /// The state fields read before they were written, and those written, since the last `take`.
+    state_reads: Cell<u128>,
     written: Cell<u128>,
 }
 
@@ -86,18 +170,35 @@ impl<'a, W: World> RecordingWorld<'a, W> {
     pub fn new(world: &'a W) -> Self {
         Self {
             world,
-            footprint: RefCell::new(Footprint::default()),
+            tape: RefCell::new(Tape::new()),
+            state_reads: Cell::new(0),
             written: Cell::new(0),
         }
     }
 
     pub fn footprint(&self) -> Footprint {
-        self.footprint.borrow().clone()
+        let tape = self.tape.borrow();
+        tape.footprint(StateReads(self.state_reads.get()), tape.environment.clone())
     }
 
     pub fn take(&self) -> Footprint {
+        let mut tape = self.tape.borrow_mut();
+        let environment = std::mem::take(&mut tape.environment);
+        let footprint = tape.footprint(StateReads(self.state_reads.replace(0)), environment);
         self.written.set(0);
-        std::mem::take(&mut *self.footprint.borrow_mut())
+        tape.corner = None;
+        tape.window.fill(0);
+        tape.beyond.clear();
+        footprint
+    }
+
+    /// Adds another recording's footprint to this one.
+    fn absorb(&self, footprint: &Footprint) {
+        let mut tape = self.tape.borrow_mut();
+        for (&p, &queries) in &footprint.reads { tape.cell(p, queries); }
+        for &p in &footprint.swept { tape.cell(p, SWEPT); }
+        tape.environment.extend(footprint.environment.iter().cloned());
+        self.state_reads.set(self.state_reads.get() | footprint.state_reads.0);
     }
 
     /// Returns one tick's dependencies and retains their union across calls.
@@ -106,7 +207,7 @@ impl<'a, W: World> RecordingWorld<'a, W> {
         let initial = state.clone();
         crate::tick(state, &tick_world, input);
         let footprint = tick_world.take();
-        self.footprint.borrow_mut().extend(&footprint);
+        self.absorb(&footprint);
         TickRecord { initial, input: *input, footprint }
     }
 
@@ -115,16 +216,17 @@ impl<'a, W: World> RecordingWorld<'a, W> {
         let initial = state.clone();
         crate::apply_server_resource_event(state, &event_world, event.clone());
         let footprint = event_world.take();
-        self.footprint.borrow_mut().extend(&footprint);
+        self.absorb(&footprint);
         ResourceRecord { initial, event, footprint }
     }
 
+    #[inline]
     fn read(&self, position: BlockPos, query: Query) {
-        *self.footprint.borrow_mut().reads.entry(position).or_default() |= query as u8;
+        self.tape.borrow_mut().cell(position, query as u8);
     }
 
     fn environment(&self, read: EnvironmentRead) {
-        self.footprint.borrow_mut().environment.push(read);
+        self.tape.borrow_mut().environment.push(read);
     }
 }
 
@@ -139,9 +241,11 @@ fn cells(lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)) {
 }
 
 impl<W: World> World for RecordingWorld<'_, W> {
+    #[inline]
     fn read_state(&self, field: StateField) {
-        self.footprint.borrow_mut().state_reads.0 |= (1 << field as u8) & !self.written.get();
+        self.state_reads.set(self.state_reads.get() | (1 << field as u8) & !self.written.get());
     }
+    #[inline]
     fn write_state(&self, field: StateField) {
         self.written.set(self.written.get() | 1 << field as u8);
     }
@@ -174,16 +278,14 @@ impl<W: World> World for RecordingWorld<'_, W> {
         self.world.loaded(p)
     }
     fn observe_region(&self, query: Query, lo: BlockPos, hi: BlockPos) {
-        cells(lo, hi, |p| self.read(p, query));
+        self.tape.borrow_mut().region(lo, hi, query as u8);
     }
     fn observe_sweep(&self, from: Aabb, to: Aabb) {
         let lo = crate::world::block_pos(crate::Vec3::new(
             from.min.x.min(to.min.x), from.min.y.min(to.min.y), from.min.z.min(to.min.z)));
         let hi = crate::world::block_pos(crate::Vec3::new(
             from.max.x.max(to.max.x), from.max.y.max(to.max.y), from.max.z.max(to.max.z)));
-        cells(lo, hi, |p| {
-            self.footprint.borrow_mut().swept.insert(p);
-        });
+        self.tape.borrow_mut().region(lo, hi, SWEPT);
     }
     fn collision_cell_bounds(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
         self.observe_region(Query::Shape, lo, hi);

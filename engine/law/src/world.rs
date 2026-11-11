@@ -253,10 +253,14 @@ impl Default for Block {
 }
 impl Block {
     fn has_inside_effects(&self)->bool { self.inside!=Inside::None || self.stuck_multiplier.is_some() || self.fluid.kind!=FluidKind::Empty }
-    fn collision_within_cell(&self)->bool {
+    fn collision_shapes(&self)->impl Iterator<Item=&VoxelShape> {
         std::iter::once(&self.shape).chain(self.above_shape.iter()).chain(self.below_shape.iter()).chain(self.sneak_shape.iter())
-            .all(|shape|shape.within_cell())
     }
+    /// No collision shape in any context leaves the block's own cell.
+    pub fn collision_within_cell(&self)->bool { self.collision_shapes().all(|shape|shape.within_cell()) }
+    /// No context gives a collision shape, so the block cannot collide or suffocate:
+    /// a world may omit it from `visit_collision_cells`.
+    pub fn never_collides(&self)->bool { self.inside!=Inside::PowderSnow && self.collision_shapes().all(|shape|shape.is_empty()) }
     fn flow_properties(&self, position: BlockPos) -> FluidFlowBlock {
         self.fluid_flow.unwrap_or_else(|| {
             panic!("raw fluid current needs block predicates at {position:?}")

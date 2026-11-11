@@ -178,3 +178,70 @@ fn extra_colliders_preserve_bits_and_keep_query_dependencies() {
     assert!(recorder.footprint().environment.iter().any(|r|
         matches!(r, EnvironmentRead::ExtraCollisions { shapes, .. } if !shapes.is_empty())));
 }
+
+/// The recorder as first written: one map entry per ask. The tape must give the same footprint.
+#[derive(Default)]
+struct Plain<'a> { world: Option<&'a BoxWorld>, reads: std::cell::RefCell<std::collections::BTreeMap<BlockPos, u8>>, swept: std::cell::RefCell<std::collections::BTreeSet<BlockPos>> }
+impl Plain<'_> {
+    fn read(&self, p: BlockPos, query: Query) { *self.reads.borrow_mut().entry(p).or_default() |= query as u8; }
+    fn inner(&self) -> &BoxWorld { self.world.unwrap() }
+}
+impl World for Plain<'_> {
+    fn block(&self, p: BlockPos) -> &Block { self.read(p, Query::Block); self.inner().block(p) }
+    fn hook_block(&self, p: BlockPos) -> &Block { self.read(p, Query::Hooks); self.inner().hook_block(p) }
+    fn fluid_block(&self, p: BlockPos) -> &Block { self.read(p, Query::Fluid); self.inner().fluid_block(p) }
+    fn raw_fluid_block(&self, p: BlockPos) -> Option<&Block> { self.read(p, Query::Fluid); self.read(p, Query::Loaded); self.inner().raw_fluid_block(p) }
+    fn collision_shape(&self, p: BlockPos, context: CollisionContext) -> &VoxelShape { self.read(p, Query::Shape); self.inner().collision_shape(p, context) }
+    fn loaded(&self, p: BlockPos) -> bool { self.read(p, Query::Loaded); self.inner().loaded(p) }
+    fn observe_region(&self, query: Query, lo: BlockPos, hi: BlockPos) {
+        for x in lo[0]..=hi[0] { for y in lo[1]..=hi[1] { for z in lo[2]..=hi[2] { self.read([x, y, z], query); } } }
+    }
+    fn observe_sweep(&self, from: Aabb, to: Aabb) {
+        let lo = [from.min.x.min(to.min.x), from.min.y.min(to.min.y), from.min.z.min(to.min.z)].map(|v| v.floor() as i32);
+        let hi = [from.max.x.max(to.max.x), from.max.y.max(to.max.y), from.max.z.max(to.max.z)].map(|v| v.floor() as i32);
+        for x in lo[0]..=hi[0] { for y in lo[1]..=hi[1] { for z in lo[2]..=hi[2] { self.swept.borrow_mut().insert([x, y, z]); } } }
+    }
+    fn collision_cell_bounds(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
+        self.observe_region(Query::Shape, lo, hi); self.inner().collision_cell_bounds(bounds, lo, hi)
+    }
+    fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, visit: impl FnMut(BlockPos) -> bool) -> bool {
+        self.observe_region(Query::Shape, lo, hi); self.inner().visit_collision_cells(bounds, lo, hi, visit)
+    }
+    fn has_fluid(&self) -> bool { self.inner().has_fluid() }
+    fn has_inside_effects(&self) -> bool { self.inner().has_inside_effects() }
+    fn min_y(&self) -> i32 { self.inner().min_y() }
+    fn fast_lava(&self) -> bool { self.inner().fast_lava() }
+    fn difficulty(&self) -> u8 { self.inner().difficulty() }
+    fn natural_regeneration(&self) -> bool { self.inner().natural_regeneration() }
+}
+
+// Is the tape's footprint the plain recorder's, inside its window and beyond it?
+#[test]
+fn the_tape_records_what_one_map_entry_per_ask_records() {
+    let (mut cells, mut beyond) = (0, 0);
+    for seed in 0..32 {
+        let mut random = Random(seed);
+        let mut world = support::world(&mut random, seed);
+        // Odd seeds fall and run far enough to leave the 16-cell window.
+        let ticks = if seed % 2 == 0 { 6 } else { world.fill([-4, -40, -4], [4, -40, 60], Block::full()); 60 };
+        let start = PlayerState { position: Vec3::new(0.5, 2.0, 0.5), velocity: Vec3::new(random.coordinate() / 4.0, 0.0, 0.6), ..PlayerState::default() };
+        let (tape, plain) = (RecordingWorld::new(&world), Plain { world: Some(&world), ..Plain::default() });
+        let (mut taped, mut plainly) = (start.clone(), start);
+        for _ in 0..ticks {
+            let input = random.input();
+            tick(&mut taped, &tape, &input);
+            tick(&mut plainly, &plain, &input);
+        }
+        assert_eq!(state_bits(&taped), state_bits(&plainly));
+        let footprint = tape.footprint();
+        assert_eq!(footprint.reads, *plain.reads.borrow(), "seed {seed}");
+        assert_eq!(footprint.swept, *plain.swept.borrow(), "seed {seed}");
+        assert_eq!(tape.take().reads, footprint.reads);
+        assert!(tape.take().reads.is_empty() && tape.footprint().swept.is_empty());
+        let span = |a: usize| footprint.reads.keys().map(|p| p[a]).max().unwrap() - footprint.reads.keys().map(|p| p[a]).min().unwrap();
+        cells += footprint.reads.len();
+        beyond += (0..3).any(|a| span(a) >= 16) as u32;
+    }
+    assert!(beyond >= 8, "some runs must leave the window: {beyond}");
+    println!("{cells} cells over 32 runs, {beyond} runs beyond the window");
+}

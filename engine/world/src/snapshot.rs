@@ -5,7 +5,11 @@ use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 /// A shared generator: the properties that change a model, and their values' slots.
 struct Map { properties: Vec<&'static str>, slots: BTreeMap<&'static str, usize> }
-struct Models { maps: Vec<Map>, tables: BTreeMap<&'static str, (usize, Vec<u16>)>, blocks: Vec<Block>, refusals: BTreeMap<&'static str, &'static str> }
+struct Models { maps: Vec<Map>, tables: BTreeMap<&'static str, (usize, Vec<u16>)>, blocks: Vec<Block>, reach: Vec<u8>, refusals: BTreeMap<&'static str, &'static str> }
+/// How far a model's collision reaches, in any context.
+const NOWHERE: u8 = 0;
+const OWN_CELL: u8 = 1;
+const BEYOND: u8 = 2;
 fn models() -> &'static Models {
     static MODELS: OnceLock<Models> = OnceLock::new();
     MODELS.get_or_init(|| {
@@ -34,7 +38,8 @@ fn models() -> &'static Models {
             let [block, bucket, _] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated census row") };
             if bucket != "modeled" { assert!(refusals.insert(block, bucket).is_none(), "one refusal reason per block: {block}"); }
         }
-        Models { maps, tables, blocks, refusals }
+        let reach = blocks.iter().map(|b| if b.never_collides() { NOWHERE } else if b.collision_within_cell() { OWN_CELL } else { BEYOND }).collect();
+        Models { maps, tables, blocks, reach, refusals }
     })
 }
 /// Project the state onto its block's relevant properties, then look the values up.
@@ -158,8 +163,9 @@ impl WorldSnapshot {
         Ok(Self { min, max, widths, cells, models: registry, difficulty: reader.difficulty, natural_regeneration, fluids, inside })
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
+    fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
     fn assert_covered(&self, p: BlockPos) {
-        assert!((0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]), "snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint",self.min,self.max);
+        assert!(self.covers(p), "snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint",self.min,self.max);
     }
 }
 fn index(min: BlockPos, widths: [usize;3], p: BlockPos) -> usize {
@@ -182,6 +188,35 @@ impl World for WorldSnapshot {
     fn natural_regeneration(&self) -> bool { self.natural_regeneration }
     fn has_fluid(&self) -> bool { self.fluids }
     fn has_inside_effects(&self) -> bool { self.inside || self.fluids }
+    /// The law's order (z, y, x), from the cells' own models: a cell that never collides
+    /// is left out, and one whose collision stays in its cell is left out of the halo,
+    /// where it cannot meet `bounds`.
+    fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
+        let near_lo = [bounds.min.x, bounds.min.y, bounds.min.z].map(law::math::floor);
+        let near_hi = [bounds.max.x, bounds.max.y, bounds.max.z].map(law::math::floor);
+        let near = |a: usize, v: i32| v >= near_lo[a] && v <= near_hi[a];
+        if !self.covers(lo) || !self.covers(hi) {
+            // The full scan asks every cell in this order and stops only at a visit, so it
+            // meets the first cell outside the snapshot exactly where this does.
+            for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] {
+                self.assert_covered([x, y, z]);
+                let reach = self.models.reach[self.cells[index(self.min, self.widths, [x, y, z])] as usize];
+                if (reach == BEYOND || reach == OWN_CELL && near(2, z) && near(1, y) && near(0, x)) && !visit([x, y, z]) { return false; }
+            } } }
+            return true;
+        }
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                let row = index(self.min, self.widths, [lo[0], y, z]);
+                let near_row = near(2, z) && near(1, y);
+                for x in lo[0]..=hi[0] {
+                    let reach = self.models.reach[self.cells[row + (x - lo[0]) as usize] as usize];
+                    if (reach == BEYOND || reach == OWN_CELL && near_row && near(0, x)) && !visit([x, y, z]) { return false; }
+                }
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]

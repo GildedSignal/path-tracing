@@ -148,8 +148,8 @@ Symmetry stays found by hashing, for a later key that replays turned words.
 ## 4. What the key leaves out, and why
 
 - **`swept`**: the worldtube, for coordination; the key needs only what was read.
-- **Answers no query asked for**: a Shape-only cell accepts any model with
-  those resolved shapes.
+- **Answers no query asked for**: a Shape-only cell accepts any model with those resolved shapes;
+  the reach visit (job 1.6) leaves 78–92% of cells Shape-only (judged: 193,668 such edits, bit-equal).
 - **`HasFluid` and `HasInsideEffects`**: forcing both true leaves every tick
   bit-identical (`speed_differential.rs`); keying them would split a pattern by
   water a kilometre away.
@@ -196,5 +196,5 @@ loaded reads) and requires a running test to catch each, then audits randomness.
 
 ## 6. Open
 - Unkeyed 128-bit FNV: a collision gives one content a wrong id; storing contents would rule it out.
-- No test catches a Shape-only cell's powder-snow flag (halo cells; the random worlds never fall onto one).
+- No test drives a body onto a Shape-only powder-snow cell (the random worlds never fall onto one); `collision_cells.rs` only guards that the reach visit never skips powder snow.
 - Start states dominate the bytes; a start class would shrink them.
