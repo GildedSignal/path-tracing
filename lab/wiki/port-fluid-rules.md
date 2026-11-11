@@ -8,14 +8,15 @@
 - Run folder: local-20261110-1954-1-2-port-fluid-rules
 
 ## local-20261110-1452-1-3-port-fluid-rules (2026-11-10)
-- Grade: lead
+- Grade: reproduced
 - Claim: In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`), breaking the blocks under a still, walled water source floods the shaft with falling full cells — `water[level=8]` (`getFlowing(8, falling=true)`), surface 1.0 under the same-kind cell above, one cell every 5 ticks start...
 - Run folder: local-20261110-1452-1-3-port-fluid-rules
 
 ## local-20261110-1056-1-5-port-fluid-rules (2026-11-10)
-- Grade: lead
+- Grade: reproduced
 - Claim: In Mojang 26.2, breaking the block under a still water source creates a falling full cell — `water[level=8]`, height 1.0 — in the hole exactly 5 ticks after the edit (`LiquidBlock.updateShape`/`neighborChanged` schedule → `FlowingFluid.tick` → `spread` → `getNewLiquid` returns `getFlowing(8, fall...
 - Falsifier: any of — the `getNewLiquid` disassembly not containing `getFlowing:(IZ)` at offsets 247–251 of the method; `WaterFluid.getTickDelay` not `iconst_5`; the scratch binary failing an assertion or printing a hole height ≠ 1.0 in world B; or the same binary passing after the engine gains a real fluid-s...
+- Checker discrepancy: - `reproduce.sh` basename flaw: `basename` does not strip dotted class names, so regeneration writes `javap/net.minecraft.world.level.material.*.java.txt` while the extraction reads the author's short-name `javap/*.java.txt`. I diffed both sets: byte-identical, so `evidence.txt` is valid, but the...
 - Run folder: local-20261110-1056-1-5-port-fluid-rules
 
 ## local-20261109-1554-1-1-port-fluid-rules (2026-11-09)

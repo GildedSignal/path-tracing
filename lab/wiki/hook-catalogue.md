@@ -13,7 +13,8 @@
 - Run folder: local-20261109-1653-1-8-hook-catalogue
 
 ## local-20261106-1240-1-1-hook-catalogue (2026-11-06)
-- Grade: lead
+- Grade: reproduced
 - Claim: in Minecraft 26.2 the movement hooks are overridden by 27 classes for `entityInside` (25 block classes + `LavaFluid` + `WaterFluid`), 8 for `fallOn`, 6 for `stepOn`, and 0 for `getFriction`/`getSpeedFactor`/`getJumpFactor` (declared only by `Block`), while `updateEntityMovementAfterFallOn` no lon...
+- Checker discrepancy: None. One non-material note: `WebBlock.entityInside`'s catalogue evidence column is empty (slow-down constants live in `Entity`/helper code, not the override) — the dossier itself flags this as expected.
 - Run folder: local-20261106-1240-1-1-hook-catalogue
 

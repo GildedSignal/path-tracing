@@ -2,13 +2,15 @@
 # trial-honey-slide-cap
 
 ## local-20261109-2251-1-1-trial-honey-slide-cap (2026-11-09)
-- Grade: lead
+- Grade: reproduced
 - Claim: In Mojang 26.2 (staged client jar), the HoneyBlock side-slide engages — for a falling LivingEntity with onGround=false and at least one horizontal center offset |x−(bx+0.5)| or |z−(bz+0.5)| strictly beyond 0.4375+getBbWidth()/2−1e-7 — exactly when the stored delta vy satisfies getOldDeltaY(vy)=vy...
+- Checker discrepancy: 1. **NaN edge — the claim's "exactly when" fails at NaN vy**: `dcmpl` pushes −1 for NaN, so vy=NaN passes the vy gate and slides (lateral-out), and y=NaN passes the y gate; a NaN lateral offset reads as inside (no slide). Measured directly (`check/NaNDebug.java`, and ADV-9a–d). Under IEEE compari...
 - Run folder: local-20261109-2251-1-1-trial-honey-slide-cap
 
 ## local-20261109-2151-1-1-trial-honey-slide-cap (2026-11-09)
-- Grade: lead
+- Grade: reproduced
 - Claim: For a falling living entity beside a honey block (onGround=false, entity Y at or below `blockY+0.9375-1e-7`, horizontal center offset beyond `0.4375+bbWidth/2-1e-7` on at least one axis), Mojang 26.2 `HoneyBlock.doSlideMovement` throttles vertical speed to exactly `-0.05` in pre-gravity space whe...
+- Checker discrepancy: - **A. Dossier note "NaN fails via `dcmpl`" is backwards.** Direct execution: stored `deltaMovement.y = NaN` → `isSlidingDown` returns TRUE (gate 3 passes; dcmpl pushes −1 on NaN → iflt taken → falls through to the sliver test). `doSlideMovement` on NaN takes branch B (dcmpg pushes +1 → ifge), ca...
 - Run folder: local-20261109-2151-1-1-trial-honey-slide-cap
 
 ## local-20261109-1653-1-4-trial-honey-slide-cap (2026-11-09)

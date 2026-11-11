@@ -117,12 +117,13 @@ PROMPT
   capture_changes checker-work.patch
   active=false
   printf 'checker exit: %s\n' "$checker_status" >> "$out/phases.txt"
-  first=$(head -n 1 "$out/check.md" 2>/dev/null || true)
+  # The first grade line and the first claim line, wherever they sit: the wiki reads them the same way.
+  first=$(grep -m1 '^Grade: ' "$out/check.md" 2>/dev/null | tr -d '\r' || true)
   case $first in
     'Grade: reproduced'|'Grade: lead'|'Grade: nothing-found') grade=${first#Grade: } ;;
     *) grade=lead ;;
   esac
-  claim=$(head -n 1 "$out/dossier.md" | sed -n 's/^Claim: //p' | tr -d '\r')
+  claim=$(grep -m1 '^Claim: ' "$out/dossier.md" | sed 's/^Claim: //' | tr -d '\r' || true)
   if [[ $author_complete != true || -z $claim || ! -f $out/reproduce.sh || -L $out/reproduce.sh || ! -f $out/check.md || -L $out/check.md || $author_status != 0 || $checker_status != 0 || $first != "Grade: $grade" ]]; then
     [[ ! -e $out/check.md ]] || mv -- "$out/check.md" "$out/check-incomplete.md"
     grade=lead

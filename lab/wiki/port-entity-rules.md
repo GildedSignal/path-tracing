@@ -14,8 +14,9 @@
 - Run folder: local-20261110-1452-1-5-port-entity-rules
 
 ## local-20261109-2251-1-5-port-entity-rules (2026-11-09)
-- Grade: lead
+- Grade: reproduced
 - Claim: In vanilla 26.2 the bot's tick carries two deterministic entity-contact laws that have no producer in the Rust engine — crowd push (`ServerPlayer.pushEntities` → `LivingEntity.pushEntities`, `aiStep` offset 817, after `travel` at 617) and solid obstruction (`Entity.collide` offset 15 merges `getE...
+- Checker discrepancy: 1. **Boats ARE solid in 26.2 — dossier contradicted.**
 - Run folder: local-20261109-2251-1-5-port-entity-rules
 
 ## local-20261109-1554-1-2-port-entity-rules (2026-11-09)
