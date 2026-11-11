@@ -78,6 +78,7 @@ Rows: T over his time and over the bracket's upper bound; first-move latency at 
 | Hundreds, then thousands, of bots with shared work (S18, S35–S36, S44–S45) | integrator, Phases 2 and 5 | one mind in the server |
 | 100× iteration (S32, 6 November, S44) | integrator, Phase 1 | the clock, the offline fast loop, job 1.5 |
 | Creativity that arises, stays and compounds, cheaply (S32, S44, S64) | integrator | [scales.md](scales.md) 4.1, with R-lego as its falsifier (slice B) |
+| Explanations in his vocabulary, grounded in the whole context: the why, the constraints, the scale (S67, S75–S77) | integrator | read every doc and his turns before explaining; speak in the docs' terms (word, certificate, worldtube, light cone, T), never in implementation shorthand |
 
 ## When a job ends
 
