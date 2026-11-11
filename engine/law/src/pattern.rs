@@ -95,6 +95,22 @@ pub struct Key {
     pub ids: Box<[u16]>,
 }
 
+/// What an entry's start is keyed on: the start block, the words that stand for the
+/// state, and the context for the extra-collider probe. `exact` is the bit-equal start;
+/// the word compiler keys proposals on a class of states (docs/vocabulary.md, section 3).
+#[derive(Clone, Debug)]
+pub struct Start {
+    pub origin: BlockPos,
+    pub words: Box<[u64]>,
+    pub context: CollisionContext,
+}
+impl Start {
+    pub fn exact(state: &PlayerState) -> Self {
+        let origin = block_of(state.position);
+        Self { origin, words: start_bits(state, origin), context: CollisionContext::of(state) }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Entry<V> {
     /// The start block where the word was recorded.
@@ -145,7 +161,13 @@ impl<V> PatternTable<V> {
 
     /// Records a word run from `start` on the snapshot its footprint was recorded on.
     pub fn insert(&mut self, world: &impl World, footprint: &Footprint, start: &PlayerState, value: V) -> Result<Key, PatternError> {
-        let origin = block_of(start.position);
+        self.insert_at(world, footprint, Start::exact(start), |_| value)
+    }
+
+    /// The same, from any start key. `value` receives the entry already under the whole key.
+    pub fn insert_at(&mut self, world: &impl World, footprint: &Footprint, start: Start,
+        value: impl FnOnce(Option<V>) -> V) -> Result<Key, PatternError> {
+        let origin = start.origin;
         let mut probe: Option<Aabb> = None;
         let mut environment = 0;
         for read in &footprint.environment {
@@ -179,7 +201,7 @@ impl<V> PatternTable<V> {
             Some(&id) => id,
             None => { self.shapes.push(shape.clone()); self.shape_ids.insert(shape, self.shapes.len() as u32 - 1); self.shapes.len() as u32 - 1 }
         };
-        let bits = start_bits(start, origin);
+        let bits = start.words;
         let start = match self.start_ids.get(&bits) {
             Some(&id) => id,
             None => { self.starts.push(bits.clone()); self.start_ids.insert(bits, self.starts.len() as u32 - 1); self.starts.len() as u32 - 1 }
@@ -187,18 +209,38 @@ impl<V> PatternTable<V> {
         let from = self.shapes_from.entry(start).or_default();
         if !from.contains(&shape) { from.push(shape); }
         let key = Key { start, shape, ids: ids.into() };
-        self.entries.insert(key.clone(), Entry { origin, scope, probe, value });
+        let previous = self.entries.remove(&key).map(|entry| entry.value);
+        self.entries.insert(key.clone(), Entry { origin, scope, probe, value: value(previous) });
         Ok(key)
     }
 
     /// The entry recorded from this start state whose footprint holds the same content
     /// here. Reads `world` at each candidate shape's cells, so it must cover them.
     pub fn lookup(&mut self, world: &impl World, start: &PlayerState) -> Option<Hit<'_, V>> {
-        let origin = block_of(start.position);
-        let start_id = *self.start_ids.get(&start_bits(start, origin))?;
+        let start = Start::exact(start);
+        let key = self.matching(world, &start, true).pop()?;
+        Some(self.hit(&key, start.origin))
+    }
+
+    /// Every entry under this start key whose footprint holds the same content here:
+    /// one per footprint form.
+    pub fn lookup_at(&mut self, world: &impl World, start: &Start) -> Vec<Hit<'_, V>> {
+        let keys = self.matching(world, start, false);
+        keys.iter().map(|key| self.hit(key, start.origin)).collect()
+    }
+
+    fn hit(&self, key: &Key, origin: BlockPos) -> Hit<'_, V> {
+        let entry = &self.entries[key];
+        let shift = [0, 1, 2].map(|a| origin[a] - entry.origin[a]);
+        Hit { entry, shift, exact: in_scope(entry.scope, shift) }
+    }
+
+    fn matching(&mut self, world: &impl World, start: &Start, first: bool) -> Vec<Key> {
+        let origin = start.origin;
+        let mut found = Vec::new();
+        let Some(&start_id) = self.start_ids.get(&start.words) else { return found };
         let mut memo = Memo::default();
-        let mut found = None;
-        'shapes: for index in 0..self.shapes_from.get(&start_id)?.len() {
+        'shapes: for index in 0..self.shapes_from[&start_id].len() {
             let shape_id = self.shapes_from[&start_id][index];
             let Some(&id) = self.ids.get(&environment_digest(world, self.shapes[shape_id as usize].environment, origin)) else { continue };
             let mut ids = Vec::with_capacity(self.shapes[shape_id as usize].cells.len() + 1);
@@ -213,14 +255,12 @@ impl<V> PatternTable<V> {
             let Some(entry) = self.entries.get(&key) else { continue };
             if let Some(probe) = entry.probe {
                 let bounds = Aabb { min: probe.min.plus(corner(origin)), max: probe.max.plus(corner(origin)) };
-                if !world.extra_collisions(bounds, CollisionContext::of(start)).is_empty() { continue; }
+                if !world.extra_collisions(bounds, start.context).is_empty() { continue; }
             }
-            found = Some(key);
-            break;
+            found.push(key);
+            if first { break; }
         }
-        let entry = self.entries.get(&found?)?;
-        let shift = [0, 1, 2].map(|a| origin[a] - entry.origin[a]);
-        Some(Hit { entry, shift, exact: in_scope(entry.scope, shift) })
+        found
     }
 
     /// A cell's content id, or None for content the table has never held. By model id

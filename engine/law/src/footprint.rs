@@ -1,10 +1,10 @@
 //! Opt-in dependencies for word certificates and worldtubes. The wrapped world
 //! must be an immutable snapshot for the duration of a recording.
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
 };
-use crate::{Aabb, Block, BlockPos, CollisionContext, Input, PlayerState, VoxelShape, World};
+use crate::{Aabb, Block, BlockPos, CollisionContext, Input, PlayerState, VoxelShape, World, state_reads::{StateField, StateReads}};
 use crate::shapes::ShapeView;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +41,8 @@ pub struct Footprint {
     /// Cells of the conservative enclosing box of each body segment.
     pub swept: BTreeSet<BlockPos>,
     pub environment: Vec<EnvironmentRead>,
+    /// The state fields read before they were written (docs/vocabulary.md, section 3).
+    pub state_reads: StateReads,
 }
 
 impl Footprint {
@@ -54,6 +56,7 @@ impl Footprint {
         }
         self.swept.extend(&other.swept);
         self.environment.extend(other.environment.iter().cloned());
+        self.state_reads.0 |= other.state_reads.0;
     }
 }
 
@@ -75,6 +78,8 @@ pub struct ResourceRecord {
 pub struct RecordingWorld<'a, W> {
     world: &'a W,
     footprint: RefCell<Footprint>,
+    /// The state fields written since the last `take`.
+    written: Cell<u128>,
 }
 
 impl<'a, W: World> RecordingWorld<'a, W> {
@@ -82,6 +87,7 @@ impl<'a, W: World> RecordingWorld<'a, W> {
         Self {
             world,
             footprint: RefCell::new(Footprint::default()),
+            written: Cell::new(0),
         }
     }
 
@@ -90,6 +96,7 @@ impl<'a, W: World> RecordingWorld<'a, W> {
     }
 
     pub fn take(&self) -> Footprint {
+        self.written.set(0);
         std::mem::take(&mut *self.footprint.borrow_mut())
     }
 
@@ -132,6 +139,13 @@ fn cells(lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)) {
 }
 
 impl<W: World> World for RecordingWorld<'_, W> {
+    fn read_state(&self, field: StateField) {
+        self.footprint.borrow_mut().state_reads.0 |= (1 << field as u8) & !self.written.get();
+    }
+    fn write_state(&self, field: StateField) {
+        self.written.set(self.written.get() | 1 << field as u8);
+    }
+
     fn block(&self, p: BlockPos) -> &Block {
         self.read(p, Query::Block);
         self.world.block(p)

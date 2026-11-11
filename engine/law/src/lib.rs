@@ -10,6 +10,7 @@ pub mod shapes;
 mod state;
 mod world;
 pub use movement::{
+    can_fall,
     ServerResourceEvent,
     apply_grounded_step,
     apply_server_resource_event,
@@ -47,3 +48,4 @@ pub use world::{
 };
 
 pub mod entity_contact;
+pub mod state_reads;

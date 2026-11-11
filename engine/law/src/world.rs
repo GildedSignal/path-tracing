@@ -312,6 +312,12 @@ pub trait World {
     fn observe_region(&self, _query: crate::footprint::Query, _lo: BlockPos, _hi: BlockPos) {}
     /// Conservative body worldtube, including motion when inside hooks are absent.
     fn observe_sweep(&self, _from: Aabb, _to: Aabb) {}
+    /// Observation only: the state fields the law reads and writes, in order. A recording
+    /// world keeps those read before written (docs/vocabulary.md, section 3).
+    #[inline(always)]
+    fn read_state(&self, _field: crate::state_reads::StateField) {}
+    #[inline(always)]
+    fn write_state(&self, _field: crate::state_reads::StateField) {}
 
     /// Conservative certificates: false proves these law hooks are absent.
     fn has_fluid(&self)->bool {true}

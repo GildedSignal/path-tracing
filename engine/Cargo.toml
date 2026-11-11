@@ -1,5 +1,5 @@
 [workspace]
-members = ["law", "world"]
+members = ["law", "world", "words"]
 resolver = "2"
 
 [profile.release]
