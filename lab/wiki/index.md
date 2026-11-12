@@ -4,19 +4,23 @@
 ## Lenses
 
 - [arc-certificate](arc-certificate.md) — reproduced: 1; last 2026-11-12
+- [backward-tools](backward-tools.md) — rate-limited: 1; last 2026-11-12
 - [certificate-size](certificate-size.md) — reproduced: 1; last 2026-11-11
 - [class-without-numbers](class-without-numbers.md) — reproduced: 1; last 2026-11-11
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
-- [gait-corridor](gait-corridor.md) — no dossier: 1; last 2026-11-12
+- [gait-corridor](gait-corridor.md) — no dossier: 1, rate-limited: 1; last 2026-11-12
 - [gait-modulo](gait-modulo.md) — reproduced: 1; last 2026-11-11
+- [generative-function](generative-function.md) — rate-limited: 1; last 2026-11-12
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
 - [idiot-index](idiot-index.md) — reproduced: 1; last 2026-11-12
 - [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 3; last 2026-11-12
+- [jump-puzzle](jump-puzzle.md) — rate-limited: 1; last 2026-11-12
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [l0-step-up-control](l0-step-up-control.md) — reproduced: 1; last 2026-11-12
+- [law-change-rebuild](law-change-rebuild.md) — rate-limited: 1; last 2026-11-12
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
 - [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 7; last 2026-11-12
