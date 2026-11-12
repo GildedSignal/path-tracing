@@ -233,6 +233,8 @@ fn stonesimple_a_second_column_hits_and_replays() {
     }
     // Every surprise left its witness, and the witness replays to the outcome it recorded.
     let c = table.counters;
+    // Pinned: the class holds no position, so 13 of the 40 pieces cross a block on another tick than predicted.
+    assert_eq!(as_proposed, 27);
     assert_eq!((c.hits, c.misses, c.refusals, c.surprises as u32, table.witnesses.len() as u32), (40, 0, 0, 40 - as_proposed, 40 - as_proposed));
     for witness in &table.witnesses {
         let again = run_segment(&world, &witness.start, table.program(witness.program), witness.arguments).unwrap();
