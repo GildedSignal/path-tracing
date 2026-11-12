@@ -69,7 +69,8 @@ fn point_of(json: &str, key: &str) -> [i32; 3] {
     [v[0], v[1], v[2]]
 }
 /// One of Julien's tracks: its snapshot padded past its box, a start column on A, and the
-/// aim of the 64 nearest to B. Walks stay three cells inside what was loaded.
+/// aim of the 64 nearest to B. Walks stay three cells inside what was loaded, two where the
+/// fixture has no room for more (the law's read halo); a read past the snapshot ends the walk.
 fn track(line: &str) -> Result<Track, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut fields = line.split_whitespace();
@@ -80,10 +81,10 @@ fn track(line: &str) -> Result<Track, String> {
     let degrees = ((a[0] - b[0]) as f64).atan2((b[2] - a[2]) as f64).to_degrees();
     let args = Arguments { yaw_index: (degrees / 5.625).round().rem_euclid(64.0) as u8, ..Arguments::default() };
     let mut last = String::new();
-    for pad in [6, 3] {
+    for pad in [6, 3, 2, 0] {
         let (min, max) = ([n[0] - pad, n[1], n[2] - pad], [n[3] + pad, n[4] + 8, n[5] + pad]);
         match world::WorldSnapshot::load(root.join("../world/tests/fixtures/world"), min, max) {
-            Ok(world) => return Ok(Track { name, world, lo: [min[0] + 3, min[1] + 1, min[2] + 3], hi: [max[0] - 3, max[1] - 3, max[2] - 3], start: [a[0], a[1] + 1, a[2]], args, pad }),
+            Ok(world) => return Ok(Track { name, world, lo: [min[0] + 3.min(pad.max(2)), min[1] + 1, min[2] + 3.min(pad.max(2))], hi: [max[0] - 3.min(pad.max(2)), max[1] - 3, max[2] - 3.min(pad.max(2))], start: [a[0], a[1] + 1, a[2]], args, pad }),
             Err(error) => last = format!("{error:?}"),
         }
     }
@@ -271,8 +272,9 @@ fn report(track: &str, name: &str, stats: &Stats, table: &ProposalTable) {
     println!("{tag} surprises={} (each a witness; {} showed a proposal a new outcome, the first {} of those written); classes that surprised {} of {}; the worst class: {} surprises in {} replays of {} proposals; \
         refusals={} walks ended at the snapshot's edge={} walks the law refused={}",
         c.surprises, stats.new_outcomes, stats.new_outcomes.min(WITNESSES_WRITTEN), surprised, table.classes().len(), worst.0, worst.1, worst.2, c.refusals, stats.ends, stats.stopped);
-    assert_eq!(c.surprises, stats.witnesses, "every surprise left a witness");
-    assert_eq!(c.replayed, stats.replays);
+    // A walk that ends at the snapshot's edge ends inside a replay, after the table counted it.
+    assert_eq!(c.surprises, stats.witnesses + table.witnesses.len() as u64, "every surprise left a witness");
+    assert!(c.replayed - stats.replays <= stats.ends);
 }
 
 #[test]
