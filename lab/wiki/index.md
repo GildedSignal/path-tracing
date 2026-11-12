@@ -8,18 +8,19 @@
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
+- [gait-modulo](gait-modulo.md) — reproduced: 1; last 2026-11-11
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
-- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 1; last 2026-11-10
+- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 2; last 2026-11-11
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 5; last 2026-11-11
-- [port-entity-rules](port-entity-rules.md) — reproduced: 5; last 2026-11-10
-- [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 4; last 2026-11-10
-- [port-movement-modes](port-movement-modes.md) — reproduced: 2; last 2026-11-09
-- [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 1; last 2026-11-09
-- [port-update-order](port-update-order.md) — lead: 1, reproduced: 2; last 2026-11-09
+- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 6; last 2026-11-11
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 5; last 2026-11-11
+- [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 5; last 2026-11-11
+- [port-movement-modes](port-movement-modes.md) — reproduced: 3; last 2026-11-11
+- [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
+- [port-update-order](port-update-order.md) — lead: 1, reproduced: 3; last 2026-11-11
 - [recorder-cost](recorder-cost.md) — reproduced: 1; last 2026-11-11
 - [server-player-readers](server-player-readers.md) — lead: 3, reproduced: 1; last 2026-11-11
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
@@ -33,6 +34,13 @@
 
 ## Reproduced results
 
+- 2026-11-11 [port-update-order](port-update-order.md) (local-20261111-1844-1-2-port-update-order): In 26.2 the piston extend/retract transition — the next unsupported non-fluid update family after the pinned falling block — runs on the **block-event** family, not the scheduled-tick family: a neighbor edit fires `neighborChanged → checkIfExtend → Level.blockEvent` inside `setBlock` (before the...
+- 2026-11-11 [port-place-replaceability](port-place-replaceability.md) (local-20261111-1844-1-1-port-place-replaceability): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058), the placement position rule is decided eagerly and exactly once in BlockPlaceContext's protected five-argument constructor — `replaceClicked = level.getBlockState(hitPos).canBeReplaced(this)` — and `getClickedPos()` return...
+- 2026-11-11 [item-use-writes](item-use-writes.md) (local-20261111-1844-1-0-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), 68 same-name declarations of the five Item use-family methods across 51 item-family classes reach — under a mechanical call-graph rule of free intra-class edges, ≤4 cross-class hops, javac lambda-name edges, and class-hierarc...
+- 2026-11-11 [port-movement-modes](port-movement-modes.md) (local-20261111-1823-1-4-port-movement-modes): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`), the fall-flying STOP is a server-only per-tick state transition `LivingEntity.aiStep:504 → LivingEntity.updateFallFlying()` which clears shared flag 7 (`!canGlide() → setSharedFlag(7,false)`, offsets 14–28) with the gate...
+- 2026-11-11 [port-fluid-rules](port-fluid-rules.md) (local-20261111-1823-1-3-port-fluid-rules): in Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the whole current half of player fluid contact is gated on `Player.isPushedByFluid()` = `!abilities.flying` (`Player.java.txt:4122` offsets 0–15; consumed at `Entity.java.txt:4183` offsets 6–17 → `EntityFluidInteraction.u...
+- 2026-11-11 [port-block-laws](port-block-laws.md) (local-20261111-1823-1-1-port-block-laws): in Mojang 26.2 the refused `entityInside` hurt family (cactus, campfire, sweet berry bush) is one gate plus three tiny per-state effects — the gate is the default full-cell `getEntityInsideCollisionShape` fired from `Entity.checkInsideBlocks`' swept walk, so cactus hurts any tick the player box o...
+- 2026-11-11 [gait-modulo](gait-modulo.md) (local-20261111-1823-1-0-gait-modulo): on every gait `engine/words` discovers on uniform open ground (8 grounds, 294 gaits, 1000 cycles each), the whole state minus position recurs bit for bit and the block crossings of a 10³-block run follow from one cycle's increments by exact floor arithmetic — 0 disagreements over 7,090,461 ticks...
 - 2026-11-11 [step-up-reachability](step-up-reachability.md) (local-20261111-1756-1-2-step-up-reachability): in Mojang 26.2 no *geometry* can put a step-up candidate within one float ulp of `0.6f` — the candidate set from block shapes (k/32), shulker peek boxes (`Shulker.getProgressAabb`, the only non-grid Y family in the game), vehicle boxes and all their pairwise differences has 98,871 exact members o...
 - 2026-11-11 [certificate-size](certificate-size.md) (local-20261111-1756-1-1-certificate-size): On the 16 standable tracks × all 54 tiny programs (124,885 walked ticks), removing the body-block cut makes certificates 1.47× longer (2.33 → 3.43 ticks/cert) and cuts the certified-replay cost 22% per tick of motion (5.80 → 4.50 µs/tick; 8.07 → 5.79 µs/tick with the certificate insert) at **equa...
 - 2026-11-11 [l0-powder-snow-freeze](l0-powder-snow-freeze.md) (local-20261111-1756-1-0-l0-powder-snow-freeze): In Mojang 26.2 the powder-snow freeze counter is server-authoritative synched entity data (`Entity.DATA_TICKS_FROZEN`) — the client's only local writer is the `InsideBlockEffectType.FREEZE` lambda (+1, cap 140, inside the move-time pass, never a decrement), while the server also decrements −2/tic...
