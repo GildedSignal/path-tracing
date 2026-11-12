@@ -221,7 +221,7 @@ fn stonesimple_a_second_column_hits_and_replays() {
     let mut state = place(&gait.start, [7, -60, 29]);
     let (mut starts, mut ticks, mut as_proposed) = (Vec::new(), 0, 0);
     for expected in &classes {
-        let proposals = table.proposals(&world, &state);
+        let proposals = table.proposals(&state);
         let proposal = *proposals.iter().find(|p| table.program(table.proposal(p.id).program) == &program).expect("a hit");
         let certified = table.replay(&world, &state, proposal).unwrap();
         as_proposed += certified.as_proposed as u32;
@@ -233,8 +233,10 @@ fn stonesimple_a_second_column_hits_and_replays() {
     }
     // Every surprise left its witness, and the witness replays to the outcome it recorded.
     let c = table.counters;
-    // Pinned: the class holds no position, so 13 of the 40 pieces cross a block on another tick than predicted.
-    assert_eq!(as_proposed, 27);
+    // Pinned: the class holds no position, so 14 of the 40 pieces cross a block on another tick than predicted.
+    // It was 27 while the world part ordered lookups (3.2c): where two read masks both hold a proposal of
+    // this program, the one whose cells held came first; by class alone (3.2b) the first mask learned does.
+    assert_eq!(as_proposed, 26);
     assert_eq!((c.hits, c.misses, c.refusals, c.surprises as u32, table.witnesses.len() as u32), (40, 0, 0, 40 - as_proposed, 40 - as_proposed));
     for witness in &table.witnesses {
         let again = run_segment(&world, &witness.start, table.program(witness.program), witness.arguments).unwrap();
@@ -258,10 +260,10 @@ fn stonesimple_a_second_column_hits_and_replays() {
     };
     let table = std::cell::RefCell::new(table);
     time("lookup + replay", &mut |state, proposal, _| {
-        let found = table.borrow_mut().proposals(&world, state);
+        let found = table.borrow_mut().proposals(state);
         std::hint::black_box((found, table.borrow_mut().replay(&world, state, proposal).unwrap()));
     });
-    time("  the lookup", &mut |state, _, _| { std::hint::black_box(table.borrow_mut().proposals(&world, state)); });
+    time("  the lookup", &mut |state, _, _| { std::hint::black_box(table.borrow_mut().proposals(state)); });
     time("  the replay", &mut |state, proposal, _| { std::hint::black_box(table.borrow_mut().replay(&world, state, proposal).unwrap()); });
     time("    the recorded segment", &mut |state, _, _| { std::hint::black_box(run_segment(&world, state, &program, args).unwrap()); });
     time("    the law alone, unrecorded", &mut |state, _, ticks| {
@@ -286,8 +288,8 @@ fn the_class_proposes_across_resources_and_a_changed_world_only_reorders() {
     // Another stomach: the same class proposes, the replay carries the real resources.
     let mut tired = start.clone();
     tired.exhaustion = 1.25;
-    let proposals = table.proposals(&world, &tired);
-    assert!(proposals[0].here);
+    let proposals = table.proposals(&tired);
+    assert!(table.holds(&world, &tired, proposals[0].id));
     let certified = table.replay(&world, &tired, proposals[0]).unwrap();
     assert!(certified.as_proposed);
     assert_ne!(certified.segment.state.exhaustion, segment.state.exhaustion);
@@ -296,19 +298,19 @@ fn the_class_proposes_across_resources_and_a_changed_world_only_reorders() {
     let mut store = law::pattern::PatternTable::<()>::default();
     certified.key(&world, &tired, &mut store, ()).unwrap();
     assert!(store.lookup(&world, &tired).is_some() && store.lookup(&world, &start).is_none());
-    // The same class over ice: the world part differs, so the proposal comes after any that
-    // holds here, and still comes. Its replay there takes the ice as its world part.
+    // The same class over ice: the lookup reads no cell, so the proposal still comes; its
+    // footprint says the certificate filed on stone is broken there, and nothing else.
     let ice = Flat::named("ice", false);
-    let found = table.proposals(&ice, &start);
-    assert!(found.len() == 1 && !found[0].here);
+    let found = table.proposals(&start);
+    assert!(found.len() == 1 && !table.holds(&ice, &start, found[0].id) && table.holds(&world, &start, found[0].id));
     table.replay(&ice, &start, found[0]).unwrap();
-    assert!(table.proposals(&ice, &start)[0].here && !table.proposals(&world, &start)[0].here);
     // Inventing: every program at the aim, each distinct piece learned once; the audit of
     // the hit that follows finds nothing better.
     let (found, ids) = table.invent(&world, &start, &tiny_programs(), &[args]);
-    assert_eq!((found.runs, found.refusals, found.pieces.len() as u32 + found.duplicates), (54, 0, 54));
+    // Each distinct input runs once: 54 programs select 24 inputs here.
+    assert_eq!((found.runs + found.shared, found.refusals, found.pieces.len() as u32 + found.duplicates + found.shared, found.runs), (54, 0, 54, 24));
     assert!(ids.iter().all(Option::is_some));
-    let proposals = table.proposals(&world, &start);
+    let proposals = table.proposals(&start);
     assert!(proposals.len() >= found.pieces.len());
     let hit: Vec<_> = proposals.iter().map(|&p| (p, table.replay(&world, &start, p).unwrap())).collect();
     let (regret, _) = table.regret(&world, &start, &hit, &tiny_programs(), &[args]);

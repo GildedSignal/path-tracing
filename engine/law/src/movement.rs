@@ -44,6 +44,19 @@ fn set_sprinting(state: &mut PlayerState, world: &impl World, sprinting: bool) {
     state.set_sprinting(sprinting);
 }
 
+/// A rule the port lacks, met during a tick: the law refuses by name. The state is then
+/// partly written, so the caller discards it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal(pub String);
+macro_rules! refuse { ($($rule:tt)*) => { return Err(Refusal(format!($($rule)*))) } }
+fn unported<T>(tick: Result<T, Refusal>) -> T {
+    tick.unwrap_or_else(|Refusal(rule)| panic!("not implemented: {rule}"))
+}
+/// The same tick as `tick`; an unported rule is returned instead of panicking.
+pub fn try_tick(state: &mut PlayerState, world: &impl World, input: &Input) -> Result<(), Refusal> {
+    tick_movement(state, world, input).map(|_| ())
+}
+
 // Player.tick; Entity.baseTick; LocalPlayer.aiStep; LivingEntity.aiStep
 // The coupled food update estimates resources from local movement without a server schedule.
 pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
@@ -54,7 +67,7 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
 pub fn tick_with_collision(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Option<(Vec3, Vec3)> {
-    tick_movement(state, world, input).0
+    unported(tick_movement(state, world, input)).0
 }
 
 /// Runs the local movement tick and reports its grounded contact request.
@@ -62,7 +75,7 @@ pub fn tick_with_collision(
 pub fn tick_with_contact(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Option<ContactDamage> {
-    tick_movement(state, world, input).1
+    unported(tick_movement(state, world, input)).1
 }
 
 fn update_swimming(state: &mut PlayerState, world: &impl World) {
@@ -104,24 +117,24 @@ mod swimming_witness {
 
 fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
-) -> (Option<(Vec3, Vec3)>, Option<ContactDamage>) {
+) -> Result<(Option<(Vec3, Vec3)>, Option<ContactDamage>), Refusal> {
     if read_state!(world, state.effects) {
-        unimplemented!("LivingEntity: status effects other than none");
+        refuse!("LivingEntity: status effects other than none");
     }
     if read_state!(world, state.boat) {
-        unimplemented!("Boat movement");
+        refuse!("Boat movement");
     }
     if read_state!(world, state.riding) {
-        unimplemented!("LivingEntity.travelRidden");
+        refuse!("LivingEntity.travelRidden");
     }
     if read_state!(world, state.fall_flying) {
-        unimplemented!("LivingEntity.travelFallFlying; Math.cos");
+        refuse!("LivingEntity.travelFallFlying; Math.cos");
     }
     if read_state!(world, state.flying) {
-        unimplemented!("Player.travel: abilities.flying");
+        refuse!("Player.travel: abilities.flying");
     }
     if read_state!(world, state.using_item) {
-        unimplemented!("LocalPlayer.itemUseSpeedMultiplier");
+        refuse!("LocalPlayer.itemUseSpeedMultiplier");
     }
     let start = read_state!(world, state.position);
     let start_box = bounding_box(state, world);
@@ -184,9 +197,9 @@ fn tick_movement(
     } else {
         movement
     };
-    let collision = travel(state, world, movement);
+    let collision = travel(state, world, movement)?;
     world.observe_sweep(start_box, bounding_box(state, world));
-    let contact = apply_block_effects(state, world, start);
+    let contact = apply_block_effects(state, world, start)?;
     // InsideBlockEffectType.FREEZE
     if read_state!(world, state.in_powder_snow) && !read_state!(world, state.leather_boots) {
         write_state!(world, state.ticks_frozen) = (read_state!(world, state.ticks_frozen) + 1).min(140);
@@ -200,7 +213,7 @@ fn tick_movement(
     movement_exhaustion(state, world, read_state!(world, state.position).minus(start));
     food_tick(state, world);
     modify_state!(world, state.t) += 1;
-    (collision, contact)
+    Ok((collision, contact))
 }
 
 // LocalPlayer.aiStep; LocalPlayer.canStartSprinting; LocalPlayer.shouldStopRunSprinting; LocalPlayer.shouldStopSwimSprinting
@@ -391,7 +404,7 @@ fn handle_climbable(state: &mut PlayerState, world: &impl World) {
 }
 
 // Player.travel; LivingEntity.travel
-fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
+fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     if read_state!(world, state.swimming) {
         let pitch = (read_state!(world, state.pitch) * 0.017453292f32) as f64;
         let look_y = -math::sin(pitch) as f64;
@@ -412,7 +425,7 @@ fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option
 }
 
 // LivingEntity.travelInAir; LivingEntity.handleRelativeFrictionAndCalculateMovement
-fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
+fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     let below = on_pos(state, world, 0.500001);
     let f = if read_state!(world, state.on_ground) {
         math::modified_friction(world.hook_block(below).friction, read_state!(world, state.friction_modifier))
@@ -421,7 +434,7 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Op
     };
     write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, friction_speed(state, world, f), read_state!(world, state.yaw)));
     handle_climbable(state, world);
-    let collision = move_player(state, world, read_state!(world, state.velocity));
+    let collision = move_player(state, world, read_state!(world, state.velocity))?;
     let mut velocity = read_state!(world, state.velocity);
     if (read_state!(world, state.horizontal_collision) || read_state!(world, state.input).jump) && (climbable(state, world) || read_state!(world, state.was_in_powder_snow) && read_state!(world, state.leather_boots)) {
         velocity.y = 0.2;
@@ -437,11 +450,11 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Op
     let horizontal = f*drag;
     let vertical = math::modified_friction(0.98, read_state!(world, state.air_drag_modifier));
     write_state!(world, state.velocity) = Vec3::new(velocity.x*horizontal as f64, vy*vertical as f64, velocity.z*horizontal as f64);
-    collision
+    Ok(collision)
 }
 
 // LivingEntity.travelInFluid; LivingEntity.travelInWater; LivingEntity.travelInLava
-fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Option<(Vec3, Vec3)> {
+fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     let falling = read_state!(world, state.velocity).y <= 0.0;
     let old_y = read_state!(world, state.position).y;
     let collision = if read_state!(world, state.in_water) {
@@ -461,7 +474,7 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
             acceleration += (read_state!(world, state.speed)-acceleration)*efficiency;
         }
         write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, acceleration, read_state!(world, state.yaw)));
-        let collision = move_player(state, world, read_state!(world, state.velocity));
+        let collision = move_player(state, world, read_state!(world, state.velocity))?;
         if read_state!(world, state.horizontal_collision) && climbable(state, world) {
             modify_state!(world, state.velocity).y = 0.2;
         }
@@ -470,7 +483,7 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
         collision
     } else {
         write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, 0.02, read_state!(world, state.yaw)));
-        let collision = move_player(state, world, read_state!(world, state.velocity));
+        let collision = move_player(state, world, read_state!(world, state.velocity))?;
         if read_state!(world, state.lava_height) <= 0.4 {
             write_state!(world, state.velocity) = read_state!(world, state.velocity).multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5));
             fluid_falling(state, world, falling);
@@ -487,7 +500,7 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
     if read_state!(world, state.horizontal_collision) && world.no_collision(jump_box, collision_context(state, world)) && !contains_fluid(world, jump_box) {
         modify_state!(world, state.velocity).y = 0.3f32 as f64;
     }
-    collision
+    Ok(collision)
 }
 
 // LivingEntity.getFluidFallingAdjustedMovement
@@ -713,10 +726,10 @@ fn supporting_block(state: &mut PlayerState, world: &impl World, moved: Vec3) {
 }
 
 // Entity.move; Entity.restituteMovementAfterCollisions
-fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Option<(Vec3, Vec3)> {
+fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     if read_state!(world, state.no_physics) {
         write_state!(world, state.position) = read_state!(world, state.position).plus(wanted);
-        return None;
+        return Ok(None);
     }
     if read_state!(world, state.stuck_speed_multiplier).length_sqr() > 1.0e-7 {
         wanted = wanted.multiply(read_state!(world, state.stuck_speed_multiplier));
@@ -745,7 +758,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
         update_fluid(state, world);
     }
     let block=world.hook_block(on_pos(state, world, 0.2));
-    check_fall_damage(state, world, block, moved.y);
+    check_fall_damage(state, world, block, moved.y)?;
     if wanted.y.abs()>0.0 && read_state!(world, state.vertical_collision) || read_state!(world, state.horizontal_collision) {
         let mut bounce=if read_state!(world, state.shift_key_down) {
             0.0
@@ -781,7 +794,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     let factor=speed_factor(state, world);
     let factor=(factor+read_state!(world, state.movement_efficiency)*(1.0f32-factor)) as f64;
     write_state!(world, state.velocity)=read_state!(world, state.velocity).multiply(Vec3::new(factor, 1.0, factor));
-    Some((wanted, moved))
+    Ok(Some((wanted, moved)))
 }
 
 // LocalPlayer.isHorizontalCollisionMinor
@@ -814,14 +827,14 @@ pub fn calculate_fall_damage(state: &PlayerState, distance: f64, multiplier: f32
 }
 
 // Entity.checkFallDamage; LivingEntity.checkFallDamage; Block.fallOn
-fn check_fall_damage(state: &mut PlayerState, world: &impl World, block: &Block, dy: f64) {
+fn check_fall_damage(state: &mut PlayerState, world: &impl World, block: &Block, dy: f64) -> Result<(), Refusal> {
     if !read_state!(world, state.in_water) && dy<0.0 {
         modify_state!(world, state.fall_distance) -= (dy as f32) as f64;
     }
     if read_state!(world, state.on_ground) {
         if read_state!(world, state.fall_distance)>0.0 {
             if let Some(name) = &block.unsupported_fall_on {
-                unimplemented!("BlockState.fallOn: {name}");
+                refuse!("BlockState.fallOn: {name}");
             }
             let multiplier=if block.slime || block.inside==Inside::PowderSnow {
                 0.0
@@ -837,6 +850,7 @@ fn check_fall_damage(state: &mut PlayerState, world: &impl World, block: &Block,
         }
         write_state!(world, state.fall_distance)=0.0;
     }
+    Ok(())
 }
 
 // EntityFluidInteraction.update; Entity.updateFluidInteraction
@@ -965,14 +979,14 @@ pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Optio
 }
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks
-fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) -> Option<ContactDamage> {
+fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<ContactDamage>, Refusal> {
     if read_state!(world, state.no_physics) {
-        return None;
+        return Ok(None);
     }
     let contact = apply_grounded_step(state, world);
     let swept = bounding_box(state, world).expand(start.minus(read_state!(world, state.position)));
     world.observe_region(crate::footprint::Query::Hooks, block_pos(swept.min), block_pos(swept.max));
-    if !world.has_inside_effects() {return contact;}
+    if !world.has_inside_effects() {return Ok(contact);}
     let delta=read_state!(world, state.position).minus(start);
     let mut visited=crate::blocks::SeenBlocks::new();
     let mut budget=16;
@@ -984,26 +998,27 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
                 continue;
             }
             let to=from.plus(Vec3::default().with(axis, distance));
-            budget-=inside_segment(state, world, from, to, &mut visited, budget);
+            budget-=inside_segment(state, world, from, to, &mut visited, budget)?;
             from=to;
         }
     } else {
-        budget-=inside_segment(state, world, start, read_state!(world, state.position), &mut visited, 16);
+        budget-=inside_segment(state, world, start, read_state!(world, state.position), &mut visited, 16)?;
     }
     if budget<=0 {
-        inside_segment(state, world, read_state!(world, state.position), read_state!(world, state.position), &mut visited, 1);
+        inside_segment(state, world, read_state!(world, state.position), read_state!(world, state.position), &mut visited, 1)?;
     }
-    contact
+    Ok(contact)
 }
 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
 fn inside_segment(state: &mut PlayerState, world: &impl World, from: Vec3, to: Vec3,
-visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
+visited: &mut impl crate::blocks::BlockSet, budget: i32) -> Result<i32, Refusal> {
     let bounds=Aabb::player(to, read_state!(world, state.pose).height()).deflate(1.0e-5f32 as f64);
     let large=from.minus(to).length_sqr()>(1.0-1.0e-5f32 as f64)*(1.0-1.0e-5f32 as f64);
     let body=Aabb::player(from, read_state!(world, state.pose).height());
     let movement=to.minus(from);
     let mut last_step=0;
+    let mut refused=None;
     crate::blocks::for_each_intersected(from, to, bounds, |p, step| {
         if read_state!(world, state.health)<=0.0 || step>=budget {
             return false;
@@ -1025,22 +1040,22 @@ visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
             let cube=Aabb {
                 min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0))
             };
-            inside_block(state, world, p, large||bounds.intersects(cube));
+            if let Err(rule)=inside_block(state, world, p, large||bounds.intersects(cube)) { refused=Some(rule); return false; }
         }
         if fluid_inside {
             match block.fluid.kind {
                 FluidKind::Water => write_state!(world, state.remaining_fire_ticks) = read_state!(world, state.remaining_fire_ticks).min(0),
-                FluidKind::Lava => unimplemented!("FluidState.entityInside: LavaFluid CLEAR_FREEZE, LAVA_IGNITE and deferred lava damage"),
+                FluidKind::Lava => { refused=Some(Refusal("FluidState.entityInside: LavaFluid CLEAR_FREEZE, LAVA_IGNITE and deferred lava damage".into())); return false; },
                 FluidKind::Empty => unreachable!(),
             }
         }
         true
     });
-    last_step+1
+    match refused { Some(rule) => Err(rule), None => Ok(last_step+1) }
 }
 
 // WebBlock.entityInside; PowderSnowBlock.entityInside; HoneyBlock.entityInside
-fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _intersects: bool) {
+fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _intersects: bool) -> Result<(), Refusal> {
     let block=world.hook_block(p);
     if let Some(multiplier)=block.stuck_multiplier {
         stuck(state, world, multiplier);
@@ -1069,8 +1084,9 @@ fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _inter
                 write_state!(world, state.fall_distance)=0.0;
             }
         },
-        Inside::Unsupported(name) => unimplemented!("BlockState.entityInside: {name}"),
+        Inside::Unsupported(name) => refuse!("BlockState.entityInside: {name}"),
     }
+    Ok(())
 }
 
 // FoodData.addExhaustion
@@ -1398,17 +1414,17 @@ mod tests {
         };
         let mut visited = std::collections::BTreeSet::new();
         let position = read_state!(world, state.position);
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, 16).unwrap();
         assert!(visited.contains(&[0, 0, 0]));
         assert_eq!(read_state!(world, state.remaining_fire_ticks), 0);
         write_state!(world, state.remaining_fire_ticks) = 10;
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, 16).unwrap();
         assert_eq!(read_state!(world, state.remaining_fire_ticks), 10);
         visited.clear();
         world.set([0, 0, 0], Block {
             air: false, inside_shape: Some(VoxelShape::default()), ..Block::default()
         });
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, 16).unwrap();
         assert!(visited.is_empty());
     }
 }

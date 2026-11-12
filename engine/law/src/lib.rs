@@ -17,6 +17,8 @@ pub use movement::{
     calculate_fall_damage,
     calculate_fall_power,
     tick,
+    try_tick,
+    Refusal,
     tick_with_collision,
     tick_with_contact,
     tick_server_resources

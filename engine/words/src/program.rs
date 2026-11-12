@@ -107,8 +107,22 @@ impl Predicate {
     fn timed(&self) -> bool {
         match self { Self::Since(_) => true, Self::All(all) => all.iter().any(Self::timed), Self::Not(inner) => inner.timed(), _ => false }
     }
+    /// Its answer can change only on a tick the event rule cuts: every field it reads is
+    /// one whose change ends a segment (segment.rs, `events`).
+    fn event_bound(&self) -> bool {
+        match self {
+            Self::Always | Self::OnGround | Self::HorizontalCollision | Self::VerticalCollision | Self::InWater | Self::InLava
+            | Self::Climbable | Self::JumpReady | Self::Sprinting => true,
+            Self::WaterDeep | Self::SupportEnds | Self::Since(_) => false,
+            Self::All(all) => all.iter().all(Self::event_bound),
+            Self::Not(inner) => inner.event_bound(),
+        }
+    }
 }
 impl Program {
+    /// Its active row is constant inside a segment, so its segment from a state is decided
+    /// by the input it selects there.
+    pub fn event_bound(&self) -> bool { self.rows.iter().all(|row| row.when.event_bound()) }
     /// Some row waits on the ticks since the segment started.
     pub fn timed(&self) -> bool { self.rows.iter().any(|row| row.when.timed()) }
     pub fn select(&self, world: &impl World, state: &PlayerState, elapsed: u32, args: Arguments) -> Option<(usize, Input)> {
