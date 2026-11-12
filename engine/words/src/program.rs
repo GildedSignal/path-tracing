@@ -8,7 +8,7 @@ pub enum Predicate {
     VerticalCollision,
     InWater,
     InLava,
-    WaterHeightBand(u8),
+    WaterDeep,
     Climbable,
     JumpReady,
     Sprinting,
@@ -42,7 +42,8 @@ impl Predicate {
                 read(F::in_lava);
                 state.in_lava
             }
-            Self::WaterHeightBand(band) => { read(F::water_height); (state.water_height * 16.0).floor() as u8 == *band }
+            // The law's own band (movement.rs:173).
+            Self::WaterDeep => { read(F::water_height); state.water_height > 0.4 }
             Self::Climbable => {
                 read(F::on_climbable);
                 state.on_climbable
@@ -101,7 +102,15 @@ impl Arguments {
         })
     }
 }
+impl Predicate {
+    /// Reads the segment's clock.
+    fn timed(&self) -> bool {
+        match self { Self::Since(_) => true, Self::All(all) => all.iter().any(Self::timed), Self::Not(inner) => inner.timed(), _ => false }
+    }
+}
 impl Program {
+    /// Some row waits on the ticks since the segment started.
+    pub fn timed(&self) -> bool { self.rows.iter().any(|row| row.when.timed()) }
     pub fn select(&self, world: &impl World, state: &PlayerState, elapsed: u32, args: Arguments) -> Option<(usize, Input)> {
         let (index, row) = self.rows.iter().enumerate().find(|(_, row)| row.when.matches(world, state, elapsed))?;
         Some((index, Input { yaw: args.yaw(), pitch: args.pitch, ..row.input }))

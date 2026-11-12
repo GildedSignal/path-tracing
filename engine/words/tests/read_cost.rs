@@ -359,10 +359,10 @@ fn time_layers(name: &str, world: &impl World, start: &PlayerState, program: &Pr
         assert_eq!(*fetches.cells.borrow(), counts.fetches);
     }
     let dry_same = segments.iter().all(|(start, segment)| rerun(&Dry(world), start, program, args, segment.ticks, |_, _| {}).bits() == segment.state.bits());
-    let mut table = ProposalTable::new(Grid::default());
+    let mut table = ProposalTable::default();
     for (start, segment) in &segments { table.learn(world, start, program, args, segment).unwrap(); }
-    let proposals: Vec<Proposal> = segments.iter().map(|(start, segment)| {
-        *table.proposals(world, start).iter().find(|p| p.exit == segment.exit && (p.ticks[0]..=p.ticks[1]).contains(&segment.ticks)).expect("a hit")
+    let proposals: Vec<Found> = segments.iter().map(|(start, _)| {
+        *table.proposals(world, start).first().expect("a hit")
     }).collect();
     let table = RefCell::new(table);
     let certificates = RefCell::new(law::pattern::PatternTable::<()>::default());
@@ -396,7 +396,7 @@ fn time_layers(name: &str, world: &impl World, start: &PlayerState, program: &Pr
     type Layer<'a> = (&'static str, Box<dyn Fn(usize) + 'a>);
     let layers: Vec<Layer> = vec![
         ("lookup", Box::new(|i| { black_box(table.borrow_mut().proposals(world, &segments[i].0)); })),
-        ("replay with its certificate", Box::new(|i| { black_box(table.borrow_mut().replay(world, &segments[i].0, &proposals[i]).unwrap()); })),
+        ("replay", Box::new(|i| { black_box(table.borrow_mut().replay(world, &segments[i].0, proposals[i]).unwrap()); })),
         ("recorded segment", Box::new(|i| { black_box(run_segment(world, &segments[i].0, program, args).unwrap()); })),
         ("law alone", Box::new(|i| { black_box(rerun(world, &segments[i].0, program, args, segments[i].1.ticks, |_, _| {})); })),
         ("law alone, certificates forced false", Box::new(|i| { black_box(rerun(&Dry(world), &segments[i].0, program, args, segments[i].1.ticks, |_, _| {})); })),
@@ -431,7 +431,7 @@ fn time_layers(name: &str, world: &impl World, start: &PlayerState, program: &Pr
         p50(0), p50(1) - p50(2), p50(6) - p50(7), p50(3) - p50(5), p50(5), p50(2) - p50(3) - (p50(6) - p50(7)), p50(0) + p50(1));
     let table = table.borrow();
     println!("[{name}] has_fluid={} has_inside_effects={}; the table after the run: classes={} confirmed={} surprised={} refusals={}",
-        world.has_fluid(), world.has_inside_effects(), table.classes(), table.confirmed, table.surprised, table.refusals);
+        world.has_fluid(), world.has_inside_effects(), table.classes().len(), table.counters.replayed - table.counters.surprises, table.counters.surprises, table.counters.refusals);
 }
 
 /// The same cells with the trait's own collision scan: `main`'s snapshot, which asks
@@ -624,12 +624,11 @@ fn side_by_side<A: World, B: World>(name: &str, scan: &A, models: Option<&B>, st
         rerun(&recorder, start, program, args, segment.ticks, |_, _| {});
         recorder
     })).collect();
-    let mut table = ProposalTable::new(Grid::default());
+    let mut table = ProposalTable::default();
     let mut proposals = Vec::new();
     if let Some(models) = models {
         for (start, segment) in s { table.learn(models, start, program, args, segment).unwrap(); }
-        proposals = s.iter().map(|(start, segment)| *table.proposals(models, start).iter()
-            .find(|p| p.exit == segment.exit && (p.ticks[0]..=p.ticks[1]).contains(&segment.ticks)).expect("a hit")).collect();
+        proposals = s.iter().map(|(start, _)| *table.proposals(models, start).first().expect("a hit")).collect();
     }
     let (table, certificates) = (RefCell::new(table), RefCell::new(law::pattern::PatternTable::<()>::default()));
     let (proposals, filled, footprints) = (&proposals, &filled, models.map(|m| s.iter().map(|(start, seg)| taped(m, start, program, args, seg.ticks)).collect::<Vec<_>>()));
@@ -659,7 +658,7 @@ fn side_by_side<A: World, B: World>(name: &str, scan: &A, models: Option<&B>, st
             ("models' world: the certificate alone", Box::new(move |i| {
                 black_box(certificates.borrow_mut().insert(models, &footprints.as_ref().unwrap()[i], &s[i].0, ()).unwrap()); })),
             ("models' world: lookup", Box::new(move |i| { black_box(table.borrow_mut().proposals(models, &s[i].0)); })),
-            ("models' world: replay with its certificate (the branch)", Box::new(move |i| { black_box(table.borrow_mut().replay(models, &s[i].0, &proposals[i]).unwrap()); })),
+            ("models' world: replay (the branch)", Box::new(move |i| { black_box(table.borrow_mut().replay(models, &s[i].0, proposals[i]).unwrap()); })),
         ]);
     }
     let rounds = (2400 / segments.len()).max(40);
@@ -706,19 +705,17 @@ fn what_a_replay_leaves_behind() {
 }
 
 /// Question 3: a footprint bounded by the body's swept cells instead of recorded. Does the
-/// bound hold, how much larger is it, and what reuse does a key on it keep?
+/// bound hold, how much larger is it? (The reuse a key on it keeps was measured under version 1's class, job 1.6.)
 #[test]
 fn what_a_bound_footprint_would_cost() {
     let program = jumping();
     for name in TIMED {
         let (snapshot, start, args) = match track(name) { Ok(track) => track, Err(error) => { println!("[{name}] refused: {error:?}"); continue; } };
         let (segments, _) = chain(&snapshot, &start, &program, args, 200);
-        let grid = Grid::default();
-        let (mut exact, mut bound) = (law::pattern::PatternTable::<()>::default(), law::pattern::PatternTable::<()>::default());
-        let (mut exact_hits, mut bound_hits, mut held) = ([0; 2], [0; 2], [0; 2]);
+        let mut held = [0; 2];
         let (mut sizes, mut extra, mut shape_only) = (Vec::new(), Vec::new(), 0usize);
         let mut cells = 0usize;
-        for (start, segment) in &segments {
+        for (_, segment) in &segments {
             let f = &segment.footprint;
             // The swept cells grown by `r` in every axis.
             let grown = |r: i32| {
@@ -729,24 +726,12 @@ fn what_a_bound_footprint_would_cost() {
             let (one, two) = (grown(1), grown(2));
             held[0] += f.reads.keys().all(|p| one.contains(p)) as u32;
             held[1] += f.reads.keys().all(|p| two.contains(p)) as u32;
-            let b: std::collections::BTreeSet<BlockPos> = one.iter().chain(f.reads.keys()).copied().collect();
             sizes.push(two.len() as f64 / f.reads.len() as f64);
             extra.push(one.iter().filter(|p| !f.reads.contains_key(*p)).count() as f64);
             shape_only += f.reads.values().filter(|&&m| m == Query::Shape as u8).count();
             cells += f.reads.len();
-            // The bound's key: every cell under every query, since nothing says which one the law asked.
-            let wide = footprint::Footprint { reads: b.iter().map(|&p| (p, 31)).collect(), ..f.clone() };
-            let class = class::start(start, f.state_reads, grid);
-            exact_hits[0] += !exact.lookup_at(&snapshot, &class).is_empty() as u32;
-            bound_hits[0] += !bound.lookup_at(&snapshot, &class).is_empty() as u32;
-            exact.insert_at(&snapshot, f, class.clone(), |_| ()).unwrap();
-            bound.insert_at(&snapshot, &wide, class, |_| ()).unwrap();
-            exact_hits[1] += 1;
-            bound_hits[1] += 1;
         }
         println!("[{name}] {} segments: the recorded cells lie within the swept cells grown by 1 in {} segments, by 2 in {}; the bound that holds (grown by 2) is {} times the recorded set; \
             cells grown by 1 that were not read: {}; {:.0}% of recorded cells are read for their shape alone", segments.len(), held[0], held[1], spread(sizes), spread(extra), 100.0 * shape_only as f64 / cells as f64);
-        println!("[{name}] class lookups that find an earlier entry, in chain order: exact key {} of {}, a key on the same cells under every query {} of {}; entries {} and {}",
-            exact_hits[0], exact_hits[1], bound_hits[0], bound_hits[1], exact.entries().count(), bound.entries().count());
     }
 }

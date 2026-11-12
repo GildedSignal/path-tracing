@@ -1,35 +1,36 @@
 # Movement words
 
-The first piece of the word compiler (docs/vocabulary.md, sections 1 to 7, movement
-only). Consumer: job 3.2b, the movement planner.
+The word compiler's movement half (docs/vocabulary.md version 2, sections 1 to 7 and 11).
+Consumer: job 3.2b, the movement planner.
 
 - **`run_segment`** runs a program through the law, on a `RecordingWorld`, until the
   event rule fires. It returns the ticks, the exit kinds, the exit state, the footprint
   (cells, environment and the state fields read before written), and the resource
   deltas and guards. A budget that runs out returns `NoEvent`: no event is invented.
-- **Events.** Any discrete fact of the state changed, or the body's block did. A
-  counter cuts when it starts or stops, not on every count. Resources are guards.
-- **`class`** is the words of the fields the segment read: the mask, the position
-  inside the body's block, the velocity, the fall distance, the support relative to
-  the block, and the other fields as bits. Resources and `t` are left out.
-  - Position, horizontal: three bins per axis, cut at 0.3 and 0.7, where the body's
-    box starts and stops overlapping the next block. Vertical: 1/16.
-  - Velocity: four bits below the leading bit of its largest component.
-  - `Grid` holds both. `tests/compiler.rs` prints the hit rate for other choices.
-- **`ProposalTable`** is one `law::pattern` table whose start key is the class, so
-  the world part of a class is the pattern key of the cells its proposal read.
-  `proposals` looks a state up under each read mask seen. `replay` is the only way to
-  a segment: it runs the law from the concrete state, keys the certificate from the
-  exact start in a second table, and learns the outcome when it differs from the
-  proposal.
-- **`discover_gaits`** runs each program until a class recurs on the same velocity
-  bits. The gait is the cycle of classes between the two visits; its orbit is the
-  least period of the per-tick velocity. Position inside the block drifts from one
-  orbit to the next, so a cycle of classes is several orbits long.
+- **`class`** is the facts the law decides on, for the fields the segment read. A field
+  from the block table or the toolkit enters by its bits. A field that accumulates
+  enters as the answers of the law's own comparisons on it, each named in `class.rs`
+  with its line in `engine/law`. No grid, no chosen number. Position leaves only the
+  clamp at the world's edge: its other comparisons are against cells.
+- **`ProposalTable`** keeps proposals under the class alone. A proposal is a program
+  and its arguments, the outcomes its replays reached with their counts, and the
+  pattern key of the cells its last filed replay read (the world part).
+  - `proposals` returns every proposal of the state's classes, those whose world part
+    holds here first. A miss is no proposal at all.
+  - `replay` is the only way to a segment: the law runs from the concrete state. "As
+    proposed" is the predicted (most frequent) outcome. A surprise leaves a witness in
+    `witnesses`: the start state, the program, the arguments, both outcomes.
+  - `invent` is the miss: every program at every aim to its event, each distinct piece
+    learned. `regret` audits a hit against the same invention and learns nothing.
+  - `counters`, `classes()` and `growth` hold section 11's counts; `walked` is the
+    consumer saying which piece its route took.
+  - Nothing is filed by its exact start. `Certified::key` computes a key when asked.
+- **`discover_gaits`** runs each program until every field but position recurs bit for
+  bit. The gait keeps the period, the displacement, the per-tick increments and the
+  clamped axes. The cycle memo keeps each cycle once, under its start's bits.
 - **`width`** replays a segment with its inputs one tick early and one tick late.
   Clearance is not built.
 
-Run `cargo test --release -p words -- --nocapture` for the gaits per ground type, the
-head-hitter's speed, the hit rates and the microseconds per segment.
-`jobs/3.2a-segments-and-gaits/verify.ps1` runs it with the law's gates and writes a
-run record on D:.
+`cargo test --release -p words -- --nocapture` prints the gaits per ground type and the
+microseconds per segment. `jobs/3.2c-vocabulary-v2/measure.ps1` runs the class against
+version 1's on the 18 tracks and writes a run record on D:.

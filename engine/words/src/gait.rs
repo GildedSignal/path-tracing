@@ -1,45 +1,70 @@
-//! Gaits: the attractors of tiny programs, kept as cycles of classes
-//! (vocabulary.md, section 6).
-use std::collections::HashSet;
-use law::{PlayerState, Vec3, World, pattern::{Key, PatternTable}};
-use crate::{Arguments, Grid, Program, SegmentError, run_segment};
+//! Gaits: exact recurrences (vocabulary.md, section 6). After one cycle of its program
+//! every field of the state but position has the same bits, and position has advanced by
+//! the cycle's displacement. This is the one place where exact starts recur, so the one
+//! exact-start store, the cycle memo, lives here and keeps each cycle once.
+use std::collections::{HashMap, HashSet};
+use law::{CollisionContext, PlayerState, Vec3, World, footprint::RecordingWorld, pattern::{PatternTable, Start}};
+use crate::{Arguments, Program, SegmentError, body_block, segment::events};
 
 #[derive(Clone, Debug)]
 pub struct Gait {
     pub program: Program,
     pub arguments: Arguments,
-    /// A state on the attractor: its velocity bits recur.
+    /// A state on the cycle, and the ticks since its segment started.
     pub start: PlayerState,
-    /// The cycle: each segment's class (state words and world part, as a key of the
-    /// discovery's own table) and its ticks. The last segment exits into the first class.
-    pub classes: Vec<(Key, u32)>,
+    pub elapsed: u32,
+    /// The period.
     pub ticks: u32,
     pub displacement: Vec3,
-    /// The orbit: the least period of the per-tick velocity, in ticks.
-    pub period: u32,
+    /// The cycle's increments: the position's step on each tick.
+    pub increments: Vec<Vec3>,
+    /// Per tick and axis: the collision clamped the step (it differs from the step the law
+    /// wanted, `movement_this_tick`). Block crossings follow from the increments by floor
+    /// arithmetic once clamped ticks snap onto their plane (lab run gait-modulo).
+    pub clamped: Vec<[bool; 3]>,
     /// Blocks per second, horizontal.
     pub speed: f64,
 }
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Discovery {
     pub gaits: Vec<Gait>,
-    /// Programs whose orbit an earlier program already gave.
+    /// Programs whose cycle an earlier program already gave.
     pub repeats: Vec<usize>,
     pub refusals: Vec<(usize, SegmentError)>,
-    /// Programs with no class that recurs on recurring velocity bits within the budget.
+    /// Programs whose state did not recur within the budget.
     pub unresolved: Vec<usize>,
+    /// The cycle memo: each cycle once, under its start's bits and the cells it read.
+    memo: PatternTable<Vec<usize>>,
+}
+impl Discovery {
+    /// The gaits whose cycle starts at this state, where its cells hold: one per program
+    /// that cycles from it. Resources are guards, so the lookup is on a full stomach, as
+    /// the discovery was.
+    pub fn gaits_at(&mut self, world: &impl World, state: &PlayerState, elapsed: u32) -> Vec<&Gait> {
+        let mut full = state.clone();
+        fed(&mut full);
+        let start = Start { origin: body_block(state), words: recurrence(&full, elapsed), context: CollisionContext::of(state) };
+        let found: Vec<usize> = self.memo.lookup_at(world, &start).iter().flat_map(|hit| hit.entry.value.iter().copied()).collect();
+        found.into_iter().map(|index| &self.gaits[index]).collect()
+    }
+    pub fn cycles(&self) -> usize { self.memo.entries().map(|(_, entry)| entry.value.len()).sum() }
 }
 
-type Beat = ([u64; 3], bool, u8, bool);
-fn beat(state: &PlayerState) -> Beat {
-    let v = state.velocity;
-    ([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()], state.on_ground, state.pose as u8, state.sprinting)
+/// What must recur: every field but position, with the supporting block taken from the
+/// body's block and the tick counter left out, and the program's own clock.
+pub fn recurrence(state: &PlayerState, elapsed: u32) -> Box<[u64]> {
+    let block = body_block(state);
+    let mut still = state.clone();
+    still.t = 0;
+    still.position = Vec3::default();
+    still.main_supporting_block = still.main_supporting_block.map(|p| [0, 1, 2].map(|a| p[a] - block[a]));
+    let mut words = still.bits();
+    words.push(elapsed as u64);
+    words.into()
 }
-/// The least period of a cyclic sequence, rotated to its least rotation.
+/// The least rotation of a cycle, so that one cycle entered at two phases is one cycle.
 fn orbit<T: Ord + Clone>(mut beats: Vec<T>) -> Vec<T> {
-    let period = (1..=beats.len()).find(|&n| beats.len() % n == 0 && (n..beats.len()).all(|i| beats[i] == beats[i - n])).unwrap();
-    beats.truncate(period);
-    let rotation = (0..period).min_by(|&a, &b| beats[a..].iter().chain(&beats[..a]).cmp(beats[b..].iter().chain(&beats[..b]))).unwrap();
+    let rotation = (0..beats.len()).min_by(|&a, &b| beats[a..].iter().chain(&beats[..a]).cmp(beats[b..].iter().chain(&beats[..b]))).unwrap();
     beats.rotate_left(rotation);
     beats
 }
@@ -50,55 +75,59 @@ fn fed(state: &mut PlayerState) {
     state.exhaustion = 0.0;
     state.food_tick_timer = 0;
 }
+/// One tick of the program, as a segment runs it: the clock restarts at each event.
+fn step(world: &impl World, state: &mut PlayerState, program: &Program, args: Arguments, elapsed: u32) -> Option<u32> {
+    let (row, input) = program.select(world, state, elapsed, args)?;
+    let before = state.clone();
+    law::tick(state, world, &input);
+    let next = program.select(world, state, elapsed + 1, args)?.0;
+    Some(if events(&before, state).0 != 0 || next != row { 0 } else { elapsed + 1 })
+}
 
-/// Runs each program from `seed` until a class recurs with the same velocity bits:
-/// the cycle between the two visits is the gait. `budget` bounds the segments tried.
-pub fn discover_gaits(world: &impl World, seed: &PlayerState, programs: &[Program], args: Arguments, grid: Grid, budget: usize) -> Discovery {
+/// Runs each program from `seed` until its state recurs: the ticks between the two visits
+/// are the gait's cycle. `budget` bounds the ticks tried.
+pub fn discover_gaits(world: &impl World, seed: &PlayerState, programs: &[Program], args: Arguments, budget: usize) -> Discovery {
     let mut report = Discovery::default();
     let mut orbits = HashSet::new();
     'programs: for (index, program) in programs.iter().enumerate() {
-        let mut table = PatternTable::<usize>::default();
-        let mut visits = Vec::<(PlayerState, Key, u32)>::new();
-        let mut state = seed.clone();
-        for visit in 0..budget {
+        let mut seen = HashMap::<Box<[u64]>, usize>::new();
+        let mut visits = Vec::<(PlayerState, u32)>::new();
+        let (mut state, mut elapsed) = (seed.clone(), 0);
+        // A program that never reads its clock recurs whatever the clock says.
+        let clocked = |elapsed: u32| if program.timed() { elapsed } else { 0 };
+        for _ in 0..budget {
             fed(&mut state);
-            let segment = match run_segment(world, &state, program, args) {
-                Ok(segment) => segment,
-                Err(error) => { report.refusals.push((index, error)); continue 'programs; }
-            };
-            let mut earlier = None;
-            let key = match table.insert_at(world, &segment.footprint, crate::class::start(&state, segment.footprint.state_reads, grid),
-                |previous| { earlier = previous; visit }) {
-                Ok(key) => key,
-                Err(error) => { report.refusals.push((index, error.into())); continue 'programs; }
-            };
-            if let Some(first) = earlier.filter(|&first| beat(&visits[first].0).0 == beat(&state).0) {
-                let start = visits[first].0.clone();
-                let ticks = visits[first..].iter().map(|visit| visit.2).sum();
-                let mut beats = Vec::new();
-                let mut replay = start.clone();
-                for _ in first..visit {
+            let words = recurrence(&state, clocked(elapsed));
+            if let Some(&first) = seen.get(&words) {
+                let (start, start_elapsed) = visits[first].clone();
+                let recording = RecordingWorld::new(world);
+                let (mut replay, mut clock) = (start.clone(), start_elapsed);
+                let (mut cycle, mut increments, mut clamped) = (Vec::new(), Vec::new(), Vec::new());
+                for _ in first..visits.len() {
                     fed(&mut replay);
-                    let segment = run_segment(world, &replay, program, args).unwrap();
-                    let mut tick = replay.clone();
-                    for elapsed in 0..segment.ticks {
-                        beats.push(beat(&tick));
-                        let input = program.select(world, &tick, elapsed, args).unwrap().1;
-                        law::tick(&mut tick, world, &input);
-                    }
-                    replay = segment.state;
+                    cycle.push(recurrence(&replay, clocked(clock)));
+                    let from = replay.position;
+                    clock = step(&recording, &mut replay, program, args, clock).unwrap();
+                    let moved = replay.position.minus(from);
+                    clamped.push(replay.movement_this_tick.map_or([false; 3], |wanted| [wanted.x != moved.x, wanted.y != moved.y, wanted.z != moved.z]));
+                    increments.push(moved);
                 }
-                let beats = orbit(beats);
-                let period = beats.len() as u32;
-                if !orbits.insert(beats) { report.repeats.push(index); continue 'programs; }
-                let displacement = state.position.minus(start.position);
-                report.gaits.push(Gait { program: program.clone(), arguments: args, start, ticks, displacement, period,
-                    classes: visits[first..].iter().map(|visit| (visit.1.clone(), visit.2)).collect(),
+                if !orbits.insert(orbit(cycle)) { report.repeats.push(index); continue 'programs; }
+                let filed = Start { origin: body_block(&start), words, context: CollisionContext::of(&start) };
+                let gait = report.gaits.len();
+                if let Err(error) = report.memo.insert_at(world, &recording.take(), filed, |known| known.into_iter().flatten().chain([gait]).collect()) { report.refusals.push((index, error.into())); continue 'programs; }
+                let displacement = replay.position.minus(start.position);
+                let ticks = increments.len() as u32;
+                report.gaits.push(Gait { program: program.clone(), arguments: args, start, elapsed: start_elapsed, ticks, displacement, increments, clamped,
                     speed: displacement.horizontal_sqr().sqrt() * 20.0 / ticks as f64 });
                 continue 'programs;
             }
-            visits.push((state, key, segment.ticks));
-            state = segment.state;
+            seen.insert(words, visits.len());
+            visits.push((state.clone(), elapsed));
+            match step(world, &mut state, program, args, elapsed) {
+                Some(next) => elapsed = next,
+                None => { report.refusals.push((index, SegmentError::NoMatchingRow)); continue 'programs; }
+            }
         }
         report.unresolved.push(index);
     }
@@ -110,9 +139,8 @@ mod tests {
     use super::orbit;
 
     #[test]
-    fn an_orbit_is_its_least_period_and_least_rotation() {
+    fn an_orbit_is_its_least_rotation() {
         assert_eq!(orbit(vec![2, 3, 1]), vec![1, 2, 3]);
-        assert_eq!(orbit(vec![1, 2, 1, 2]), vec![1, 2]);
         assert_ne!(orbit(vec![1, 2, 3]), orbit(vec![1, 3, 2]));
     }
 }

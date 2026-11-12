@@ -2,7 +2,7 @@
 //! (vocabulary.md, section 4).
 use law::{Input, PlayerState, World, footprint::{Footprint, RecordingWorld},
     pattern::{self, PatternError}, state_reads::StateField as F};
-use crate::{Arguments, Grid, Program, body_block, class};
+use crate::{Arguments, Program, body_block, class};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExitKind { State(F), SupportContents, BodyBlock, ActiveRow }
@@ -61,7 +61,7 @@ impl From<PatternError> for SegmentError { fn from(e: PatternError) -> Self { Se
 /// counts, and a program that waits for it reads it in a predicate, which cuts by its
 /// row. Resources are guards. Fields the law overwrites before it reads them (the
 /// previous input, `movement_this_tick`, the `was_*` flags) echo other fields a tick late.
-fn events(a: &PlayerState, b: &PlayerState) -> Exit {
+pub(crate) fn events(a: &PlayerState, b: &PlayerState) -> Exit {
     let mut exit = 0;
     macro_rules! cut {
         ($($field:ident),*) => { $(if a.$field != b.$field { exit |= ExitKind::State(F::$field).bit(); })* };
@@ -117,7 +117,7 @@ pub fn run_segment(world: &impl World, start: &PlayerState, program: &Program, a
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Width { pub early: bool, pub late: bool }
 
-pub fn width(world: &impl World, start: &PlayerState, program: &Program, args: Arguments, segment: &Segment, grid: Grid) -> Width {
+pub fn width(world: &impl World, start: &PlayerState, program: &Program, args: Arguments, segment: &Segment) -> Width {
     let mut tape = Vec::<Input>::new();
     let mut state = start.clone();
     for elapsed in 0..=segment.ticks {
@@ -129,7 +129,7 @@ pub fn width(world: &impl World, start: &PlayerState, program: &Program, args: A
     let same = |shifted: &dyn Fn(usize) -> Input| {
         let mut state = start.clone();
         for tick in 0..segment.ticks as usize { law::tick(&mut state, world, &shifted(tick)); }
-        body_block(&state) == body_block(&segment.state) && class(&state, reads, grid) == class(&segment.state, reads, grid)
+        body_block(&state) == body_block(&segment.state) && class(&state, reads) == class(&segment.state, reads)
     };
     Width {
         early: same(&|tick| tape[(tick + 1).min(tape.len() - 1)]),
