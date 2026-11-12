@@ -100,24 +100,21 @@ fn the_class_is_what_the_law_reads_before_writing() {
         assert!(!reads.contains(field), "overwritten before read: {field:?}");
     }
     assert!(reads.contains(F::velocity) && reads.contains(F::position) && reads.contains(F::food_level));
-    // Resources, the block and a sub-bin offset leave the class; a bin does not.
-    let grid = Grid::default();
+    // Resources above their guards and the position leave the class: no grid.
     let mut same = start.clone();
     same.food_level = 12;
     same.health = 13.0;
     same.exhaustion = 2.3;
-    same.position = same.position.plus(Vec3::new(3.0, 0.0, 4.0 + 1.0 / 64.0));
-    same.velocity.z = 1.0e-4;
-    assert_eq!(class(&start, reads, grid), class(&same, reads, grid));
-    let mut other = start.clone();
-    other.position.z += 0.25;
-    assert_ne!(class(&start, reads, grid), class(&other, reads, grid));
-    // The velocity grid is relative: 1/8 of the speed apart is another class at any speed.
-    for speed in [0.1, 0.28, 1.0] {
-        let moving = |z: f64| class(&PlayerState { velocity: Vec3::new(0.0, 0.0, z), ..seed() }, reads, grid);
-        assert_eq!(moving(speed), moving(speed * (1.0 + 1.0 / 256.0)));
-        assert_ne!(moving(speed), moving(speed * (1.0 + 1.0 / 8.0)));
-    }
+    same.position = same.position.plus(Vec3::new(3.0, 0.0, 4.25 + 1.0 / 64.0));
+    assert_eq!(class(&start, reads), class(&same, reads));
+    // A guard is a class: at food 6 the law stops the sprint (movement.rs:209).
+    assert_ne!(class(&start, reads), class(&PlayerState { food_level: 6, ..start.clone() }, reads));
+    // Velocity enters by the law's comparisons alone: 0.05 is the back-off step
+    // (movement.rs:551), and nothing separates 0.06 from 0.2.
+    let moving = |z: f64| class(&PlayerState { velocity: Vec3::new(0.0, 0.0, z), ..seed() }, reads);
+    assert_ne!(moving(0.04), moving(0.06));
+    assert_eq!(moving(0.06), moving(0.2));
+    assert_ne!(moving(0.2), moving(-0.2));
     // The budget refuses; ticks since the start and the support's end are predicates.
     let idle = held(Input::default());
     let settled = run_segment(&world, &start, &idle, Arguments::default()).unwrap().state;
@@ -148,45 +145,48 @@ fn the_class_is_what_the_law_reads_before_writing() {
 
 #[test]
 #[cfg_attr(debug_assertions, ignore = "attractor enumeration is a release run")]
-fn gaits_are_cycles_of_classes_and_the_head_hitter_is_the_speed_of_light() {
-    let grid = Grid::default();
+fn gaits_are_exact_recurrences_and_the_head_hitter_is_the_speed_of_light() {
     for (name, block, ceiling) in [("stone", "stone", false), ("ice", "ice", false), ("blue_ice", "blue_ice", false),
         ("slime", "slime_block", false), ("soul_sand", "soul_sand", false), ("honey", "honey_block", false),
         ("stone_ceiling", "stone", true), ("blue_ice_ceiling", "blue_ice", true)] {
         let world = Flat::named(block, ceiling);
         let clock = Instant::now();
-        let report = discover_gaits(&world, &seed(), &tiny_programs(), Arguments::default(), grid, 20000);
-        let fastest = report.gaits.iter().max_by(|a, b| a.speed.total_cmp(&b.speed)).unwrap();
-        let mut periods = report.gaits.iter().map(|gait| gait.period).collect::<Vec<_>>();
+        let mut report = discover_gaits(&world, &seed(), &tiny_programs(), Arguments::default(), 20000);
+        let fastest = report.gaits.iter().max_by(|a, b| a.speed.total_cmp(&b.speed)).unwrap().clone();
+        let mut periods = report.gaits.iter().map(|gait| gait.ticks).collect::<Vec<_>>();
         periods.sort();
-        println!("gaits ground={name} count={} repeats={} refusals={} unresolved={:?} fastest={:.6} b/s period={} ticks orbit={:.16} blocks cycle={} segments; periods={periods:?}; {:.1}s",
-            report.gaits.len(), report.repeats.len(), report.refusals.len(), report.unresolved, fastest.speed, fastest.period,
-            fastest.displacement.horizontal_sqr().sqrt() * fastest.period as f64 / fastest.ticks as f64, fastest.classes.len(), clock.elapsed().as_secs_f64());
+        println!("gaits ground={name} count={} repeats={} refusals={} unresolved={:?} cycles kept={} fastest={:.6} b/s period={} ticks cycle={:.16} blocks; periods={periods:?}; {:.1}s",
+            report.gaits.len(), report.repeats.len(), report.refusals.len(), report.unresolved, report.cycles(), fastest.speed, fastest.ticks,
+            fastest.displacement.horizontal_sqr().sqrt(), clock.elapsed().as_secs_f64());
         assert!(report.refusals.is_empty(), "{name} {:?}", report.refusals);
         assert!(report.unresolved.is_empty(), "{name} {:?}", report.unresolved);
-        // Each gait, replayed from its start, walks its ticks and exits into its first class on the same velocity bits.
-        for gait in &report.gaits {
+        // Each gait, ticked from its start for one period: every field but position has the same bits, and
+        // position has advanced by the displacement. The cycle is kept once and found again from its start.
+        assert_eq!(report.cycles(), report.gaits.len());
+        for gait in report.gaits.clone() {
             let mut state = gait.start.clone();
-            let mut first = None;
-            for &(_, ticks) in &gait.classes {
+            for increment in &gait.increments {
                 fed(&mut state);
-                let segment = run_segment(&world, &state, &gait.program, gait.arguments).unwrap();
-                first.get_or_insert_with(|| (segment.footprint.state_reads, class(&state, segment.footprint.state_reads, grid)));
-                assert_eq!(segment.ticks, ticks);
-                state = segment.state;
+                let from = state.position;
+                let input = gait.program.select(&world, &state, gait.elapsed, gait.arguments).unwrap().1;
+                tick(&mut state, &world, &input);
+                assert_eq!(state.position.minus(from), *increment);
             }
-            let (reads, first) = first.unwrap();
-            assert_eq!(class(&state, reads, grid), first);
-            assert_eq!(state.velocity, gait.start.velocity);
+            fed(&mut state);
+            assert_eq!(recurrence(&state, 0), recurrence(&gait.start, 0), "{name}");
+            assert_eq!(state.position.minus(gait.start.position), gait.displacement);
+            // On the ground some tick of every cycle is clamped in y, and the body rests on the plane.
+            assert!(gait.clamped.len() == gait.increments.len() && gait.clamped.iter().any(|axes| axes[1]), "{name}");
+            assert!(report.gaits_at(&world, &state, 0).iter().any(|found| found.program == gait.program && found.ticks == gait.ticks), "{name}");
         }
         // The fastest gait is the sprint-jump: straight, sprinting, jump held, never sneaking.
         if name == "stone" || ceiling {
-            assert!(fastest.program.rows[3].input == sprint() && fastest.start.sprinting && !fastest.start.shift_key_down && fastest.period > 1, "{name}");
+            assert!(fastest.program.rows[3].input == sprint() && fastest.start.sprinting && !fastest.start.shift_key_down && fastest.ticks > 1, "{name}");
         }
         if name == "stone" { assert_eq!(format!("{:.6}", fastest.speed), "7.126767"); }
         // Under a 2-block ceiling it is the head-hitter, cut by the ceiling every third tick. On blue ice it is
         // lab/wiki/speed-of-light-window.md: 19.902885797033985 b/s, a 3-tick orbit of 2.9854328695550976 blocks.
-        if ceiling { assert_eq!(fastest.period, 3, "{name}"); }
+        if ceiling { assert_eq!(fastest.ticks, 3, "{name}"); }
         if name == "blue_ice_ceiling" { assert_eq!(format!("{:.6}", fastest.speed), "19.902886"); }
     }
 }
@@ -204,43 +204,49 @@ fn percentile(sorted: &[f64], p: f64) -> f64 { sorted[((sorted.len() - 1) as f64
 #[cfg_attr(debug_assertions, ignore = "the bench is a release run")]
 fn stonesimple_a_second_column_hits_and_replays() {
     let world = stonesimple();
-    let (program, args, grid) = (jumping(), Arguments::default(), Grid::default());
-    let report = discover_gaits(&Flat::named("stone", false), &seed(), std::slice::from_ref(&program), args, grid, 20000);
+    let (program, args) = (jumping(), Arguments::default());
+    let report = discover_gaits(&Flat::named("stone", false), &seed(), std::slice::from_ref(&program), args, 20000);
     let gait = &report.gaits[0];
     // The first run, from one column, compiles the table.
-    let mut table = ProposalTable::new(grid);
+    let mut table = ProposalTable::default();
     let mut state = place(&gait.start, [5, -60, 28]);
     let mut classes = Vec::new();
     for _ in 0..40 {
         let segment = run_segment(&world, &state, &program, args).unwrap();
-        classes.push(class(&state, segment.footprint.state_reads, grid));
+        classes.push(class(&state, segment.footprint.state_reads));
         table.learn(&world, &state, &program, args, &segment).unwrap();
         state = segment.state;
     }
     // The second run, from another column, takes every segment from a hit and replays it.
     let mut state = place(&gait.start, [7, -60, 29]);
-    let (mut starts, mut ticks) = (Vec::new(), 0);
+    let (mut starts, mut ticks, mut as_proposed) = (Vec::new(), 0, 0);
     for expected in &classes {
         let proposals = table.proposals(&world, &state);
-        let proposal = *proposals.iter().find(|p| table.program(p.program) == &program).expect("a hit");
-        let certified = table.replay(&world, &state, &proposal).unwrap();
-        assert!(certified.as_proposed);
-        assert_eq!(&class(&state, certified.segment.footprint.state_reads, grid), expected);
+        let proposal = *proposals.iter().find(|p| table.program(table.proposal(p.id).program) == &program).expect("a hit");
+        let certified = table.replay(&world, &state, proposal).unwrap();
+        as_proposed += certified.as_proposed as u32;
+        assert_eq!(&class(&state, certified.segment.footprint.state_reads), expected);
         assert_eq!(certified.segment.state.bits(), run_segment(&world, &state, &program, args).unwrap().state.bits());
         ticks += certified.segment.ticks;
         starts.push((state, proposal, certified.segment.ticks));
         state = certified.segment.state;
     }
-    assert_eq!((table.hits, table.misses, table.confirmed, table.surprised, table.refusals), (40, 0, 40, 0, 0));
-    println!("stonesimple second column: hits 40/40 segments, {ticks}/{ticks} ticks, {:.2} ticks/segment, classes={} masks={}",
-        ticks as f64 / 40.0, table.classes(), table.masks().len());
+    // Every surprise left its witness, and the witness replays to the outcome it recorded.
+    let c = table.counters;
+    assert_eq!((c.hits, c.misses, c.refusals, c.surprises as u32, table.witnesses.len() as u32), (40, 0, 0, 40 - as_proposed, 40 - as_proposed));
+    for witness in &table.witnesses {
+        let again = run_segment(&world, &witness.start, table.program(witness.program), witness.arguments).unwrap();
+        assert!(Outcome::of(&again) == witness.actual && witness.actual != witness.predicted);
+    }
+    println!("stonesimple second column: hits 40/40 segments, {as_proposed}/40 as proposed, {ticks}/{ticks} ticks, {:.2} ticks/segment, classes={} proposals={} masks={}",
+        ticks as f64 / 40.0, table.classes().len(), table.all().len(), table.masks().len());
     // The bench: the same 40 lookups and certifying replays, 100 passes, with what the replay is made of.
-    let mut time = |name: &str, run: &mut dyn FnMut(&PlayerState, &Proposal, u32)| {
+    let time = |name: &str, run: &mut dyn FnMut(&PlayerState, Found, u32)| {
         let mut costs = Vec::new();
         for _ in 0..100 {
             for (state, proposal, ticks) in &starts {
                 let clock = Instant::now();
-                run(state, proposal, *ticks);
+                run(state, *proposal, *ticks);
                 costs.push(clock.elapsed().as_secs_f64() * 1e6);
             }
         }
@@ -249,12 +255,12 @@ fn stonesimple_a_second_column_hits_and_replays() {
             percentile(&costs, 0.99), costs[costs.len() - 1], costs.len());
     };
     let table = std::cell::RefCell::new(table);
-    time("lookup + replay with its certificate", &mut |state, proposal, _| {
+    time("lookup + replay", &mut |state, proposal, _| {
         let found = table.borrow_mut().proposals(&world, state);
         std::hint::black_box((found, table.borrow_mut().replay(&world, state, proposal).unwrap()));
     });
     time("  the lookup", &mut |state, _, _| { std::hint::black_box(table.borrow_mut().proposals(&world, state)); });
-    time("  the replay with its certificate", &mut |state, proposal, _| { std::hint::black_box(table.borrow_mut().replay(&world, state, proposal).unwrap()); });
+    time("  the replay", &mut |state, proposal, _| { std::hint::black_box(table.borrow_mut().replay(&world, state, proposal).unwrap()); });
     time("    the recorded segment", &mut |state, _, _| { std::hint::black_box(run_segment(&world, state, &program, args).unwrap()); });
     time("    the law alone, unrecorded", &mut |state, _, ticks| {
         let mut direct = state.clone();
@@ -266,64 +272,10 @@ fn stonesimple_a_second_column_hits_and_replays() {
     });
 }
 
-/// The number that says whether the grids are right: runs from rest at arbitrary
-/// offsets inside a block, each learning what it missed. Printed, not gated.
-#[test]
-#[cfg_attr(debug_assertions, ignore = "a release measurement")]
-fn stonesimple_hit_rate_from_arbitrary_offsets() {
-    let world = stonesimple();
-    let (program, args) = (jumping(), Arguments::default());
-    let sixteenths = Grid { horizontal: class::SIXTEENTHS, ..Grid::default() };
-    let edges = |horizontal| Grid { horizontal, ..Grid::default() };
-    for (name, grid) in [("body edges 0.3 0.7 (default)", Grid::default()), ("1/16", sixteenths), ("1/4", edges(&[0.25, 0.5, 0.75])),
-        ("1/2", edges(&[0.5])), ("no horizontal position", edges(&[])),
-        ("default, velocity 2 bits", Grid { velocity_bits: 2, ..Grid::default() }), ("default, velocity 6 bits", Grid { velocity_bits: 6, ..Grid::default() }),
-        ("default, velocity 12 bits", Grid { velocity_bits: 12, ..Grid::default() }), ("1/16, velocity 12 bits", Grid { velocity_bits: 12, ..sixteenths })] {
-        let mut table = ProposalTable::new(grid);
-        let mut random = 0x9e3779b97f4a7c15u64;
-        let mut offset = || {
-            random = random.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            (random >> 11) as f64 / (1u64 << 53) as f64 - 0.5
-        };
-        let mut curve = Vec::new();
-        for _ in 0..64 {
-            let mut state = PlayerState { position: Vec3::new(5.5 + 0.9 * offset(), -60.0, 28.5 + 0.9 * offset()), ..seed() };
-            let (mut segments, mut hits, mut ticks, mut hit_ticks, mut as_proposed) = (0u32, 0u32, 0u32, 0u32, 0u32);
-            while state.position.z < 54.0 {
-                let proposals = table.proposals(&world, &state);
-                let segment = match proposals.iter().find(|p| table.program(p.program) == &program) {
-                    Some(proposal) => {
-                        let certified = table.replay(&world, &state, proposal).unwrap();
-                        hits += 1;
-                        hit_ticks += certified.segment.ticks;
-                        as_proposed += certified.as_proposed as u32;
-                        certified.segment
-                    }
-                    None => {
-                        let segment = run_segment(&world, &state, &program, args).unwrap();
-                        table.learn(&world, &state, &program, args, &segment).unwrap();
-                        segment
-                    }
-                };
-                segments += 1;
-                ticks += segment.ticks;
-                state = segment.state;
-            }
-            curve.push((hits as f64 / segments as f64, hit_ticks as f64 / ticks as f64, as_proposed as f64 / hits.max(1) as f64, segments));
-        }
-        let mean = |runs: &[(f64, f64, f64, u32)], f: fn(&(f64, f64, f64, u32)) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
-        print!("hit rate [{name}] classes={} masks={} segments/run={}; runs: % of segments hit / % of ticks hit / % of hits ending as proposed:",
-            table.classes(), table.masks().len(), curve[0].3);
-        for (runs, range) in [("2", 1..2), ("3-4", 2..4), ("5-8", 4..8), ("9-16", 8..16), ("17-32", 16..32), ("33-64", 32..64)] {
-            let runs_in = &curve[range];
-            print!(" {runs}: {:.0}/{:.0}/{:.0}", 100.0 * mean(runs_in, |r| r.0), 100.0 * mean(runs_in, |r| r.1), 100.0 * mean(runs_in, |r| r.2));
-        }
-        println!();
-    }
-}
+// The hit rates from arbitrary offsets, the class against version 1's, are in tests/vocabulary.rs.
 
 #[test]
-fn the_class_proposes_across_resources_and_a_changed_world_misses() {
+fn the_class_proposes_across_resources_and_a_changed_world_only_reorders() {
     let world = Flat::named("stone", false);
     let (start, program, args) = (seed(), jumping(), Arguments::default());
     let segment = run_segment(&world, &start, &program, args).unwrap();
@@ -333,13 +285,34 @@ fn the_class_proposes_across_resources_and_a_changed_world_misses() {
     let mut tired = start.clone();
     tired.exhaustion = 1.25;
     let proposals = table.proposals(&world, &tired);
-    let certified = table.replay(&world, &tired, &proposals[0]).unwrap();
+    assert!(proposals[0].here);
+    let certified = table.replay(&world, &tired, proposals[0]).unwrap();
     assert!(certified.as_proposed);
     assert_ne!(certified.segment.state.exhaustion, segment.state.exhaustion);
     assert_eq!(certified.segment.uses.food, 0);
-    // The same class over ice: the world part differs, so nothing is proposed.
-    assert!(table.proposals(&Flat::named("ice", false), &start).is_empty());
-    let width = width(&world, &start, &program, args, &segment, Grid::default());
+    // A certificate's key is computed only when asked, in the store the caller names.
+    let mut store = law::pattern::PatternTable::<()>::default();
+    certified.key(&world, &tired, &mut store, ()).unwrap();
+    assert!(store.lookup(&world, &tired).is_some() && store.lookup(&world, &start).is_none());
+    // The same class over ice: the world part differs, so the proposal comes after any that
+    // holds here, and still comes. Its replay there takes the ice as its world part.
+    let ice = Flat::named("ice", false);
+    let found = table.proposals(&ice, &start);
+    assert!(found.len() == 1 && !found[0].here);
+    table.replay(&ice, &start, found[0]).unwrap();
+    assert!(table.proposals(&ice, &start)[0].here && !table.proposals(&world, &start)[0].here);
+    // Inventing: every program at the aim, each distinct piece learned once; the audit of
+    // the hit that follows finds nothing better.
+    let (found, ids) = table.invent(&world, &start, &tiny_programs(), &[args]);
+    assert_eq!((found.runs, found.refusals, found.pieces.len() as u32 + found.duplicates), (54, 0, 54));
+    assert!(ids.iter().all(Option::is_some));
+    let proposals = table.proposals(&world, &start);
+    assert!(proposals.len() >= found.pieces.len());
+    let hit: Vec<_> = proposals.iter().map(|&p| (p, table.replay(&world, &start, p).unwrap())).collect();
+    let (regret, _) = table.regret(&world, &start, &hit, &tiny_programs(), &[args]);
+    assert_eq!(regret, Regret::default());
+    println!("inventing from rest on stone: {} runs, {} distinct pieces, {} proposals", found.runs, found.pieces.len(), proposals.len());
+    let width = width(&world, &start, &program, args, &segment);
     println!("width of the first jump segment: {width:?}");
     assert!(!width.late);
 }
