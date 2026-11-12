@@ -24,7 +24,7 @@ fn a_sentence_on_a_floor_is_certified_and_its_tube_carries_ticks() {
     let problem = Problem { timeline: &timeline, start: start.clone(), goal, body, read: ([-4, -4, -4], [4, 5, 16]), a: Some([0, -1, 0]) };
     let mut planner = Planner::new(problem, tiny_programs(), &mut table, Some(field), options(Order::Field));
     let outcome = planner.run(&mut |seconds, _, _| seconds > 20.0);
-    println!("floor: stopped {:?} {:.2}s nearest {:?} stats {:?}", outcome.stopped, outcome.seconds, outcome.nearest.as_ref().map(|n| (n.0.position, n.0.on_ground, n.1, n.2)), (planner.stats.nodes, planner.stats.expansions, planner.stats.replays, planner.stats.misses, planner.stats.dead, planner.stats.dominated, planner.stats.no_event, &planner.stats.refusals, &planner.stats.uncertified));
+    println!("floor: stopped {:?} {:.2}s nearest {:?} stats {:?}", outcome.stopped, outcome.seconds, outcome.nearest.as_ref().map(|n| (n.0.position, n.0.on_ground, n.1, n.2)), (planner.stats.arcs, planner.stats.arc_ticks, planner.stats.solutions.len(), planner.stats.nodes, planner.stats.expansions, planner.stats.replays, planner.stats.misses, planner.stats.dead, planner.stats.dominated, planner.stats.no_event, &planner.stats.refusals, &planner.stats.uncertified));
     let (steps, certificate) = outcome.sentence.expect("a sentence");
     let stats = &planner.stats;
     println!("floor: T={} clock={:?} lower={} steps={} thinking={:.3}s nodes={} replays={} arcs={} arc ticks={} audits={} differ={} compared={:?} differs={:?}",
@@ -73,7 +73,7 @@ fn a_platform_that_exists_only_on_a_schedule_is_crossed_while_it_stands() {
 #[test]
 fn a_gait_cycle_advances_by_its_increments_on_uniform_ground() {
     let mut world = BoxWorld::default();
-    floor(&mut world, [-8, -1, -8], [8, -1, 400]);
+    floor(&mut world, [-400, -1, -400], [400, -1, 400]);
     let timeline = Still(&world);
     let fed = |state: &PlayerState| PlayerState { food_level: 20, saturation: 20.0, exhaustion: 0.0, food_tick_timer: 0, ..state.clone() };
     let mut report = Vec::new();
@@ -83,11 +83,11 @@ fn a_gait_cycle_advances_by_its_increments_on_uniform_ground() {
         advance(&timeline, &mut state, program, words::Arguments::default(), 600, &mut |_, after| { states.push(after.clone()); false }).unwrap();
         // The first recurrence, found as the search finds it: an earlier state with the same bits.
         let words: Vec<_> = states.iter().map(|s| recurrence(&fed(s), 0)).collect();
-        let Some((from, to)) = (1..states.len()).find_map(|to| (0..to).rev().find(|&from| words[from] == words[to]).map(|from| (from, to))) else { report.push((index, None)); continue };
+        let Some((from, to)) = (1..states.len()).find_map(|to| (0..to).rev().find(|&from| words[from] == words[to]).map(|from| (from, to))) else { println!("program {index}: no recurrence in 600 ticks; v={:?}", states[600].velocity); report.push((index, None)); continue };
         let recording = law::footprint::RecordingWorld::new(&world);
         let mut replay = states[from].clone();
         for elapsed in 0..(to - from) as u32 { let input = program.select(&recording, &replay, elapsed, words::Arguments::default()).unwrap().1; law::tick(&mut replay, &recording, &input); }
-        let Some(cycle) = plan::arith::Cycle::observed(&states[from..=to], recording.take().reads.keys().copied()) else { report.push((index, None)); continue };
+        let Some(cycle) = plan::arith::Cycle::observed(&states[from..=to], recording.take().reads.keys().copied()) else { println!("program {index}: cycle {from}..{to} not taken"); report.push((index, None)); continue };
         assert!(cycle.layered(&world, &states[to], &|_| true));
         let (mut predicted, mut differs, mut ticks) = (states[to].clone(), 0, 0);
         for lap in 0..8 {

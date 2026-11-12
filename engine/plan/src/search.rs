@@ -1,4 +1,4 @@
-//! The search (job 3.2b steps 3, 4, 6 and 7): A* over exact states (Hart, Nilsson and
+//! Te search (job 3.2b steps 3, 4, 6 and 7): A* over exact states (Hart, Nilsson and
 //! Raphael 1968, recalled, not re-read). A node is a concrete state with its tick. An edge is
 //! a word: a proposal of the node's class certified by one replay, a free arc, gait cycles,
 //! or a segment cut where the world changes. The cost is ticks.
@@ -93,6 +93,8 @@ impl Ord for Entry {
         other.key[0].total_cmp(&self.key[0]).then(other.key[1].total_cmp(&self.key[1])).then(self.node.cmp(&other.node)).then(other.ring.cmp(&self.ring))
     }
 }
+/// Where a free arc went: out of the world, or to its last free tick.
+enum Fate { Lost, Ends(Option<f64>) }
 const ALL: u8 = u8::MAX;
 const ROOT: u32 = u32::MAX;
 
@@ -250,16 +252,27 @@ impl<'a, T: Timeline> Planner<'a, T> {
         }
         let Some(id) = self.push(parent, step, state) else { return };
         if step.lane != Lane::Replay { return; }
-        if self.options.arcs && self.free.is_some() && arith::flying(&self.nodes[id as usize].state) { self.arc(id); }
+        if self.options.arcs && self.free.is_some() && arith::flying(&self.nodes[id as usize].state) {
+            // A body in the air is ordered by where its free arc ends (the arc's ticks plus the
+            // estimate there): last if the arc leaves the
+            // world, and never discarded for it.
+            let fate = self.arc(id);
+            match fate {
+                Fate::Lost => self.nodes[id as usize].h = f64::MAX,
+                Fate::Ends(Some(through)) => self.nodes[id as usize].h = through,
+                Fate::Ends(None) => {}
+            }
+        }
         if self.options.gaits && self.frozen { self.gait(id); }
     }
     /// The free arc from a node in the air: the same program, tick by tick in free space,
     /// while its tube meets nothing. One edge, to the last free tick.
-    fn arc(&mut self, from: u32) {
+    fn arc(&mut self, from: u32) -> Fate {
         let step = self.nodes[from as usize].step;
         let program = self.programs[step.program as usize].clone();
-        if program.timed() { return; }
+        if program.timed() { return Fate::Ends(None); }
         let (free, timeline, goal) = (self.free.unwrap(), self.problem.timeline, self.problem.goal);
+        let mut lost = false;
         let clock = Instant::now();
         let mut state = self.nodes[from as usize].state.clone();
         let change = timeline.next_change(state.t);
@@ -280,15 +293,24 @@ impl<'a, T: Timeline> Planner<'a, T> {
             if touched {
                 self.stats.arc_ticks += ticks as u64;
                 self.stats.arc_us += clock.elapsed().as_secs_f64() * 1e6;
-                return self.solution(from, Step { ticks, lane: Lane::Arc, ..step });
+                self.solution(from, Step { ticks, lane: Lane::Arc, ..step });
+                return Fate::Ends(None);
             }
-            if self.dead(&state) { break; }
+            if self.dead(&state) { lost = true; break; }
         }
         self.stats.arc_us += clock.elapsed().as_secs_f64() * 1e6;
-        if ticks == 0 { return; }
+        if lost { return Fate::Lost; }
+        if ticks == 0 { return Fate::Ends(None); }
         self.stats.arcs += 1;
         self.stats.arc_ticks += ticks as u64;
-        self.push(from, Step { ticks, lane: Lane::Arc, ..step }, state);
+        // The estimate through the arc stands whether or not its end is a new node.
+        let anchor = self.nodes[from as usize].anchor;
+        let through = match (&self.field, anchor) {
+            (Some(field), Some(anchor)) => Some(ticks as f64 + field.estimate(anchor, state.position, &goal).0 + goal.lower_bound(&state) as f64),
+            _ => None,
+        };
+        let end = self.push(from, Step { ticks, lane: Lane::Arc, ..step }, state);
+        Fate::Ends(end.map(|end| ticks as f64 + self.nodes[end as usize].h).or(through).filter(|_| self.field.is_some()))
     }
     /// A gait, found and not given: the node's state, position and resources aside, has the
     /// bits of an ancestor reached by the same program at the same aim. One cycle is replayed
@@ -378,7 +400,6 @@ impl<'a, T: Timeline> Planner<'a, T> {
         let state = self.nodes[id as usize].state.clone();
         let timeline = self.problem.timeline;
         let horizon = timeline.next_change(state.t).map(|change| (change - state.t) as u32);
-        let limit = horizon.map_or(Arguments::default().max_ticks, |h| h.min(Arguments::default().max_ticks));
         let aims: Vec<u8> = if ring == ALL { (0..64).collect() } else {
             let base = self.bearing(&self.nodes[id as usize]);
             match ring { 0 => vec![base], 32 => vec![(base + 32) % 64], r => vec![(base + r) % 64, (base + 64 - r) % 64] }
@@ -388,7 +409,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
         self.stats.decisions += 1;
         let found: Vec<Found> = self.table.proposals(&state).into_iter().filter(|found| {
             let args = self.table.proposal(found.id).arguments;
-            args.refined_yaw.is_none() && args.max_ticks == limit && aims.contains(&args.yaw_index)
+            args.refined_yaw.is_none() && args.max_ticks == Arguments::default().max_ticks && aims.contains(&args.yaw_index)
         }).collect();
         self.stats.per_decision.push(found.len() as u32);
         let world = timeline.at(state.t);
@@ -400,16 +421,18 @@ impl<'a, T: Timeline> Planner<'a, T> {
             self.stats.replay_us += clock.elapsed().as_secs_f64() * 1e6;
             self.stats.replays += 1;
             match replayed {
+                // A word that runs past a change of the world is cut at the change.
+                Ok(certified) if horizon.is_some_and(|h| certified.segment.ticks > h) => self.cut(id, program, args, horizon.unwrap()),
                 Ok(certified) => {
                     self.stats.replay_ticks += certified.segment.ticks as u64;
                     self.child(id, Step { program, args, ticks: certified.segment.ticks, lane: Lane::Replay }, certified.segment.state);
                 }
-                Err(SegmentError::NoEvent { ticks }) if horizon == Some(ticks) => self.cut(id, program, args, ticks),
+                Err(SegmentError::NoEvent { .. }) if horizon.is_some() => self.cut(id, program, args, horizon.unwrap()),
                 Err(error) => self.refused(&error, 1, &state),
             }
         }
         let missing: Vec<Arguments> = aims.iter().filter(|&&aim| !found.iter().any(|f| self.table.proposal(f.id).arguments.yaw_index == aim))
-            .map(|&yaw_index| Arguments { yaw_index, max_ticks: limit, ..Arguments::default() }).collect();
+            .map(|&yaw_index| Arguments { yaw_index, ..Arguments::default() }).collect();
         if missing.is_empty() { return; }
         self.stats.misses += 1;
         self.stats.miss_aims += missing.len() as u64;
@@ -420,12 +443,13 @@ impl<'a, T: Timeline> Planner<'a, T> {
         self.stats.invented_runs += invented.runs as u64;
         for (error, count) in &invented.refused { self.refused(error, *count as u64, &state); }
         for piece in &invented.pieces {
+            if horizon.is_some_and(|h| piece.segment.ticks > h) { self.cut(id, piece.program as u16, piece.arguments, horizon.unwrap()); continue; }
             self.stats.invented_ticks += piece.segment.ticks as u64;
             self.stats.replay_ticks += piece.segment.ticks as u64;
             self.child(id, Step { program: piece.program as u16, args: piece.arguments, ticks: piece.segment.ticks, lane: Lane::Replay }, piece.segment.state.clone());
         }
         // The inputs whose run met no event before the world changes.
-        if let Some(horizon) = horizon.filter(|&h| h == limit) {
+        if let Some(horizon) = horizon.filter(|&h| h <= Arguments::default().max_ticks) {
             for &args in &missing {
                 let mut inputs = Vec::new();
                 for (program, rows) in programs.iter().enumerate() {
@@ -450,6 +474,9 @@ impl<'a, T: Timeline> Planner<'a, T> {
             let node = &self.nodes[entry.node as usize];
             if self.best.as_ref().is_some_and(|best| node.g + node.lb >= best.1.ticks) { self.stats.pruned += 1; continue; }
             if self.closed.get(&self.identity(&node.state)).is_some_and(|&known| known < node.g) { self.stats.dominated += 1; continue; }
+            // An estimate that moved since the entry was made: the entry takes its place again.
+            let key = self.key(node);
+            if key != entry.key { self.open.push(Entry { key, ..entry }); continue; }
             if entry.ring != ALL && entry.ring < 32 {
                 self.open.push(Entry { key: entry.key, node: entry.node, ring: entry.ring + 1 });
             }

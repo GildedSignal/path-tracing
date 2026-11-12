@@ -23,7 +23,7 @@ fn plain(block: &Block, free: &Block) -> bool {
 /// A body the free arc's premises hold for: in the air, upright, in no medium.
 pub fn flying(state: &PlayerState) -> bool {
     !state.on_ground && !state.in_water && !state.in_lava && !state.on_climbable && !state.swimming && !state.in_powder_snow
-        && state.pose == Pose::Standing && state.stuck_speed_multiplier.length_sqr() == 0.0 && !state.no_physics && state.health > 0.0
+        && state.pose != Pose::Swimming && state.stuck_speed_multiplier.length_sqr() == 0.0 && !state.no_physics && state.health > 0.0
 }
 /// One tick of a free arc from `state`, or None where the tube meets the world.
 pub fn free_tick<W: World>(real: &W, free: &Block, state: &PlayerState, program: &Program, args: Arguments, elapsed: u32,
@@ -34,8 +34,10 @@ pub fn free_tick<W: World>(real: &W, free: &Block, state: &PlayerState, program:
     let mut next = state.clone();
     law::try_tick(&mut next, &space, &input).ok()?;
     let wanted = next.movement_this_tick?;
-    let before = state.bounding_box();
-    let swept = hull(hull(before, before.moved(wanted)), next.bounding_box());
+    // The box the step sweeps, at standing height: a crouched body asks whether it can stand (`update_pose`).
+    let tall = |at: &PlayerState| law::Aabb::player(at.position, Pose::Standing.height());
+    let before = hull(state.bounding_box(), tall(state));
+    let swept = hull(hull(before, before.moved(wanted)), hull(next.bounding_box(), tall(&next)));
     let (lo, hi) = (law::math::floor, law::math::floor);
     let (min, max) = ([lo(swept.min.x), lo(swept.min.y - 0.500001), lo(swept.min.z)], [hi(swept.max.x), hi(swept.max.y), hi(swept.max.z)]);
     for x in min[0]..=max[0] { for y in min[1]..=max[1] { for z in min[2]..=max[2] {
@@ -58,7 +60,7 @@ pub fn free_tick<W: World>(real: &W, free: &Block, state: &PlayerState, program:
 /// addition the law makes; clamped axes keep the recorded coordinate. Resources are not
 /// advanced: the food clock is a third lane nobody has proved, so the state this returns is
 /// a prediction for ordering, and the sentence's replay is what certifies it.
-pub struct Cycle { pub increments: Vec<Vec3>, pub clamped: Vec<[bool; 3]>, pub level: Vec<f64>, pub reach: [[i32; 2]; 3] }
+pub struct Cycle { pub increments: Vec<Vec3>, pub clamped: Vec<[bool; 3]>, pub level: Vec<f64>, pub reach: [[i32; 2]; 3], pub flat: bool }
 impl Cycle {
     /// From the states of one cycle (first and last recur) and the cells its replay read,
     /// relative to the first state's block.
@@ -68,15 +70,16 @@ impl Cycle {
         for cell in reads { for a in 0..3 { reach[a] = [reach[a][0].min(cell[a] - origin[a]), reach[a][1].max(cell[a] - origin[a])]; } }
         let (mut increments, mut clamped, mut level) = (Vec::new(), Vec::new(), Vec::new());
         for pair in states.windows(2) {
-            let moved = pair[1].position.minus(pair[0].position);
+            let (from, to) = (pair[0].position, pair[1].position);
             let wanted = pair[1].movement_this_tick?;
+            // An axis is free when the law added the step it wanted: the same addition gives the same bits.
             // Only the vertical clamp of flat ground is taken: a wall would need its plane.
-            if wanted.x != moved.x || wanted.z != moved.z { return None; }
-            clamped.push([false, wanted.y != moved.y, false]);
-            increments.push(moved);
+            if from.x + wanted.x != to.x || from.z + wanted.z != to.z { return None; }
+            clamped.push([false, from.y + wanted.y != to.y, false]);
+            increments.push(wanted);
             level.push(pair[1].position.y);
         }
-        Some(Cycle { increments, clamped, level, reach })
+        Some(Cycle { increments, clamped, level, reach, flat: states[0].position.y == states[states.len() - 1].position.y })
     }
     /// Whether the corridor of one more cycle from `state` is uniform ground like the
     /// observed one: each layer one content, the content of the observed column.
@@ -85,7 +88,7 @@ impl Cycle {
         let run = self.increments.iter().fold(Vec3::default(), |sum, step| sum.plus(*step));
         let far = |d: f64| if d < 0.0 { [d.floor() as i32 - 1, 1] } else { [-1, d.ceil() as i32 + 1] };
         let (wx, wz) = (far(run.x), far(run.z));
-        if run.y != 0.0 { return false; }
+        if !self.flat { return false; }
         for dy in self.reach[1][0]..=self.reach[1][1] {
             let y = origin[1] + dy;
             if !readable([origin[0], y, origin[2]]) { return false; }
