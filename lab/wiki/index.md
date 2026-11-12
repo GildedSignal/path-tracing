@@ -3,24 +3,28 @@
 
 ## Lenses
 
+- [arc-certificate](arc-certificate.md) — reproduced: 1; last 2026-11-12
 - [certificate-size](certificate-size.md) — reproduced: 1; last 2026-11-11
 - [class-without-numbers](class-without-numbers.md) — reproduced: 1; last 2026-11-11
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
+- [gait-corridor](gait-corridor.md) — no dossier: 1; last 2026-11-12
 - [gait-modulo](gait-modulo.md) — reproduced: 1; last 2026-11-11
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
-- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 2; last 2026-11-11
+- [idiot-index](idiot-index.md) — reproduced: 1; last 2026-11-12
+- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 3; last 2026-11-12
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
+- [l0-step-up-control](l0-step-up-control.md) — reproduced: 1; last 2026-11-12
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 6; last 2026-11-11
-- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 5; last 2026-11-11
-- [port-fluid-rules](port-fluid-rules.md) — lead: 1, reproduced: 5; last 2026-11-11
-- [port-movement-modes](port-movement-modes.md) — reproduced: 3; last 2026-11-11
+- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 7; last 2026-11-12
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 6; last 2026-11-12
+- [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 5; last 2026-11-12
+- [port-movement-modes](port-movement-modes.md) — reproduced: 4; last 2026-11-12
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
-- [port-update-order](port-update-order.md) — lead: 1, reproduced: 3; last 2026-11-11
+- [port-update-order](port-update-order.md) — lead: 1, reproduced: 4; last 2026-11-12
 - [recorder-cost](recorder-cost.md) — reproduced: 1; last 2026-11-11
 - [server-player-readers](server-player-readers.md) — lead: 3, reproduced: 1; last 2026-11-11
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
@@ -34,6 +38,14 @@
 
 ## Reproduced results
 
+- 2026-11-12 [idiot-index](idiot-index.md) (local-20261112-1305-1-1-idiot-index): the proposal lookup is the ground layer's largest weighted idiot index — 54% of the steady-state per-piece pipeline at ~49× its Fermi floor — because `ProposalTable::proposals` (engine/words/src/table.rs:71-80) re-digests the world's cells once for every read-mask the table has ever learned (15–3...
+- 2026-11-12 [item-use-writes](item-use-writes.md) (local-20261112-1251-1-7-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), 51 classes declare the five Item use-family methods by name — 50 item-family (Item + 49 subclasses, 63 declarations) plus ItemStack (5) — and under the strict own-class rule (closure over same-class helper and `lambda$` edges...
+- 2026-11-12 [port-update-order](port-update-order.md) (local-20261112-1251-1-6-port-update-order): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the redstone-wire transition — the third unsupported non-fluid update family after the falling block (scheduled-tick) and piston (block-event) — is a **zero-schedule, zero-block-event recursion inside the neighbor-update ph...
+- 2026-11-12 [port-movement-modes](port-movement-modes.md) (local-20261112-1251-1-5-port-movement-modes): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the creative-flight boundary is exactly one server-accepted state transition — `ServerGamePacketListenerImpl.handlePlayerAbilities` writes `Abilities.flying = packet.isFlying() && abilities.mayfly` (offsets 16–44, single...
+- 2026-11-12 [port-entity-rules](port-entity-rules.md) (local-20261112-1251-1-3-port-entity-rules): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) every knockback-family direction resolver is deterministic from fixed pair state (`Player.attack` has zero RNG references) and funnels into exactly two server velocity primitives — `LivingEntity.knockback(6-arg)`, whose in-...
+- 2026-11-12 [port-block-laws](port-block-laws.md) (local-20261112-1251-1-2-port-block-laws): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the stuck-speed rule family is closed — exactly 7 classes touch `makeStuckInBlock` (whole-jar byte scan) — and the law's plain-cobweb port is bit-exact against a jar-derived oracle for 280 ticks on the real generated row,...
+- 2026-11-12 [l0-step-up-control](l0-step-up-control.md) (local-20261112-1251-1-1-l0-step-up-control): L0's controls catch `mutant-step-up` through the step-up rule itself but at a **planted 0.5 boundary, not the 0.6f boundary** the reachability lane analysed — the `step-below` witness is a recorded client whose `stepHeight` attribute is `0x3effffff` (0.5−1ulp), the mutant's `to_bits()+1` raises i...
+- 2026-11-12 [arc-certificate](arc-certificate.md) (local-20261112-1251-1-0-arc-certificate): on the 16 standable track fixtures x the 54 tiny programs, every event that cuts a mid-air arc is state-determined (an input/counter echo or a body-block crossing; 0 of 12,759 firings on collision-free arcs needs the world), and a collision-free arc's per-tick increments are bit-for-bit invariant...
 - 2026-11-11 [port-update-order](port-update-order.md) (local-20261111-1844-1-2-port-update-order): In 26.2 the piston extend/retract transition — the next unsupported non-fluid update family after the pinned falling block — runs on the **block-event** family, not the scheduled-tick family: a neighbor edit fires `neighborChanged → checkIfExtend → Level.blockEvent` inside `setBlock` (before the...
 - 2026-11-11 [port-place-replaceability](port-place-replaceability.md) (local-20261111-1844-1-1-port-place-replaceability): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058), the placement position rule is decided eagerly and exactly once in BlockPlaceContext's protected five-argument constructor — `replaceClicked = level.getBlockState(hitPos).canBeReplaced(this)` — and `getClickedPos()` return...
 - 2026-11-11 [item-use-writes](item-use-writes.md) (local-20261111-1844-1-0-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), 68 same-name declarations of the five Item use-family methods across 51 item-family classes reach — under a mechanical call-graph rule of free intra-class edges, ≤4 cross-class hops, javac lambda-name edges, and class-hierarc...
