@@ -418,13 +418,14 @@ fn freeze_events(state: &mut PlayerState, row: &Object<'_>, phase: &str) {
     }
 }
 
-fn freeze_fixture(plant: bool) {
+fn freeze_fixture(plant: bool, phase_111: &str, phase_112: &str) {
     let (mut world, mut state) = stationary_fixture();
     world.fill([-1, 0, -1], [1, 1, 1], Block { inside: law::Inside::PowderSnow, ..Block::boxes(&[]) });
     let expected = [1, 2, 4, 4, 6, 7];
     let starts = [0, 1, 2, 3, 5, 6];
-    let events = ["[]", "[]", if plant { r#"[{"phase":"post","v":5}]"# } else { r#"[{"phase":"post","v":4}]"# },
-        r#"[{"phase":"between","v":3}]"#, r#"[{"phase":"between","v":5}]"#, "[]"];
+    let event_111 = format!(r#"[{{"phase":"{phase_111}","v":{}}}]"#, if plant { 5 } else { 4 });
+    let event_112 = format!(r#"[{{"phase":"{phase_112}","v":3}}]"#);
+    let events = ["[]", "[]", &event_111, &event_112, r#"[{"phase":"between","v":5}]"#, "[]"];
     for i in 0..6 {
         let text = format!(r#"{{"freezeSync":{}}}"#, events[i]);
         let row = Object::parse(&text);
@@ -438,11 +439,23 @@ fn freeze_fixture(plant: bool) {
 }
 
 #[test]
-fn freeze_sync_replays_recorded_sequence() { freeze_fixture(false); }
+fn freeze_sync_replays_recorded_sequence() { freeze_fixture(false, "post", "between"); }
 
 #[test]
 #[should_panic(expected = "tick 111 END freeze counter")]
-fn freeze_sync_refuses_planted_value() { freeze_fixture(true); }
+fn freeze_sync_refuses_planted_value() { freeze_fixture(true, "post", "between"); }
+
+#[test]
+#[should_panic(expected = "tick 111 END freeze counter")]
+fn freeze_sync_refuses_tick_111_post_moved_to_pre() { freeze_fixture(false, "pre", "between"); }
+
+#[test]
+#[should_panic(expected = "tick 111 START freeze counter")]
+fn freeze_sync_refuses_tick_111_post_moved_to_between() { freeze_fixture(false, "between", "between"); }
+
+#[test]
+#[should_panic(expected = "tick 112 START freeze counter")]
+fn freeze_sync_refuses_tick_112_between_moved_to_pre() { freeze_fixture(false, "post", "pre"); }
 
 fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64, Duration) {
     let mut expected_tick = 0;
@@ -648,6 +661,39 @@ fn stationary_fixture() -> (BoxWorld, PlayerState) {
         ..PlayerState::default()
     };
     (world, state)
+}
+
+#[test]
+fn replay_text_freeze_sync_checks_recorded_value_and_start() {
+    let row = stationary_tick().replace("\"ticksFrozen\":0", "\"ticksFrozen\":4");
+    let row = format!(r#"{},"startTicksFrozen":3,"freezeSync":[{{"phase":"between","v":3}},{{"phase":"post","v":4}}]}}"#, &row[..row.len()-1]);
+    let text = complete_recording(&row, 1);
+    let (world, mut state) = stationary_fixture();
+    assert_eq!(replay_text(&text, &world, &mut state).0, 1);
+    assert_eq!(state.ticks_frozen, 4);
+    for (old, new, message) in [
+        (r#""phase":"post","v":4"#, r#""phase":"post","v":5"#, "tick 0: END freeze counter"),
+        (r#""phase":"between","v":3"#, r#""phase":"between","v":2"#, "tick 0: START freeze counter"),
+    ] {
+        let (world, mut state) = stationary_fixture();
+        let edited = text.replacen(old, new, 1);
+        assert_ne!(edited, text);
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay_text(&edited, &world, &mut state)))
+            .expect_err("edited freeze value was accepted");
+        let diagnostic = failure.downcast_ref::<String>().map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied()).expect("panic message");
+        assert!(diagnostic.contains(message), "{diagnostic}");
+    }
+}
+
+#[test]
+fn replay_text_legacy_fixture_without_freeze_sync() {
+    let row = stationary_tick().replace("\"ticksFrozen\":0", "\"ticksFrozen\":73");
+    assert!(!row.contains("freezeSync"));
+    let (world, mut state) = stationary_fixture();
+    state.ticks_frozen = 12;
+    assert_eq!(replay_text(&complete_recording(&row, 1), &world, &mut state).0, 1);
+    assert_eq!(state.ticks_frozen, 73);
 }
 
 #[test]
