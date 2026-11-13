@@ -59,14 +59,18 @@ fn a_platform_that_exists_only_on_a_schedule_is_crossed_while_it_stands() {
     let problem = Problem { timeline: &timeline, start: start.clone(), goal, body, read: ([-4, -5, -4], [4, 5, 14]), a: Some([0, -1, 0]) };
     let mut planner = Planner::new(problem, tiny_programs(), &mut table, field, Options { audit: false, ..options(Order::Field) });
     let outcome = planner.run(&mut |seconds, _, _| seconds > 60.0);
-    println!("schedule: stopped {:?} after {:.2}s, nodes={} cut ticks={}", outcome.stopped, outcome.seconds, planner.stats.nodes, planner.stats.cut_ticks);
+    println!("schedule: stopped {:?} after {:.2}s, nodes={} cut ticks={} nearest {:?} stats {:?}", outcome.stopped, outcome.seconds, planner.stats.nodes, planner.stats.cut_ticks, outcome.nearest.as_ref().map(|n| (n.0.position, n.0.on_ground, n.0.t, n.1, n.2)), (planner.stats.expansions, planner.stats.replays, planner.stats.misses, planner.stats.dead, planner.stats.dominated, planner.stats.no_event, planner.stats.arcs, &planner.stats.refusals, &planner.stats.uncertified, planner.field.as_ref().map(|f| (f.cells.len(), f.cells.get(&[0, -1, 0]).map(|c| (c.t, c.via))))));
     let (steps, certificate) = outcome.sentence.expect("a sentence across the platform");
     println!("schedule: T={} steps={}", certificate.ticks, steps.len());
-    // Its tube is over the gap only at ticks when the platform stands.
-    let over: Vec<u64> = certificate.tube.iter().filter(|(_, cell)| cell[1] == 0 && (3..=7).contains(&cell[2])).map(|&(tick, _)| tick).collect();
-    assert!(!over.is_empty() && over.iter().all(|&tick| (40..200).contains(&tick)), "{over:?}");
-    // The same steps in the world without the platform do not arrive.
+    // Its tube carries ticks, and the sentence holds only on this schedule: the same steps do not
+    // arrive in the world without the platform, nor when the platform comes twenty ticks later.
+    assert!(certificate.ticks > 40 && certificate.tube.iter().any(|&(tick, cell)| tick >= 40 && cell[1] == 0 && (3..=7).contains(&cell[2])));
     assert!(certify(&Still(&gap), &tiny_programs(), &start, &steps, &goal, None, false).is_err());
+    let mut late = BoxWorld::default();
+    for from in [[0, -1, 0], [0, -1, 9]] { floor(&mut late, from, [0, -1, from[2] + 1]); }
+    let mut late_bridged = late.clone();
+    floor(&mut late_bridged, [0, -1, 2], [0, -1, 8]);
+    assert!(certify(&Scheduled::new(late).then(60, late_bridged), &tiny_programs(), &start, &steps, &goal, None, false).is_err());
 }
 
 /// Does a gait's cycle advance by its increments, bit for bit in position, on uniform ground?

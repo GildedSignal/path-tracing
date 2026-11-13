@@ -159,7 +159,7 @@ impl Field {
         let free = |p: Vec3| inside(p) && world.no_collision(Aabb::player(p, PlayerState::default().pose.height()), context(p.y));
         let mut cells: Vec<Cell> = Vec::new();
         let mut columns: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
-        for x in body.0[0]..=body.1[0] { for z in body.0[2]..=body.1[2] { for y in body.0[1] - 1..=body.1[1] {
+        for x in body.0[0]..=body.1[0] { for z in body.0[2]..=body.1[2] { for y in body.0[1]..=body.1[1] {
             let shape = world.collision_shape([x, y, z], context(y as f64 + 2.0));
             let Some(&top) = shape.coords[1].last().filter(|_| !shape.is_empty()) else { continue };
             let stand = Vec3::new(x as f64 + 0.5, y as f64 + top, z as f64 + 0.5);
@@ -240,7 +240,8 @@ impl Field {
     /// and the point it is sent toward. Along the chain of sets from the anchor to the goal,
     /// each set offers its own time plus the way to it at its hop's rate; the least offer is
     /// the estimate, so it falls continuously as the body moves down the chain.
-    pub fn estimate(&self, anchor: BlockPos, position: Vec3, goal: &Goal) -> (f64, (f64, f64)) {
+    /// A sinking body does not rise: the sets above its feet offer it nothing.
+    pub fn estimate(&self, anchor: BlockPos, position: Vec3, sinking: bool, goal: &Goal) -> (f64, (f64, f64)) {
         let centre = |p: BlockPos| (p[0] as f64 + 0.5, p[2] as f64 + 0.5);
         let far = |a: (f64, f64), b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
         let here = (position.x, position.z);
@@ -248,12 +249,13 @@ impl Field {
         // The anchor's own offer is at its outgoing hop's rate.
         let rate = |from: &Cell| from.via.map(|next| (from.hop.0 as f64, far(centre(from.support), centre(next)))).filter(|hop| hop.1 > 0.0).map(|hop| hop.0 / hop.1);
         let mut pace = rate(cell).unwrap_or(1.0 / crate::goal::C);
-        let mut best = (cell.t as f64 + pace * far(here, centre(cell.support)), centre(cell.via.unwrap_or(goal.cell)));
+        let offered = |cell: &Cell| !(sinking && cell.y > position.y);
+        let mut best = (if offered(cell) { cell.t as f64 + pace * far(here, centre(cell.support)) } else { f64::INFINITY }, centre(cell.via.unwrap_or(goal.cell)));
         while let Some(next) = cell.via {
             pace = rate(cell).unwrap_or(pace);
             cell = &self.cells[&next];
             let offer = cell.t as f64 + pace * far(here, centre(next));
-            if offer < best.0 { best = (offer, centre(cell.via.unwrap_or(goal.cell))); }
+            if offered(cell) && offer < best.0 { best = (offer, centre(cell.via.unwrap_or(goal.cell))); }
         }
         best
     }

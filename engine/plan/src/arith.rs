@@ -25,15 +25,18 @@ pub fn flying(state: &PlayerState) -> bool {
     !state.on_ground && !state.in_water && !state.in_lava && !state.on_climbable && !state.swimming && !state.in_powder_snow
         && state.pose != Pose::Swimming && state.stuck_speed_multiplier.length_sqr() == 0.0 && !state.no_physics && state.health > 0.0
 }
-/// One tick of a free arc from `state`, or None where the tube meets the world.
+/// Why a free arc takes no further tick: its tube meets the world, or leaves what may be read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ends { Meets, Leaves }
+/// One tick of a free arc from `state`, or why it is not taken.
 pub fn free_tick<W: World>(real: &W, free: &Block, state: &PlayerState, program: &Program, args: Arguments, elapsed: u32,
-    readable: &dyn Fn(BlockPos) -> bool) -> Option<PlayerState> {
-    if !flying(state) { return None; }
+    readable: &dyn Fn(BlockPos) -> bool) -> Result<PlayerState, Ends> {
+    if !flying(state) { return Err(Ends::Meets); }
     let space = Free { real, block: free };
-    let (_, input) = program.select(&space, state, elapsed, args)?;
+    let (_, input) = program.select(&space, state, elapsed, args).ok_or(Ends::Meets)?;
     let mut next = state.clone();
-    law::try_tick(&mut next, &space, &input).ok()?;
-    let wanted = next.movement_this_tick?;
+    law::try_tick(&mut next, &space, &input).map_err(|_| Ends::Meets)?;
+    let wanted = next.movement_this_tick.ok_or(Ends::Meets)?;
     // The box the step sweeps, at standing height: a crouched body asks whether it can stand (`update_pose`).
     let tall = |at: &PlayerState| law::Aabb::player(at.position, Pose::Standing.height());
     let before = hull(state.bounding_box(), tall(state));
@@ -41,13 +44,14 @@ pub fn free_tick<W: World>(real: &W, free: &Block, state: &PlayerState, program:
     let (lo, hi) = (law::math::floor, law::math::floor);
     let (min, max) = ([lo(swept.min.x), lo(swept.min.y - 0.500001), lo(swept.min.z)], [hi(swept.max.x), hi(swept.max.y), hi(swept.max.z)]);
     for x in min[0]..=max[0] { for y in min[1]..=max[1] { for z in min[2]..=max[2] {
-        if !readable([x, y, z]) || !real.loaded([x, y, z]) || !plain(real.block([x, y, z]), free) { return None; }
+        if !readable([x, y, z]) { return Err(Ends::Leaves); }
+        if !real.loaded([x, y, z]) || !plain(real.block([x, y, z]), free) { return Err(Ends::Meets); }
     } } }
     let context = CollisionContext::of(state);
     // One cell of margin: a shape may reach out of its cell, as the law's own scan allows.
-    if !readable(min.map(|v| v - 1)) || !readable(max.map(|v| v + 1)) { return None; }
-    if !real.no_collision(swept, context) || !real.extra_collisions(swept, context).is_empty() { return None; }
-    flying(&next).then_some(next)
+    if !readable(min.map(|v| v - 1)) || !readable(max.map(|v| v + 1)) { return Err(Ends::Leaves); }
+    if !real.no_collision(swept, context) || !real.extra_collisions(swept, context).is_empty() { return Err(Ends::Meets); }
+    if flying(&next) { Ok(next) } else { Err(Ends::Meets) }
 }
 
 /// The gait lane (lab/wiki/gait-modulo.md): on uniform ground the state minus position

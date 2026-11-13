@@ -154,14 +154,21 @@ impl<'a, T: Timeline> Planner<'a, T> {
     fn key(&self, node: &Node) -> [f64; 2] {
         match (self.options.order, self.improving) {
             (Order::Admissible, _) => [(node.g + node.lb) as f64, node.lb as f64],
-            (Order::Field, false) => [node.h, node.g as f64],
+            // Among equal estimates the deeper node first: where nothing moves, time does.
+            (Order::Field, false) => [node.h, -(node.g as f64)],
             (Order::Field, true) => [node.g as f64 + node.h, node.h],
         }
     }
+    /// What makes two states one under the law. The fields every tick writes before it reads
+    /// them (the previous input, yaw and pitch, `movement_this_tick`, crouching, the `was_*`
+    /// flags: movement.rs:128-140, vocabulary.md section 3) cannot reach the future, so states
+    /// that differ only there have the same futures. So has the tick counter, in a world that
+    /// never changes.
     fn identity(&self, state: &PlayerState) -> Box<[u64]> {
-        let mut bits = state.bits();
-        if self.frozen { bits[0] = 0; }
-        bits.into()
+        let mut same = PlayerState { input: law::Input::default(), yaw: 0.0, pitch: 0.0, movement_this_tick: None, crouching: false,
+            was_eye_in_water: false, was_in_powder_snow: false, ..state.clone() };
+        if self.frozen { same.t = 0; }
+        same.bits().into()
     }
     /// Adds a node unless an exact state proves it dominated or the bound proves it useless.
     fn push(&mut self, parent: u32, step: Step, state: PlayerState) -> Option<u32> {
@@ -181,7 +188,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
                     if field.cells[&now].t < field.cells[&before].t { field.cells.get_mut(&before).unwrap().arrivals += 1; }
                 }
                 let anchor = stood.or(inherited);
-                (anchor, anchor.map_or(f64::INFINITY, |anchor| field.estimate(anchor, state.position, &self.problem.goal).0 + lb as f64))
+                (anchor, anchor.map_or(f64::INFINITY, |anchor| field.estimate(anchor, state.position, !state.on_ground && state.velocity.y < 0.0, &self.problem.goal).0 + lb as f64))
             }
             None => (None, lb as f64),
         };
@@ -258,7 +265,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
             // world, and never discarded for it.
             let fate = self.arc(id);
             match fate {
-                Fate::Lost => self.nodes[id as usize].h = f64::MAX,
+                Fate::Lost => self.nodes[id as usize].h = f64::INFINITY,
                 Fate::Ends(Some(through)) => self.nodes[id as usize].h = through,
                 Fate::Ends(None) => {}
             }
@@ -280,7 +287,10 @@ impl<'a, T: Timeline> Planner<'a, T> {
         loop {
             if change.is_some_and(|change| state.t >= change) { break; }
             let real = timeline.at(state.t);
-            let Some(next) = arith::free_tick(real, free, &state, &program, step.args, ticks, &|p| self.readable(p)) else { break };
+            let next = match arith::free_tick(real, free, &state, &program, step.args, ticks, &|p| self.readable(p)) {
+                Ok(next) => next,
+                Err(ends) => { lost = ends == arith::Ends::Leaves; break }
+            };
             if self.options.audit {
                 let mut replayed = state.clone();
                 let same = advance(timeline, &mut replayed, &program, step.args, 1, &mut |_, _| false).is_ok() && replayed.bits() == next.bits();
@@ -306,7 +316,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
         // The estimate through the arc stands whether or not its end is a new node.
         let anchor = self.nodes[from as usize].anchor;
         let through = match (&self.field, anchor) {
-            (Some(field), Some(anchor)) => Some(ticks as f64 + field.estimate(anchor, state.position, &goal).0 + goal.lower_bound(&state) as f64),
+            (Some(field), Some(anchor)) => Some(ticks as f64 + field.estimate(anchor, state.position, state.velocity.y < 0.0, &goal).0 + goal.lower_bound(&state) as f64),
             _ => None,
         };
         let end = self.push(from, Step { ticks, lane: Lane::Arc, ..step }, state);
@@ -376,7 +386,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
     /// The aim nearest the bearing from `node` to its next set, or to the goal.
     fn bearing(&self, node: &Node) -> u8 {
         let (x, z) = match (&self.field, node.anchor) {
-            (Some(field), Some(anchor)) => field.estimate(anchor, node.state.position, &self.problem.goal).1,
+            (Some(field), Some(anchor)) => field.estimate(anchor, node.state.position, false, &self.problem.goal).1,
             _ => (self.problem.goal.cell[0] as f64 + 0.5, self.problem.goal.cell[2] as f64 + 0.5),
         };
         let degrees = (node.state.position.x - x).atan2(z - node.state.position.z).to_degrees();
