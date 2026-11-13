@@ -183,7 +183,12 @@ impl<'a, T: Timeline> Planner<'a, T> {
         let inherited = if parent == ROOT { None } else { self.nodes[parent as usize].anchor };
         let (anchor, h) = match &mut self.field {
             Some(field) => {
-                let stood = state.main_supporting_block.filter(|support| state.on_ground && field.cells.contains_key(support));
+                // The join: a set is matched only where its premises hold in the world at this tick,
+                // and the set carried from before only while its own still do.
+                let (timeline, tick) = (self.problem.timeline, state.t);
+                let (world, epoch) = (timeline.at(tick), timeline.next_change(tick));
+                let stood = state.main_supporting_block.filter(|&support| state.on_ground && field.holds(world, support, tick, epoch));
+                let inherited = inherited.filter(|&set| field.holds(world, set, tick, epoch));
                 if let (Some(now), Some(before)) = (stood, inherited) {
                     if field.cells[&now].t < field.cells[&before].t { field.cells.get_mut(&before).unwrap().arrivals += 1; }
                 }
@@ -422,11 +427,12 @@ impl<'a, T: Timeline> Planner<'a, T> {
             args.refined_yaw.is_none() && args.max_ticks == Arguments::default().max_ticks && aims.contains(&args.yaw_index)
         }).collect();
         self.stats.per_decision.push(found.len() as u32);
-        let world = timeline.at(state.t);
         for &proposal in &found {
             let (program, args) = (self.table.proposal(proposal.id).program, self.table.proposal(proposal.id).arguments);
             let program = self.program_index(program);
             let clock = Instant::now();
+            // A child's own checks may have moved the timeline's clock: set it again.
+            let world = timeline.at(state.t);
             let replayed = self.table.replay(world, &state, proposal);
             self.stats.replay_us += clock.elapsed().as_secs_f64() * 1e6;
             self.stats.replays += 1;
@@ -448,6 +454,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
         self.stats.miss_aims += missing.len() as u64;
         let clock = Instant::now();
         let programs = self.programs.clone();
+        let world = timeline.at(state.t);
         let (invented, _) = self.table.invent(world, &state, &programs, &missing);
         self.stats.miss_us.push((clock.elapsed().as_secs_f64() * 1e6) as f32);
         self.stats.invented_runs += invented.runs as u64;
@@ -463,6 +470,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
             for &args in &missing {
                 let mut inputs = Vec::new();
                 for (program, rows) in programs.iter().enumerate() {
+                    let world = timeline.at(state.t);
                     let Some((_, input)) = rows.select(world, &state, 0, args) else { continue };
                     if inputs.contains(&input) || invented.pieces.iter().any(|piece| piece.arguments == args && programs[piece.program].select(world, &state, 0, args).map(|s| s.1) == Some(input)) { continue; }
                     inputs.push(input);

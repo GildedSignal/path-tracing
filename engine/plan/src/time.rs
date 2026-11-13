@@ -35,7 +35,10 @@ impl Scheduled {
         self.frames.push((from, world));
         self
     }
-    pub fn frames(&self) -> impl Iterator<Item = &BoxWorld> { self.frames.iter().map(|frame| &frame.1) }
+    /// Each frame with the ticks it stands over: from, and until.
+    pub fn frames(&self) -> impl Iterator<Item = ((u64, Option<u64>), &BoxWorld)> {
+        self.frames.iter().enumerate().map(|(i, frame)| ((frame.0, self.frames.get(i + 1).map(|next| next.0)), &frame.1))
+    }
     fn frame(&self) -> &BoxWorld { &self.frames.iter().rev().find(|frame| frame.0 <= self.clock.get()).unwrap().1 }
 }
 impl World for Scheduled {

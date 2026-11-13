@@ -97,7 +97,7 @@ fn fly(track: &Track, mode: char, programs: &[Program], reaches: &mut HashMap<us
             }
         }
         let reach = &reaches[&key];
-        let built = Field::build(&track.world, reach, track.body, &goal, start.main_supporting_block);
+        let built = Field::build(&track.world, reach, track.body, &goal, start.main_supporting_block, (0, None));
         writeln!(out, "{tag} sets backward: tools={} contacts={} landings={} kept={} compile {:.3}s (once per floor, not in thinking); standable={} reached={} goal cells={} checks={} build {:.3}s; T at A by the sets: {}",
             reach.tools, reach.contacts, reach.landings, reach.kept, compile, built.standable, built.reached, built.goals, built.checks, built.build_us / 1e6,
             start.main_supporting_block.and_then(|s| built.cells.get(&s)).map_or("none: no chain of sets reaches A".to_owned(), |c| c.t.to_string())).unwrap();
@@ -151,7 +151,8 @@ fn fly(track: &Track, mode: char, programs: &[Program], reaches: &mut HashMap<us
         let mut unmet: Vec<_> = field.cells.values().filter(|cell| cell.tries > 0 && cell.arrivals == 0 && cell.via.is_some()).collect();
         unmet.sort_by_key(|cell| std::cmp::Reverse(cell.tries));
         let met = field.cells.values().filter(|cell| cell.arrivals > 0).count();
-        writeln!(out, "{tag} mirror: sets the forward pass stood in {}, left for a nearer set {}, never left {}", field.cells.values().filter(|c| c.tries > 0).count(), met, unmet.len()).unwrap();
+        writeln!(out, "{tag} mirror: sets the forward pass stood in {}, left for a nearer set {}, never left {}; premises asked at {} joins, broken {}; cells read per set: {}", field.cells.values().filter(|c| c.tries > 0).count(), met, unmet.len(), field.joins, field.broken,
+            spread(&field.cells.values().map(|c| c.premises.len() as f64).collect::<Vec<_>>())).unwrap();
         for cell in unmet.iter().take(if sentence.is_some() { 2 } else { 6 }) {
             writeln!(out, "{tag} mirror failed: from {:?} (stand {:.4}) the sets said {} ticks to {:?} (stand {:.4}), a {} of {} ticks after {} run-up contacts, tool {}; {} expansions there, no arrival",
                 cell.support, cell.y, cell.t, cell.via.unwrap(), field.cells[&cell.via.unwrap()].y, if cell.hop.2 { "walk" } else { "free arc" }, cell.hop.0, cell.hop.1, cell.hop.3, cell.tries).unwrap();

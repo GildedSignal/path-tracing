@@ -17,7 +17,7 @@ fn a_sentence_on_a_floor_is_certified_and_its_tube_carries_ticks() {
     let body = ([-3, -3, -3], [3, 4, 15]);
     let reach = Reach::compile(&Block::full(), &tiny_programs(), 20.0, 8.0).unwrap();
     println!("reach: tools={} contacts={} landings={} kept={} compile={:.0} ms", reach.tools, reach.contacts, reach.landings, reach.kept, reach.compile_us / 1e3);
-    let field = Field::build(&world, &reach, body, &goal, start.main_supporting_block);
+    let field = Field::build(&world, &reach, body, &goal, start.main_supporting_block, (0, None));
     println!("field: standable={} reached={} goals={} checks={} build={:.1} ms; T at start {:?}", field.standable, field.reached, field.goals, field.checks, field.build_us / 1e3, field.cells.get(&[0, -1, 0]).map(|c| c.t));
     assert!(field.cells.contains_key(&[0, -1, 0]));
     let mut table = ProposalTable::default();
@@ -51,8 +51,8 @@ fn a_platform_that_exists_only_on_a_schedule_is_crossed_while_it_stands() {
     let body = ([-2, -3, -2], [2, 3, 12]);
     let reach = Reach::compile(&Block::full(), &tiny_programs(), 16.0, 4.0).unwrap();
     let mut field: Option<Field> = None;
-    for frame in timeline.frames() {
-        let built = Field::build(frame, &reach, body, &goal, None);
+    for (ticks, frame) in timeline.frames() {
+        let built = Field::build(frame, &reach, body, &goal, None, ticks);
         match &mut field { Some(field) => field.merge(built), None => field = Some(built) }
     }
     let mut table = ProposalTable::default();
@@ -107,4 +107,26 @@ fn a_gait_cycle_advances_by_its_increments_on_uniform_ground() {
     println!("gaits found on a floor within 600 ticks: {} of {} programs; (program, (first tick, period, ticks advanced, laps that differ)): {found:?}", found.len(), report.len());
     assert!(!found.is_empty());
     assert!(found.iter().all(|f| f.1.3 == 0), "the gait lane differs from the law");
+}
+
+/// Does a broken premise invalidate only the sets whose footprint reads the change?
+#[test]
+fn a_broken_premise_invalidates_only_the_sets_that_read_it() {
+    let mut world = BoxWorld::default();
+    floor(&mut world, [-4, -1, -4], [4, -1, 16]);
+    let goal = Goal { cell: [0, -1, 9] };
+    let body = ([-3, -3, -3], [3, 4, 15]);
+    let reach = Reach::compile(&Block::full(), &tiny_programs(), 20.0, 8.0).unwrap();
+    let mut field = Field::build(&world, &reach, body, &goal, None, (0, None));
+    let sets: Vec<_> = field.cells.keys().copied().collect();
+    assert!(sets.iter().all(|&set| field.holds(&world, set, 0, None)));
+    // The forward path's world differs by one cell: a block in the air over [0, -1, 4].
+    let mut edited = world.clone();
+    edited.set([0, 0, 4], Block::full());
+    let reads: Vec<_> = sets.iter().filter(|set| field.cells[*set].premises.iter().any(|p| p.0 == [0, 0, 4])).copied().collect();
+    let broken: Vec<_> = sets.iter().filter(|&&set| !field.holds(&edited, set, 0, Some(1))).copied().collect();
+    println!("premises: {} sets, {} read the edited cell, {} broken; premises per set min {} max {}", sets.len(), reads.len(), broken.len(),
+        field.cells.values().map(|c| c.premises.len()).min().unwrap(), field.cells.values().map(|c| c.premises.len()).max().unwrap());
+    assert!(!broken.is_empty() && broken.len() < sets.len());
+    assert_eq!(broken, reads);
 }
