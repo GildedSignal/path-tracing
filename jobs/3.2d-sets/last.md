@@ -1,0 +1,5 @@
+**Job 3.2d is blocked before implementation by the held-out-set prerequisite.** The spec requires the variation set to be chosen independently and committed before any solver code, while also forbidding me to commit. I found no matching committed held-out or variation file in this checkout or in the filename history I searched.
+
+The integrator needs to choose the variation rule and commit the resulting file to this branch before the work can proceed. The checkout is clean at `7713f9d`, on `wt/3.2d-sets`; net change is **0 lines**.
+
+No planner changes, baseline runs, gates, or track measurements were made. Consequently the per-track scoreboard, mover verdicts, held-out result, table provenance, and refusal counts are unavailable. The speed bound has not been changed or proved; Step 0 and the remaining audited constraints remain unverified. No kill-table result is claimed.

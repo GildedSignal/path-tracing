@@ -17,6 +17,7 @@
 #   states refuse earlier by name, none inside a track box. So the first flight is NOT blocked here, and
 #   this line stays closed until a track uses one. A measurement that cancels a job is the best outcome.
 
+3.2d-sets                 D:\path-tracing-wt\sets  7713f9d   # the first flight's gate; red-teamed twice
 1.4g-flying-travel        D:\path-tracing-wt\flying   # now the top real wall
 # ^ movement.rs:121 `Player.travel: abilities.flying`. Consumer: 1.4c's fluid-current delta is merged on
 #   main and DEAD through the public API until this lands - tick_movement panics first (its judge said so).

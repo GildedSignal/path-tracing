@@ -6,3 +6,9 @@
 2026-11-13 23:34 start: 1.4f-fallon-entityinside in D:\path-tracing-wt\fallon (from main)
 2026-11-13 23:34 no report: 1.4f-fallon-entityinside
 2026-11-13 23:34 queue finished
+2026-11-13 23:46 queue started: 2 jobs, 4 slots, model gpt-6.1-terra
+2026-11-13 23:46 start: 3.2d-sets in D:\path-tracing-wt\sets (from 7713f9d)
+2026-11-13 23:46 skip (no prompt.md): 1.4g-flying-travel
+2026-11-13 23:47 done: 3.2d-sets (883 bytes) - needs commit with Built-by:
+2026-11-13 23:47 no report: 1.4g-flying-travel
+2026-11-13 23:47 queue finished
