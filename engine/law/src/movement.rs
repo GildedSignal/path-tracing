@@ -867,6 +867,8 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
     let mut counts=[0; 2];
     let center=block_pos(read_state!(world, state.position));
     let eye_y=read_state!(world, state.position).y+read_state!(world, state.pose).eye_height() as f64;
+    // Player.isPushedByFluid; EntityFluidInteraction.update skips current while flying.
+    let pushed = !read_state!(world, state.flying);
     for x in lo[0]..=hi[0] {
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {
@@ -884,10 +886,12 @@ fn update_fluid(state: &mut PlayerState, world: &impl World) {
                     eyes[a]=true;
                 }
                 heights[a]=heights[a].max(top-bounding_box(state, world).min.y);
-                let flow=f.current(world, [x, y, z]);
-                let flow=if heights[a]<0.4 { flow.scale(heights[a]) } else { flow };
-                currents[a]=currents[a].plus(flow);
-                counts[a]+=1;
+                if pushed {
+                    let flow=f.current(world, [x, y, z]);
+                    let flow=if heights[a]<0.4 { flow.scale(heights[a]) } else { flow };
+                    currents[a]=currents[a].plus(flow);
+                    counts[a]+=1;
+                }
             }
         }
     }
@@ -1410,5 +1414,67 @@ mod tests {
         });
         inside_segment(&mut state, &world, position, position, &mut visited, 16);
         assert!(visited.is_empty());
+    }
+}
+
+// Witness from local-20261111-1823-1-3-port-fluid-rules (port-fluid-rules).
+// Jar anchors: Player.isPushedByFluid = !abilities.flying (Player.java.txt:4122,
+// offsets 0-15); Entity.updateFluidInteraction (Entity.java.txt:4183) passes it as
+// EntityFluidInteraction.update's skip-flow flag (offsets 6-17, consumed at offsets
+// 359-402) and gates applyCurrentTo on it (offsets 73-77).
+#[cfg(test)]
+mod flying_current_witness {
+    use super::*;
+    use crate::{BoxWorld, Fluid};
+
+    // Feet cell water[amount=7] (own height 7/9 >= 0.4), +X neighbour water[amount=4]
+    // (own 4/9). FlowingFluid.getFlow: exactly one horizontal contributor, difference
+    // 7/9-4/9 toward +X, final normalize gives (1,0,0); Tracker count 1, the Player
+    // branch of Tracker.applyCurrentTo averages by count and scales by 0.014 (Entity
+    // offsets 88-95); height 7/9 >= 0.4 so no 0.4 flow scale, and 0.014 >= 0.0045 so
+    // the minimum-current floor does not engage. Vanilla delta-x = exactly 0.014.
+    fn witness_world() -> BoxWorld {
+        let water = |amount: u8| Block {
+            fluid: Fluid {
+                kind: FluidKind::Water,
+                raw_amount: Some(amount),
+                raw_falling: Some(false),
+                ..Fluid::default()
+            },
+            ..Block::default()
+        };
+        let mut world = BoxWorld::default();
+        world.set([0, 0, 0], water(7));
+        world.set([1, 0, 0], water(4));
+        world
+    }
+
+    fn witness_player(flying: bool) -> PlayerState {
+        PlayerState { position: Vec3::new(0.5, 0.0, 0.5), flying, ..PlayerState::default() }
+    }
+
+    #[test]
+    fn control_not_flying_takes_the_current() {
+        let world = witness_world();
+        let mut state = witness_player(false);
+        update_fluid(&mut state, &world);
+        assert_eq!(read_state!(world, state.velocity).x.to_bits(), 0.014f64.to_bits());
+        assert!(read_state!(world, state.in_water));
+    }
+
+    #[test]
+    fn flying_player_takes_no_current() {
+        let world = witness_world();
+        let mut state = witness_player(true);
+        update_fluid(&mut state, &world);
+        // The height half of contact is ungated in the jar: the eyes/height updates
+        // (EntityFluidInteraction.java.txt offsets 305-356) run before the skip-flow
+        // branch at offset 359, so in_water still updates while flying.
+        assert!(read_state!(world, state.in_water));
+        assert_eq!(
+            read_state!(world, state.velocity).x.to_bits(),
+            0.0f64.to_bits(),
+            "jar applies no fluid current while abilities.flying (Player.isPushedByFluid)"
+        );
     }
 }
