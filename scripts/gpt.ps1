@@ -5,7 +5,9 @@
 param(
   [Parameter(Mandatory)][string]$Job,
   [Parameter(Mandatory)][string]$Worktree,
-  [string]$Model = 'gpt-6.1-sol',
+  # Terra by default (S99 retired Sol; S103: Sol is twice Terra's price for little gain). Astra only for
+  # what Terra stalls on.
+  [string]$Model = 'gpt-6.1-terra',
   [string]$Resume
 )
 $ErrorActionPreference = 'Stop'

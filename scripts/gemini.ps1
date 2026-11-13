@@ -38,10 +38,13 @@ $full = Join-Path $dir 'full-prompt.md'
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the
 # run STILL EXITS 0, with only a note on stderr. So the exit code is not a gate here - the report is.
-$settings = @{ permissions = @{ allow = @("read_file($($Root -replace '\\','/'))") } }
+# On Windows a permission path has its drive letter stripped and its separators flipped, and a directory
+# rule needs its trailing slash to be recursive. Get this wrong and the run still "succeeds" with an empty
+# report, having been auto-denied - it cost one 197k-token run to learn.
+function Convert-PermPath([string]$p) { (($p -replace '\\','/') -replace '^[A-Za-z]:','') + '/' }
+$settings = @{ permissions = @{ allow = @("read_file($(Convert-PermPath $Root))") } }
 if ($Write) {
-  $w = $Write -replace '\\','/'
-  $settings.permissions.allow += @("write_file($w)", 'command(git)', 'command(cargo)')
+  $settings.permissions.allow += @("write_file($(Convert-PermPath $Write))", 'command(git)', 'command(cargo)')
 }
 # --settings takes inline JSON or a file path. Inline loses its own quotes when Start-Process builds the
 # command line, so always pass a file.
@@ -71,6 +74,12 @@ if ((Get-Item $raw -ErrorAction SilentlyContinue).Length -gt 0) {
   $u = $j.usage
   $usage = "in $($u.input_tokens) (cached $($u.cache_read_tokens)) out $($u.output_tokens) think $($u.thinking_tokens)"
   if ($j.error) { "error: $($j.error)" }
+  # A soft-denied tool leaves status SUCCESS and exit 0. The report is the gate, and this is the gate.
+  if ($j.denied_actions) {
+    $status = "DENIED (" + (($j.denied_actions | ForEach-Object { $_.action }) -join ', ') + ")"
+    "REFUSED: headless mode auto-denied a tool it could not prompt for. The report is empty or partial and"
+    "this run must not be trusted. Fix the permissions.allow rules in $settingsFile and run again."
+  }
 }
 "agy exited $($p.ExitCode) after $([int]$sw.Elapsed.TotalSeconds)s; status $status; $usage"
 "report: $(Join-Path $dir 'last.md')"
