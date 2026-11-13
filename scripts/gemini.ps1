@@ -17,6 +17,7 @@ param(
   [Parameter(Mandatory)][string]$Job,
   [string]$Model = 'gemini-4-argon-high',
   [string]$Write,
+  [string[]]$ReadDir = @(),   # extra directories to read, e.g. a worktree under judgment
   [int]$TimeoutMinutes = 60
 )
 $ErrorActionPreference = 'Stop'
@@ -43,6 +44,7 @@ $full = Join-Path $dir 'full-prompt.md'
 # report, having been auto-denied - it cost one 197k-token run to learn.
 function Convert-PermPath([string]$p) { (($p -replace '\\','/') -replace '^[A-Za-z]:','') + '/' }
 $settings = @{ permissions = @{ allow = @("read_file($(Convert-PermPath $Root))") } }
+foreach ($d in $ReadDir) { $settings.permissions.allow += "read_file($(Convert-PermPath $d))" }
 if ($Write) {
   $settings.permissions.allow += @("write_file($(Convert-PermPath $Write))", 'command(git)', 'command(cargo)')
 }
@@ -53,6 +55,7 @@ $settingsFile = Join-Path $dir 'settings.json'
 
 $a = @('--output-format','json','--model',$Model,'--print-timeout',"$($TimeoutMinutes)m",
        '--add-dir',$Root,'--settings',$settingsFile)
+foreach ($d in $ReadDir) { $a += @('--add-dir',$d) }
 if ($Write) { $a += @('--add-dir',$Write,'--mode','accept-edits') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space in it.
 $quoted = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
