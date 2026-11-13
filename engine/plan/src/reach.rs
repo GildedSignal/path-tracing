@@ -156,6 +156,8 @@ pub struct Field {
     pub build_us: f64,
     /// Premises asked at a join: (set, epoch) -> they hold. And the counts.
     asked: HashMap<(BlockPos, Option<u64>), bool>,
+    /// The standable cells no chain of sets reached: the cell and the height stood at.
+    pub unreached: Vec<(BlockPos, f64)>,
     pub joins: u64,
     pub broken: u64,
 }
@@ -194,7 +196,7 @@ impl Field {
                 ticks, premises: read.into_iter().map(|p| (p, content(world, p, &mut known))).collect() });
         } } }
         let own: Vec<usize> = cells.iter().map(|cell| cell.premises.len()).collect();
-        let mut field = Field { cells: HashMap::new(), standable: cells.len(), reached: 0, goals: 0, checks: 0, build_us: 0.0, asked: HashMap::new(), joins: 0, broken: 0 };
+        let mut field = Field { cells: HashMap::new(), standable: cells.len(), reached: 0, goals: 0, checks: 0, build_us: 0.0, asked: HashMap::new(), unreached: Vec::new(), joins: 0, broken: 0 };
         // The goal's own set: the cells where a standing body's box meets the region.
         let zone = goal.zone();
         let mut open = BinaryHeap::new();
@@ -268,6 +270,7 @@ impl Field {
                 }
             }
         }
+        field.unreached = cells.iter().filter(|cell| cell.t == u32::MAX).map(|cell| (cell.support, cell.y)).collect();
         field.cells = cells.into_iter().filter(|cell| cell.t != u32::MAX).map(|cell| (cell.support, cell)).collect();
         field.build_us = clock.elapsed().as_secs_f64() * 1e6;
         field

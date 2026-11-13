@@ -96,6 +96,8 @@ impl Ord for Entry {
 /// Where a free arc went: out of the world, or to its last free tick.
 enum Fate { Lost, Ends(Option<f64>) }
 const ALL: u8 = u8::MAX;
+/// Past every estimate a set can give; it only orders.
+const UNSET: f64 = 1e12;
 const ROOT: u32 = u32::MAX;
 
 pub struct Outcome {
@@ -193,7 +195,8 @@ impl<'a, T: Timeline> Planner<'a, T> {
                     if field.cells[&now].t < field.cells[&before].t { field.cells.get_mut(&before).unwrap().arrivals += 1; }
                 }
                 let anchor = stood.or(inherited);
-                (anchor, anchor.map_or(f64::INFINITY, |anchor| field.estimate(anchor, state.position, !state.on_ground && state.velocity.y < 0.0, &self.problem.goal).0 + lb as f64))
+                // A body no set reaches is ordered after every body in a set, the nearest to the goal first.
+                (anchor, anchor.map_or(UNSET + lb as f64, |anchor| field.estimate(anchor, state.position, !state.on_ground && state.velocity.y < 0.0, &self.problem.goal).0 + lb as f64))
             }
             None => (None, lb as f64),
         };

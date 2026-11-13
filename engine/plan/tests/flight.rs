@@ -38,7 +38,8 @@ fn track(line: &str) -> Result<Track, String> {
     let mut last = String::new();
     for pad in [6, 3, 2, 0] {
         let (min, max) = ([n[0] - pad, n[1], n[2] - pad], [n[3] + pad, n[4] + 8, n[5] + pad]);
-        let margin = 3.min(pad.max(2));
+        // Three cells inside what was loaded: the law's collision scan reads that far past the body.
+        let margin = 3;
         match world::WorldSnapshot::load(root.join("../world/tests/fixtures/world"), min, max) {
             Ok(world) => return Ok(Track { name, world, read: (min, max), body: ([min[0] + margin, min[1] + 1, min[2] + margin], [max[0] - margin, max[1] - 3, max[2] - margin]), a, b, his, items, pad }),
             Err(error) => last = format!("{error:?}"),
@@ -101,6 +102,15 @@ fn fly(track: &Track, mode: char, programs: &[Program], reaches: &mut HashMap<us
         writeln!(out, "{tag} sets backward: tools={} contacts={} landings={} kept={} compile {:.3}s (once per floor, not in thinking); standable={} reached={} goal cells={} checks={} build {:.3}s; T at A by the sets: {}",
             reach.tools, reach.contacts, reach.landings, reach.kept, compile, built.standable, built.reached, built.goals, built.checks, built.build_us / 1e6,
             start.main_supporting_block.and_then(|s| built.cells.get(&s)).map_or("none: no chain of sets reaches A".to_owned(), |c| c.t.to_string())).unwrap();
+        // Where the chain of sets stops short of A: the unreached cells nearest A that stand beside a reached one.
+        if start.main_supporting_block.is_none_or(|s| !built.cells.contains_key(&s)) {
+            let near = |p: &BlockPos, q: &BlockPos| (p[0] - q[0]).abs() <= 2 && (p[2] - q[2]).abs() <= 2 && (p[1] - q[1]).abs() <= 2;
+            let mut edge: Vec<_> = built.unreached.iter().filter_map(|(cell, y)| built.cells.values().filter(|set| near(&set.support, cell)).min_by_key(|set| set.t).map(|set| (*cell, *y, set.support, set.y, set.t))).collect();
+            edge.sort_by_key(|e| (e.0[0] - track.a[0]).pow(2) + (e.0[1] - track.a[1]).pow(2) + (e.0[2] - track.a[2]).pow(2));
+            for (cell, y, set, set_y, t) in edge.iter().take(4) {
+                writeln!(out, "{tag} mirror failed: no tool's free arc or walk from {cell:?} (stand {y:.4}) lands on the set at {set:?} (stand {set_y:.4}, {t} ticks from B): rise {:.4}, {} cells across", set_y - y, (cell[0] - set[0]).abs().max((cell[2] - set[2]).abs())).unwrap();
+            }
+        }
         field = Some(built);
     }
     let search_start = clock.elapsed().as_secs_f64() - compile;
@@ -227,4 +237,31 @@ struct Tee(std::fs::File);
 impl Write for Tee {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { std::io::stdout().write_all(bytes)?; self.0.write_all(bytes)?; Ok(bytes.len()) }
     fn flush(&mut self) -> std::io::Result<()> { self.0.flush() }
+}
+
+/// A look at the cells around a track's B and A: `PLAN_TRACKS=name cargo test ... probe -- --ignored`.
+#[test]
+#[ignore = "a probe"]
+fn probe_the_cells_around_a_track() {
+    let only = std::env::var("PLAN_TRACKS").unwrap_or_default();
+    for line in include_str!("../../world/tests/fixtures/tracks.txt").lines().filter(|line| only.split(',').any(|n| line.starts_with(n))) {
+        let Ok(track) = track(line) else { continue };
+        for (what, at) in [("A", track.a), ("B", track.b)] {
+            println!("[{}] {what} {at:?}", track.name);
+            for dy in (-2..=3).rev() {
+                let mut row = format!("  y{:+}: ", dy);
+                for dz in -3..=3 { for dx in -3..=3 {
+                    let p = [at[0] + dx, at[1] + dy, at[2] + dz];
+                    let inside = (0..3).all(|a| p[a] >= track.read.0[a] && p[a] <= track.read.1[a]);
+                    let cell = if !inside { "??".to_string() } else {
+                        let block = track.world.block(p);
+                        let top = block.shape.coords[1].last().copied();
+                        if block.air { " .".into() } else { match top { Some(t) if !block.shape.is_empty() => format!("{:2.0}", t * 16.0), _ => if block.fluid.kind != law::FluidKind::Empty { " ~".into() } else { " '".into() } } }
+                    };
+                    row += &cell; row.push(' ');
+                } row += "| "; }
+                println!("{row}");
+            }
+        }
+    }
 }
