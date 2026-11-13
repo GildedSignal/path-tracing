@@ -13,7 +13,7 @@
 # all in engine/law/src/movement.rs, and they are the backlog below in consumer order.
 
 # 1.4f-fallon-entityinside  DONE 14 Nov: measured first and ported NOTHING, correctly. Both panics are
-# unreachable through WorldSnapshot on all 18 tracks (0 states each). 28 fallOn and 721 entityInside and :1078 `BlockState.entityInside` both panic by block name.
+# unreachable through WorldSnapshot on all 18 tracks (0 states each). 28 fallOn and 721 entityInside
 #   states refuse earlier by name, none inside a track box. So the first flight is NOT blocked here, and
 #   this line stays closed until a track uses one. A measurement that cancels a job is the best outcome.
 
