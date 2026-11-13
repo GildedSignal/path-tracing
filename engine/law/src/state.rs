@@ -116,6 +116,8 @@ pub struct PlayerState {
     pub effects: bool,
     pub flying: bool,
     pub using_item: bool,
+    pub use_item_speed_multiplier: Option<f32>,
+    pub use_item_can_sprint: Option<bool>,
 }
 impl Default for PlayerState {
     // Entity.<init>; LivingEntity.createLivingAttributes; Player.createAttributes; FoodData.<init>
@@ -183,7 +185,9 @@ impl Default for PlayerState {
             boat: false,
             effects: false,
             flying: false,
-            using_item: false
+            using_item: false,
+            use_item_speed_multiplier: None,
+            use_item_can_sprint: None
         }
     }
 }
@@ -208,7 +212,7 @@ impl PlayerState {
             movement_speed_base, speed_modifiers, speed, jump_strength, gravity,
             step_height, friction_modifier, air_drag_modifier, water_movement_efficiency,
             movement_efficiency, sneaking_speed, safe_fall_distance, fall_damage_multiplier,
-            bounciness, fall_flying, riding, boat, effects, flying, using_item,
+            bounciness, fall_flying, riding, boat, effects, flying, using_item, use_item_speed_multiplier, use_item_can_sprint,
         } = self;
         let mut bits = vec![*t, input.yaw.to_bits() as u64, input.pitch.to_bits() as u64,
             yaw.to_bits() as u64, pitch.to_bits() as u64, *pose as u64,
@@ -225,6 +229,10 @@ impl PlayerState {
             air_drag_modifier, water_movement_efficiency, movement_efficiency, sneaking_speed] {
             bits.push(value.to_bits() as u64);
         }
+        bits.push(use_item_speed_multiplier.is_some() as u64);
+        if let Some(value) = use_item_speed_multiplier { bits.push(value.to_bits() as u64); }
+        bits.push(use_item_can_sprint.is_some() as u64);
+        if let Some(value) = use_item_can_sprint { bits.push(*value as u64); }
         for value in [fall_distance, water_height, lava_height, movement_speed_base, jump_strength,
             gravity, safe_fall_distance, fall_damage_multiplier, bounciness] { bits.push(value.to_bits()); }
         for v in [position, velocity, stuck_speed_multiplier] { bits.extend([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]); }

@@ -120,9 +120,6 @@ fn tick_movement(
     if read_state!(world, state.flying) {
         unimplemented!("Player.travel: abilities.flying");
     }
-    if read_state!(world, state.using_item) {
-        unimplemented!("LocalPlayer.itemUseSpeedMultiplier");
-    }
     let start = read_state!(world, state.position);
     let start_box = bounding_box(state, world);
     write_state!(world, state.movement_this_tick) = None;
@@ -161,7 +158,7 @@ fn tick_movement(
     if read_state!(world, state.velocity).y.abs() < 0.003 {
         modify_state!(world, state.velocity).y = 0.0;
     }
-    let movement = modify_input(input, slowly, read_state!(world, state.sneaking_speed));
+    let movement = modify_input(input, slowly, read_state!(world, state.sneaking_speed), item_multiplier(state, world));
     write_state!(world, state.on_climbable) = climbable(state, world);
     if input.jump && read_state!(world, state.health) > 0.0 {
         let height = if read_state!(world, state.in_lava) {
@@ -207,7 +204,7 @@ fn tick_movement(
 fn update_sprinting(state: &mut PlayerState, world: &impl World, input: &Input, slowly: bool) {
     let forward = input.forward && !input.back;
     let possible = read_state!(world, state.food_level) > 6 && (read_state!(world, state.flying) || !read_state!(world, state.in_water) || read_state!(world, state.underwater));
-    if !read_state!(world, state.sprinting) && forward && possible && (!slowly || read_state!(world, state.underwater)) && input.sprint {
+    if !read_state!(world, state.sprinting) && forward && possible && (!slowly || read_state!(world, state.underwater)) && input.sprint && !(read_state!(world, state.using_item) && !read_state!(world, state.use_item_can_sprint).expect("used item canSprint")) {
         set_sprinting(state, world, true);
     }
     if read_state!(world, state.sprinting) {
@@ -255,7 +252,11 @@ fn move_towards_closest_space(state: &mut PlayerState, world: &impl World, x: f6
 }
 
 // KeyboardInput.tick; LocalPlayer.modifyInput; LocalPlayer.modifyInputSpeedForSquareMovement
-fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32) -> Vec3 {
+fn item_multiplier(state: &PlayerState, world: &impl World) -> Option<f32> {
+    read_state!(world, state.using_item).then(|| read_state!(world, state.use_item_speed_multiplier).expect("used item speedMultiplier"))
+}
+
+fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32, item_multiplier: Option<f32>) -> Vec3 {
     let mut x = (i.left as i32 - i.right as i32) as f32;
     let mut z = (i.forward as i32 - i.back as i32) as f32;
     let length = math::sqrt(x*x+z*z);
@@ -266,6 +267,7 @@ fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32) -> Vec3 {
     z /= length;
     x *= 0.98f32;
     z *= 0.98f32;
+    if let Some(multiplier) = item_multiplier { x *= multiplier; z *= multiplier; }
     if slowly {
         x *= sneaking_speed;
         z *= sneaking_speed;
@@ -789,7 +791,7 @@ fn minor_collision(state: &PlayerState, world: &impl World, moved: Vec3) -> bool
     if !read_state!(world, state.horizontal_collision) {
         return false;
     }
-    let input=modify_input(&read_state!(world, state.input), read_state!(world, state.crouching)||(read_state!(world, state.pose)==Pose::Swimming&&!read_state!(world, state.in_water)), read_state!(world, state.sneaking_speed));
+    let input=modify_input(&read_state!(world, state.input), read_state!(world, state.crouching)||(read_state!(world, state.pose)==Pose::Swimming&&!read_state!(world, state.in_water)), read_state!(world, state.sneaking_speed), item_multiplier(state, world));
     let yaw = (read_state!(world, state.yaw) * 0.017453292f32) as f64;
     let sin = math::sin(yaw) as f64;
     let cos = math::cos(yaw) as f64;

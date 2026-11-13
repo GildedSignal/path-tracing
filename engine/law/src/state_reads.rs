@@ -90,6 +90,8 @@ state_fields!(
     effects,
     flying,
     using_item,
+    use_item_speed_multiplier,
+    use_item_can_sprint,
 );
 impl StateField {
     pub fn is_resource(self) -> bool {

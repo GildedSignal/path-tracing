@@ -97,7 +97,7 @@ pub fn class(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             | F::movement_speed_base | F::speed_modifiers | F::speed | F::jump_strength | F::gravity | F::step_height
             | F::friction_modifier | F::air_drag_modifier | F::water_movement_efficiency | F::movement_efficiency
             | F::sneaking_speed | F::safe_fall_distance | F::fall_damage_multiplier | F::bounciness | F::fall_flying
-            | F::riding | F::boat | F::effects | F::flying | F::using_item => s.push_field_bits(field, &mut words),
+            | F::riding | F::boat | F::effects | F::flying | F::using_item | F::use_item_speed_multiplier | F::use_item_can_sprint => s.push_field_bits(field, &mut words),
         }
     }
     words.into()
