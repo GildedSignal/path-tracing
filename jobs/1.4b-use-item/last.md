@@ -1,0 +1,7 @@
+**Stopped before implementation:** the dossiers pin the bytecode rule, but I could not find the game’s item-component dump or an existing item-data path that supplies `speedMultiplier` and `canSprint`. The earlier dossier also explicitly says the per-item registry values were not extracted. The later candidate patch instead supplies hard-coded defaults, which does not meet this job’s requirement to read the values from the game’s dump.
+
+The dossiers also provide rounded model outputs and law-internal distance checks, rather than a bit-exact jar-derived movement witness. I therefore did not substitute those checks for the requested witness or guess at the missing data path.
+
+The pinned rule is `LocalPlayer.modifyInput` offsets 12–41: scale horizontal input by `0.98f`, then, when using an item and not a passenger, by its `UseEffects.speedMultiplier`; sneaking follows at offsets 42–63. `LocalPlayer.isSlowDueToUsingItem` offsets 0–34 reads `canSprint`, and `canStartSprinting` offsets 31–35 refuses sprint start when that predicate holds. The dossier says sprint retention does not read it.
+
+No files were changed; net lines: **0**. The red/green witness, jar suite, mutant verification and workspace tests remain unrun. The missing item dump and a bit-exact jar-derived witness need to be identified or produced before this job can meet its stated gate.

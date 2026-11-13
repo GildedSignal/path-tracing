@@ -1,0 +1,7 @@
+**Playback is not complete.** There is no `play <track>` command yet, so Julien cannot run a certified sentence in the game.
+
+I added a partial exporter in [flight.rs](/D:/path-tracing-wt/playback/engine/plan/tests/flight.rs). When the flight harness runs with `PLAN_RECORD` set, it writes `<track>-<mode>.jsonl` beside the run record for each sentence it certifies. The JSONL extends the recorder’s input format with the law’s complete start-state bit vector, raw yaw and pitch bits, and predicted position, velocity and on-ground state per tick. It checks the replay’s final state against the certificate before writing.
+
+No track scripts were generated in this session: the flight measurement remains ignored by the normal test run. The existing recorder’s start check does not verify the complete law state, so exact start-state playback has **not** been established. The playback integration, per-run deviation and correction report, track clock, and player-input cancellation remain to be built.
+
+`cargo test --offline` passed, with the repository’s designated tests ignored; the changed flight test also compiled after the final edit. The existing mod built successfully. No client or server was started, and no commit was made.

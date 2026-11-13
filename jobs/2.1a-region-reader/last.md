@@ -1,0 +1,7 @@
+**Job 2.1a is incomplete.** I added the `engine/world` crate to the workspace and implemented a dependency-free zlib/DEFLATE decoder with a 16 MiB output limit and checksum validation. Its two tests pass, covering stored, fixed-Huffman and dynamic-Huffman streams, plus corruption rejection. The dynamic stream was generated independently with .NET; the stored and fixed streams are embedded in the test.
+
+The region and NBT readers, bounded chunk cache, law bridge, probe, copied fixtures and course comparisons remain undone. No world-format assumptions have been validated by a reader yet. The supplied world does have its overworld region files under `dimensions/minecraft/overworld/region`, rather than the top-level `region` path in the job.
+
+`cargo test -p world` passes. The full `cargo test` stops before running because the existing law manifest points to a missing `jobs/1.9e-fluid-flow-oracle/compare.rs` example. The current law `World::block` API also returns a borrowed block without an error channel, so the bridge needs a fallible loading boundary to avoid silently guessing for unknown states.
+
+Changes are uncommitted in [engine/world](/D:/path-tracing-wt/world/engine/world) and the workspace manifest and lockfile.

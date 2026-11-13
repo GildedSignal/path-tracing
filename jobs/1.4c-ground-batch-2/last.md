@@ -1,0 +1,9 @@
+Ported the fluid-current gate in [movement.rs](D:/path-tracing-wt/ground-2/engine/law/src/movement.rs). The other two deltas remain refused because their dossiers leave evidence needed for the requested ports unresolved.
+
+- **Inside-contact family — skipped.** `BlockBehaviour.getEntityInsideCollisionShape` offsets 0–3 and `Entity.lambda$checkInsideBlocks$0` offsets 80–117 pin the full-cell gate; the effects are in `CactusBlock.entityInside` 0–13, `CampfireBlock.entityInside` 0–38, and `SweetBerryBushBlock.entityInside` 31–50 and 114–177. The checker says the hurt pipeline’s handling of multiple requests is not modeled, and the berry movement vector’s correspondence to the tick delta is interpreted rather than executed. The candidate takes only the first contact. No red/green witness was added; **net lines: 0**.
+
+- **Fluid current — ported.** `Player.isPushedByFluid` offsets 0–15 returns `!abilities.flying`; `Entity.updateFluidInteraction` offsets 6–17 and 73–77 and `EntityFluidInteraction.update` offsets 359–402 gate current accumulation and application while leaving height and eye contact active. The dossier witness was **red** before the change: flying velocity was `0.014` instead of zero. It is **green** after the change, alongside the non-flying `0.014` control. **Net lines: +70, −4**, including the two witnesses.
+
+- **Fall-flying stop — skipped.** `LivingEntity.aiStep` offsets 496–504 calls `updateFallFlying`; that method’s offsets 14–28 clear flag 7 when `canGlide` is false. The dossier’s frozen witness is unrecoverable, and the current state lacks the glider-equipment and levitation inputs needed for the full gate. No red/green witness was added; **net lines: 0**.
+
+Verification: `cargo test` passed, including the **6/6 jar suite**; `jobs/1.2-footprints/verify.ps1` caught **12/12 mutants**. Fixture-dependent tests remained ignored. The fluid gate is currently shadowed in full ticks by the existing creative-flight refusal.

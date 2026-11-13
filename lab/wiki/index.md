@@ -4,31 +4,36 @@
 ## Lenses
 
 - [arc-certificate](arc-certificate.md) — reproduced: 1; last 2026-11-12
-- [backward-tools](backward-tools.md) — rate-limited: 1; last 2026-11-12
+- [backward-tools](backward-tools.md) — lead: 1, no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-13
 - [certificate-size](certificate-size.md) — reproduced: 1; last 2026-11-11
 - [class-without-numbers](class-without-numbers.md) — reproduced: 1; last 2026-11-11
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
-- [gait-corridor](gait-corridor.md) — no dossier: 1, rate-limited: 1; last 2026-11-12
+- [gait-corridor](gait-corridor.md) — no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-13
 - [gait-modulo](gait-modulo.md) — reproduced: 1; last 2026-11-11
-- [generative-function](generative-function.md) — rate-limited: 1; last 2026-11-12
+- [generative-function](generative-function.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-13
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
 - [idiot-index](idiot-index.md) — reproduced: 1; last 2026-11-12
 - [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 3; last 2026-11-12
-- [jump-puzzle](jump-puzzle.md) — rate-limited: 1; last 2026-11-12
+- [jump-puzzle](jump-puzzle.md) — lead: 1, rate-limited: 1; last 2026-11-13
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [l0-step-up-control](l0-step-up-control.md) — reproduced: 1; last 2026-11-12
 - [law-change-rebuild](law-change-rebuild.md) — rate-limited: 1; last 2026-11-12
+- [monotone-tick](monotone-tick.md) — reproduced: 1; last 2026-11-13
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
 - [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 7; last 2026-11-12
+- [port-boat-delta](port-boat-delta.md) — reproduced: 1; last 2026-11-13
+- [port-boat-rider-attachment](port-boat-rider-attachment.md) — reproduced: 1; last 2026-11-13
+- [port-door-interaction](port-door-interaction.md) — no dossier: 1; last 2026-11-13
 - [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 6; last 2026-11-12
 - [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 5; last 2026-11-12
 - [port-movement-modes](port-movement-modes.md) — reproduced: 4; last 2026-11-12
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 4; last 2026-11-12
+- [port-use-effects-dump](port-use-effects-dump.md) — reproduced: 1; last 2026-11-13
 - [recorder-cost](recorder-cost.md) — reproduced: 1; last 2026-11-11
 - [server-player-readers](server-player-readers.md) — lead: 3, reproduced: 1; last 2026-11-11
 - [speed-of-light](speed-of-light.md) — reproduced: 1; last 2026-11-09
@@ -42,6 +47,13 @@
 
 ## Reproduced results
 
+- 2026-11-13 [port-boat-delta](port-boat-delta.md) (local-20261113-2043-1-1-port-boat-delta): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the occupied-boat update in still water is a closed, fully bytecode-pinned per-tick recurrence — `floatBoat` drag/buoyancy, then `controlBoat` thrust/yaw, then `move` — giving terminal straight speed 0.39999990 b/t (7.999...
+- 2026-11-13 [port-boat-rider-attachment](port-boat-rider-attachment.md) (local-20261113-2043-1-0-port-boat-rider-attachment): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) a boat rider's per-tick seat is `hull.position + localOffset.yRot(-hull.yRot * 0.017453292f) - rider.VEHICLEattachment`, where the isolated yaw step is `AbstractBoat.getPassengerAttachmentPoint(Entity, EntityDimensions, flo...
+- 2026-11-13 [backward-tools](backward-tools.md) (local-20261113-1845-1-1-backward-tools): On the 16 loadable track fixtures (5,587 standable goal cells), looking backward from a goal is a lookup — mirroring a tool's law-measured reach table about the goal cell and checking takeoff standability, flight-tube clearance and run-up cells yields, for 4,722 goals (84.5%), a one-word sentence...
+- 2026-11-13 [port-use-effects-dump](port-use-effects-dump.md) (local-20261113-1727-1-1-port-use-effects-dump): In Mojang 26.2 (client jar sha1 2dc72797acbc1b63fc16a11c4ac393605f453754, server jar sha1 86765a5899bd9c96461036a628796b4245715058) every one of the 1537 registered items binds an explicit `UseEffects` component, exactly seven items deviate from the constant `UseEffects.DEFAULT` — the seven spear...
+- 2026-11-13 [monotone-tick](monotone-tick.md) (local-20261113-1727-1-0-monotone-tick): On the 18 track fixtures × the 54 tiny programs (9,488 reached states, 28,350 boxes, 255,150 one-tick member-ticks), the law's tick is corner-monotone bit for bit on 255,136 member-ticks (14 fail, 0.0055%, one walk state, all one operation: the minor-collision angle threshold `movement.rs:802-803...
+- 2026-11-13 [gait-corridor](gait-corridor.md) (local-20261113-1712-1-0-gait-corridor): on uniform ground a gait's validity is one corridor query — the first cycle whose shifted footprint reads a cell whose digest differs from the certified pattern — and replaying from the last cycle start before that read reproduces today's tick-by-tick outcome exactly (same divergence tick, same s...
+- 2026-11-13 [generative-function](generative-function.md) (local-20261113-0958-1-0-generative-function): Between events the law's whole tick for a walking, sprinting, sneaking or jumping player on his tracks is ONE closed per-tick rule — v ← ((v+a·u(yaw)) with per-axis collision rewrites −v_axis·bounce) × (f·0.91, 1, f·0.91) plus gravity 0.08 and vertical drag 0.98 — whose k-tick prediction needs no...
 - 2026-11-12 [idiot-index](idiot-index.md) (local-20261112-1305-1-1-idiot-index): the proposal lookup is the ground layer's largest weighted idiot index — 54% of the steady-state per-piece pipeline at ~49× its Fermi floor — because `ProposalTable::proposals` (engine/words/src/table.rs:71-80) re-digests the world's cells once for every read-mask the table has ever learned (15–3...
 - 2026-11-12 [item-use-writes](item-use-writes.md) (local-20261112-1251-1-7-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), 51 classes declare the five Item use-family methods by name — 50 item-family (Item + 49 subclasses, 63 declarations) plus ItemStack (5) — and under the strict own-class rule (closure over same-class helper and `lambda$` edges...
 - 2026-11-12 [port-update-order](port-update-order.md) (local-20261112-1251-1-6-port-update-order): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the redstone-wire transition — the third unsupported non-fluid update family after the falling block (scheduled-tick) and piston (block-event) — is a **zero-schedule, zero-block-event recursion inside the neighbor-update ph...
