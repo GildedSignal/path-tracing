@@ -1,0 +1,17 @@
+**Pass 2 is incomplete.** I added a three-answer type and a finite arriving-state set in [sets.rs](D:/path-tracing-wt/sets/engine/plan/src/sets.rs), but this does not yet provide the general comparison-derived velocity intervals and bounds needed by pass 3. The API also does not enforce that every future consumer uses its authorization token or bind that token to a particular question. It should not yet be treated as the finished spine for the solver.
+
+The implemented set stores whole `PlayerState` values. For those finite members, every field and every correlation is **exact**, using the law’s bit representation:
+
+- Time and controls: `t`, all `input` fields, `yaw`, `pitch`.
+- Motion and contact: `position`, `velocity`, `on_ground`, the four collision flags, `sprinting`, `sprint_speed_modifier`, `no_physics`, `shift_key_down`, `pose`, `fall_distance`, `stuck_speed_multiplier`, `movement_this_tick`, `main_supporting_block`, `on_ground_no_blocks`, `crouching`.
+- Fluids and environment: `in_water`, `in_lava`, `on_climbable`, `swimming`, `underwater`, `eye_in_water`, `was_eye_in_water`, `water_height`, `lava_height`, `in_powder_snow`, `was_in_powder_snow`, `ticks_frozen`, `leather_boots`.
+- Resources and counters: `health`, both `hurt_cooldown` fields, `food_level`, `saturation`, `exhaustion`, `food_tick_timer`, `remaining_fire_ticks`, `no_jump_delay`.
+- Attributes and capabilities: `movement_speed_base`, `speed_modifiers`, `speed`, `jump_strength`, `gravity`, `step_height`, `friction_modifier`, `air_drag_modifier`, `water_movement_efficiency`, `movement_efficiency`, `sneaking_speed`, `safe_fall_distance`, `fall_damage_multiplier`, `bounciness`, `fall_flying`, `riding`, `boat`, `effects`, `flying`, `using_item`.
+
+No field or correlation is discarded for those exact members. An **open** set can also retain an unspecified unresolved remainder; a state absent from its known members then returns `Unknown`. This is not a certified interval or enclosure. World, timeline and program context remain separate inputs that pass 3 must validate.
+
+`Unknown` carries the question and a budget-exhausted or proof-unavailable reason. The tests show it cannot pass the provided `require_yes` check to authorize a discard or membership certification. For pass 3, an unknown must keep the alternative unresolved, open exact fallback, and prevent a completeness or optimality claim. A certified sentence may still be returned without an optimality claim. Corner-derived enclosures have no proof here and must remain unknown; no clamp was added.
+
+For pass 3, the outstanding representation decisions are to derive and trace non-singleton bounds to law comparisons, provide comparison-based splitting and a general preimage representation, and bind authorization to the specific question and set so consumers cannot accidentally reuse it. No solver, switches, lookup, footprint checking, timing, restoration proof, comparison, kill table, or held-out run was built.
+
+Verification passed: `cargo test --offline`; the footprint script caught **12/12 mutants** and restored its temporary law edits. The current doctest run contained zero tests; I did not change the import. The [run record](D:/path-tracing-evidence/sets-pass2-record.txt) includes replay commands, limitations and the test refusals. The diff is **+123 net lines** across the new set module and its export. Nothing was committed, pushed or merged.
