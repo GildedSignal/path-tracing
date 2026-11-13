@@ -2,6 +2,7 @@
 
 **Read [docs/PRINCIPLES.md](docs/PRINCIPLES.md) first.** It holds the goal and Julien's philosophy, and they are always on.
 Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, [docs/scales.md](docs/scales.md), every scale under one rule (S65), and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
+- **[docs/clan.md](docs/clan.md) before you give anyone a job**: which band a job is in, which companion takes it, the meter order, and the exact launch command for each with the traps that have cost us hours;
 - [docs/learning.md](docs/learning.md) for the unified idea (approved 12 November, S93) and [docs/vocabulary.md](docs/vocabulary.md) for the word record;
 - [docs/engine.md](docs/engine.md) for the law and the engine's contract;
 - [docs/ladder.md](docs/ladder.md) for the rungs and the scoreboard.
@@ -24,6 +25,8 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 | Judge | Sonnet 5.5 for GPT's work; GPT Terra for Claude's | gates and merges, by the other family in a fresh context |
 | Runner | Claude Haiku 5.5 | ladder runs, log digests, completeness checks |
 | Lab | GLM 5.3 through omp, as many lanes as its token window sustains (S47) | ground-layer laws, deviation triage, breakers, worst cases, tracks, R&D, primary research, red-teams; only results a machine can check ([lab/glm.md](lab/glm.md)) |
+| Google | Argon and Hydrogen through Antigravity, from 13 November (S102) | Argon reads: the corpus traversal, the untrusted channel, his primary sources. Hydrogen is a second wide lane. Neither builds and neither judges ([docs/clan.md](docs/clan.md)) |
+| The spare meter | Opus 5.5 and Sonnet 5.5 **through Antigravity** | the same minds on a meter that is not Julien's Anthropic plan: prefer it for judging and red-teaming, and keep the native plan as the reserve |
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
@@ -31,7 +34,7 @@ Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable".
 
 ## Rules
 
-- **How many at once.** One Claude sub-agent, plus up to four GPT Terra jobs, four at once only as fresh first prompts (S99; a resumed job runs with fewer), and only one GPT job while Astra runs, in dependency order, never on the same files. GLM has no slot limit (S47).
+- **How many at once.** One **native** Claude sub-agent, plus up to four GPT Terra jobs, four at once only as fresh first prompts (S99; a resumed job runs with fewer), and only one GPT job while Astra runs, in dependency order, never on the same files. GLM and Antigravity have no slot limit (S47, S102). **The native Anthropic plan is the reserve and is exhausted last** (S102): Claude-shaped work goes to Antigravity's Claude meter first, and "fill the Anthropic context" means load the integrator with context, not drain its quota. Check what is already running before launching ([docs/clan.md](docs/clan.md) section 5).
 - **The integrator orchestrates.** It writes specs and prompts, reads verdicts and decides. Builders build, judges judge, runners run.
 - **Resuming.** A stopped agent resumes: SendMessage for Claude, a fresh `gpt.ps1` run with a continuation section for GPT. GPT can't write git metadata, so the integrator commits its work with `Built-by:`.
 - **Prompts.** Each prompt starts with PRINCIPLES' "goal" and "philosophy" sections, verbatim, followed by its job file `jobs/<id>/prompt.md`, which gives the inputs, the output, the gate and what the job must not touch.

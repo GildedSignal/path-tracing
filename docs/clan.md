@@ -41,10 +41,16 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended |
 | Astra | OpenAI | Frozen (convergent) | the math Terra stalls on: a bound, a monotonicity, a closed gap |
 | GLM | Z.ai | Checked (wide) | many cheap narrow questions, each reproduced by a second session ([lab/glm.md](../lab/glm.md)) |
-| **Argon** | **Google** | **claimed: corpus traversal only** | **walks the corpus and reports what contradicts what. Narrowed from "orchestration support" by section 4b: it loses every benchmark shaped like our building and judging, and leads only on graph traversal — so it gets the traversal and nothing else** |
+| **Argon** | **Google** | **claimed: corpus traversal; untrusted reading; primary sources** | **three rows, none of them building. It walks the corpus and says what contradicts what; it reads the channel where our exposure is measured and worst; and it is the mind for his primary sources** |
 | **Hydrogen** | **Google** | **claimed: Checked (wide)** | **a second cheap-wide lane beside GLM, on the same lens queue, graded against GLM's own reproduced answers. Run at `high`: its terminal score is identical at `xhigh`, so `xhigh` is pure waste** |
 
-**Why those two claims and not others.** Our bottleneck is not building — Terra builds. Per [HANDOFF](HANDOFF.md) it is the planner's representation (taste, and Opus has it), measurement throughput (GLM has it), and **the integrator's own context**, which Julien named in S102. A frontier model whose published edge is long context is pointed at the third. If the measurement says otherwise, the rows change; they are written here so they can be wrong in public.
+**Why Argon gets three rows and none of them is building.** Its benchmarks say plainly that it should not build and should not judge (section 4b). What they also say is that it is the best thing we have for three jobs we had nobody for:
+
+1. **Corpus traversal.** GraphWalks 84.2 against Astra's 71.8 and Opus's 66.8 — a 17-point lead, and the only place it leads anything shaped like our work. That benchmark *is* multi-hop traversal over a graph, and this corpus is a graph: HANDOFF points at jobs, jobs at run folders, run folders at wiki pages, the register at his turns. "Where does `learning.md` disagree with HANDOFF" is that query, and we know such disagreements exist, because one was corrected this week.
+2. **The untrusted channel, which is the real purchase.** Argon's indirect-prompt-injection success rate is **0.7%**, the lowest on the roster, against Opus's 1.0% and **GLM's 31.5%**. GLM's lanes read decompiled Mojang bytecode and scraped wiki pages all day. That 31.5% is a measured exposure with no fix beside it; Argon is the fix for the reading half of it.
+3. **His primary sources.** The tracked request from S86–S89 — read directly whatever a design leans on, and mine his book list and Readwise in depth — is long-document synthesis, not terminal work. That is where Argon's wins actually are, and that request is owed.
+
+So Argon is not weak; it was pointed at the wrong band by the first draft of this file. Hydrogen's row is unchanged: a second wide lane, graded against GLM's own reproduced answers.
 
 ## 4. The bake-off: no row stands on reputation
 
@@ -70,7 +76,7 @@ A companion's row is a hypothesis, settled the way everything here is settled �
 | GLM's 5-hour window | **first**, always full | nothing else contends for it; ~18 lanes per window |
 | Antigravity's Gemini meter | first, for Checked-band lanes | included in the new plan, otherwise idle |
 | **Antigravity's Claude meter** | **before the native Anthropic plan** | it buys Claude-shaped work — judging, red-teaming — *without touching the reserve* |
-| Antigravity's GPT meter | beside Codex, for Checked builds | separate from the Codex plan, so it widens the build lane rather than competing with it |
+| ~~Antigravity's GPT meter~~ | **does not exist** | `agy models` carries only `gpt-oss-120b`, the open-weights one. Codex stays the only GPT route |
 | Codex (Terra, Astra) | freely; it drains fast (~4 jobs an hour), so rank jobs by what they unblock | the build lane |
 | **Native Anthropic (Opus, Sonnet, Fable, Haiku)** | **last. It is the reserve, and it is exhausted last** | it is the only meter that runs the integrator, and the integrator cannot be delegated. Spending it on work another meter could have done is the one unrecoverable waste here |
 
@@ -89,7 +95,36 @@ Measured 13 November, independent harnesses preferred over vendor tables (the sa
 - **GLM is the weakest-supported row we have**, and honesty requires saying so: index 32 against Hydrogen's 54, slow (27.6 min/task), very verbose, with reproduced endless-reasoning and degeneration failures in agentic tool use, and a **31.5% success rate for indirect prompt injection** against Argon's 0.7% and Opus's 1.0%. The last is not academic: GLM's lanes read Mojang's jar and decompiler output, which is exactly the untrusted-artefact channel that number measures. It keeps its band on the window rule above and on 72 reproduced results out of 106 lanes — **not** on being good or cheap, and the injection figure is a real exposure to close.
 - **METR, the only independent party that looked for it, found no large improvement in judgement, taste or foresight** in the model our Designer row rests on, and published no time-horizon figure at all. Treat long unattended autonomy as unmeasured for every companion here; the 18-hour-run stories are vendor anecdotes.
 
-## 5. How a job is assigned, in practice
+## 5. How to launch one, from a cold session
+
+Everything below is copy-pasteable from the repo root. A job is always a folder: `jobs/<id>/prompt.md` is the spec, and `jobs/<id>/last.md` is the report it leaves. Every runner prepends the goal and philosophy sections of PRINCIPLES verbatim, so no prompt repeats them.
+
+| Companion | Launch | Notes |
+|---|---|---|
+| **Terra** (build) | `.\scripts\gpt.ps1 -Job <id> -Worktree D:\path-tracing-wt\<id> -Model gpt-6.1-terra` | four at once, **fresh first prompts only**; resume with `-Resume <session id>`. It cannot write git metadata, so the integrator commits with `Built-by:` |
+| **Astra** (hard math) | same, `-Model gpt-6-astra` | sparingly, and only one GPT job beside it |
+| **Argon** (read, traverse) | `.\scripts\gemini.ps1 -Job <id> -Model gemini-4-argon-high` | read-only; the report is the CLI's JSON response. `-Write <worktree>` opts into editing |
+| **Hydrogen** (wide, cheap) | `.\scripts\gemini.ps1 -Job <id> -Model gemini-4-hydrogen-high` | never `xhigh`: its terminal score is identical and costs more |
+| **Sonnet / Opus on Antigravity** | `.\scripts\gemini.ps1 -Job <id> -Model claude-sonnet-5-5-high` (or `claude-opus-5-5-high`) | **this is the meter that spares the native Anthropic plan.** Prefer it for judging and red-teaming |
+| **Claude sub-agents** (native) | the integrator's own Agent tool, fresh context | the reserve. **One at a time**, and only where the native plan is the only thing that can do it |
+| **GLM** (lab lanes) | `.\scripts\glm-local.ps1 -Lenses "<space-separated>" -Minutes 60`, or `.\scripts\glm-queue.ps1` for [lab/queue.txt](../lab/queue.txt) | ~18 lanes per 5-hour window, no slot limit. Read `checker.log` for HTTP 429 before trusting a "lead" |
+
+**Model slugs**, from `agy models` on 13 November — re-run it rather than trusting this list, because it is the authority and this is a copy: `gemini-4-argon-{low,medium,high}` (no xhigh), `gemini-4-hydrogen-{low,medium,high,xhigh}`, `gemini-pro-orchestrator-g1-pro`, `claude-opus-5-5-{low,medium,high}`, `claude-sonnet-5-5-{low,medium,high}`, `gemini-3.8-flash-{low,medium,high}`, `gpt-oss-120b-medium`. There is **no frontier GPT on Antigravity** — only the open-weights one — so Codex stays the GPT route.
+
+**Running detached**, so a job outlives the session that started it (S100):
+`Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','.\scripts\gemini.ps1','-Job','<id>','-Model','gemini-4-argon-high') -WindowStyle Hidden`
+
+**The five traps that have each cost an hour:**
+1. **`Start-Process` does not quote its arguments**, and this repo's path has a space in it. Every runner quotes any argument containing whitespace; a new one must too, or the model receives `with` as a flag.
+2. **A job prompt is far past the Windows command-line limit.** It goes in on **stdin**, never in `-p`.
+3. **Antigravity soft-denies silently.** In headless mode there is no approval prompt: a disallowed action is refused, a note goes to **stderr**, and the run **still exits 0**. The exit code is not a gate — read the report and the stderr.
+4. **A job prompt must cite the main checkout by absolute path** for anything not on its branch. Two jobs of the 13 November wave could not read reports they were told to read, because the worktree predated them.
+5. **Never write a BOM.** PowerShell's `-Encoding UTF8` adds one; it breaks Antigravity's `settings.json` before 1.5.8 and resets the rig's `options.txt` to defaults. Use `[Text.UTF8Encoding]::new($false)`.
+
+**Before launching anything**, check what is already running, or you will exceed a slot limit and drain a window for nothing:
+`Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.CommandLine -match 'exec -m' }` for GPT jobs, `Get-Process agy` for Google ones, and `Get-Content lab\results\queue.log -Tail 3` for the GLM queue.
+
+## 5b. How a job is assigned, in practice
 
 1. Name the band. A machine checks it → Checked. Only another mind checks it → Judged. Nothing checks it later → Frozen.
 2. Checked: the cheapest companion whose bake-off row covers that shape, as many lanes as its window sustains.
