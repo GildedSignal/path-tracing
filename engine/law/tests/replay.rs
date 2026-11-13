@@ -404,6 +404,46 @@ fn recording_header(object: &Object<'_>) {
     assert_eq!(object.number("sprintWindow"), 0.0, "unsupported double-tap sprint window");
 }
 
+fn freeze_events(state: &mut PlayerState, row: &Object<'_>, phase: &str) {
+    if let Some(raw) = row.get("freezeSync") {
+        let mut last = 0;
+        for event in array(raw).into_iter().map(Object::parse) {
+            let order = match event.string("phase") { "between" => 0, "pre" => 1, "post" => 2, _ => panic!("invalid freeze phase") };
+            assert!(order >= last, "freeze event order");
+            last = order;
+            if event.string("phase") == phase {
+                state.ticks_frozen = event.required("v").parse().expect("invalid freeze value");
+            }
+        }
+    }
+}
+
+fn freeze_fixture(plant: bool) {
+    let (mut world, mut state) = stationary_fixture();
+    world.fill([-1, 0, -1], [1, 1, 1], Block { inside: law::Inside::PowderSnow, ..Block::boxes(&[]) });
+    let expected = [1, 2, 4, 4, 6, 7];
+    let starts = [0, 1, 2, 3, 5, 6];
+    let events = ["[]", "[]", if plant { r#"[{"phase":"post","v":5}]"# } else { r#"[{"phase":"post","v":4}]"# },
+        r#"[{"phase":"between","v":3}]"#, r#"[{"phase":"between","v":5}]"#, "[]"];
+    for i in 0..6 {
+        let text = format!(r#"{{"freezeSync":{}}}"#, events[i]);
+        let row = Object::parse(&text);
+        freeze_events(&mut state, &row, "between");
+        assert_eq!(state.ticks_frozen, starts[i], "tick {} START freeze counter", 109 + i);
+        freeze_events(&mut state, &row, "pre");
+        tick(&mut state, &world, &Input::default());
+        freeze_events(&mut state, &row, "post");
+        assert_eq!(state.ticks_frozen, expected[i], "tick {} END freeze counter", 109 + i);
+    }
+}
+
+#[test]
+fn freeze_sync_replays_recorded_sequence() { freeze_fixture(false); }
+
+#[test]
+#[should_panic(expected = "tick 111 END freeze counter")]
+fn freeze_sync_refuses_planted_value() { freeze_fixture(true); }
+
 fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64, Duration) {
     let mut expected_tick = 0;
     let mut previous_tick_count = None;
@@ -446,10 +486,20 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
         // Server-driven: the server echoes its pose and shared flags (swimming) between ticks.
         if object.get("startPose").is_some() { state.pose = pose(object.string("startPose")); }
         if object.get("startSwimming").is_some() { state.swimming = object.boolean("startSwimming"); }
-        state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen");
+        if object.get("freezeSync").is_some() && object.get("startTicksFrozen").is_some() {
+            freeze_events(state, &object, "between");
+            assert_eq!(state.ticks_frozen, object.required("startTicksFrozen").parse::<i32>().unwrap(), "tick {expected_tick}: START freeze counter");
+            freeze_events(state, &object, "pre");
+        } else {
+            state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen");
+        }
         let applied = input(&object.object("inputs"));
         let start = Instant::now();
         tick(state, world, &applied);
+        if object.get("freezeSync").is_some() && object.get("startTicksFrozen").is_some() {
+            freeze_events(state, &object, "post");
+            assert_eq!(state.ticks_frozen, object.required("ticksFrozen").parse::<i32>().unwrap(), "tick {expected_tick}: END freeze counter");
+        }
         elapsed += start.elapsed();
         assert_tick(state, &object, expected_tick);
         expected_tick += 1;

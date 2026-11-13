@@ -37,6 +37,7 @@ abstract class ClientPacketListenerMixin {
     }
     @Inject(method = "handleSetEntityData", at = @At("RETURN"))
     private void ptSprintEntityData(ClientboundSetEntityDataPacket packet, CallbackInfo ci) {
+        Recorder.entityDataPacket(packet);
         var p = Minecraft.getInstance().player;
         if (SprintDiagnostic.ENABLED && p != null && packet.id() == p.getId()) SprintDiagnostic.observe("entity-data-packet-return", p);
     }

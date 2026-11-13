@@ -394,8 +394,14 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
             let modifiers = row.get("startSpeedModifiers").unwrap_or_else(|| panic!("tick {tick}: missing START speed modifiers"));
             assert_eq!(modifiers, row.required("speedModifiers"), "tick {tick}: unsupported in-tick speed modifier change");
             state.speed_modifiers = speed_modifiers_from(modifiers);
-            state.ticks_frozen = row.get("startTicksFrozen").unwrap_or_else(|| panic!("tick {tick}: missing START freeze counter"))
-                .parse().unwrap();
+            let start_frozen = row.get("startTicksFrozen").unwrap_or_else(|| panic!("tick {tick}: missing START freeze counter")).parse::<i32>().unwrap();
+            if row.get("freezeSync").is_some() {
+                freeze_events(&mut state, row, "between");
+                assert_eq!(state.ticks_frozen, start_frozen, "tick {tick}: START freeze counter");
+                freeze_events(&mut state, row, "pre");
+            } else {
+                state.ticks_frozen = start_frozen;
+            }
         } else {
             state.speed_modifiers = speed_modifiers(row);
             state.ticks_frozen = row.required("ticksFrozen").parse().unwrap();
@@ -406,6 +412,7 @@ fn verify(file: &Path, rate: &str, ticks: usize, archive: Option<(bool, &[Object
                 eprintln!("{run}: first unsupported movement boundary at tick {tick}, input {input:?}");
                 std::panic::resume_unwind(failure)
             });
+        freeze_events(&mut state, row, "post");
         let steps = array(row.required("collisionSteps"));
         assert_eq!(steps.len(), usize::from(collision.is_some()), "tick {tick}: collision step count");
         if let Some((requested, resolved)) = collision {

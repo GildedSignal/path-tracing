@@ -23,6 +23,8 @@ import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import pathtracing.mixin.EntityStateAccess;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.Vec3;
@@ -52,6 +54,8 @@ public final class Recorder {
     private static boolean capturingDeparture;
     private static JsonArray startSpeedModifiers;
     private static int startTicksFrozen;
+    private static JsonArray freezeSync = new JsonArray();
+    private static String freezePhase = "between";
     private static boolean startSprinting;
     private static boolean startSprintSpeedModifier;
     private static String startPose;
@@ -112,6 +116,8 @@ public final class Recorder {
         capturingDeparture = false;
         applied = null;
         anomalies = new JsonArray();
+        freezeSync = new JsonArray();
+        freezePhase = "between";
         return outputPath;
     }
 
@@ -144,6 +150,8 @@ public final class Recorder {
         previousTickCount = null;
         applied = null;
         anomalies = new JsonArray();
+        freezeSync = new JsonArray();
+        freezePhase = "between";
     }
 
     static void replay(Minecraft mc, String runName, String outName) throws IOException {
@@ -223,6 +231,8 @@ public final class Recorder {
         awaitStart = false;
         applied = null;
         anomalies = new JsonArray();
+        freezeSync = new JsonArray();
+        freezePhase = "between";
         if (wasReplay) TickInput.release(mc);
         if (output == null) return;
         BufferedWriter writer = output;
@@ -252,6 +262,21 @@ public final class Recorder {
             }
         } catch (IOException e) {
             Bot.reply(mc, "Recording finalization failed; temporary output retained: " + e.getMessage());
+        }
+    }
+
+    public static void freezePass() { if (freezePhase.equals("pre")) freezePhase = "post"; }
+
+    public static void entityDataPacket(ClientboundSetEntityDataPacket packet) {
+        var player = Minecraft.getInstance().player;
+        if (output == null || player == null || packet.id() != player.getId() || start != null || awaitStart) return;
+        for (var item : packet.packedItems()) {
+            if (item.id() == EntityStateAccess.pathtracing$ticksFrozen().id()) {
+                JsonObject event = new JsonObject();
+                event.addProperty("phase", freezePhase);
+                event.addProperty("v", (Integer) item.value());
+                freezeSync.add(event);
+            }
         }
     }
 
@@ -315,9 +340,11 @@ public final class Recorder {
             replay.get(tick).apply(mc);
         }
         applied = TickInput.capture(mc);
+        freezePhase = "pre";
     }
 
     private static void endTick(Minecraft mc) {
+        freezePhase = "between";
         if (SprintDiagnostic.ENABLED && mc.player != null) SprintDiagnostic.observe("recorder-end t=" + tick, mc.player);
         if (LandingClientTrace.ENABLED) LandingClientTrace.tickEnd();
         if ((output == null && !capturingDeparture) || mc.player == null) return;
@@ -331,6 +358,7 @@ public final class Recorder {
             if (settled == 5) {
                 start = null;
                 anomalies = new JsonArray();
+                freezeSync = new JsonArray();
                 if (awaitStart) Bot.reply(mc, "Settled " + name + "; waiting for rec continue.");
             } else if (settlingTicks >= 200) {
                 abort(mc, "Replay start did not settle within 200 ticks of tp (tick " + settlingTicks + ").");
@@ -350,6 +378,7 @@ public final class Recorder {
         out.addProperty("startSwimming", startSwimming);
         out.addProperty("sprintSpeedModifier", TraceJson.sprintSpeedModifier(player.getAttribute(Attributes.MOVEMENT_SPEED)));
         out.addProperty("ticksFrozen", player.getTicksFrozen());
+        out.add("freezeSync", freezeSync);
         boolean gap = previousTickCount != null && (long) player.tickCount - previousTickCount != 1;
         out.add("inputs", applied.json());
         out.add("position", TraceJson.vector(player.position()));
@@ -400,6 +429,7 @@ public final class Recorder {
             }
             previousTickCount = player.tickCount;
             anomalies = new JsonArray();
+            freezeSync = new JsonArray();
             if (replaying() && tick == replay.size()) stop(mc);
         } catch (IOException e) {
             abort(mc, "Recording write failed at tick " + tick + ": " + e.getMessage());
