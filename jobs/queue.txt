@@ -1,0 +1,42 @@
+# Terra's standing queue (S103: "terra is very often idle you should have a list for it").
+# One job per line: <job-id> <worktree-path> [base-commit, default main]
+# The runner creates the worktree, keeps up to four running, and skips a line whose jobs/<id>/prompt.md
+# does not exist yet - so a line can be queued before its spec is written, and goes live when it is.
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gpt-queue.ps1 -Queue jobs\queue.txt
+# Order is dependency order. Never queue two jobs that touch the same files.
+# The runner does not commit: read jobs/<id>/last.md and commit with `Built-by:`.
+#
+# WHAT BELONGS HERE. AGENTS: "No job without a consumer." The port's real consumers are the places the
+# law still refuses to run - every `unimplemented!` in engine/law is a wall the planner will hit - plus a
+# measured deviation or a rung that cannot run. A delta with neither is NOT queued, however good the
+# lab evidence is, because porting it buys nothing yet. As of 14 November there are eight such walls,
+# all in engine/law/src/movement.rs, and they are the backlog below in consumer order.
+
+# 1.4f-fallon-entityinside  DONE 14 Nov: measured first and ported NOTHING, correctly. Both panics are
+# unreachable through WorldSnapshot on all 18 tracks (0 states each). 28 fallOn and 721 entityInside and :1078 `BlockState.entityInside` both panic by block name.
+#   states refuse earlier by name, none inside a track box. So the first flight is NOT blocked here, and
+#   this line stays closed until a track uses one. A measurement that cancels a job is the best outcome.
+
+1.4g-flying-travel        D:\path-tracing-wt\flying   # now the top real wall
+# ^ movement.rs:121 `Player.travel: abilities.flying`. Consumer: 1.4c's fluid-current delta is merged on
+#   main and DEAD through the public API until this lands - tick_movement panics first (its judge said so).
+#   Needs a dossier pinning the flying travel path; none exists yet. Write the lens before the spec.
+
+# 1.4h-boat-connect       D:\path-tracing-wt\boat-connect
+# ^ movement.rs:112 `Boat movement`. Consumer: job 1.4d built the seat and the still-water recurrence but
+#   deliberately did not connect them to the player tick. Queue once 1.4d is judged and merged.
+
+# 1.4i-elytra             D:\path-tracing-wt\elytra
+# ^ movement.rs:118 `LivingEntity.travelFallFlying; Math.cos`. Consumer: the elytra axis (R-brach).
+#   Waits on GLM's `port-elytra-delta`, `elytra-law`, `port-elytra-bits` and `port-glide-cosine-exact`
+#   lanes reproducing - they are batches 5 and 11 of lab/queue.txt.
+
+# NOT queued, and why - each would be a delta with no consumer today:
+#   movement.rs:109 status effects      - no potion or mob reaches the bot on his 18 tracks.
+#   movement.rs:115 travelRidden        - nothing rides anything until slice B.
+#   movement.rs:1039 lava entityInside  - no track has lava; it panics loudly if one ever does, which is
+#                                         the correct behaviour until something needs it.
+#   doors, trapdoors                    - `port-door-interaction` reproduced on 13 November, but the
+#                                         door tracks stay failures in 3.2d's frozen kill table because
+#                                         they need operator WORDS (slice B, phase 4), not the door law.
+#                                         Porting it now moves nothing and would be fake work.

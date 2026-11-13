@@ -1,0 +1,8 @@
+{
+    "permissions":  {
+                        "allow":  [
+                                      "read_file(C:/Users/PASCAL/Desktop/path tracing/)",
+                                      "read_file(/Users/PASCAL/Desktop/path tracing/)"
+                                  ]
+                    }
+}

@@ -1,0 +1,35 @@
+1. **Kill table can pass without the intended result — Step 6, line 63; axes 1, 7.** “Moves” is undefined, and only one of four needs to move. A changed expansion count, an uncertified intermediate, or one easier sentence caused by a different budget could qualify while the other three remain stalled. **Fix:** freeze a per-track definition: a newly certified end-to-end arrival under matched conditions, or a separately named and replayed intermediate witness; report each of the four independently.
+
+2. **Known tracks can be memorized — Steps 2–6, lines 32–64; axes 1, 7.** Nothing excludes track-specific prebuilt answers or tests reuse on changed starts and terrain. Replay would certify those answers without showing generalization. **Fix:** freeze a small, undisclosed variation set before implementation and require the same solver and prebuilt artifacts to run it without track-specific inputs or answers.
+
+3. **The supposed bounds can be false — Step 1, line 26; audit #2, #9; axes 2–4.** Observed corner escapes invalidate an unqualified corner-derived enclosure; calling it a “bound” does not make it sound. Final replay rejects a bad *candidate*, but cannot recover a route omitted by an unsound bound or membership test. The no-clamp rule is compatible with soundness only if non-monotone cases receive a proven conservative treatment or remain unresolved. **Fix:** require proof for every bound used to exclude states or certify membership; otherwise label it ordering-only and preserve the uncertainty. No clamp is required.
+
+4. **Set entry decides despite the exact-layer rule — Step 4, lines 44, 48; audit #2, #9, #15; axes 2–5.** “Switch fires” and fallback opens *only* on failed set entry, but the spec does not establish exact, decidable membership for approximate preimages. A false yes can suppress fallback; a false no can redirect execution. **Fix:** distinguish proven membership, proven non-membership and unknown; specify that uncertain results cannot suppress exact checking or discard alternatives.
+
+5. **Certification and restoration are not explicit return conditions — Step 1, line 26; Step 6, lines 64, 68; audit #1; axis 2.** “Final replay decides” does not state that *every returned sentence*, including fallback and improvement paths, must replay from the exact start and satisfy arrival, survival and restoration. The predecessor’s judge found restoration was not established. **Fix:** impose those checks on every return path and require refusal otherwise.
+
+6. **The measured joint cause is overstated — Step 3, line 40; axis 3.** The 42 replays depart on tick 1, and the stored hop starts pre-accelerated; the report explicitly says neither establishes the stall’s cause or reachability. “Because” and “run-up is the bottleneck” promote correlation to diagnosis. **Fix:** state these as observations and retain competing causes as unresolved.
+
+7. **The preimage claim exceeds its evidence — Step 2, line 34; axes 3, 5, 6.** A sample of translated takeoffs does not prove inversion is computable for arbitrary velocities, programs, collisions, ticks or coordinates; “computed rather than searched” also dictates a mechanism. **Fix:** limit the measured claim to its tested domain, and require sound preimages or an explicit unresolved result elsewhere.
+
+8. **The set’s state is incomplete or ambiguous — Step 1, line 24; Step 5, line 57; audit #8; axes 2, 5.** Face, booleans, velocity interval and ticks do not specify position within the face, airborne status, or other law-relevant state; a single velocity interval also leaves dimensionality and correlations unclear. **Fix:** require preservation of all state needed by the law and specify which fields and correlations the set represents or conservatively retains.
+
+9. **The baseline is not reproducible or necessarily fair — Step 0, lines 17–20; Step 6, lines 62, 68; audit #3, #17; axes 2, 5, 7.** “Fixes” include a separate backward solver, so it is unclear what remains the 3.2b baseline. Caps, hardware, inputs, precomputation, termination and timing treatment are not matched or defined. **Fix:** identify the baseline algorithm and applicable corrections, then freeze identical run conditions and cap semantics for both methods.
+
+10. **Thinking-time accounting remains gameable — Step 0, line 18; Step 6, lines 64, 68; audit #5; axes 2, 7.** A key requiring no post-click work does not establish that the table was available before the click, or account for loading, lookup, parallel work and tick rounding. **Fix:** record the actual click-to-restored-arrival clock, pre-click artifact provenance and all post-click wall time, with the conversion to server ticks specified.
+
+11. **The scoreboard cannot judge performance — Step 6, line 64; axis 7.** One per-track T against Julien supplies neither the proven lower bound and independent-search best T nor a distribution; failures and timeouts can also disappear behind a dash. **Fix:** report the bracket or explicitly mark each unavailable component, plus repeated-run distributions, budgets and failure counts.
+
+12. **Proof and termination duties conflict operationally — Steps 1–2, lines 27–32; Step 6, lines 62–68; axes 4, 5.** “Never dropped without proof” and exact preimages leave no specified outcome when proof cannot be obtained within a finite cap; an unattended builder is pushed toward an implicit tolerance or silent discard. **Fix:** define unresolved sets and budget exhaustion as recorded refusals, with no correctness or completeness claim.
+
+13. **Local repair has no decisive acceptance check — Step 0, line 20; audit #7; axes 2, 5.** The requirement says what to invalidate but does not specify how changed contents at recorded ticks are compared, including the two un-evented reads. A cache can appear to pass without demonstrating both affected and unaffected sets. **Fix:** require recorded-read evidence and an edit check covering an affected read and an unrelated change, without an artificial epoch.
+
+14. **Class-only lookup is over-prescribed from a timing sample — Step 4, line 47; audit #18; axes 2, 6.** The measured lookup cost does not establish that every context sharing a class has the same applicable proposals. **Fix:** retain the speed objective but require evidence that lookup preserves applicable proposals, or report the constraint as unresolved.
+
+15. **The five expected failures are not checked as missing-word failures — Step 6, line 63; axis 1.** A timeout, unsound pruning, or unrelated defect can produce the expected failure and appear to confirm the table. **Fix:** report the actual refusal or missing capability and distinguish it from budget exhaustion and other failures.
+
+16. **Snapshot bounds were dropped — Steps 1–6, lines 24–68; audit §3 open question 6; axis 2.** Offline execution does not itself guard reads outside snapshot halos. **Fix:** require bounds-checked reads and a recorded refusal or explicit supported world source on an out-of-snapshot lookup.
+
+**Clean axes:** None.
+
+REWRITE
