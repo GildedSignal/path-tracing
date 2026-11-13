@@ -19,22 +19,21 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 |---|---|---|
 | Integrator | Claude, main session: Fable 5.1 from 10 November (S63), Opus 5.5 before | orchestrates; specs, the word record, adjudication, merges, docs, the register |
 | Designer | Claude Opus 5.5 sub-agent, fresh context | red-teams each one-way door before it freezes |
-| Builder | GPT `gpt-6.1-sol` through `codex exec` | work that needs judgment within a spec |
-| Builder | GPT `gpt-6.1-terra` through `codex exec` (S47) | well-defined work: integration, speed, readers, executors, batches of checked GLM deltas |
-| Exact math | GPT `gpt-6-astra`, sparingly | convergent math that Sol stalls on |
-| Judge | Sonnet 5.5 for GPT's work; GPT Sol for Claude's | gates and merges, by the other family in a fresh context |
+| Builder | GPT `gpt-6.1-terra` through `codex exec` (S47) | all GPT building, hard tasks included (S99: Sol is not used); it does best on a spec that leaves nothing open |
+| Hard tasks | GPT `gpt-6-astra`, sparingly | what Terra stalls on: convergent math, hard design within a spec |
+| Judge | Sonnet 5.5 for GPT's work; GPT Terra for Claude's | gates and merges, by the other family in a fresh context |
 | Runner | Claude Haiku 5.5 | ladder runs, log digests, completeness checks |
 | Lab | GLM 5.3 through omp, as many lanes as its token window sustains (S47) | ground-layer laws, deviation triage, breakers, worst cases, tracks, R&D, primary research, red-teams; only results a machine can check ([lab/glm.md](lab/glm.md)) |
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
-**While GPT is out of weekly usage (S55; back 13 November 13:29):** one Fable sub-agent at low effort builds, on the job that most needs intelligence (S66; Opus sub-agents are out until 16 November 10:00). A Sonnet sub-agent judges it in a fresh context, and Haiku runs. GLM lanes keep going within their window (about 18 lanes per 5 hours).
+**Opus and GPT are back as agents from 13 November (S97):** the table above is in force. GPT drains fast (about four jobs an hour), so rank its jobs by what they unblock. GLM lanes keep going within their window (about 18 lanes per 5 hours).
 
 ## Rules
 
-- **How many at once.** One Claude sub-agent, plus up to four GPT Terra jobs (S50), of which Sol may take up to two (only one GPT job while Astra runs), in dependency order, never on the same files. GLM has no slot limit (S47).
+- **How many at once.** One Claude sub-agent, plus up to four GPT Terra jobs, four at once only as fresh first prompts (S99; a resumed job runs with fewer), and only one GPT job while Astra runs, in dependency order, never on the same files. GLM has no slot limit (S47).
 - **The integrator orchestrates.** It writes specs and prompts, reads verdicts and decides. Builders build, judges judge, runners run.
-- **Resuming.** A stopped agent resumes: SendMessage for Claude, `codex exec resume` for GPT. GPT can't write git metadata, so the integrator commits its work with `Built-by:`.
+- **Resuming.** A stopped agent resumes: SendMessage for Claude, a fresh `gpt.ps1` run with a continuation section for GPT. GPT can't write git metadata, so the integrator commits its work with `Built-by:`.
 - **Prompts.** Each prompt starts with PRINCIPLES' "goal" and "philosophy" sections, verbatim, followed by its job file `jobs/<id>/prompt.md`, which gives the inputs, the output, the gate and what the job must not touch.
 - **Worktrees.** Builders work on `wt/<id>` branches in worktrees on D:. The integrator merges into `main` after the judge passes. `PATHTRACING_ROOT` points every worktree at the one rig, and gates take the rig lock.
 - **No new search code.** Capabilities enter as law and toolkit data only. A capability that needs its own search or geometry means the representation is wrong: stop and re-derive it.

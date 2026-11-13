@@ -1,0 +1,14 @@
+# The unattended GLM queue of 13 November (S100). One batch per line; scripts\glm-queue.ps1 runs them in order.
+# First what the planner and the first flight wait for, then the port (boats, elytra, the world's own laws).
+monotone-tick port-use-effects-dump
+jump-puzzle backward-tools
+port-boat-rider-attachment port-boat-delta
+port-boat-surface-transition law-change-rebuild
+port-elytra-delta elytra-law
+port-block-laws port-entity-rules
+port-fluid-rules port-movement-modes
+port-update-order item-use-writes
+port-direct-pair-push port-flowing-water
+port-falling-block-landing-place port-scheduled-tick-dedup
+port-elytra-bits port-glide-cosine-exact
+port-mining-target-switch port-breaking-threshold
