@@ -31,7 +31,9 @@ function Running {
 $lines = Get-Content (Join-Path $Root $Queue) | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }
 Note "queue started: $($lines.Count) jobs, $Slots slots, model $Model"
 foreach ($line in $lines) {
-  $parts = $line.Trim() -split '\s+'
+  # Strip a trailing comment first, or "job wt # note" reads "#" as the base commit and the worktree is
+  # created from a ref that does not exist.
+  $parts = ($line -replace '#.*$','').Trim() -split '\s+'
   $job = $parts[0]; $wt = $parts[1]; $base = if ($parts.Count -gt 2) { $parts[2] } else { 'main' }
   if (-not (Test-Path (Join-Path $Root "jobs\$job\prompt.md"))) { Note "skip (no prompt.md): $job"; continue }
 
