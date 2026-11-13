@@ -68,7 +68,7 @@ fn shape(raw: &str) -> VoxelShape {
 }
 fn parse_model(line: &str) -> Block {
     let f: Vec<_> = line.split('\t').collect();
-    assert_eq!(f.len(), 20, "generated model schema");
+    assert_eq!(f.len(), 21, "generated model schema");
     let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i],16).expect("generated float bits"));
     let bits: u16 = f[5].parse().unwrap();
     let flag = |i: usize| bits & (1u16<<i) != 0;
@@ -77,7 +77,7 @@ fn parse_model(line: &str) -> Block {
     let faces: u8 = f[12].parse().unwrap();
     Block {
         shape: shape(f[15]), inside_shape: Some(shape(f[16])),
-        above_shape: Some(shape(f[17])), below_shape: Some(shape(f[18])), sneak_shape: Some(shape(f[19])),
+        above_shape: Some(shape(f[17])), below_shape: Some(shape(f[18])), sneak_shape: Some(shape(f[19])), inside_cell_shape: Some(shape(f[20])),
         friction: fp(0), speed_factor: fp(1), jump_factor: fp(2), bounce: fp(3), fall_on_multiplier: fp(4),
         air: flag(0), suffocating: flag(1), water_block: flag(2), climbable: flag(3), scaffolding: flag(4),
         slime: flag(5), bed: flag(6), fence: flag(7), wall_or_gate: flag(8), suppresses_bounce: flag(9),

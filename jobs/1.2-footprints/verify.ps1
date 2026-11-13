@@ -57,7 +57,7 @@ try {
     # A cell must be keyed by every answer its queries read: drop the fluid, then the sneak shape.
     $answers = @('test', '--offline', '-p', 'law', '--test', 'footprints', 'edits_that_keep_a_cells_answers_cannot_alter_tick')
     Mutant 'fluid-unkeyed' 'law/src/pattern.rs' 'groups & (FLUID | HOOKS) != 0' 'groups & HOOKS != 0' $answers
-    Mutant 'sneak-unkeyed' 'law/src/pattern.rs' 'for shape in [shape, above, below, sneak] {' 'let _ = sneak; for shape in [shape, above, below] {' $answers
+    Mutant 'sneak-unkeyed' 'law/src/pattern.rs' 'for shape in [shape, above, below, sneak, inside_cell] {' 'let _ = sneak; for shape in [shape, above, below, inside_cell] {' $answers
     # A shift that leaves a binade must not be called exact.
     Mutant 'scope-unbounded' 'law/src/pattern.rs' '(0..3).all(|a| shift[a] == 0 ||' '(0..3).all(|a| true ||' @('test', '--offline', '-p', 'law', '--test', 'pattern', 'shifts_inside_the_binades_replay_bit_exact')
     # The fluid check's loaded reads at absolute chunk corners: a shifted key no longer sees them.

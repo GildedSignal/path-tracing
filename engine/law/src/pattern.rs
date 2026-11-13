@@ -382,7 +382,7 @@ const HOOKS: u8 = 4;
 fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Result<bool, PatternError> {
     // Exhaustive, so a new law field forces a review of the key.
     let Block {
-        shape, inside_shape, water_block, above_shape, below_shape, sneak_shape, friction,
+        shape, inside_shape, water_block, above_shape, below_shape, sneak_shape, inside_cell_shape, friction,
         speed_factor, jump_factor, climbable, scaffolding, ladder_facing, open_trapdoor_facing,
         fluid, fluid_flow, inside, grounded_contact, stuck_multiplier, unsupported_fall_on,
         fall_on_multiplier, bed, suffocating, bounce, suppresses_bounce, slime, fence,
@@ -394,7 +394,8 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         let above = above_shape.as_ref().unwrap_or(shape);
         let below = below_shape.as_ref().unwrap_or(shape);
         let sneak = sneak_shape.as_ref().unwrap_or(above);
-        for shape in [shape, above, below, sneak] { exact &= encode_shape(bytes, shape, frame)?; }
+        let inside_cell = inside_cell_shape.as_ref().unwrap_or(below);
+        for shape in [shape, above, below, sneak, inside_cell] { exact &= encode_shape(bytes, shape, frame)?; }
         // Powder snow replaces its shapes by context.
         bytes.push((*inside == Inside::PowderSnow) as u8);
     }

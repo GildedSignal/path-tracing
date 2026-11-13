@@ -1,7 +1,7 @@
 //! Job 2.1b: the generated rule's census, Julien's tracks, and the new families' shapes against the jar.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use law::{Aabb, BoxWorld, CollisionContext, VoxelShape, World};
+use law::{Aabb, BoxWorld, CollisionContext, Input, PlayerState, Vec3, VoxelShape, World, tick_with_collision};
 use world::{BlockState, WorldReader, WorldSnapshot, model};
 fn fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world") }
 fn state(raw: &str) -> BlockState {
@@ -10,6 +10,33 @@ fn state(raw: &str) -> BlockState {
     let mut properties = tail.trim_end_matches(']').split(',').filter(|p| !p.is_empty())
         .map(|p| { let (k,v) = p.split_once('=').unwrap(); (k.to_owned(),v.to_owned()) }).collect::<Vec<_>>();
     properties.sort(); BlockState { name, properties }
+}
+
+#[test]
+fn inside_cell_collision_matches_jar_bottom_cap() {
+    let block = model(&state("scaffolding[bottom=true,distance=1,waterlogged=false]")).unwrap();
+    let mut world = BoxWorld::default();
+    world.set([0,0,0], block.clone());
+    for descending in [false, true] {
+        let actual = world.collision_shape([0,0,0], CollisionContext { feet_y: 0.125, descending, fall_distance: 0.0, leather_boots: false });
+        let expected = VoxelShape::boxes(&[Aabb::new(0.0,0.0,0.0,1.0,0.125,1.0)]);
+        for axis in 0..3 { assert_eq!(actual.coords[axis], expected.coords[axis]); }
+    }
+}
+
+#[test]
+fn descending_climbable_caps_motion_and_bottom_plate_stops_it() {
+    let mut world = BoxWorld::default();
+    let input = Input { sneak: true, ..Default::default() };
+    let mut player = PlayerState { position: Vec3::new(0.5, 0.5, 0.5), velocity: Vec3::new(0.0,-0.2,0.0), ..Default::default() };
+    world.set([0,0,0], model(&state("scaffolding[bottom=false,distance=7,waterlogged=false]")).unwrap().clone());
+    let (requested, _) = tick_with_collision(&mut player, &world, &input).unwrap();
+    assert_eq!(requested.y.to_bits(), (-0.15f32 as f64).to_bits());
+    world.set([0,0,0], model(&state("scaffolding[bottom=true,distance=1,waterlogged=false]")).unwrap().clone());
+    player.position.y = 0.2;
+    player.velocity.y = -0.2;
+    tick_with_collision(&mut player, &world, &input);
+    assert_eq!(player.position.y.to_bits(), 0.125f64.to_bits());
 }
 
 #[test]
@@ -82,7 +109,7 @@ fn new_family_shapes_equal_the_jar_bit_for_bit() {
         let law = match context {
             "0" => block.shape.clone(),
             c => {
-                let (descending, feet_y) = [(false,1.0),(false,-2.0),(true,1.0)][c.parse::<usize>().unwrap()-1];
+                let (descending, feet_y) = [(false,1.0),(false,-2.0),(true,1.0),(false,0.0)][c.parse::<usize>().unwrap()-1];
                 let mut world = BoxWorld::default(); world.set([0,0,0], block.clone());
                 world.collision_shape([0,0,0], CollisionContext { feet_y, descending, fall_distance: 0.0, leather_boots: false }).clone()
             }
@@ -98,5 +125,5 @@ fn new_family_shapes_equal_the_jar_bit_for_bit() {
         }}}
         checked += 1;
     }
-    assert_eq!(checked, 10*4);
+    assert_eq!(checked, 10*5);
 }

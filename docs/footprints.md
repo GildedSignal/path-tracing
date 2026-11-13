@@ -59,13 +59,13 @@ it started from. `insert(&world, &footprint, &start, value)` records an entry;
 
 **Cells: `reads` only, each as its queries see it.** `cell_digest(block, loaded, mask)`
 is FNV-1a 128 over the content those queries return:
-- `Shape`: the four collision shapes as `World::collision_shape` resolves them
-  (`shape`; `above`, else `shape`; `below`, else `shape`; `sneak`, else `above`),
+- `Shape`: the five collision shapes as `World::collision_shape` resolves them
+  (`shape`; `above`, else `shape`; `below`, else `shape`; `sneak`, else `above`; `inside_cell`, else `below`),
   each as its grid cells, empty subdivisions included; and whether it is powder
   snow, which replaces its shapes by context;
 - `Fluid`: the fluid (kind, height, flow, raw amount and falling) and the flow
   predicates (blocks motion, four solid faces);
-- `Hooks`: every field but the four collision shapes, the fluid included;
+- `Hooks`: every field but the five collision shapes, the fluid included;
 - `Block`: the whole model (shapes and hooks);
 - `Loaded`: the loaded bit, and only where it was read.
 

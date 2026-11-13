@@ -50,8 +50,8 @@ public final class ModelTable {
     static final class Context extends EntityCollisionContext {
         Context(boolean descending, double feet) { super(descending, false, feet, ItemStack.EMPTY, false, null); }
     }
-    // The collision contexts the law uses: none, feet above, feet below, descending above.
-    static final CollisionContext[] CONTEXTS = {CollisionContext.empty(), new Context(false,1), new Context(false,-2), new Context(true,1)};
+    // Empty, above, below, descending above, and feet at the cell's bottom plane.
+    static final CollisionContext[] CONTEXTS = {CollisionContext.empty(), new Context(false,1), new Context(false,-2), new Context(true,1), new Context(false,0)};
     // Bootstrap does not bind datapack tags. Resolve the vanilla jar resources
     // explicitly instead of treating its initially empty tag sets as answers.
     static final Map<String,Set<String>> TAGS = new HashMap<>();
@@ -130,7 +130,7 @@ public final class ModelTable {
             shape(collision.get(0)),
             // PowderSnowBlock returns Shapes.block when the unbooted collision shape is empty (26.2 bytecode).
             shape(b instanceof PowderSnowBlock?Shapes.block():s.getEntityInsideCollisionShape(LOCAL,BlockPos.ZERO,null)),
-            shape(collision.get(1)),shape(collision.get(2)),shape(collision.get(3)));
+            shape(collision.get(1)),shape(collision.get(2)),shape(collision.get(3)),shape(collision.get(4)));
     }
     // The jar's collision boxes for named states, in each law context, as exact double bits.
     static void shapes(Path out, String[] states) throws Exception {

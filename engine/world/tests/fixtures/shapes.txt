@@ -2,39 +2,49 @@ minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=tru
 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]	1	0,0,3fd8000000000000,3ff0000000000000,3ff8000000000000,3fe4000000000000
 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]	2	0,0,3fd8000000000000,3ff0000000000000,3ff8000000000000,3fe4000000000000
 minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]	3	0,0,3fd8000000000000,3ff0000000000000,3ff8000000000000,3fe4000000000000
+minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]	4	0,0,3fd8000000000000,3ff0000000000000,3ff8000000000000,3fe4000000000000
 minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]	0	3fd0000000000000,0,3fd0000000000000,3fe8000000000000,3ff8000000000000,3fe8000000000000;3fd4000000000000,0,3fe8000000000000,3fe6000000000000,3ff8000000000000,3ff0000000000000;3fe8000000000000,0,3fd4000000000000,3ff0000000000000,3ff8000000000000,3fe6000000000000
 minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]	1	3fd0000000000000,0,3fd0000000000000,3fe8000000000000,3ff8000000000000,3fe8000000000000;3fd4000000000000,0,3fe8000000000000,3fe6000000000000,3ff8000000000000,3ff0000000000000;3fe8000000000000,0,3fd4000000000000,3ff0000000000000,3ff8000000000000,3fe6000000000000
 minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]	2	3fd0000000000000,0,3fd0000000000000,3fe8000000000000,3ff8000000000000,3fe8000000000000;3fd4000000000000,0,3fe8000000000000,3fe6000000000000,3ff8000000000000,3ff0000000000000;3fe8000000000000,0,3fd4000000000000,3ff0000000000000,3ff8000000000000,3fe6000000000000
 minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]	3	3fd0000000000000,0,3fd0000000000000,3fe8000000000000,3ff8000000000000,3fe8000000000000;3fd4000000000000,0,3fe8000000000000,3fe6000000000000,3ff8000000000000,3ff0000000000000;3fe8000000000000,0,3fd4000000000000,3ff0000000000000,3ff8000000000000,3fe6000000000000
+minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]	4	3fd0000000000000,0,3fd0000000000000,3fe8000000000000,3ff8000000000000,3fe8000000000000;3fd4000000000000,0,3fe8000000000000,3fe6000000000000,3ff8000000000000,3ff0000000000000;3fe8000000000000,0,3fd4000000000000,3ff0000000000000,3ff8000000000000,3fe6000000000000
 minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]	0	
 minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]	1	
 minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]	2	
 minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]	3	
+minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]	4	
 minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]	0	3fd8000000000000,0,0,3fe4000000000000,3ff8000000000000,3ff0000000000000
 minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]	1	3fd8000000000000,0,0,3fe4000000000000,3ff8000000000000,3ff0000000000000
 minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]	2	3fd8000000000000,0,0,3fe4000000000000,3ff8000000000000,3ff0000000000000
 minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]	3	3fd8000000000000,0,0,3fe4000000000000,3ff8000000000000,3ff0000000000000
+minecraft:oak_fence_gate[facing=east,in_wall=false,open=false,powered=false]	4	3fd8000000000000,0,0,3fe4000000000000,3ff8000000000000,3ff0000000000000
 minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]	0	0,0,0,3fc8000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]	1	0,0,0,3fc8000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]	2	0,0,0,3fc8000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]	3	0,0,0,3fc8000000000000,3ff0000000000000,3ff0000000000000
+minecraft:oak_door[facing=east,half=lower,hinge=left,open=false,powered=false]	4	0,0,0,3fc8000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]	0	3fea000000000000,0,0,3ff0000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]	1	3fea000000000000,0,0,3ff0000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]	2	3fea000000000000,0,0,3ff0000000000000,3ff0000000000000,3ff0000000000000
 minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]	3	3fea000000000000,0,0,3ff0000000000000,3ff0000000000000,3ff0000000000000
+minecraft:oak_door[facing=north,half=upper,hinge=right,open=true,powered=false]	4	3fea000000000000,0,0,3ff0000000000000,3ff0000000000000,3ff0000000000000
 minecraft:white_carpet	0	0,0,0,3ff0000000000000,3fb0000000000000,3ff0000000000000
 minecraft:white_carpet	1	0,0,0,3ff0000000000000,3fb0000000000000,3ff0000000000000
 minecraft:white_carpet	2	0,0,0,3ff0000000000000,3fb0000000000000,3ff0000000000000
 minecraft:white_carpet	3	0,0,0,3ff0000000000000,3fb0000000000000,3ff0000000000000
+minecraft:white_carpet	4	0,0,0,3ff0000000000000,3fb0000000000000,3ff0000000000000
 minecraft:mud	0	0,0,0,3ff0000000000000,3fec000000000000,3ff0000000000000
 minecraft:mud	1	0,0,0,3ff0000000000000,3fec000000000000,3ff0000000000000
 minecraft:mud	2	0,0,0,3ff0000000000000,3fec000000000000,3ff0000000000000
 minecraft:mud	3	0,0,0,3ff0000000000000,3fec000000000000,3ff0000000000000
+minecraft:mud	4	0,0,0,3ff0000000000000,3fec000000000000,3ff0000000000000
 minecraft:stone_pressure_plate[powered=true]	0	
 minecraft:stone_pressure_plate[powered=true]	1	
 minecraft:stone_pressure_plate[powered=true]	2	
 minecraft:stone_pressure_plate[powered=true]	3	
+minecraft:stone_pressure_plate[powered=true]	4	
 minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]	0	
 minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]	1	
 minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]	2	
 minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]	3	
+minecraft:tripwire[attached=true,disarmed=false,east=true,north=false,powered=true,south=false,west=true]	4	

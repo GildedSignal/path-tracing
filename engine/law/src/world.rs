@@ -186,6 +186,7 @@ pub struct Block {
     pub above_shape: Option<VoxelShape>,
     pub below_shape: Option<VoxelShape>,
     pub sneak_shape: Option<VoxelShape>,
+    pub inside_cell_shape: Option<VoxelShape>,
     pub friction: f32,
     pub speed_factor: f32,
     pub jump_factor: f32,
@@ -223,6 +224,7 @@ impl Default for Block {
             above_shape: None,
             below_shape: None,
             sneak_shape: None,
+            inside_cell_shape: None,
             friction: 0.6,
             speed_factor: 1.0,
             jump_factor: 1.0,
@@ -254,7 +256,7 @@ impl Default for Block {
 impl Block {
     fn has_inside_effects(&self)->bool { self.inside!=Inside::None || self.stuck_multiplier.is_some() || self.fluid.kind!=FluidKind::Empty }
     fn collision_shapes(&self)->impl Iterator<Item=&VoxelShape> {
-        std::iter::once(&self.shape).chain(self.above_shape.iter()).chain(self.below_shape.iter()).chain(self.sneak_shape.iter())
+        std::iter::once(&self.shape).chain(self.above_shape.iter()).chain(self.below_shape.iter()).chain(self.sneak_shape.iter()).chain(self.inside_cell_shape.iter())
     }
     /// No collision shape in any context leaves the block's own cell.
     pub fn collision_within_cell(&self)->bool { self.collision_shapes().all(|shape|shape.within_cell()) }
@@ -458,6 +460,9 @@ pub trait World {
             if let Some(state) = &block.sneak_shape {
                 return state;
             }
+        }
+        if !above && context.feet_y > position[1] as f64 - 1.0e-5f32 as f64 {
+            if let Some(state) = &block.inside_cell_shape { return state; }
         }
         if let Some(state) = if above {
             &block.above_shape
