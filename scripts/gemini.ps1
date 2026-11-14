@@ -41,7 +41,8 @@ $full = Join-Path $dir 'full-prompt.md'
 # 352k in, 16k out, empty). So the job may write into its own folder only, and must write its report there
 # as it goes; if the final response comes back empty, that file becomes last.md.
 $reportFile = Join-Path $dir 'report.md'
-$contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportFile`` (create it at the start, then keep it current); it is the one file you may write. Your final message should repeat it."
+# 14 November: a run that wrote only "Drafting in progress..." lost 208k tokens of reading to one denied read.
+$contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportFile``: it is the one file you may write. Create it at the start, and **append what you have found after every three or four files you read**, never only at the end: a denied read ends the run at once, and only what is already in that file survives. Your final message should repeat it."
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body$contract", $utf8)
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the
@@ -55,7 +56,9 @@ $contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportF
 # output tokens for nothing). So grant BOTH forms; the extra rule costs nothing and removes the race.
 function Convert-PermPaths([string]$p) {
   $slash = ($p -replace '\\','/').TrimEnd('/') + '/'
-  @($slash, ($slash -replace '^[A-Za-z]:','')) | Select-Object -Unique
+  # The agent links files as file:///C:/Users/.../path%20tracing/..., and may read them in that form.
+  $forms = @($slash, ($slash -replace '^[A-Za-z]:',''))
+  $forms + @($forms | ForEach-Object { $_ -replace ' ','%20' }) | Select-Object -Unique
 }
 $allow = @(); foreach ($f in (Convert-PermPaths $Root)) { $allow += "read_file($f)" }
 foreach ($d in $ReadDir) { foreach ($f in (Convert-PermPaths $d)) { $allow += "read_file($f)" } }
