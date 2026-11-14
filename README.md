@@ -24,8 +24,8 @@ and [the ladder](docs/ladder.md).
 
 The roadmap and its state are in [HANDOFF](docs/HANDOFF.md). Phase 1 is nearly done: the law runs at under 1 µs per tick
 and reads real worlds (every block in the 18 test tracks), with footprints and a pattern key. L0, the check against the
-real client, is closing. The word record is frozen ([vocabulary.md](docs/vocabulary.md)), and the word compiler (Phase 3)
-is next, toward about 5 bots with pathfinding racing the tracks.
+real client, waits on its live gate. The words are in the code ([vocabulary.md](docs/vocabulary.md)). Next is the first
+flight (Phase 2): one bot playing certified sentences on his tracks, then learning where it fails, toward about 5 bots.
 
 ## Run
 

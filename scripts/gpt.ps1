@@ -8,7 +8,10 @@ param(
   # Terra by default (S99 retired Sol; S103: Sol is twice Terra's price for little gain). Astra only for
   # what Terra stalls on.
   [string]$Model = 'gpt-6.1-terra',
-  [string]$Resume
+  [string]$Resume,
+  # Pinned (clan.md 4b): Terra's factuality error is 16.7% at low effort against 4.3% at max, so an
+  # unpinned default is unusable for anything load-bearing.
+  [string]$Effort = 'high'
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -32,10 +35,11 @@ $env:PATHTRACING_ROOT = $Rig
 $env:PATHTRACING_DEPS = 'D:\path-tracing-deps\data'
 $env:RUSTUP_HOME = 'D:\rust\rustup'; $env:CARGO_HOME = 'D:\rust\cargo'
 $roots = "sandbox_workspace_write.writable_roots=['D:/path-tracing-deps','D:/rust','D:/path-tracing-target','D:/path-tracing-lab','D:/path-tracing-evidence']"
+$effortArg = "model_reasoning_effort=`"$Effort`""
 # A writable root must already exist; the sandbox cannot create it.
 New-Item -ItemType Directory -Force 'D:\path-tracing-target' | Out-Null
 # A resumed session must keep its worktree, writable roots and report file, or it loses write access (job 1.1).
-$codexArgs = if ($Resume) { @('exec', 'resume', '-c', $roots, '-c', 'sandbox_mode=workspace-write', '--json', '-o', (Join-Path $dir 'last.md'), $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
+$codexArgs = if ($Resume) { @('exec', 'resume', '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', (Join-Path $dir 'last.md'), $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-c', $effortArg, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space.
 $quoted = $codexArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 $p = Start-Process $codex.FullName -ArgumentList $quoted -WorkingDirectory $Worktree -NoNewWindow -Wait -PassThru `

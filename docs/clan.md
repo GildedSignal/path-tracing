@@ -125,6 +125,8 @@ Everything below is copy-pasteable from the repo root. A job is always a folder:
 4. **A job prompt must cite the main checkout by absolute path** for anything not on its branch. Two jobs of the 13 November wave could not read reports they were told to read, because the worktree predated them.
 5. **Never write a BOM.** PowerShell's `-Encoding UTF8` adds one; it breaks Antigravity's `settings.json` before 1.5.8 and resets the rig's `options.txt` to defaults. Use `[Text.UTF8Encoding]::new($false)`.
 
+**One launcher, one status screen (S104).** `.\scripts\launch.ps1 <job> <terra|astra|sonnet|opus|argon|hydrogen> [-Worktree ...] [-ReadDir ...]` starts any of the above detached, creates a GPT worktree if missing, and **refuses** to exceed a slot: four GPT (two with Astra), and on Antigravity (S105) one Argon or two Hydrogen on the Gemini meter, one Opus or two Sonnet on the Claude meter. `.\scripts\status.ps1` prints every lane, the Zai window, both queue tails and every report not yet committed. The table above is what they call.
+
 **Before launching anything**, check what is already running, or you will exceed a slot limit and drain a window for nothing:
 `Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.CommandLine -match 'exec -m' }` for GPT jobs, `Get-Process agy` for Google ones, and `Get-Content lab\results\queue.log -Tail 3` for the GLM queue.
 

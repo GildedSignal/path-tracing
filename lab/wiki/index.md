@@ -9,6 +9,7 @@
 - [class-without-numbers](class-without-numbers.md) — reproduced: 1; last 2026-11-11
 - [debug-world](debug-world.md) — reproduced: 1; last 2026-11-11
 - [elite-techniques](elite-techniques.md) — lead: 1, reproduced: 2; last 2026-11-10
+- [elytra-law](elytra-law.md) — lead: 1; last 2026-11-13
 - [foundations-primary](foundations-primary.md) — reproduced: 1; last 2026-11-05
 - [gait-corridor](gait-corridor.md) — no dossier: 1, rate-limited: 1, reproduced: 1; last 2026-11-13
 - [gait-modulo](gait-modulo.md) — reproduced: 1; last 2026-11-11
@@ -20,15 +21,17 @@
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [l0-step-up-control](l0-step-up-control.md) — reproduced: 1; last 2026-11-12
-- [law-change-rebuild](law-change-rebuild.md) — rate-limited: 1; last 2026-11-12
+- [law-change-rebuild](law-change-rebuild.md) — rate-limited: 1, reproduced: 1; last 2026-11-13
 - [monotone-tick](monotone-tick.md) — reproduced: 1; last 2026-11-13
 - [place-reach-legality](place-reach-legality.md) — reproduced: 1; last 2026-11-10
 - [port-action-resources](port-action-resources.md) — rate-limited: 1, reproduced: 3; last 2026-11-09
-- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 7; last 2026-11-12
+- [port-block-laws](port-block-laws.md) — lead: 1, reproduced: 8; last 2026-11-13
 - [port-boat-delta](port-boat-delta.md) — reproduced: 1; last 2026-11-13
 - [port-boat-rider-attachment](port-boat-rider-attachment.md) — reproduced: 1; last 2026-11-13
+- [port-boat-surface-transition](port-boat-surface-transition.md) — reproduced: 1; last 2026-11-13
 - [port-door-interaction](port-door-interaction.md) — no dossier: 1; last 2026-11-13
-- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 6; last 2026-11-12
+- [port-elytra-delta](port-elytra-delta.md) — reproduced: 1; last 2026-11-13
+- [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 7; last 2026-11-13
 - [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 5; last 2026-11-12
 - [port-movement-modes](port-movement-modes.md) — reproduced: 4; last 2026-11-12
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
@@ -47,6 +50,11 @@
 
 ## Reproduced results
 
+- 2026-11-13 [port-entity-rules](port-entity-rules.md) (local-20261113-2350-1-1-port-entity-rules): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) every melee mob's hit — `Mob.doHurtTarget:85`, the zombie archetype — is a deterministic RNG-free pair-state velocity rewrite (hurtServer's `dealDefaultKnockback`, 0.4f source-position delta, then the `LivingEntity.causeExt...
+- 2026-11-13 [port-block-laws](port-block-laws.md) (local-20261113-2350-1-0-port-block-laws): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the bubble column — the only `entityInside` overrider that rewrites velocity without damage or world writes — is one deterministic per-tick law (`vy' = min(0.7, vy+0.06)` up / `max(-0.3, vy-0.03)` down in the column inter...
+- 2026-11-13 [port-elytra-delta](port-elytra-delta.md) (local-20261113-2303-1-0-port-elytra-delta): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the elytra free-glide step is the private `LivingEntity.travelFallFlying` → `updateFallFlyingMovement` velocity recurrence — exact-arithmetic, world-free until `Entity.move:149 → Entity.collide:15 → Level.getEntityCollisi...
+- 2026-11-13 [law-change-rebuild](law-change-rebuild.md) (local-20261113-2121-1-1-law-change-rebuild): on the walk protocol's full corpus (18 tracks, 62,208 walks, 1,211,510 pieces, 1,121,340 distinct, 3,172,216 ticks), all twelve one-rule law mutants break only pieces whose own run executed the mutated rule (changed-unexposed = 0 for every mutant, measured over 12 x 1.21M pieces, not assumed), sm...
+- 2026-11-13 [port-boat-surface-transition](port-boat-surface-transition.md) (local-20261113-2121-1-0-port-boat-surface-transition): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`), the single shared Boat IN_WATER → ON_LAND/IN_AIR boundary is `net.minecraft.world.entity.vehicle.boat.AbstractBoat.getStatus()` (private; written once per tick by `AbstractBoat.tick()` at bytecode offsets 2–13), whose we...
 - 2026-11-13 [port-boat-delta](port-boat-delta.md) (local-20261113-2043-1-1-port-boat-delta): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the occupied-boat update in still water is a closed, fully bytecode-pinned per-tick recurrence — `floatBoat` drag/buoyancy, then `controlBoat` thrust/yaw, then `move` — giving terminal straight speed 0.39999990 b/t (7.999...
 - 2026-11-13 [port-boat-rider-attachment](port-boat-rider-attachment.md) (local-20261113-2043-1-0-port-boat-rider-attachment): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) a boat rider's per-tick seat is `hull.position + localOffset.yRot(-hull.yRot * 0.017453292f) - rider.VEHICLEattachment`, where the isolated yaw step is `AbstractBoat.getPassengerAttachmentPoint(Entity, EntityDimensions, flo...
 - 2026-11-13 [backward-tools](backward-tools.md) (local-20261113-1845-1-1-backward-tools): On the 16 loadable track fixtures (5,587 standable goal cells), looking backward from a goal is a lookup — mirroring a tool's law-measured reach table about the goal cell and checking takeoff standability, flight-tube clearance and run-up cells yields, for 4,722 goals (84.5%), a one-word sentence...

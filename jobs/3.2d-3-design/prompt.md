@@ -1,0 +1,131 @@
+# Design job 3.2d-3: the set, the preimage and the backward solver, specified so a builder has nothing left open
+
+You are the **Designer** (AGENTS.md team table): Frozen-band work, a representation decision that everything above it rests on. You read and write a design; you edit no code. Your output is the build spec for pass 3 of job 3.2d, and it will be red-teamed by another family before anyone builds it.
+
+**Why this job exists.** Job 3.2d (the planner, the gate to the first flight) has a spec, two red-teams and two build passes, and the builder (GPT Terra) stopped both times after about a hundred lines, each time at the same place: **the spec says what a set must satisfy but not what a set is**. Terra builds a spec that leaves nothing open; this one leaves the representation open, which is a design decision, not a build step. Pass 2 already exists on branch `wt/3.2d-sets` (worktree `D:\path-tracing-wt\sets`, file `engine/plan/src/sets.rs`): a three-answer type and a finite set of exact arriving states. Its report is quoted below.
+
+**Read** (the main checkout is `C:\Users\PASCAL\Desktop\path tracing`; read by absolute path): `docs/learning.md` section 1 (the approved design: the map plans, the search only reads it; sets backward, the point forward, slides, one replay); `docs/vocabulary.md` sections 3, 7 and 12; `docs/representation.md`; `jobs/planner-premises/last.md` (19 audited constraints with file and line); `jobs/3.2b-judge/last.md` (the FAIL); `jobs/3.2f-b-joints/last.md`; the wiki pages `lab/wiki/monotone-tick.md`, `lab/wiki/arc-certificate.md`, `lab/wiki/generative-function.md`, `lab/wiki/backward-tools.md`; and the code: `engine/plan/src/` on the sets worktree, `engine/law/src/movement.rs`, `engine/words/`.
+
+**What to produce** (under 200 lines, written as a builder's spec, every choice with its reason):
+1. **What a set is**, as a data type: which `PlayerState` fields are held exactly, which as intervals, and where each interval endpoint comes from (a comparison the law makes, with its `movement.rs` line). No number of ours: no tolerance, epsilon, grid, bucket width or fixed depth (PRINCIPLES 6 and Julien's "no made-up numbers").
+2. **The preimage**: how a takeoff set is computed from the next set under one word's run, its domain (the collision-free fixed-velocity arc is the measured one: 0 of 12,759 world-dependent cuts; jump takeoffs 108 of 108 bit-equal under translation), and what returns `unknown` outside it. Name the 14 non-monotone ticks (`movement.rs:802-803`, the `acos` ratio) and how a set containing one is handled without a clamp.
+3. **The backward solver**: from the goal set, which words are tried, in what order, how a set is split (only at a law comparison), what ends it, and where it hands to the forward point choice and the one replay. How premises are recorded (cells read at ticks) and checked.
+4. **The authorization token**: how a proven answer is bound to the question and the set it answers, so an `unknown` cannot act (the spine).
+5. **The build steps**, each one a Terra job of a few hundred lines at most, each with a gate a machine checks (a witness red then green, a bit-exact comparison, an edit test), in dependency order.
+6. **What to cut.** Julien's principle 6: "the resulting idea will be genuinely simple." If a rule in the spec below buys nothing the first flight needs, say which and why. If the spec's settled rules make the representation impossible, stop and say so: that goes back to Julien.
+
+---
+
+## The 3.2d spec, verbatim
+# Job 3.2d: the planner, rewritten — sets backward, the point forward, one replay
+
+**Version 2, after a red-team verdict of REWRITE.** The first draft of this spec was attacked by two families; one returned 16 defects and no clean axis. Every change below is traceable to one of them. Its predecessor, job 3.2b, was judged **FAIL**, so this is the third attempt and the bar is correspondingly high.
+
+**Why.** This is the gate to the first flight: one bot racing his 18 tracks. **Consumer:** that flight, and nothing else.
+
+**Branch.** `D:\path-tracing-wt\sets` on `wt/sets`, cut from `7713f9d`. Anything outside your branch is in the main checkout at `C:\Users\PASCAL\Desktop\path tracing` and must be opened by absolute path.
+
+**Read**, in this order: `AGENTS.md`; `docs/PRINCIPLES.md` goal and philosophy; **`jobs/planner-premises/last.md`** — the audited list of 19 constraints with the file and line behind each, which is this spec's bibliography; `jobs/3.2d-redteam-terra/last.md` — the 16 defects, so you can see what each rule below is defending against; `jobs/3.2b-judge/last.md`; `docs/learning.md` section 1; `docs/vocabulary.md` sections 3, 7, 12; `jobs/3.2f-b-joints/last.md` and `jobs/3.2e-probes/last.md`; `docs/engine.md`.
+
+---
+
+## The spine: three answers, never two
+
+Every test this planner makes about a set — "is this state in it", "can this set be discarded", "does this bound exclude this candidate" — returns one of exactly three answers: **proven yes**, **proven no**, or **unknown**. This is the rule the rest of the spec hangs on, so build it first and make it impossible to bypass in the types.
+
+- **Only a proven answer may act.** An `unknown` may **order**, and may do nothing else. It may never discard a candidate, never certify membership, never suppress a fallback, and never end a search.
+- **`unknown` is recorded, not resolved.** When a budget runs out, or a proof is unavailable, the result is a **recorded refusal** carrying what was being asked and why it stopped. It is never silently turned into a yes or a no, and the run makes no completeness claim over any part of the space where a refusal was recorded.
+- **What a finite budget means, so you do not have to invent it.** A search that exhausts its budget with alternatives still unresolved **may return a certified sentence** — the planner is a semi-decision procedure and is expected to answer (`learning.md` section 2, step 3). It must then report that sentence as **certified but not claimed optimal**, and list the unresolved alternatives it did not settle. What it may never do is report such a run as complete, as a proof of optimality, or as evidence that no better route exists. Returning nothing when a sentence was certified is also wrong.
+- This exists because the final replay is **not** a safety net for this class of error. A replay rejects a bad candidate, but a route wrongly excluded by an unsound bound or a false membership test is never generated, so the replay never sees it and the loss is silent and permanent.
+
+## Step 0 — the judge's four fixes
+
+Nothing else is built until these hold; before them the old numbers are not comparable.
+
+1. **No bound discards without a proof.** `c = 19.902886` b/s is a **3-tick average**, not a per-tick bound, so it may order and must never exclude. Either prove a per-tick horizontal bound covering an arbitrary start velocity — stating the proof and its assumptions in the report — or prune **only** by exact-state dominance. This applies to *every* bound the planner uses to exclude or to certify, not only to `c`.
+2. **Thinking time counts, and is clocked, not argued.** Record the actual wall clock from click to restored arrival, the conversion you use from wall time to server ticks (state the conversion; a tick is 50 ms and rounding is yours to declare), and every post-click computation. For each pre-built artefact record its **provenance**: what built it, when, and from what. **What is outside T is the artefact's construction, never its use** — reading a key and performing a lookup are work, they happen after the click, and their measured cost is counted inside T like any other. A table whose provenance is not recorded is treated as built after the click, in full.
+3. **"Sets backward" must be backward.** The old code was one forward search ordered by a field over cells, which is why its comparison meant nothing. Sets are carried backward along the chain, the point is chosen forward, joints slide inside their sets.
+4. **Premises are checked against recorded read footprints at ticks** — never a supplied epoch, never a rescan. The comparison is: for each cell the footprint records as read at tick t, the contents now at that cell at that tick against the contents recorded then; a difference invalidates, identical contents do not, and a cell absent from the footprint is never consulted. Prove it with an **edit test**: one edit to a cell an affected set's footprint read (it must invalidate), and one unrelated edit (it must not), both at ticks, including the two un-evented reads named in Step 4.
+
+## Step 1 — what a set is
+
+A set is **arriving states**, never cells. The cell stays nature's address for block reads, footprints and premises, and is not a node. No cell carries a T of its own, and there is no grid of ours.
+
+**On numbers in a set.** A set's bounds are *derived*: each one traces to a comparison the law makes, and you should record that trace. What is forbidden is a number **you** choose — a tolerance, an epsilon, a grid spacing, a bucket width, a threshold, a fixed subdivision depth. A derived interval endpoint is not one of those; a rounded or widened one is.
+
+- **It must carry everything the law reads.** Face and class booleans and a velocity interval are **not** sufficient: position within the face, airborne status, and any other law-relevant field are part of the state. State explicitly which fields the set represents exactly, which it bounds, and what correlations between them it keeps or conservatively discards. A field you neither represent nor conservatively over-approximate is a soundness bug.
+- **Corner checks order; they do not decide.** `monotone-tick` is reproduced: the tick is corner-monotone on **255,136 of 255,150** one-tick member-ticks. The **14 exceptions have a named cause** — at `movement.rs:802-803` an `acos` ratio rounds above 1 and yields `NaN` on `minor_horizontal_collision`, flipping `sprinting` at `movement.rs:217` — and escapes over k ticks peak at **0.427% at k = 3**. You may **not** clamp that ratio: the law must equal Mojang's. So a corner-derived enclosure is `unknown`, not proven, wherever a non-monotone case is not separately proven conservative. Treat it accordingly under the spine.
+- **Splitting** happens only where the law makes a comparison. **Dropping** needs a proof, and where no proof is available the set is recorded as unresolved and kept.
+
+## Step 2 — takeoffs
+
+The takeoff set of a word is the **preimage of the next set under that word's run**. Two measurements bear on this and neither is a general result, so do not treat them as one:
+
+- Free-air arcs: **0 of 12,759** world-dependent cuts, **56,575 of 56,575** exact floor and landing-tick predictions, ~700 ns per arc (`local-20261112-1251-1-0-arc-certificate`).
+- Jump takeoffs: **108 of 108** bit-equal under translation as a function of `(v_start, program, k, f)` (`local-20261113-0958-1-0-generative-function`).
+
+The convenient reading — "the landing surface shifted back by the arc" — is permitted **only** for a collision-free arc at fixed velocity, which is the tested domain. Outside it, produce a sound preimage or record `unknown`. **How** you compute a preimage is yours to choose: this spec requires soundness and a stated domain, not a mechanism.
+
+## Step 3 — the run-up, stated as what was measured
+
+Do **not** rely on gaits: a stone sprint-jump gait needs **265 ticks, 22 cycles** from rest, and corridors degenerate to **1.07 cells per run** on these tracks. A run-up is the per-tick rule applied k times.
+
+Two observations, reported as observations: `backward-tools` certifies **4,722 of 5,587** standable goals from mirrored tables, and **89%** of its false yeses are run-up mismatch against 2.4% from the flight half; and all **42** stalled-joint replays on `fences` and `fencemaze` depart on **tick 1**, the stored hop beginning at a pre-accelerated contact. **The measurements explicitly do not establish the cause of the stalls, nor whether a valid run-up is reachable from the search's own states.** Competing causes stay open. Design sets to carry an explicit entry-velocity interval because the state demands it, not because the stall has been diagnosed.
+
+## Step 4 — switches, aim, lookup, fallback
+
+- **A switch fires when the exact state is a proven member of the next word's takeoff set.** `unknown` membership does not fire a switch, does not suppress fallback, and does not discard the alternatives.
+- **The planner does not branch at a body-block change** (vocabulary 12.4, S101); segments, certificates and the proposal table keep that cut.
+- **Aim is solved from the sets it joins**, then refined — not 64 replays per decision.
+- **Proposal lookup.** A multi-mask lookup measured 22.1 µs against 100 ns single-mask, 49× its floor, so looking up by class alone is the speed objective. It is **not** assumed sound: show that every context sharing a class has the same applicable proposals, or record the constraint as unresolved and keep the slower lookup.
+- **Exact-state search opens wherever membership is not proven**, which includes `unknown`. `Order::Admissible` **stays** as the offline judge for the bracket.
+- **Every hop's full four-dimensional worldtube** is checked against real block collision shapes at ticks, walked hops included.
+- **Reads are bounds-checked.** A lookup outside the snapshot's halo is a recorded refusal, or names the supported world source it came from. Offline execution does not make this safe by itself.
+- Two world reads are **not** evented and sets must not assume they are: a wall contact ending on one axis while the other stays collided, and sneak `maybeBackOffFromEdge` at `movement.rs:577`.
+
+## Step 5 — what every returned sentence must satisfy
+
+**Every** sentence this planner returns — from the main path, from a fallback, from an improvement pass, from anywhere — is replayed end to end by the law **from the exact start state**, and must show arrival, survival, **and restoration of the world** (3.2b's judge found restoration was not established). A sentence that fails any of these is refused, not returned and not reported as a success.
+
+## Step 6 — the measurement that decides
+
+- **The baseline must be reproducible.** The baseline is `Order::Admissible` as 3.2b left it, plus **only** Step 0 fixes 1 and 2 — the bound stops discarding, and thinking time is clocked. Fixes 3 and 4 define the new method and do **not** apply to it. Run both at **cap 1 and cap 20**, where a cap counts expansions and termination is cap exhaustion or a certified sentence, whichever comes first; state it precisely if you must refine that. Match the **accounting** of precomputation, not the artefacts: the two methods legitimately need different ones, so list each method's artefacts with its build cost and say which are inside T. Same hardware, same inputs, same timing treatment.
+- **A held-out set, already frozen, and not chosen by you.** The integrator wrote and committed it before this job existed: **`jobs/3.2d-sets/held-out.md`**, three deterministic transformations (translate, start off-centre and moving, mirror) with how each is reported. Read it, implement it, run it with the same solver and the same pre-built artefacts — and do not look at its results until the main table is finished, and never tune against it. **You are not asked to choose or commit anything here**; the file is already on your branch.
+  - **Instance data is allowed; answers and tuning are not.** The solver of course receives the track's geometry and its start and goal — that is the problem. What must not exist anywhere is a stored answer, a per-track parameter, a table keyed by track identity, or anything selected by trying the tracks. If a pre-built artefact was built from the 18 tracks, say so: that is the thing most likely to be memorisation in disguise.
+- **The kill table, frozen before the first run and never edited after it.** Expected to stay failures *for a missing word*: `doorcorridor`, `doorparkourblue`, `trapdoorparkour`, `ametwoodbox`, `mud`. Expected to move: `fences`, `redfakemaze`, `fencemaze`, `amertystcoral`.
+  - **"Moves" means**: a newly certified end-to-end arrival under matched conditions; or, failing that, a replayed witness that reaches a **named state the baseline provably never reached** — the joint it was stalled at, by name — under the same conditions. A changed expansion count, a different budget, an uncertified intermediate, or a replay that reaches somewhere already reachable is **not** movement. Report the four independently.
+  - **A failure must be the right kind, and shown to be.** For each expected failure, report the planner's actual recorded refusal, and show the missing capability **caused** it: name the point where no word applies, and show that the run did not instead stop on budget exhaustion, a timeout, or an unrelated defect — if it did, say so and the table is not confirmed for that track.
+  - **If none of the four movers moves, this spec is wrong.** Report that as a kill, not as a tuning problem.
+- **The scoreboard.** Per track: whether a sentence arrives; T against his; the **bracket** — the proven lower bound and the best T from the independent search — or an explicit mark for each component that is unavailable and why; a **distribution over repeated runs**, never an average alone — **5 runs per track**, with failures and timeouts reported as their own counts beside the distribution and never dropped from it or folded in as a large value; expansions; the budget; the refusal counts; and the clocked thinking time inside T.
+- **Write a run record** (AGENTS) under `D:\path-tracing-evidence\`: inputs for exact replay, each invariant's worst margin, and every refusal.
+
+**On what this spec dictates, and why.** A red-team called several rules below mechanism rather than requirement, which would normally be a fair objection. They are kept because they are **not this spec's choices**: "sets backward, the point forward" is the judge's third FAIL fix and his S91/S94/X16; no grid field and no MCTS are AGENTS' "No new search code" and audit constraint 19; "never a rescan" is the judge's fourth FAIL fix; splitting only at a law comparison is the red-team's own earlier requirement. Inside those, the mechanism is yours — how you compute a preimage, order a frontier, or represent a set is not prescribed, and a better representation found within them is welcome. If one of these settled rules is what blocks you, **stop and say so**: that is a re-derivation for the integrator and Julien, not something to work around.
+
+**Must not.** Add a tolerance, an epsilon, a retry, a per-block branch, a jump catalogue, or a clamp — including on the `acos` ratio. Turn an `unknown` into a yes or a no anywhere. Write new search or geometry code per tool; if a capability seems to need its own search, stop and say so. Use MCTS or a field over a grid. Touch `bot/`, `docs/`, the gates, the fixtures, or the law's arithmetic. Edit the kill table or the held-out set after a run. Commit, push or merge.
+
+**Done means.** Step 0's four fixes; the baseline rerun at both caps under stated identical conditions; the solver measured on the 18 tracks **and** the held-out set; the scoreboard above; the run records written. **Gates:** `jobs/1.2-footprints/verify.ps1` still 12 of 12 mutants, and `cargo test --offline` from `engine/` passing **except** the known-broken `engine/plan` doctest at `walk.rs:4`, which imports `law::Refusal` unavailable to rustdoc — you may fix that import, and if you do, say so; you may not disable or ignore any other test.
+
+Final message: the per-track table, which of the four movers moved and by the definition above, the held-out result, what Step 0's bound became (proved, or ordering-only), the provenance of every pre-built table, every place you recorded `unknown` or a refusal, the net lines, and every audited constraint you could not satisfy and why. **A spec that fails its own kill table honestly is a result; one that passes by editing the table, by memorising the tracks, or by resolving an `unknown` is a failure.**
+
+
+---
+
+## Pass 2's report, verbatim
+
+**Pass 2 is incomplete.** I added a three-answer type and a finite arriving-state set in [sets.rs](D:/path-tracing-wt/sets/engine/plan/src/sets.rs), but this does not yet provide the general comparison-derived velocity intervals and bounds needed by pass 3. The API also does not enforce that every future consumer uses its authorization token or bind that token to a particular question. It should not yet be treated as the finished spine for the solver.
+
+The implemented set stores whole `PlayerState` values. For those finite members, every field and every correlation is **exact**, using the law’s bit representation:
+
+- Time and controls: `t`, all `input` fields, `yaw`, `pitch`.
+- Motion and contact: `position`, `velocity`, `on_ground`, the four collision flags, `sprinting`, `sprint_speed_modifier`, `no_physics`, `shift_key_down`, `pose`, `fall_distance`, `stuck_speed_multiplier`, `movement_this_tick`, `main_supporting_block`, `on_ground_no_blocks`, `crouching`.
+- Fluids and environment: `in_water`, `in_lava`, `on_climbable`, `swimming`, `underwater`, `eye_in_water`, `was_eye_in_water`, `water_height`, `lava_height`, `in_powder_snow`, `was_in_powder_snow`, `ticks_frozen`, `leather_boots`.
+- Resources and counters: `health`, both `hurt_cooldown` fields, `food_level`, `saturation`, `exhaustion`, `food_tick_timer`, `remaining_fire_ticks`, `no_jump_delay`.
+- Attributes and capabilities: `movement_speed_base`, `speed_modifiers`, `speed`, `jump_strength`, `gravity`, `step_height`, `friction_modifier`, `air_drag_modifier`, `water_movement_efficiency`, `movement_efficiency`, `sneaking_speed`, `safe_fall_distance`, `fall_damage_multiplier`, `bounciness`, `fall_flying`, `riding`, `boat`, `effects`, `flying`, `using_item`.
+
+No field or correlation is discarded for those exact members. An **open** set can also retain an unspecified unresolved remainder; a state absent from its known members then returns `Unknown`. This is not a certified interval or enclosure. World, timeline and program context remain separate inputs that pass 3 must validate.
+
+`Unknown` carries the question and a budget-exhausted or proof-unavailable reason. The tests show it cannot pass the provided `require_yes` check to authorize a discard or membership certification. For pass 3, an unknown must keep the alternative unresolved, open exact fallback, and prevent a completeness or optimality claim. A certified sentence may still be returned without an optimality claim. Corner-derived enclosures have no proof here and must remain unknown; no clamp was added.
+
+For pass 3, the outstanding representation decisions are to derive and trace non-singleton bounds to law comparisons, provide comparison-based splitting and a general preimage representation, and bind authorization to the specific question and set so consumers cannot accidentally reuse it. No solver, switches, lookup, footprint checking, timing, restoration proof, comparison, kill table, or held-out run was built.
+
+Verification passed: `cargo test --offline`; the footprint script caught **12/12 mutants** and restored its temporary law edits. The current doctest run contained zero tests; I did not change the import. The [run record](D:/path-tracing-evidence/sets-pass2-record.txt) includes replay commands, limitations and the test refusals. The diff is **+123 net lines** across the new set module and its export. Nothing was committed, pushed or merged.

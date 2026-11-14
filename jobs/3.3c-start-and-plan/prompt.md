@@ -1,0 +1,28 @@
+# Job 3.3c: the start state, a planner you can call, and the play driver
+
+**Why.** Nothing has been played in the game yet. Job 3.3a-b stopped at its own step 1 because it asked for the complete start-state bit vector from the client snapshot, and the client cannot see every field. That spec was wrong, not the builder: **the L0 replay gate already builds a full law start state from a client snapshot plus a server sample**, and this job reuses that instead of re-deriving it. Every phase ends in a flight Julien can use (AGENTS, "Pace"); this is the shortest path to the first one.
+
+**Consumer.** The first flight (HANDOFF roadmap item 2): Julien clicks a track, the bot plays a certified sentence, and the deviation stream gets its first run.
+
+**What is flown.** The sentences of the flight harness on this branch (job 3.2b's planner). Its judge FAILED it on its *claims* — the bound, thinking time, the backward method — not on whether a certified sentence is a valid path: every sentence it returns is replayed tick by tick through the law from the start state. So fly them, report T, and claim nothing about optimality. Job 3.2d replaces the planner later behind the same call.
+
+**Branch.** `D:\path-tracing-wt\playback` on `wt/playback`. Your earlier partial exporter is uncommitted in `engine/plan/tests/flight.rs`: keep it and build on it. Anything outside the branch is in the main checkout, `C:\Users\PASCAL\Desktop\path tracing`, by absolute path.
+
+**Read.** `AGENTS.md`; `docs/engine.md`; `bot/recorder.md` sections "Server endpoints" and the L0 driver's resource rule (search for "foodTickTimer=0"); `engine/law/tests/replay.rs` `load_state` (line ~86) and `engine/law/tests/support/server_resources.rs`; `jobs/3.3a-playback/last.md` and `jobs/3.3a-b-playback/last.md` (your own two reports); `scripts/server-state.ps1`; `oracles/1.6g-terrain-corpus/run-live.ps1` as the model for driving the bot from a script.
+
+## Build, in this order. Stop at the first step you cannot finish, and say why.
+
+1. **The start state, every field classified.** Move `load_state` out of the test into a library function the planner can call (a move, not a copy: `replay.rs` then calls the library, and its tests must still pass unchanged). Inputs: the client's settled snapshot, the server sample from `server-state.ps1`, and the number of settled ticks. For **every** field of `PlayerState::bits()`, the code and a table in your report say which of four it is:
+   - **observed** by the client snapshot (taken bit for bit);
+   - **server-sampled** (health, food, saturation, exhaustion, food timer, ticks frozen, fall distance: the server's value wins over the client's, as the L0 driver already does);
+   - **settled**: forced by the settling condition (on ground, zero horizontal velocity for 5 ticks, nothing damaging): cite the law line that makes the value determined after those ticks, e.g. a cooldown counted down;
+   - **refused**: none of the above, so the function returns a refusal naming the field. Never a default chosen to make it pass.
+   Tests: every archived L0 fixture's start state rebuilt through the library is bit-equal to what `replay.rs` builds today; one fixture with an edited server resource is refused at that field, by name.
+2. **A planner you can call.** A binary in `engine/plan` (for example `plan-track`) taking a track name, a start-state file and an output path. It runs the flight harness's planner from **that** start state, replays the sentence through the law, and writes the JSONL your exporter already defines (start-state bits, inputs with raw yaw and pitch bits, predicted state per tick). It records the wall-clock thinking time from start to file written, with every pre-built table's provenance (what built it, when, from what). No sentence: a refusal with the planner's own reason, and a non-zero exit.
+3. **Which tracks export.** Run it on all 18 tracks from each track's settled start on A as the harness defines it today. Per track: sentence or refusal (with reason), predicted T in ticks, his T from the track record, thinking time.
+4. **The play driver, written and dry-run, not run live.** `scripts/play-track.ps1 <track>`, modelled on `run-live.ps1`: take the rig lock; have the bot prepare the track and settle with `wait`; read `server-state.ps1` and the client snapshot; build the start state (step 1) or stop with its refusal; call the planner (step 2) — **thinking time is inside T, so the clock starts at the click**; feed the JSONL to the bot's replay; collect the recording. A `-DryRun` switch does everything up to the bot commands against a saved snapshot and sample, and you run that.
+5. **The deviation report**, as an offline function over a recording and its JSONL: the first tick where the live state leaves the predicted one, which fields differ and by how many bits, and the count of server corrections. Test it on an archived L0 recording against its own law replay (zero deviations), and on the same with one tick's input edited (a deviation at that tick).
+
+**Must not.** Nudge, re-anchor or retry the bot toward the plan; a deviation is the measurement. Add a tolerance or an epsilon anywhere. Change the law's arithmetic, the planner's search, or any gate (`jobs/1.2-footprints/verify.ps1` and the fixtures). Start a server or a client: live runs need a quiet machine and Julien. Commit, push or merge.
+
+**Done means.** Each step built or named as not built, with why; the classification table; the per-track table; the exact command Julien types; what a refusal looks like; `cargo test --offline` from `engine/` passing (you may fix the `walk.rs:4` doctest import of `law::Refusal`, and say so); `jobs/1.2-footprints/verify.ps1` still 12 of 12 mutants; the net lines.

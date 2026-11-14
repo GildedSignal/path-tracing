@@ -16,7 +16,8 @@ public class UseEffectsTable {
             if (!pending.key().equals(BuiltInRegistries.ITEM.key())) continue;
             pending.forEach((ref, map) -> {
                 UseEffects fx = map.get(DataComponents.USE_EFFECTS);
-                if (fx == null) fx = UseEffects.DEFAULT;
+                // Every 26.2 item binds USE_EFFECTS explicitly (1,537 of 1,537); a future jar that does not must stop the export, not default (1.4b judge).
+                if (fx == null) throw new IllegalStateException("no USE_EFFECTS binding: " + ref.key().identifier());
                 rows.put(ref.key().identifier().toString(), fx.canSprint() + "\t" + String.format("%08x", Float.floatToRawIntBits(fx.speedMultiplier())));
             });
         }

@@ -38,7 +38,7 @@ A segment ends at the first tick where **any discrete field of the state changes
 - the booleans (on ground, collisions, in fluid, climbable, and the others);
 - pose, sprinting, and the supporting block's cell or contents;
 - the program's active row;
-- **or the body's block changes.**
+- **or the body's block changes** (a segment ends here; the planner does not choose here, section 12.4, S101).
 
 This one rule catches what a list misses: stone to ice, soul sand or honey; step-ups onto carpet, slabs or mud, where `on_ground` stays true; cobwebs and berry bushes; losing sprint; taking damage. The block-change cut keeps segments short for recognition; a segment without a bound would bring back the whole-word key (0.9ⁿ). Members of one class that reach different exits are a width question (section 7), not a determinism one. Whether a certificate must end where a piece ends is open (section 12).
 
