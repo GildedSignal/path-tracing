@@ -285,6 +285,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "start with big models because you'd rather have the small models cutoff than the bigs ones"; start with Argon | S114 | **Followed:** [clan.md](clan.md) section 4: on a shared meter the big model's work launches first (Astra before Terra; Argon at once on its own weekly). Argon took the `butoonpressureplates` diagnosis that afternoon |
 | "antigravity is sonnet only you can use opus" | S115 | **Followed:** `launch.ps1` refuses Opus on Antigravity; Opus work runs as a native sub-agent |
 | "are we properly representing things? ... gaming must have extremely smart solutions to this that we may have missed" | S116 | **Followed:** Argon research job `jobs/intersection-research` (collision, motion planning, voxel traversal, equivalence), set off by the button-and-plate crouch-walk |
+| "this should never happen anyway since we're doing things ES style" (re-testing tick by tick) | S117 | **Followed, and found broken in code:** the planner's `arith::free_tick` scans cells every tick of every arc; the 3.2d-3 design continuation now requires each worldtube checked once and rechecked only when an edit breaks its certificate |
 
 ## Contradictions (kept side by side)
 
