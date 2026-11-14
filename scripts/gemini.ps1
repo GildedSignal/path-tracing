@@ -37,7 +37,12 @@ $guard = [regex]::Match($principles, '(?s)## The goal.*?(?=\n## From Emergent Sp
 if (-not $guard) { throw 'Could not find the goal and philosophy sections in docs/PRINCIPLES.md' }
 $body = [IO.File]::ReadAllText((Join-Path $dir 'prompt.md'), $utf8)
 $full = Join-Path $dir 'full-prompt.md'
-[IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body", $utf8)
+# S113-S115: a refused read_file has twice ended a run with its whole report lost (Argon on 14 November:
+# 352k in, 16k out, empty). So the job may write into its own folder only, and must write its report there
+# as it goes; if the final response comes back empty, that file becomes last.md.
+$reportFile = Join-Path $dir 'report.md'
+$contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportFile`` (create it at the start, then keep it current); it is the one file you may write. Your final message should repeat it."
+[IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body$contract", $utf8)
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the
 # run STILL EXITS 0, with only a note on stderr. So the exit code is not a gate here - the report is.
@@ -54,6 +59,7 @@ function Convert-PermPaths([string]$p) {
 }
 $allow = @(); foreach ($f in (Convert-PermPaths $Root)) { $allow += "read_file($f)" }
 foreach ($d in $ReadDir) { foreach ($f in (Convert-PermPaths $d)) { $allow += "read_file($f)" } }
+foreach ($f in (Convert-PermPaths $dir)) { $allow += "write_file($f)"; $allow += "read_file($f)" }
 if ($Write) {
   foreach ($f in (Convert-PermPaths $Write)) { $allow += "write_file($f)" }
   $allow += @('command(git)', 'command(cargo)')
@@ -65,7 +71,7 @@ $settingsFile = Join-Path $dir 'settings.json'
 [IO.File]::WriteAllText($settingsFile, ($settings | ConvertTo-Json -Depth 6), $utf8)
 
 $a = @('--output-format','json','--model',$Model,'--print-timeout',"$($TimeoutMinutes)m",
-       '--add-dir',$Root,'--settings',$settingsFile)
+       '--add-dir',$Root,'--settings',$settingsFile,'--log-file',(Join-Path $dir 'agy.log'))
 foreach ($d in $ReadDir) { $a += @('--add-dir',$d) }
 if ($Write) { $a += @('--add-dir',$Write,'--mode','accept-edits') }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space in it.
@@ -96,6 +102,11 @@ if ((Get-Item $raw -ErrorAction SilentlyContinue).Length -gt 0) {
     if ($j.denied_actions) { "note: $(@($j.denied_actions).Count) denied action(s), recovered - the report is non-empty" }
   } else {
     $status = 'EMPTY'
+    if ((Get-Item $reportFile -ErrorAction SilentlyContinue).Length -gt 0) {
+      Copy-Item $reportFile (Join-Path $dir 'last.md') -Force
+      $status = 'EMPTY RESPONSE, REPORT KEPT'
+      "the final response was empty; the report written as it went is kept as last.md"
+    }
     "REFUSED: the run produced no report. If stderr mentions a permission, fix permissions.allow in"
     "$settingsFile; otherwise just run it again - an empty first turn has been seen and is not reproducible."
   }
