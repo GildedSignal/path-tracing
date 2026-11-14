@@ -34,20 +34,26 @@ function Read-Meters {
       break
     }
   }
-  # A 429 in the last five hours means that Antigravity meter is spent until the reset it names.
-  $since = (Get-Date).AddHours(-5)
-  Get-ChildItem (Join-Path $Root 'jobs') -Recurse -File -Include result.json,stderr.txt -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTime -gt $since } | ForEach-Object {
-      $hit = Select-String -Path $_.FullName -Pattern 'RESOURCE_EXHAUSTED' -List
-      if ($hit) {
-        # Which meter is read from the model the job was launched with (jobs/launch.log), never from the
-        # error text, which does not name it: guessing from the text called a spent Claude meter Gemini.
-        $job = Split-Path -Leaf $_.DirectoryName
-        $launched = Select-String -Path (Join-Path $Root 'jobs\launch.log') -Pattern " $([regex]::Escape($job)) " -ErrorAction SilentlyContinue | Select-Object -Last 1
-        $meter = if ([string]$launched -match 'claude-') { 'agy claude' } elseif ([string]$launched -match 'gemini-') { 'agy gemini' } else { 'agy unknown' }
-        $m[$meter] = 100
+  # Antigravity: its own `/usage` slash command, run headless on stdin, costs no model call and prints
+  # "<group>\t<label>\t<N>%\t<reset>" with N the share REMAINING (found 14 November, S112; the earlier
+  # "unreadable until spent" was never tested). Claude and GPT models share one meter; Argon has its own.
+  $agy = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+  if (Test-Path $agy) {
+    $in = [IO.Path]::GetTempFileName(); $out = [IO.Path]::GetTempFileName()
+    Set-Content -LiteralPath $in '/usage' -Encoding ascii
+    $p = Start-Process $agy -ArgumentList @('--output-format','text','--print-timeout','60s') -RedirectStandardInput $in `
+      -RedirectStandardOutput $out -RedirectStandardError ([IO.Path]::GetTempFileName()) -NoNewWindow -Wait -PassThru
+    foreach ($line in Get-Content -LiteralPath $out) {
+      $f = $line -split "`t"
+      if ($f.Count -ge 3 -and $f[2] -match '^(\d+)%$') {
+        $used = 100 - [double]$Matches[1]   # read before any other -match overwrites $Matches
+        $group = if ($f[0] -match 'Argon') { 'agy argon' } elseif ($f[0] -match 'Claude') { 'agy claude+gpt' } elseif ($f[0] -match 'Gemini') { 'agy gemini' } else { "agy $($f[0])" }
+        $window = if ($f[1] -match 'Five Hour') { '5h' } else { 'week' }
+        $m["$group $window"] = $used
       }
     }
+    Remove-Item -LiteralPath $in, $out -ErrorAction SilentlyContinue
+  }
   $m
 }
 
