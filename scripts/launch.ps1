@@ -11,7 +11,10 @@ param(
   [Parameter(Mandatory, Position = 1)][ValidateSet('terra','astra','sonnet','opus','argon','hydrogen')][string]$Who,
   [string]$Worktree,
   [string]$Base = 'main',
-  [string[]]$ReadDir = @()
+  [string[]]$ReadDir = @(),
+  # Check slots and print what would start, without starting it. Test changes to this script this way:
+  # on 14 November a "test" of the slot fix launched a real duplicate job.
+  [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
@@ -30,10 +33,16 @@ if ($Who -in 'terra','astra') {
   if ($running.Count -ge 4 -or ($astra -and $running.Count -ge 2) -or ($Who -eq 'astra' -and $running.Count -ge 2)) {
     throw "GPT lane full: $($running.Count) running ($astra Astra). Wait, or queue it in jobs\queue.txt."
   }
-  if (-not (Test-Path $Worktree)) {
+  if (-not (Test-Path $Worktree) -and -not $DryRun) {
     # git reports progress on stderr, which PS 5.1 turns into a terminating error under 'Stop'.
     $ErrorActionPreference = 'Continue'; git -C $Root worktree add -b "wt/$Job" $Worktree $Base 2>&1 | Out-Null; $ErrorActionPreference = 'Stop'
     if (-not (Test-Path $Worktree)) { throw "worktree failed: $Worktree from $Base" }
+  }
+  # The fixture world is git-ignored, so a new worktree lacks it and its track tests fail (14 November,
+  # three times). Copy main's whenever the worktree has none.
+  $fixture = 'engine\world\tests\fixtures\world'
+  if ((Test-Path (Join-Path $Root $fixture)) -and -not (Test-Path (Join-Path $Worktree $fixture))) {
+    robocopy (Join-Path $Root $fixture) (Join-Path $Worktree $fixture) /E /NFL /NDL /NJH /NJS /NP | Out-Null
   }
   $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6-astra' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gpt.ps1",'-Job',$Job,'-Worktree',$Worktree,'-Model',$model)
@@ -62,6 +71,7 @@ if ($Who -in 'terra','astra') {
 }
 # Start-Process does not quote its arguments and this repo's path has a space (clan.md, trap 1).
 $q = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
+if ($DryRun) { "dry run: slots allow $Job on $Who ($model); would run: powershell $($q -join ' ')"; return }
 $p = Start-Process powershell -ArgumentList $q -WorkingDirectory $Root -WindowStyle Hidden -PassThru
 # Every lane runs at Idle CPU priority and its children inherit it, so a live gate on the same machine
 # keeps its rate: L0 Preflight passed under full load this way on 14 November (S106), where the same

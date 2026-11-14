@@ -44,6 +44,9 @@ $contract = @'
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$job$contract", $utf8)
 
 $env:PATHTRACING_ROOT = $Rig
+# One cargo target per job: the workspace config sends every worktree to D:/path-tracing-target, and two
+# jobs building there overwrote each other's binaries (14 November).
+$env:CARGO_TARGET_DIR = "D:/path-tracing-target/job-$Job"
 # The sandbox cannot read %LOCALAPPDATA%: builds use the staged copy (scripts\stage-deps.ps1), and the
 # staged copy, the Rust homes, the shared cargo target dir, the reference rig (its lock and disposable worlds) and the evidence folder are opened to the job. Julien's own world (server in this checkout) is not.
 $env:PATHTRACING_DEPS = 'D:\path-tracing-deps\data'
