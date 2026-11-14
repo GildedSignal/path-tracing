@@ -35,7 +35,7 @@ $contract = @'
 
 ---
 
-**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you. Anything else is read as unfinished, and you will be resumed in this same session to continue. Partial progress is not a stopping point: keep going until DONE or BLOCKED.
+**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you: a missing input file, a denied permission, or a contradiction inside the spec (quote both sides). Running out of time, turns or effort is never BLOCKED: write what you did and end without a STATUS line, and you will be resumed in this same session to continue. Read only the files the spec names; do not read the project's documentation beyond them.
 '@
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$job$contract", $utf8)
 

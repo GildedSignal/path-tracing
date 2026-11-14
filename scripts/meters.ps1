@@ -36,7 +36,11 @@ function Read-Meters {
     Where-Object { $_.LastWriteTime -gt $since } | ForEach-Object {
       $hit = Select-String -Path $_.FullName -Pattern 'RESOURCE_EXHAUSTED' -List
       if ($hit) {
-        $meter = if ((Get-Content $_.FullName -Raw) -match 'claude') { 'agy claude' } else { 'agy gemini' }
+        # Which meter is read from the model the job was launched with (jobs/launch.log), never from the
+        # error text, which does not name it: guessing from the text called a spent Claude meter Gemini.
+        $job = Split-Path -Leaf $_.DirectoryName
+        $launched = Select-String -Path (Join-Path $Root 'jobs\launch.log') -Pattern " $([regex]::Escape($job)) " -ErrorAction SilentlyContinue | Select-Object -Last 1
+        $meter = if ([string]$launched -match 'claude-') { 'agy claude' } elseif ([string]$launched -match 'gemini-') { 'agy gemini' } else { 'agy unknown' }
         $m[$meter] = 100
       }
     }
@@ -44,9 +48,13 @@ function Read-Meters {
 }
 
 if (-not $WatchAt) { (Read-Meters).GetEnumerator() | ForEach-Object { '{0,-12} {1,5:N1}%' -f $_.Key, $_.Value }; return }
+# Alarm on a crossing: a meter already over the line when the watch starts (a spent weekly meter) is
+# reported once here and then ignored, or the watch would exit at once forever.
+$already = @((Read-Meters).GetEnumerator() | Where-Object { $_.Value -ge $WatchAt } | ForEach-Object { $_.Key })
+if ($already) { "already at $WatchAt%+ when the watch began (ignored): $($already -join ', ')" }
 while ($true) {
   $m = Read-Meters
-  $over = @($m.GetEnumerator() | Where-Object { $_.Value -ge $WatchAt })
+  $over = @($m.GetEnumerator() | Where-Object { $_.Value -ge $WatchAt -and $_.Key -notin $already })
   if ($over) {
     "$(Get-Date -Format HH:mm) METER AT $WatchAt%+: " + (($over | ForEach-Object { "$($_.Key) $($_.Value)%" }) -join ', ')
     $m.GetEnumerator() | ForEach-Object { '{0,-12} {1,5:N1}%' -f $_.Key, $_.Value }
