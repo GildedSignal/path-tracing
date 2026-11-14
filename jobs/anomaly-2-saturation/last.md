@@ -1,0 +1,11 @@
+**Verdict: undetermined, with peaceful regeneration a strong competing explanation.** The recorded client start value of zero does not explain the server endpoint. The fixture’s start value produces an exact exhaustion match, while the replay omits peaceful saturation regeneration.
+
+The red reproduced in an isolated copy using `cargo test --offline -p law --test replay replay -- --exact --nocapture`. Its assertion reports predicted saturation **19.0** (`1100480512`) and server saturation **20.0** (`1101004800`).
+
+The fixture’s `player.exhaustionBits` is `4071890c` (3.7739897); the recording header’s client observation is zero. [replay.rs](/D:/path-tracing-wt/anomaly-2/engine/law/tests/replay.rs:125) loads the fixture value. The law adds exhaustion for jumps and sprint movement at [movement.rs](/D:/path-tracing-wt/anomaly-2/engine/law/src/movement.rs:368) and [movement.rs](/D:/path-tracing-wt/anomaly-2/engine/law/src/movement.rs:1088). At zero-based tick 25, a sprint jump raises it above 4; [food_tick](/D:/path-tracing-wt/anomaly-2/engine/law/src/movement.rs:1255) subtracts 4 and saturation falls from 20 to 19. The complete tick-by-tick changes and rule inputs are in [the trace](/D:/path-tracing-deps/anomaly-2-trace.log).
+
+The fixture start yields end exhaustion **1.7389898**, exactly the server’s `3fde9738`. Starting at the recorded client value 0 instead yields saturation 20 but exhaustion **1.9649998**. No nonnegative start can produce both endpoint values in this replay without a saturation debit: even a zero start finishes above the observed exhaustion.
+
+The world records peaceful difficulty and natural regeneration. The ordinary movement tick calls `food_tick` but omits [server_regeneration](/D:/path-tracing-wt/anomaly-2/engine/law/src/movement.rs:1237). In a diagnostic copy, supplying regeneration with an **assumed** server tick phase restored saturation at tick 41 and made the entire endpoint comparison pass. The missing measurement is the authoritative server player tick phase and resource events over this archived run; those would establish whether regeneration actually restored the point. The assumed-phase experiment is evidence, not proof of the server’s sequence.
+
+No fixture, recording, assertion, or law was changed. No server or client was started. Net repository change: **0 lines**.

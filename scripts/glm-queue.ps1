@@ -8,9 +8,13 @@ $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\common.ps1"
 $log = Join-Path $Root 'lab\results\queue.log'
 function Note($text) { Add-Content -Encoding utf8 $log "$(Get-Date -Format 'yyyy-MM-dd HH:mm') $text" }
-$batches = Get-Content (Join-Path $Root $Queue) | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }
-Note "queue started: $($batches.Count) batches from $Queue"
-foreach ($batch in $batches) {
+# The file is re-read before every batch, so a line appended while the queue runs is picked up (S104).
+$started = @()
+Note "queue started from $Queue"
+while ($true) {
+  $batch = Get-Content (Join-Path $Root $Queue) | Where-Object { $_.Trim() -and -not $_.StartsWith('#') -and $_ -notin $started } | Select-Object -First 1
+  if (-not $batch) { break }
+  $started += $batch
   # One GLM run at a time: wait for any run already going (omp is its harness).
   while (Get-Process omp -ErrorAction SilentlyContinue) { Start-Sleep -Seconds 60 }
   # Two runs started in the same minute would share a run id.

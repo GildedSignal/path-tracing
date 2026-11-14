@@ -1,0 +1,18 @@
+**Stopped at step 1:** the supplied snapshot and server sample cannot reconstruct every field of `PlayerState::bits()` exactly. No planner, track exports, play driver, or deviation report was built, and there is no command to play a track yet.
+
+The decisive example is `hurt_cooldown.last_raw_hit`. It is in the bit vector, but neither [PlayerSnapshot.java](D:/path-tracing-wt/playback/bot/src/pathtracing/PlayerSnapshot.java) nor [server-state.ps1](D:/path-tracing-wt/playback/scripts/server-state.ps1) captures it. The law decrements the cooldown counter but retains the last hit value during settling; see [movement.rs](D:/path-tracing-wt/playback/engine/law/src/movement.rs:1152). The existing [replay loader](D:/path-tracing-wt/playback/engine/law/tests/replay.rs:86) initializes that field to zero through `PlayerState::default()`. Moving that loader unchanged would preserve its fixture behavior, but would not establish the requested exact start state.
+
+The classification below is an audit of the current inputs, **not an implemented loader**. “Refused” means the specified inputs do not establish the field’s exact value; it does not mean a refusal has been implemented.
+
+| Classification | `PlayerState::bits()` fields |
+|---|---|
+| Client observed | `input` including yaw and pitch; `position`, `velocity`, `yaw`, `pitch`; `on_ground`, all four collision flags; `sprinting`, `sprint_speed_modifier`, `shift_key_down`, `pose`; `in_water`, `in_lava`, `on_climbable`; `no_jump_delay`, `stuck_speed_multiplier`, `main_supporting_block`, `on_ground_no_blocks`; `crouching`, `swimming`, `underwater`, `eye_in_water`, `was_eye_in_water`, `water_height`, `lava_height`, `in_powder_snow`, `was_in_powder_snow`, `leather_boots`; `movement_speed_base`, `speed_modifiers`, `speed`, `jump_strength`, `gravity`, `step_height`, `friction_modifier`, `air_drag_modifier`, `water_movement_efficiency`, `movement_efficiency`, `sneaking_speed`, `safe_fall_distance`, `fall_damage_multiplier`, `bounciness` |
+| Server-sampled | `health`, `food_level`, `saturation`, `exhaustion`, `food_tick_timer`, `ticks_frozen`, `fall_distance` |
+| Settled | No additional field was established solely by the stated five-tick condition. `no_jump_delay` is observed; the law sets it to zero when jump is released, but five stationary ticks alone do not prove that input condition. |
+| Refused | `t` as an exact captured state field; `hurt_cooldown.remaining_ticks`, `hurt_cooldown.last_raw_hit`; `remaining_fire_ticks`, `movement_this_tick`, `no_physics`, `fall_flying`, `riding`, `boat`, `effects`, `flying`, `using_item` |
+
+A viable next specification needs to resolve the missing fields, including whether `t` is a replay-relative clock, and how archived fixtures with defaulted values are to be treated. A safe loader could name the first unavailable field—for example, `refused: hurt_cooldown.last_raw_hit`—but that refusal has not been built or tested. No per-track results exist because step 3 was not reached.
+
+`cargo test --offline` passed; the fixture replay and other designated tests remained ignored. The branch’s unchanged footprints gate passed and caught **12 of 12 mutants**. An initial attempt used the main checkout’s different gate and stopped at its tenth mutation site; the branch gate was restored and run successfully afterward.
+
+No client or server was started, and no commit was made. Net changes from this turn: **0 lines**. The prior uncommitted exporter remains at **+30 / −0 lines** in [flight.rs](D:/path-tracing-wt/playback/engine/plan/tests/flight.rs).

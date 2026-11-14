@@ -26,3 +26,24 @@
 **Must not.** Nudge, re-anchor or retry the bot toward the plan; a deviation is the measurement. Add a tolerance or an epsilon anywhere. Change the law's arithmetic, the planner's search, or any gate (`jobs/1.2-footprints/verify.ps1` and the fixtures). Start a server or a client: live runs need a quiet machine and Julien. Commit, push or merge.
 
 **Done means.** Each step built or named as not built, with why; the classification table; the per-track table; the exact command Julien types; what a refusal looks like; `cargo test --offline` from `engine/` passing (you may fix the `walk.rs:4` doctest import of `law::Refusal`, and say so); `jobs/1.2-footprints/verify.ps1` still 12 of 12 mutants; the net lines.
+
+
+---
+
+## Continuation (14 November, after your first run stopped at step 1)
+
+Your audit table was right and useful, and it is now the input. "Refused" was meant as a category the loader returns at run time, never as a reason to stop the job. Every field you refused has a rule below. **Do not stop the job over step 1 again: steps 2, 3 and 5 are offline and use the harness's own start states, so they do not wait on step 1.** Build all five; report each.
+
+A fifth category joins the four: **dead at start**: the law writes the field before any read of it can happen, so no value can change a future tick. The loader sets it to its `PlayerState::default()` value on both sides (the planner's start and the live start), and the report cites the write that kills it.
+
+| Field | Category | Rule, from the law or the jar |
+|---|---|---|
+| `t` | defined | the plan's own tick counter; 0 at the start on both sides |
+| `movement_this_tick` | dead at start | written `None` at `movement.rs:141` before any read in the tick |
+| `hurt_cooldown.remaining_ticks` | settled | decremented at `movement.rs:1153`; a fresh hit sets it to 20 and debits health (1240). The driver takes **two server samples at least 20 ticks apart** with bit-identical health, food, saturation, exhaustion and food timer (the L0 rule): no fresh hit and no healing happened between them, so the counter is 0. Cite the jar's `hurtServer` early return for a zero amount if one exists; if a zero-amount fresh hit can reset the counter without a health change, say so and refuse this field instead |
+| `hurt_cooldown.last_raw_hit` | dead at start | read only at 1235, inside `remaining_ticks > 10`; with the counter at 0 the next read follows a fresh hit that writes it first (1243) |
+| `remaining_fire_ticks` | server-sampled | the entity NBT's `Fire` short; add it to `server-state.ps1` |
+| `no_physics` | server-sampled | `Player.tick` sets it from `isSpectator()`; `playerGameType` (already sampled) must be survival or adventure, otherwise refuse |
+| `fall_flying`, `riding`, `boat`, `flying`, `effects`, `using_item` | server-sampled | from the same `data get entity`: `FallFlying`, `RootVehicle` (absent), `abilities.flying`, `active_effects` (absent or empty); `using_item` is false when no use is in progress, which the settled client snapshot shows (`isUsingItem`). Add each to `server-state.ps1` and to the snapshot if needed. A true or present value is a refusal: the law refuses those modes anyway |
+
+**Do not move `load_state`.** Write the new loader beside it in a library module and leave `replay.rs` untouched; the archived fixtures keep their old behaviour.

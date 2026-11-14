@@ -163,5 +163,6 @@ Settings are written with `-Encoding utf8NoBOM`: a BOM made `settings.json` be r
 ## 7. Open
 
 - **Hydrogen** has never run a real job here: its row is still a claim with no evidence. Argon's corpus row is earned (section 6); its other two rows, the untrusted channel and the primary sources, are not yet tested.
-- Route A is **Julien's call, not the integrator's**: it trades a grey-zone ToS reading against the only access to Argon, on a plan he has just paid for. Nothing is installed and nothing is signed in until he decides.
+- Route A was **Julien's call** (S102): it trades a grey-zone ToS reading against the only access to Argon. He chose it; `agy` is installed and signed in.
+- **Hydrogen's first job** is `anomaly-1-stepup` (14 November), a read job whose answer the integrator can check against the code.
 - Which family's errors are least like which is unmeasured. Until it is, the judge rule stays "the other family", as AGENTS.md has it.
