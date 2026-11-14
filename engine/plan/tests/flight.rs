@@ -64,6 +64,30 @@ fn label(index: u16) -> String {
 fn say(steps: &[Step]) -> String {
     steps.iter().map(|s| format!("{}@{}x{}{}", label(s.program), s.args.yaw_index, s.ticks, match s.lane { Lane::Replay => "", Lane::Arc => "~", Lane::Gait => "*", Lane::Cut => "|" })).collect::<Vec<_>>().join(" ")
 }
+// The recorder's input JSONL, extended with the law's raw start and prediction bits.
+fn write_script(track: &Track, mode: char, timeline: &Still<'_, world::WorldSnapshot>, programs: &[Program], start: &law::PlayerState, certificate: &Certificate) -> Result<PathBuf, String> {
+    let dir = PathBuf::from(std::env::var("PLAN_RECORD").map_err(|e| e.to_string())?);
+    let path = dir.join(format!("{}-{}.jsonl", track.name, mode));
+    let mut out = Vec::new();
+    let mut state = start.clone();
+    writeln!(out, "{{\"start\":[{},{},{},{},{}],\"start_bits\":{:?}}}", state.position.x, state.position.y, state.position.z, state.yaw, state.pitch, state.bits()).map_err(|e| e.to_string())?;
+    let mut tick = 0;
+    for step in &certificate.steps {
+        for elapsed in 0..step.ticks {
+            let world = timeline.at(state.t);
+            let (_, input) = programs[step.program as usize].select(world, &state, elapsed, step.args).ok_or("no row matches")?;
+            law::try_tick(&mut state, world, &input).map_err(|e| e.0)?;
+            writeln!(out, "{{\"t\":{},\"forward\":{},\"back\":{},\"left\":{},\"right\":{},\"jump\":{},\"sneak\":{},\"sprint\":{},\"yaw\":{},\"pitch\":{},\"yaw_bits\":{},\"pitch_bits\":{},\"position_bits\":[{},{},{}],\"velocity_bits\":[{},{},{}],\"onGround\":{},\"state_bits\":{:?}}}",
+                tick, input.forward, input.back, input.left, input.right, input.jump, input.sneak, input.sprint, input.yaw, input.pitch, input.yaw.to_bits(), input.pitch.to_bits(), state.position.x.to_bits(), state.position.y.to_bits(), state.position.z.to_bits(), state.velocity.x.to_bits(), state.velocity.y.to_bits(), state.velocity.z.to_bits(), state.on_ground, state.bits()).map_err(|e| e.to_string())?;
+            tick += 1;
+        }
+    }
+    if tick != certificate.ticks || state.bits() != certificate.end.bits() {
+        return Err("script replay differs from certificate".into());
+    }
+    std::fs::write(&path, out).map_err(|e| e.to_string())?;
+    Ok(path)
+}
 #[derive(Default)]
 #[allow(dead_code)]
 struct Row { found: bool, ticks: u32, clock: Option<u32>, thinking: f64, first: Option<f64> }
@@ -171,6 +195,12 @@ fn fly(track: &Track, mode: char, programs: &[Program], reaches: &mut HashMap<us
     let thinking_ticks = (thinking * 20.0).ceil() as u32;
     match &sentence {
         Some((steps, certificate)) => {
+            if std::env::var_os("PLAN_RECORD").is_some() {
+                match write_script(track, mode, &timeline, programs, &start, certificate) {
+                    Ok(path) => writeln!(out, "{tag} script: {}", path.display()).unwrap(),
+                    Err(error) => panic!("{tag} script failed: {error}"),
+                }
+            }
             let improvements = stats.solutions.iter().map(|(s, t)| format!("{t}@{s:.3}s")).collect::<Vec<_>>().join(" ");
             writeln!(out, "{tag} SENTENCE certified: T={} ticks from the start state, {} on the track's clock; Julien {} ({}); thinking {:.3}s = {} ticks; sum {} (clock {}); bracket [{} by the speed limit, {}], open list's least cost plus bound {:?}; first sentence after {:?}s; found {}; tube {} cells with ticks, {} cells read; {} steps: {}",
                 certificate.ticks, certificate.clock.map_or("none".into(), |c| c.to_string()), his.map_or("none recorded".into(), |t| format!("{t} best of {:?}", track.his)), if track.items.is_empty() { "{}" } else { &track.items },
