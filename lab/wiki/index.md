@@ -18,6 +18,7 @@
 - [idiot-index](idiot-index.md) — reproduced: 1; last 2026-11-12
 - [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 3; last 2026-11-12
 - [jump-puzzle](jump-puzzle.md) — lead: 1, rate-limited: 1; last 2026-11-13
+- [l0-freeze-tick-111](l0-freeze-tick-111.md) — reproduced: 1; last 2026-11-14
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
 - [l0-powder-snow-freeze](l0-powder-snow-freeze.md) — reproduced: 1; last 2026-11-11
 - [l0-step-up-control](l0-step-up-control.md) — reproduced: 1; last 2026-11-12
@@ -29,11 +30,13 @@
 - [port-boat-delta](port-boat-delta.md) — reproduced: 1; last 2026-11-13
 - [port-boat-rider-attachment](port-boat-rider-attachment.md) — reproduced: 1; last 2026-11-13
 - [port-boat-surface-transition](port-boat-surface-transition.md) — reproduced: 1; last 2026-11-13
+- [port-boat-turn-trace](port-boat-turn-trace.md) — reproduced: 1; last 2026-11-14
 - [port-door-interaction](port-door-interaction.md) — no dossier: 1; last 2026-11-13
 - [port-elytra-delta](port-elytra-delta.md) — reproduced: 1; last 2026-11-13
 - [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 7; last 2026-11-13
-- [port-fluid-rules](port-fluid-rules.md) — lead: 2, reproduced: 5; last 2026-11-12
-- [port-movement-modes](port-movement-modes.md) — reproduced: 4; last 2026-11-12
+- [port-fluid-rules](port-fluid-rules.md) — lead: 3, reproduced: 5; last 2026-11-14
+- [port-movement-modes](port-movement-modes.md) — reproduced: 5; last 2026-11-14
+- [port-peaceful-regen](port-peaceful-regen.md) — reproduced: 1; last 2026-11-14
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
 - [port-update-order](port-update-order.md) — lead: 1, reproduced: 4; last 2026-11-12
 - [port-use-effects-dump](port-use-effects-dump.md) — reproduced: 1; last 2026-11-13
@@ -50,6 +53,10 @@
 
 ## Reproduced results
 
+- 2026-11-14 [l0-freeze-tick-111](l0-freeze-tick-111.md) (local-20261114-1107-1-0-l0-freeze-tick-111): the +2 at tick 111 exists because 26.2's freeze counter is not "+1 per tick in powder snow" — the client's only local writer, the `InsideBlockEffectType.FREEZE` lambda, fires **once per distinct step index of the sub-tick inside-block sweep**, and the tick a player's leading edge crosses into a *...
+- 2026-11-14 [port-boat-turn-trace](port-boat-turn-trace.md) (local-20261114-1103-1-1-port-boat-turn-trace): The Rust port's occupied-boat turn recurrence is confirmed — running the 26.2 server jar's own `Mth.sin`/`Mth.cos` (called from the jar, never reimplemented) in the same 800-tick W+A recurrence reproduces the port's 800th-tick horizontal speed bits exactly (`4596625426452742353` = 0.2069846006315...
+- 2026-11-14 [port-peaceful-regen](port-peaceful-regen.md) (local-20261114-1103-1-0-port-peaceful-regen): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the peaceful regeneration branch is `ServerPlayer.tickRegeneration` (offsets 0–124, called by `Player.aiStep` offset 18) gated on `difficulty == PEACEFUL` and game rule `NATURAL_HEALTH_REGENERATION`, timed by `Entity.tick...
+- 2026-11-14 [port-movement-modes](port-movement-modes.md) (local-20261114-1013-1-1-port-movement-modes): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the equipment boundary of movement is a closed, server-only, data-driven state machine — a `location_changed` enchantment effect such as soul speed activates/deactivates exactly on block-position change or equipment chang...
 - 2026-11-13 [port-entity-rules](port-entity-rules.md) (local-20261113-2350-1-1-port-entity-rules): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) every melee mob's hit — `Mob.doHurtTarget:85`, the zombie archetype — is a deterministic RNG-free pair-state velocity rewrite (hurtServer's `dealDefaultKnockback`, 0.4f source-position delta, then the `LivingEntity.causeExt...
 - 2026-11-13 [port-block-laws](port-block-laws.md) (local-20261113-2350-1-0-port-block-laws): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the bubble column — the only `entityInside` overrider that rewrites velocity without damage or world writes — is one deterministic per-tick law (`vy' = min(0.7, vy+0.06)` up / `max(-0.3, vy-0.03)` down in the column inter...
 - 2026-11-13 [port-elytra-delta](port-elytra-delta.md) (local-20261113-2303-1-0-port-elytra-delta): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the elytra free-glide step is the private `LivingEntity.travelFallFlying` → `updateFallFlyingMovement` velocity recurrence — exact-arithmetic, world-free until `Entity.move:149 → Entity.collide:15 → Level.getEntityCollisi...

@@ -1,0 +1,13 @@
+# Job 1.3d: the frozen counter counts sweep steps, not ticks
+
+**Why and consumer.** L0's live gate (branch `wt/l0-veto`) keeps 90 of 90 Full runs and refuses only powder snow run 3 (seed 91) at tick 111: the real client ends that tick with `ticksFrozen` 5, the law with 4. GLM lane `l0-freeze-tick-111` (reproduced by an independent checker) found the rule the law lacks: the client's only local writer, the `InsideBlockEffectType.FREEZE` lambda, fires **once per distinct step index of the sub-tick inside-block sweep** (`LivingEntity.aiStep:638 -> Entity.applyEffectsFromBlocks -> checkInsideBlocks -> BlockGetter.forEachBlockIntersectedBetween / addCollisionsAlongTravel -> PowderSnowBlock.entityInside -> StepBasedCollector -> FREEZE lambda -> Entity.setTicksFrozen`), so a tick whose leading edge enters a new powder-snow cell while still overlapping one at sweep start gets two steps (+2). Consumer: L0's merge, the last gate of Phase 1.
+
+**Worktree** `D:\path-tracing-wt\l0-veto` (branch `wt/l0-veto`, `246ff07`).
+
+**Read** the lane's folder, `C:\Users\PASCAL\Desktop\path tracing\lab\results\local-20261114-1107-1-0-l0-freeze-tick-111`: `dossier.md` (the rule, with offsets), `check.md` (the checker's grade), `reproduce.sh` and its harness; then `engine/law/src/movement.rs` where the law applies inside-block effects and the freeze counter, and `engine/law/tests/replay.rs` (the freeze-sync controls of job 1.3c).
+
+**This job has one deliverable.** The law's freeze increment follows the jar's step-based collector: once per distinct step index at which a powder-snow cell is inside the swept box, exactly as the jar orders the sweep. A witness first: the L0 recording `D:\path-tracing-wt\l0-veto\lab\gates\results\20261114T0939502715144Z-fixtures\l0_20261114T0939502715144Z_powder-snow_3.jsonl` replayed through the law fails at tick 111 (4 against 5) before the change, record it; after it, that recording replays to its end bit for bit, and the existing freeze-sync controls (1.3c) still refuse their planted faults. No constant, tolerance or per-block branch of ours: the step order and the count come from the cited offsets.
+
+**Must not.** Weaken any control or gate; edit a recording; commit, push or merge; run anything live.
+
+**Done means.** The witness red then green (quote both); `cargo test --offline` from `engine/` passing; `jobs/1.2-footprints/verify.ps1` 12 of 12; the rule as ported with class, method and offsets; the net lines.
