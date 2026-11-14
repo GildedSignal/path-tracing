@@ -15,13 +15,14 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 **Lessons that cost slots** (memory `terra-stops-at-step-one`): Terra halts the whole job at the first open question, so resolve every classification or representation question before launching, name which steps are independent, and relaunch with a continuation section, never a bare retry. Inline the one file an Antigravity job must read (clan.md trap). A judge's verdict goes to `jobs/<id>/last.md`, never only into a chat turn.
 
-## Start here (14 November, 12:20, before a compaction)
+## Start here (14 November, 15:20)
 
-- **Scheduled, detached:** 15:16 Astra resumes the 3.2d design (`jobs/3.2d-3-design`, worktree `D:\path-tracing-wt\sets`; its audit so far is `jobs/3.2d-3/last.md` on that worktree); 15:17 Terra starts job 3.3h (`D:\path-tracing-wt\thinking`). Big models first (S114).
-- **Running:** Argon on `jobs/butoon-diagnosis` (why the plan crouch-walks over buttons and plates). Its first run returned empty on one refused `read_file`; the rerun writes `report.md` as it goes and logs to `agy.log`: read both, and find the refused path in the log. GLM's queue (port batches) and lanes `port-peaceful-regen`, `port-boat-turn-trace`, `l0-freeze-tick-111`: read each `check.md` and commit `lab/wiki/`.
-- **Meters at 12:17** (`scripts/meters.ps1`): native 5 h 89% (resets 15:10), weekly 67%; Codex 5 h spent until 15:15, weekly 25%; Zai 50%; Antigravity Gemini 2%/1%, Argon weekly 18%, Claude-and-GPT weekly spent until 20 November. Antigravity is Sonnet only (S115).
-- **The play stack** that flew (`wt/3.3g-play`) is not on main: merging it is his call. His lab server and the bot client may still be running from the flight.
-
+- **ES first (S116–S118).** He asked whether we respect ES: nothing in the world model runs on ticks; ticks are a premeditated execution layer that breaks only where a certificate does. The Argon audit `jobs/es-audit/last.md` (committed `3b5434f`) says the ground layer on main respects it and the planner and flight stack (`wt/3.3g-play`) break it in six places, worst `slide` (462 thinking ticks to save 264 on `straight800`). Finding 1 is job 3.3h; findings 2–5 went into the 3.2d-3 design's continuation. The GPU stays unqualified until a measured crossover (`engine.md` "The machine"); no code has the qualifying shape yet.
+- **Launched 15:16** (`jobs/launch.log`): Astra resumes `3.2d-3-design` (`D:\path-tracing-wt\sets`); Terra runs `3.3h-thinking` (`D:\path-tracing-wt\thinking`). `1.3d-freeze-steps` (`D:\path-tracing-wt\l0-veto`) waits for a GPT slot (one job beside Astra).
+- **Running:** Argon reruns `intersection-research` (S116: how other fields represent what a moving box touches; run 1 died on one denied read with only a stub report; `gemini.ps1` now grants the `%20` path form and asks for the report every few files). GLM: a detached runner starts at 15:53 (Zai's reset) on `lab/queue.txt`, 28 lenses, movement first.
+- **Butoon solved:** `jobs/butoon-diagnosis/last.md` (`80c46ab`): plates and buttons are air to the law; the planner's `arith::plain` refuses `world_hook`, and its last-made tie-break plus h-only greedy order turn the fallback into a crouch-walk.
+- **Meters at 15:10:** Codex 5 h resets 15:15, weekly 25%; Zai 84% (resets 15:52); Argon weekly 39% (four Argon runs today, ~10% each); Antigravity Claude+GPT weekly spent; Gemini 2%. Antigravity is Sonnet only (S115).
+- **The play stack** (`wt/3.3g-play`) is not on main: merging it is his call. He plays on this machine this afternoon: no live gate while he does.
 ## Now (14 November, S104–S106)
 
 **Where we are.** The ground is built (the law at about 1 µs per tick, the world reader, footprints, the words in the code). A planner exists on `wt/planner` (job 3.2b): it certifies sentences on 8 of his 18 tracks, judged FAIL on its *claims* (the bound, thinking time, the backward method), not on its sentences, which the law replays tick by tick. **Nothing has been played in the game.** The shortest path to the first flight is therefore to fly 3.2b's certified sentences now (job 3.3c) while 3.2d replaces the planner behind the same call.
