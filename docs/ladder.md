@@ -103,3 +103,15 @@ When a rung below is frozen, it is frozen as a ladder: its extreme tracks, each 
 | R8 | 7 | Tokens: pearls, food, health, durability | when Phase 7 starts |
 | R9 | 8 | The moving world: fluids, falling blocks, mobs, redstone | when Phase 8 starts |
 | R10 | 11 | Far travel: boats, the Nether sheet, elytra | when Phase 11 starts |
+
+### Rediscovery: his list (S122)
+
+Techniques he has studied from speedrunners and bridgers that **should emerge in the right conditions**, never coded by name (the Rediscovery and R-lego rungs). Each names what the law and toolkit must hold first; the mechanics are his account, to be checked against the jar before any course is frozen.
+
+| Technique | What must exist for it to emerge | Where it pays |
+|---|---|---|
+| Speed bridging | place words (S108), the sneak edge, reach | a void or lava gap past any jump, with blocks carried |
+| Boat clutch over lava | boat placement and riding, fall-distance reset on the boat, lava as a hazard | a fall onto lava with a boat carried |
+| Pearls carried further by momentum | the pearl inherits the thrower's motion (catalogue row "Pearl at speed") | a gap of 40+ blocks with a pearl carried |
+| The burning-boat lava bridge | the boat on lava burning and dropping its item, item pickup before the item burns, placing again: a cycle | a long lava lake with one boat |
+| Leaving and re-entering a boat mid-fall | dismount and mount velocity transfer while airborne | a long fall where horizontal distance pays |
