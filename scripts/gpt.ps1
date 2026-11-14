@@ -34,11 +34,12 @@ $full = Join-Path $dir 'full-prompt.md'
 # S104: Terra ends its turn after a few minutes and ~20 lines, reporting "incomplete", whatever the spec
 # says. So every prompt ends with a status contract, and a run that does not end in DONE or BLOCKED is
 # resumed in the same session (context kept) up to $MaxResumes times.
+# 14 November 15:17: "read only the files the spec names" blocked 3.3h at once (it must change slide, Field, plan-track).
 $contract = @'
 
 ---
 
-**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you: a missing input file, a denied permission, or a contradiction inside the spec (quote both sides). Running out of time, turns or effort is never BLOCKED: write what you did and end without a STATUS line, and you will be resumed in this same session to continue. Read only the files the spec names; do not read the project's documentation beyond them.
+**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you: a missing input file, a denied permission, or a contradiction inside the spec (quote both sides). Running out of time, turns or effort is never BLOCKED: write what you did and end without a STATUS line, and you will be resumed in this same session to continue. Read the code you need to change and what it calls; for the project's documentation, read only the documents the spec names.
 '@
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$job$contract", $utf8)
 
