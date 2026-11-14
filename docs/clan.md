@@ -69,17 +69,23 @@ A companion's row is a hypothesis, settled the way everything here is settled �
 
 **But the currency is window-hours, not dollars** (S102). Every family here is a flat subscription: we spend *a meter*, and an unspent meter is worth nothing when it resets. What matters is which meter the work lands on.
 
-**The meters, measured on 14 November** (`.\scripts\meters.ps1` reads every one that can be read; regenerate before trusting a row):
+**What each model costs, per kind of work** (rough anchors from 14 November, S113: not a science, just enough to route work by what it needs; `.\scripts\meters.ps1` reads every meter, so re-anchor whenever a number surprises you):
 
-| Meter | Window | Measured capacity | Spend it on | Never on |
-|---|---|---|---|---|
-| GLM (Zai) | 5 h | 0 → 41% over ~1.5 h of 4–5 lanes, so **~10–12 lanes per window** (the old "18" was a guess) | first and always: jar laws, deviation triage, port lanes. Keep ≥ 2 lanes running at all times | anything not machine-checkable |
-| Codex (Terra, Astra) | 5 h **and** weekly | 2% → 99% in ~1 h: **~12 Terra runs + 1 Astra design per 5-hour window**, each Terra run ~5–7%; weekly went 10% → 25% in that one window, so **~4 full windows a week** | builds with a closed spec, ranked by what they unblock; ≤ 10 Terra runs per window | design questions (they come back as zero-line runs), measurement a plain command can do |
-| Antigravity, Claude **and GPT** models (one meter) | **weekly only**; the 5-hour window is "disabled" | **one** Opus design job (233k in, 119k out) spent all of it and returned nothing | short Sonnet judges with their inputs inlined | Opus, design, anything over ~10 minutes |
-| Antigravity, Gemini models | 5 h and weekly | 2% and 1% used on 14 November: **nearly idle** | Checked-band lanes beside GLM, once Hydrogen survives its permission denials | |
-| Antigravity, Argon | **its own weekly limit** | one 303k-token corpus audit = 7%, so **~14 audits a week** | corpus reads and audits | building, judging |
-| Native Anthropic (this plan) | 5 h and weekly | integrator at 70% of 5 h after ~1 h 40; a native Sonnet sub-agent judged three branches in 98k tokens | the integrator; batched Sonnet judges (one sub-agent, several diffs) | building, polling, reading whole logs |
+| Need | Model | Rough cost | Anchored on |
+|---|---|---|---|
+| a jar law, a measurement, a port delta | GLM lane (~1 h, author + checker) | ~8–10% of Zai's 5 h | 41% for ~5 lanes |
+| a narrow build with a closed spec | Terra run (5–7 min) | ~5–8% of Codex's 5 h | mostly the ~1.3M input it reads, so name the files |
+| hard design within a spec | Astra run (~30 min) | ~25–30% of Codex's 5 h | 43% → 99% with Astra and ~4 Terra |
+| one full Codex 5-hour window | | ~15% of Codex's weekly | 10% → 25% |
+| a corpus audit, a contradiction hunt | Argon (~300k in) | ~7% of Argon's own weekly | one audit |
+| a short judge with the diff inlined | Sonnet on Antigravity (~2 min) | small | 65k in, 16k out |
+| a big design | Opus on Antigravity | most of the Claude-and-GPT weekly | 233k in, 119k out, 2M cached; it also seems to have a 5-hour limit (13 November) |
+| judging GPT's work | native Sonnet sub-agent | ~100k tokens for three diffs | batch several diffs per judge |
+| orchestration | native integrator | ~40% of its 5 h per hour at high context | 70% after 1 h 40 |
+| wide cheap lanes | Hydrogen | unknown | no run has survived its permission denials yet |
+| measurement | a plain command | no meter | flights, scaling and timings were all commands |
 
+Windows: Zai 5 h; Codex 5 h and weekly; Antigravity's Gemini models 5 h and weekly (2% and 1% used on 14 November), its Claude and GPT models one shared weekly, Argon its own weekly; the native plan 5 h, weekly, and weekly per model.
 **So: inside a band, spend the least contended meter; the native plan runs the integrator and is spent last.** "Fill the Anthropic context" means load the integrator with context, not drain its quota (S102).
 
 **The protocol, from what wasted the 14 November windows:**
