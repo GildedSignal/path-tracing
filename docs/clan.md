@@ -67,22 +67,29 @@ A companion's row is a hypothesis, settled the way everything here is settled �
 
 **The cost column is not optional.** Two companions within noise of each other are the same companion, and the cheaper one takes the work (ES 27: the goal, never a proxy).
 
-**But the currency is window-hours, not dollars** (S102). Every family here is a flat subscription, so a price per million tokens is not what we spend — we spend *a meter*, and an unspent meter is worth nothing when it resets. GLM costs about $5.01 per completed task against Haiku's $0.41, and that is irrelevant: what matters is which meter the work lands on.
+**But the currency is window-hours, not dollars** (S102). Every family here is a flat subscription: we spend *a meter*, and an unspent meter is worth nothing when it resets. What matters is which meter the work lands on.
 
-**The meters, and the order they are spent in.** They are independent, and Antigravity is the reason there are more of them than there are families: its Gemini models, its Claude models and its GPT models each draw on **their own meter**, separate from Google's and separate from Julien's native plans.
+**The meters, measured on 14 November** (`.\scripts\meters.ps1` reads every one that can be read; regenerate before trusting a row):
 
-| Meter | Spend it | Why |
-|---|---|---|
-| GLM's 5-hour window | **first**, always full | nothing else contends for it; ~18 lanes per window |
-| Antigravity's Gemini meter | first, for Checked-band lanes | included in the new plan, otherwise idle |
-| **Antigravity's Claude meter** | **before the native Anthropic plan** | it buys Claude-shaped work — judging, red-teaming — *without touching the reserve* |
-| ~~Antigravity's GPT meter~~ | **does not exist** | `agy models` carries only `gpt-oss-120b`, the open-weights one. Codex stays the only GPT route |
-| Codex (Terra, Astra) | freely; it drains fast (~4 jobs an hour), so rank jobs by what they unblock | the build lane |
-| **Native Anthropic (Opus, Sonnet, Fable, Haiku)** | **last. It is the reserve, and it is exhausted last** | it is the only meter that runs the integrator, and the integrator cannot be delegated. Spending it on work another meter could have done is the one unrecoverable waste here |
+| Meter | Window | Measured capacity | Spend it on | Never on |
+|---|---|---|---|---|
+| GLM (Zai) | 5 h | 0 → 41% over ~1.5 h of 4–5 lanes, so **~10–12 lanes per window** (the old "18" was a guess) | first and always: jar laws, deviation triage, port lanes. Keep ≥ 2 lanes running at all times | anything not machine-checkable |
+| Codex (Terra, Astra) | 5 h **and** weekly | 2% → 99% in ~1 h: **~12 Terra runs + 1 Astra design per 5-hour window**, each Terra run ~5–7%; weekly went 10% → 25% in that one window, so **~4 full windows a week** | builds with a closed spec, ranked by what they unblock; ≤ 10 Terra runs per window | design questions (they come back as zero-line runs), measurement a plain command can do |
+| Antigravity, Claude models | **weekly** (156 h reset) | **one** Opus design job (233k in, 119k out) spent all of it and returned nothing | short Sonnet judges with their inputs inlined | Opus, design, anything over ~10 minutes |
+| Antigravity, Gemini models | unknown until spent | Argon: one 303k-token corpus audit, fine | Argon corpus reads and audits | Hydrogen, until a run survives its permission denials |
+| Native Anthropic (this plan) | 5 h and weekly | integrator at 70% of 5 h after ~1 h 40; a native Sonnet sub-agent judged three branches in 98k tokens | the integrator; batched Sonnet judges (one sub-agent, several diffs) | building, polling, reading whole logs |
 
-**So the rule is: inside a band, spend the least contended meter, and treat the native Anthropic plan as the one you do not spend.** Dollars decide only where two companions draw on the *same* meter, or where one must be bought outside a plan.
+**So: inside a band, spend the least contended meter; the native plan runs the integrator and is spent last.** "Fill the Anthropic context" means load the integrator with context, not drain its quota (S102).
 
-This reverses the first reading of S102. "Fill the Anthropic context" means **load this session with context** — the integrator must hold the whole project — not *spend the Anthropic quota hardest*. Context in; quota conserved.
+**The protocol, from what wasted the 14 November windows:**
+1. **Close every design question before a builder starts.** Four Terra runs wrote zero lines (3.3c, 3.3d twice, 3.2h) on an open classification or representation question: that is Designer or integrator work, done first.
+2. **One deliverable per job, the files to read named, small ones inlined.** A Terra run that reads the corpus costs ~1.3M input tokens; the status contract in `gpt.ps1` now says to read only what the spec names.
+3. **A long job writes its output to a file as it goes.** The Opus design died with the meter and its 119k output tokens were lost; a report written progressively survives a quota death.
+4. **Measure with a command, not a job.** The 18-track flight, the straight tracks and the thinking split were plain commands the integrator ran at no meter cost; jobs are for building.
+5. **Never resume into a spent meter** (`gpt.ps1` stops on "usage limit"), and never launch a lane whose meter `meters.ps1` shows above 90%.
+6. **Lanes run at Idle CPU priority** (`launch.ps1` does it), so a live gate shares the machine (S107).
+7. **Queue the next window before this one ends:** a detached launch scheduled for the reset (see HANDOFF) loses no window to the integrator being away.
+8. **Admin goes through three scripts:** `launch.ps1` (start, with slot refusals), `status.ps1` (every lane, every report not committed), `meters.ps1 -WatchAt 80` in the background (wakes the integrator on a crossing). Background waiters that exit on a report replace polling.
 
 ## 4b. What the public record says, and where it contradicts section 3
 
@@ -91,46 +98,25 @@ Measured 13 November, independent harnesses preferred over vendor tables (the sa
 - **Argon loses every benchmark shaped like our work.** Terminal-Bench 4.0: 57.4 against Opus 5.5's 59.6 independent / 66.4 vendor. FrontierSWE v2: 55.0 against Astra's 65.5. Terminal-Bench-Science: 57.6 against Astra's 68.1. It leads on legal, finance, video — and on **graph traversal: GraphWalks 84.2, against Astra 71.8 and Opus 5.5 66.8**. That one number is the only public support for its row here, and it happens to be exactly the shape of a corpus pass. Its row is therefore narrowed to that and nothing else, and it is the most expensive route per task on the roster, with its price doubling on 1 December.
 - **Nobody has publicly shown any model on this roster is good at 1M tokens.** Artificial Analysis dropped its long-context reasoning benchmark; no MRCR or fiction.live entry exists for any of them. Every "1M context" figure is a capacity, not a quality. GraphWalks is the single exception above.
 - **The one number worth most** is Sonnet 5.5 at 63.9% on Terminal-Bench 4.1 **in Google's own comparison table** — a competitor reporting a rival ahead of its own model is the least corruptible evidence available, and it holds up the judge row.
-- **Terra's vendor claims scope adherence and blocker reporting**, and our own record confirms it: all four jobs of this wave reported precisely what they had not done rather than claiming completion. But its factuality error rate is 4.3% at max effort and **16.7% at low**, so low effort is unusable for anything load-bearing. `scripts/gpt.ps1` does not set an effort today and must pin one.
+- **Terra's vendor claims scope adherence and blocker reporting**, and our own record confirms it: all four jobs of this wave reported precisely what they had not done rather than claiming completion. But its factuality error rate is 4.3% at max effort and **16.7% at low**, so low effort is unusable for anything load-bearing. `scripts/gpt.ps1` now pins high.
 - **GLM is the weakest-supported row we have**, and honesty requires saying so: index 32 against Hydrogen's 54, slow (27.6 min/task), very verbose, with reproduced endless-reasoning and degeneration failures in agentic tool use, and a **31.5% success rate for indirect prompt injection** against Argon's 0.7% and Opus's 1.0%. The last is not academic: GLM's lanes read Mojang's jar and decompiler output, which is exactly the untrusted-artefact channel that number measures. It keeps its band on the window rule above and on 72 reproduced results out of 106 lanes — **not** on being good or cheap, and the injection figure is a real exposure to close.
 - **METR, the only independent party that looked for it, found no large improvement in judgement, taste or foresight** in the model our Designer row rests on, and published no time-horizon figure at all. Treat long unattended autonomy as unmeasured for every companion here; the 18-hour-run stories are vendor anecdotes.
 
 ## 5. How to launch one, from a cold session
 
-Everything below is copy-pasteable from the repo root. A job is always a folder: `jobs/<id>/prompt.md` is the spec, and `jobs/<id>/last.md` is the report it leaves. Every runner prepends the goal and philosophy sections of PRINCIPLES verbatim, so no prompt repeats them.
+A job is a folder: `jobs/<id>/prompt.md` is the spec, `jobs/<id>/last.md` the report. Every runner prepends PRINCIPLES' goal and philosophy verbatim.
 
 | Companion | Launch | Notes |
 |---|---|---|
-| **Terra** (build) | `.\scripts\gpt.ps1 -Job <id> -Worktree D:\path-tracing-wt\<id> -Model gpt-6.1-terra` | four at once, **fresh first prompts only**; resume with `-Resume <session id>`. It cannot write git metadata, so the integrator commits with `Built-by:` |
-| **Astra** (hard math) | same, `-Model gpt-6-astra` | sparingly, and only one GPT job beside it |
-| **Argon** (read, traverse) | `.\scripts\gemini.ps1 -Job <id> -Model gemini-4-argon-high` | read-only; the report is the CLI's JSON response. `-Write <worktree>` opts into editing |
-| **Hydrogen** (wide, cheap) | `.\scripts\gemini.ps1 -Job <id> -Model gemini-4-hydrogen-high` | never `xhigh`: its terminal score is identical and costs more |
-| **Sonnet / Opus on Antigravity** | `.\scripts\gemini.ps1 -Job <id> -Model claude-sonnet-5-5-high` (or `claude-opus-5-5-high`) | **this is the meter that spares the native Anthropic plan.** Prefer it for judging and red-teaming |
-| **Claude sub-agents** (native) | the integrator's own Agent tool, fresh context | the reserve. **One at a time**, and only where the native plan is the only thing that can do it |
-| **GLM** (lab lanes) | `.\scripts\glm-local.ps1 -Lenses "<space-separated>" -Minutes 60`, or `.\scripts\glm-queue.ps1` for [lab/queue.txt](../lab/queue.txt) | ~18 lanes per 5-hour window, no slot limit. Read `checker.log` for HTTP 429 before trusting a "lead" |
+| Terra (build), Astra (hard design within a spec) | `.\scripts\launch.ps1 <id> terra -Worktree D:\path-tracing-wt\<name> [-Base <ref>]` (or `astra`) | ≤ 4 GPT, ≤ 2 with Astra; effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's, with `Built-by:`. The fixture world is git-ignored: copy `engine/world/tests/fixtures/world` into a new worktree |
+| Sonnet on Antigravity (judge) | `.\scripts\launch.ps1 <id> sonnet [-ReadDir <worktree>]` | ≤ 2 Sonnet or 1 Opus; weekly meter; inline the diff |
+| Argon (read, traverse), Hydrogen | `.\scripts\launch.ps1 <id> argon` (or `hydrogen`) | ≤ 1 Argon or 2 Hydrogen; read-only |
+| Native Claude sub-agent | the integrator's Agent tool, fresh context | one at a time; batch judges into one |
+| GLM | `.\scripts\glm-queue.ps1 -Queue lab\queue.txt` (re-reads the file each batch) or `.\scripts\glm-local.ps1 -Lenses "<a b>"` | **commit the lens first**: lanes run from a checkout of HEAD. Read `checker.log` for 429 before trusting a "lead" |
 
-**Measured 14 November: Antigravity's Claude meter is weekly, and one Opus design spends it.** Job `3.2d-3-design` (`claude-opus-5-5-high`, about 23 minutes, 233k in, 119k out, 1.95M cached) hit `Individual quota reached … Resets in 156h23m` and returned an empty report, so the work was lost with the meter. A Sonnet judge of about 2 minutes ran on it first. So on that meter: Sonnet judges only, short and with their one critical file inlined; no Opus design work there (S105, adjusted). Hydrogen's first two runs both came back empty on one auto-denied `read_file` despite allow rules for every directory named; until a run proves otherwise, inline everything a Google job must read.
+**Antigravity traps.** It soft-denies silently: a refused action exits 0 with a note on stderr, so read the report, not the exit code; an empty report on one denied `read_file` is common, so inline what a job must read. Its Gemini and Claude meters are separate and announce themselves only when spent (`RESOURCE_EXHAUSTED … Resets in <h>`). Slugs: re-run `agy models` (13 November: `gemini-4-argon-{low,medium,high}`, `gemini-4-hydrogen-{low,…,xhigh}`, `claude-{opus,sonnet}-5-5-{low,medium,high}`; no frontier GPT, so Codex is the GPT route).
 
-**Reading Antigravity's meters.** There is no usage readout in the CLI and Google publishes no numbers, but the meter announces itself when it runs out: a run returns `status: ERROR` with `RESOURCE_EXHAUSTED (429): Individual quota reached … Resets in 4h34m41s`, and **that reset time is the 5-hour window**. Its Gemini and Claude meters are genuinely separate — the Claude one was exhausted on 13 November while Argon kept running on the same account. So the honest way to report Antigravity usage is: not readable until it is spent, then exact.
-
-**An empty report is a real failure mode, and it is not always the model's.** Every `agy` run so far logs exactly one auto-denied `read_file`. A job that must read many files shrugs it off and recovers; a job whose **first instruction is a single critical read** is killed by it and returns nothing after burning its tokens — this cost two models three runs each on the same job. **So inline the artifact a job must have into its prompt** rather than pointing at it, and leave file reads for what is merely useful.
-
-**Model slugs**, from `agy models` on 13 November — re-run it rather than trusting this list, because it is the authority and this is a copy: `gemini-4-argon-{low,medium,high}` (no xhigh), `gemini-4-hydrogen-{low,medium,high,xhigh}`, `gemini-pro-orchestrator-g1-pro`, `claude-opus-5-5-{low,medium,high}`, `claude-sonnet-5-5-{low,medium,high}`, `gemini-3.8-flash-{low,medium,high}`, `gpt-oss-120b-medium`. There is **no frontier GPT on Antigravity** — only the open-weights one — so Codex stays the GPT route.
-
-**Running detached**, so a job outlives the session that started it (S100):
-`Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','.\scripts\gemini.ps1','-Job','<id>','-Model','gemini-4-argon-high') -WindowStyle Hidden`
-
-**The five traps that have each cost an hour:**
-1. **`Start-Process` does not quote its arguments**, and this repo's path has a space in it. Every runner quotes any argument containing whitespace; a new one must too, or the model receives `with` as a flag.
-2. **A job prompt is far past the Windows command-line limit.** It goes in on **stdin**, never in `-p`.
-3. **Antigravity soft-denies silently.** In headless mode there is no approval prompt: a disallowed action is refused, a note goes to **stderr**, and the run **still exits 0**. The exit code is not a gate — read the report and the stderr.
-4. **A job prompt must cite the main checkout by absolute path** for anything not on its branch. Two jobs of the 13 November wave could not read reports they were told to read, because the worktree predated them.
-5. **Never write a BOM.** PowerShell's `-Encoding UTF8` adds one; it breaks Antigravity's `settings.json` before 1.5.8 and resets the rig's `options.txt` to defaults. Use `[Text.UTF8Encoding]::new($false)`.
-
-**One launcher, one status screen (S104).** `.\scripts\launch.ps1 <job> <terra|astra|sonnet|opus|argon|hydrogen> [-Worktree ...] [-ReadDir ...]` starts any of the above detached, creates a GPT worktree if missing, and **refuses** to exceed a slot: four GPT (two with Astra), and on Antigravity (S105) one Argon or two Hydrogen on the Gemini meter, one Opus or two Sonnet on the Claude meter. `.\scripts\status.ps1` prints every lane, the Zai window, both queue tails and every report not yet committed. The table above is what they call.
-
-**Before launching anything**, check what is already running, or you will exceed a slot limit and drain a window for nothing:
-`Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.CommandLine -match 'exec -m' }` for GPT jobs, `Get-Process agy` for Google ones, and `Get-Content lab\results\queue.log -Tail 3` for the GLM queue.
+**Windows traps.** `Start-Process` does not quote arguments and this path has a space; prompts go on stdin, never `-p`; never write a BOM (`[Text.UTF8Encoding]::new($false)`); under PowerShell 5.1 a native command's stderr under `ErrorAction Stop` throws (git, javac), and `git commit -F -` does not read a here-string: use a message file; cite the main checkout by absolute path in any prompt.
 
 ## 5b. How a job is assigned, in practice
 

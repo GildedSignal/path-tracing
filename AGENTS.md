@@ -30,7 +30,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
 
-**Opus and GPT are back as agents from 13 November (S97):** the table above is in force. GPT drains fast (about four jobs an hour), so rank its jobs by what they unblock. GLM lanes keep going within their window (about 18 lanes per 5 hours).
+**Opus and GPT are back as agents from 13 November (S97):** the table above is in force. Measured capacities and the usage protocol: [docs/clan.md](docs/clan.md) section 4 (14 November: Codex ~12 Terra runs + 1 Astra per 5 h; GLM ~10–12 lanes per 5 h; Antigravity Claude weekly). Rank GPT jobs by what they unblock.
 
 ## Rules
 
