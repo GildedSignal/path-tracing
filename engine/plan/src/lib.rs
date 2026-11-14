@@ -3,6 +3,7 @@
 //! ticks. A lossy layer (the bounds, the backward sets) orders and never decides.
 pub mod arith;
 pub mod goal;
+pub mod flight;
 pub mod polish;
 pub mod reach;
 pub mod search;
