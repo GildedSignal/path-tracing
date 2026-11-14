@@ -35,6 +35,67 @@ public final class Recorder {
     private static int tick;
     private static TickInput applied;
     private static List<TickInput> replay;
+    private static List<TickInput> planInputs;
+    private static int planTick;
+
+    static int playPlan(Minecraft mc, Path path, Path directory, String track) throws IOException {
+        if (active() || planInputs != null) throw new IllegalStateException("A recording or replay is already running.");
+        TickInput.holdSettings(mc);
+        List<TickInput> inputs = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            String first = reader.readLine();
+            if (first == null) throw new IllegalArgumentException("Missing plan start.");
+            JsonObject head = JsonParser.parseString(first).getAsJsonObject();
+            JsonArray origin = head.getAsJsonArray("start");
+            if (origin == null || origin.size() != 5) throw new IllegalArgumentException("Invalid plan start.");
+            JsonArray bits = head.getAsJsonArray("start_bits");
+            if (bits == null || bits.size() < 69) throw new IllegalArgumentException("Missing plan start bits.");
+            double[] position = {mc.player.getX(), mc.player.getY(), mc.player.getZ()};
+            for (int i = 0; i < 3; i++) {
+                long expected = Long.parseUnsignedLong(bits.get(66 + i).getAsString());
+                if (Double.doubleToRawLongBits(origin.get(i).getAsDouble()) != expected) throw new IllegalArgumentException("Inconsistent plan start bits.");
+                if (expected != Double.doubleToRawLongBits(position[i])) throw new IllegalArgumentException("Plan start position differs from bot in axis " + i + ".");
+            }
+            String line;
+            while ((line = reader.readLine()) != null) {
+                JsonObject row = JsonParser.parseString(line).getAsJsonObject();
+                if (!row.has("t") || row.get("t").getAsBigDecimal().compareTo(java.math.BigDecimal.valueOf(inputs.size())) != 0)
+                    throw new IllegalArgumentException("Plan ticks must be consecutive from zero.");
+                TickInput value = TickInput.read(row);
+                long yaw = row.get("yaw_bits").getAsLong(), pitch = row.get("pitch_bits").getAsLong();
+                if (yaw < 0 || yaw > 0xffffffffL || pitch < 0 || pitch > 0xffffffffL) throw new IllegalArgumentException("Invalid angle bits.");
+                if (!Float.isFinite(Float.intBitsToFloat((int) yaw)) || !Float.isFinite(Float.intBitsToFloat((int) pitch))
+                    || Float.floatToRawIntBits(value.yaw()) != (int) yaw || Float.floatToRawIntBits(value.pitch()) != (int) pitch)
+                    throw new IllegalArgumentException("Inconsistent angle bits.");
+                if (row.getAsJsonArray("position_bits").size() != 3 || row.getAsJsonArray("velocity_bits").size() != 3
+                    || row.getAsJsonArray("state_bits").size() < 69 || !row.getAsJsonPrimitive("onGround").isBoolean())
+                    throw new IllegalArgumentException("Invalid predicted state.");
+                inputs.add(new TickInput(value.forward(), value.back(), value.left(), value.right(), value.jump(), value.sneak(), value.sprint(), Float.intBitsToFloat((int) yaw), Float.intBitsToFloat((int) pitch)));
+            }
+        }
+        if (inputs.isEmpty()) throw new IllegalArgumentException("Plan has no ticks.");
+        requireQualifiedClock(mc);
+        trackRecording = TrackRecording.open(directory, "track-" + track + "-" + mc.player.getName().getString() + "-");
+        output = trackRecording.writer;
+        outputPath = trackRecording.path;
+        temporaryPath = trackRecording.temporary;
+        name = outputPath.getFileName().toString().replace(".jsonl", "");
+        header = TickInput.holdSettings(mc);
+        header.addProperty("type", "recording");
+        tick = 0;
+        previousTickCount = null;
+        applied = null;
+        anomalies = new JsonArray();
+        planInputs = inputs;
+        planTick = 0;
+        return inputs.size();
+    }
+
+    static Path planRecording() { return outputPath; }
+
+    static void cancelPlan(Minecraft mc) {
+        if (planInputs != null) { planInputs = null; TickInput.release(mc); }
+    }
     private static double[] start;
     private static int settled;
     private static int settlingTicks;
@@ -252,6 +313,14 @@ public final class Recorder {
     }
 
     private static void startTick(Minecraft mc) {
+        if (planInputs != null) {
+            if (mc.player == null || mc.level == null || planTick == planInputs.size()) cancelPlan(mc);
+            else {
+                TickInput input = planInputs.get(planTick++);
+                input.apply(mc);
+                Tracks.firstInput(mc, input.forward() || input.back() || input.left() || input.right() || input.jump() || input.sneak() || input.sprint());
+            }
+        }
         if (mc.player != null) {
             startSprinting = mc.player.isSprinting();
             startSprintSpeedModifier = TraceJson.sprintSpeedModifier(mc.player.getAttribute(Attributes.MOVEMENT_SPEED));

@@ -26,6 +26,8 @@ Mode/refill commands and server verification require op permission. A restore mi
 Each human run stores `kitSha256` over canonical kit JSON (sorted keys, compact UTF-8, no newline) and `gameMode`.
 If tracks share A, the alphabetically first arms. `/track new` refuses during a run or track mode.
 Send `/msg PathBot track run <name>`; enable local vanilla RCON in the rig's server/server.properties.
+For a planned flight, `scripts/play-track.ps1 -Track <name>` sends `track play`, waits for the bot to settle on A, plans, and sends `track plan <absolute path>`. Use `-DryRun` to plan without a bot; `-Mode` selects the planner mode and `-Rig` selects the rig.
+The plan must start at the bot's exact position, bit for bit. Inputs run without correction; its recording starts with the first input, and the run row records `plan` and `predictedT`. The track clock still starts on leaving A.
 The bot takes the fastest human run's mode (current mode if none), your toolkit, then settles on A.
 Bot runs abandon at 20 times the best human T, or 6,000 ticks without a human time.
 Command-to-first-input latency includes preparation, counts turns, and is reported separately.

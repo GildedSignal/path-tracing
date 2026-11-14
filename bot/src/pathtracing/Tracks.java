@@ -56,6 +56,9 @@ public final class Tracks {
     private static Long latency;
     private static Double latencyMs;
     private static boolean botAttempt;
+    private static boolean playAttempt;
+    private static String planFile;
+    private static int predictedT;
     private static Map<String, Integer> toolkit = Map.of();
     private static TrackMode human;
     private static TrackHumanClient humanClient;
@@ -94,7 +97,20 @@ public final class Tracks {
         try {
             tickFault = false;
             String[] words = text.trim().split("\\s+");
-            if (words.length == 1 && (words[0].equals("cancel") || words[0].equals("exit"))) {
+            if (text.startsWith("plan ")) {
+                if (!playAttempt || settling || preparation != null || selected == null || planFile != null || DETECTOR.running() || !onA(mc, selected))
+                    throw new IllegalStateException("Refusing plan: no armed track play waiting on A.");
+                String path = text.substring(5).trim();
+                if (path.isEmpty()) throw new IllegalArgumentException("Missing plan path.");
+                try {
+                    predictedT = Recorder.playPlan(mc, Path.of(path), STORE.rig.resolve("recordings"), selected.name());
+                } catch (IOException | RuntimeException failure) {
+                    throw new IllegalArgumentException("Refusing plan: " + failure, failure);
+                }
+                recording = Recorder.planRecording();
+                planFile = path;
+                say(mc, "Plan accepted: " + predictedT + " ticks.");
+            } else if (words.length == 1 && (words[0].equals("cancel") || words[0].equals("exit"))) {
                 cancel(mc, true);
                 creating = null;
                 first = null;
@@ -140,7 +156,8 @@ public final class Tracks {
                         if (isBot()) throw new IllegalStateException("Set kits in the player client.");
                         human(mc).replaceKit(words[1], run != null || DETECTOR.running());
                     }
-                    case "run" -> startBot(mc, words[1], receivedNanos);
+                    case "run" -> startBot(mc, words[1], receivedNanos, false);
+                    case "play" -> startBot(mc, words[1], receivedNanos, true);
                     default -> throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit/restore; bot track run <name>.");
                 }
             } else throw new IllegalArgumentException("Usage: track new/list/delete/best/kit/cancel/exit/restore; bot track run <name>.");
@@ -340,12 +357,15 @@ public final class Tracks {
         run.addProperty("trackCreated", selected.created());
         run.addProperty("dimension", selected.dimension());
         if (botAttempt) run.add("toolkit", TrackStore.items(toolkit));
+        if (planFile != null) { run.addProperty("plan", planFile); run.addProperty("predictedT", predictedT); }
         recordingReason = null;
-        try {
-            recording = Recorder.recordTrack(mc, STORE.rig.resolve("recordings"), selected.name());
-        } catch (IOException | RuntimeException e) {
-            recording = null;
-            recordingReason = e.toString();
+        if (!playAttempt) {
+            try {
+                recording = Recorder.recordTrack(mc, STORE.rig.resolve("recordings"), selected.name());
+            } catch (IOException | RuntimeException e) {
+                recording = null;
+                recordingReason = e.toString();
+            }
         }
     }
 
@@ -410,6 +430,9 @@ public final class Tracks {
             USED.clear();
             DETECTOR.reset();
             botAttempt = false;
+            playAttempt = false;
+            planFile = null;
+            Recorder.cancelPlan(mc);
             try {
                 if (stopBot && wasBot) {
                     Bot.clearFollowPath();
@@ -419,7 +442,7 @@ public final class Tracks {
         }
     }
 
-    private static void startBot(Minecraft mc, String name, long receivedNanos) throws IOException {
+    private static void startBot(Minecraft mc, String name, long receivedNanos, boolean play) throws IOException {
         if (!isBot()) throw new IllegalStateException("Use /msg " + PathTracingMod.BOT + " track run <name>.");
         if (preparation != null) throw new IllegalStateException("Track preparation is still running.");
         if (Recorder.active() && recording == null) throw new IllegalStateException("A recording or replay is already running.");
@@ -437,6 +460,7 @@ public final class Tracks {
         TickInput.release(mc);
         selected = track;
         botAttempt = true;
+        playAttempt = play;
         botMode = mode;
         botLimit = humanBest == null ? 6000 : Math.multiplyExact(20, humanBest.get("T").getAsLong());
         Bot.trackMode();
@@ -492,9 +516,12 @@ public final class Tracks {
             settling = false;
             DETECTOR.sample(true, false, false, clock, mc.level.getGameTime());
             previousBox = mc.player.getBoundingBox();
-            say(mc, selected.name() + " armed. Toolkit " + TrackStore.items(toolkit) + ".");
-            var b = selected.b();
-            Bot.goTo(mc, new BlockPos(b.x(), b.y() + 1, b.z()));
+            if (playAttempt) say(mc, "Armed " + selected.name() + "; waiting for a plan.");
+            else {
+                say(mc, selected.name() + " armed. Toolkit " + TrackStore.items(toolkit) + ".");
+                var b = selected.b();
+                Bot.goTo(mc, new BlockPos(b.x(), b.y() + 1, b.z()));
+            }
         } else if (clock - preparationTick >= 200) {
             say(mc, "Track preparation failed: teleport, supporting block or exact toolkit did not settle within 200 ticks.");
             cancel(mc, true);
