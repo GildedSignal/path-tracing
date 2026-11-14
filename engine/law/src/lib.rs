@@ -49,3 +49,5 @@ pub use world::{
 
 pub mod entity_contact;
 pub mod state_reads;
+
+pub mod boat;
