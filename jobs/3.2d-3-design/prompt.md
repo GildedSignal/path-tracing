@@ -129,3 +129,12 @@ No field or correlation is discarded for those exact members. An **open** set ca
 For pass 3, the outstanding representation decisions are to derive and trace non-singleton bounds to law comparisons, provide comparison-based splitting and a general preimage representation, and bind authorization to the specific question and set so consumers cannot accidentally reuse it. No solver, switches, lookup, footprint checking, timing, restoration proof, comparison, kill table, or held-out run was built.
 
 Verification passed: `cargo test --offline`; the footprint script caught **12/12 mutants** and restored its temporary law edits. The current doctest run contained zero tests; I did not change the import. The [run record](D:/path-tracing-evidence/sets-pass2-record.txt) includes replay commands, limitations and the test refusals. The diff is **+123 net lines** across the new set module and its export. Nothing was committed, pushed or merged.
+
+---
+
+## Continuation (14 November, after the Codex reset)
+
+Your first run wrote a 102-line audit at `D:\path-tracing-wt\sets\jobs\3.2d-3\last.md` and named two things unresolved: the non-singleton preimage solver, and aim and joint selection derived from the sets. Resolve both into a build-ready spec. Two measurements from the first flight bear on it (`C:\Users\PASCAL\Desktop\path tracing\docs\HANDOFF.md`, "Now"):
+1. **On flat straight tracks of 100, 300 and 800 blocks the planner makes one decision per jump** (430 on 800 blocks) where the map's answer has about two switches. A set representation in which a straight run on uniform ground is one set, not one per jump, is the target; say how yours achieves it.
+2. **On `butoonpressureplates` the plan crouch-walks 170 ticks over buttons and plates**, which have an empty collision shape (models 508 and 510, as air 378) but different flags. Your sets must treat two cells as the same wherever every comparison the law makes on them answers the same, not wherever their names or flags match.
+End with `STATUS: DONE` when the spec is build-ready (every choice made, each build step with a machine gate).
