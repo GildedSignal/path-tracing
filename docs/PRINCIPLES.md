@@ -288,6 +288,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "this should never happen anyway since we're doing things ES style" (re-testing tick by tick) | S117 | **Followed, and found broken in code:** the planner's `arith::free_tick` scans cells every tick of every arc; the 3.2d-3 design continuation now requires each worldtube checked once and rechecked only when an edit breaks its certificate |
 | "ticks are just an execution layer that's premeditated and only breaks when the certificate does"; "are we using the gpu fully" | S118 | **Followed:** Argon audit `jobs/es-audit` (every tick loop, cache and hot-path copy outside the law, verification and word compiling), ES cloned read-only to `D:\path-tracing-deps\emergent-space-engine`. GPU: not used yet, by design (`engine.md` "The machine": unqualified until a measured crossover); the audit says which code would qualify |
 | "i don't use the pc you can use it" | S119 | **Followed:** the three straight tracks flown live that afternoon (0 corrections, 0 pushes over 2,315 ticks on 800 blocks) |
+| "it should see a straight line and go oh i have no kit but not hungry so i get the modulus of my best tool"; presence before position; segments in parallel; "the bot should move instantly unless things are really hard"; nudge only where a local signal asks; "if it fail get better" | S120 | **Talking it through** (not yet built): checked that food stays 20/20.0 over the 800-block live run |
 
 ## Contradictions (kept side by side)
 
