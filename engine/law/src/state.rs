@@ -248,3 +248,127 @@ impl PlayerState {
         bits
     }
 }
+
+/// Invalid state encoding and the position of the offending or missing word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal { pub position: usize, pub reason: &'static str }
+
+struct Bits<'a> { words: &'a [u64], at: usize }
+impl Bits<'_> {
+    fn word(&mut self) -> Result<u64, Refusal> {
+        let at = self.at;
+        let value = *self.words.get(at).ok_or(Refusal { position: at, reason: "missing word" })?;
+        self.at += 1; Ok(value)
+    }
+    fn boolean(&mut self) -> Result<bool, Refusal> {
+        let at = self.at;
+        match self.word()? { 0 => Ok(false), 1 => Ok(true), _ => Err(Refusal { position: at, reason: "boolean" }) }
+    }
+    fn f32(&mut self) -> Result<f32, Refusal> {
+        let at = self.at; let n = self.word()?;
+        if n > u32::MAX as u64 { return Err(Refusal { position: at, reason: "f32" }); }
+        Ok(f32::from_bits(n as u32))
+    }
+    fn f64(&mut self) -> Result<f64, Refusal> { Ok(f64::from_bits(self.word()?)) }
+    fn i32(&mut self) -> Result<i32, Refusal> {
+        let at = self.at; let n = self.word()?; let v = n as i32;
+        if v as u64 != n { return Err(Refusal { position: at, reason: "i32" }); }
+        Ok(v)
+    }
+    fn vec3(&mut self) -> Result<Vec3, Refusal> { Ok(Vec3::new(self.f64()?, self.f64()?, self.f64()?)) }
+}
+impl PlayerState {
+    /// Decode exactly the representation returned by `bits`.
+    pub fn from_bits(words: &[u64]) -> Result<Self, Refusal> {
+        let mut b = Bits { words, at: 0 };
+        let mut s = Self::default();
+        s.t = b.word()?; s.input.yaw = b.f32()?; s.input.pitch = b.f32()?;
+        s.yaw = b.f32()?; s.pitch = b.f32()?;
+        let at = b.at;
+        s.pose = match b.word()? { 0 => Pose::Standing, 1 => Pose::Crouching, 2 => Pose::Swimming,
+            _ => return Err(Refusal { position: at, reason: "pose" }) };
+        s.hurt_cooldown.remaining_ticks = b.i32()?; s.hurt_cooldown.last_raw_hit = b.f32()?;
+        s.food_level = b.i32()?;
+        let at = b.at; let n = b.word()?;
+        s.food_tick_timer = u32::try_from(n).map_err(|_| Refusal { position: at, reason: "u32" })?;
+        s.remaining_fire_ticks = b.i32()?; s.no_jump_delay = b.i32()?; s.ticks_frozen = b.i32()?;
+        s.input.forward = b.boolean()?;
+        s.input.back = b.boolean()?;
+        s.input.left = b.boolean()?;
+        s.input.right = b.boolean()?;
+        s.input.jump = b.boolean()?;
+        s.input.sneak = b.boolean()?;
+        s.input.sprint = b.boolean()?;
+        s.on_ground = b.boolean()?;
+        s.horizontal_collision = b.boolean()?;
+        s.vertical_collision = b.boolean()?;
+        s.vertical_collision_below = b.boolean()?;
+        s.minor_horizontal_collision = b.boolean()?;
+        s.sprinting = b.boolean()?;
+        s.sprint_speed_modifier = b.boolean()?;
+        s.no_physics = b.boolean()?;
+        s.shift_key_down = b.boolean()?;
+        s.in_water = b.boolean()?;
+        s.in_lava = b.boolean()?;
+        s.on_climbable = b.boolean()?;
+        s.on_ground_no_blocks = b.boolean()?;
+        s.crouching = b.boolean()?;
+        s.swimming = b.boolean()?;
+        s.underwater = b.boolean()?;
+        s.eye_in_water = b.boolean()?;
+        s.was_eye_in_water = b.boolean()?;
+        s.in_powder_snow = b.boolean()?;
+        s.was_in_powder_snow = b.boolean()?;
+        s.leather_boots = b.boolean()?;
+        s.fall_flying = b.boolean()?;
+        s.riding = b.boolean()?;
+        s.boat = b.boolean()?;
+        s.effects = b.boolean()?;
+        s.flying = b.boolean()?;
+        s.using_item = b.boolean()?;
+        s.health = b.f32()?;
+        s.saturation = b.f32()?;
+        s.exhaustion = b.f32()?;
+        s.speed = b.f32()?;
+        s.step_height = b.f32()?;
+        s.friction_modifier = b.f32()?;
+        s.air_drag_modifier = b.f32()?;
+        s.water_movement_efficiency = b.f32()?;
+        s.movement_efficiency = b.f32()?;
+        s.sneaking_speed = b.f32()?;
+        s.use_item_speed_multiplier = if b.boolean()? { Some(b.f32()?) } else { None };
+        s.use_item_can_sprint = if b.boolean()? { Some(b.boolean()?) } else { None };
+        s.fall_distance = b.f64()?;
+        s.water_height = b.f64()?;
+        s.lava_height = b.f64()?;
+        s.movement_speed_base = b.f64()?;
+        s.jump_strength = b.f64()?;
+        s.gravity = b.f64()?;
+        s.safe_fall_distance = b.f64()?;
+        s.fall_damage_multiplier = b.f64()?;
+        s.bounciness = b.f64()?;
+        s.position = b.vec3()?;
+        s.velocity = b.vec3()?;
+        s.stuck_speed_multiplier = b.vec3()?;
+        s.movement_this_tick = if b.boolean()? { Some(b.vec3()?) } else { None };
+        s.main_supporting_block = if b.boolean()? { Some([b.i32()?, b.i32()?, b.i32()?]) } else { None };
+        let at = b.at; let count = b.word()?;
+        if count > (words.len() - b.at) as u64 / 3 { return Err(Refusal { position: at, reason: "modifier count" }); }
+        for _ in 0..count {
+            let at = b.at; let len = b.word()?;
+            if len > (words.len() - b.at) as u64 { return Err(Refusal { position: at, reason: "id length" }); }
+            let start = b.at; let mut bytes = Vec::new();
+            for _ in 0..len {
+                let at = b.at; let n = b.word()?;
+                bytes.push(u8::try_from(n).map_err(|_| Refusal { position: at, reason: "id byte" })?);
+            }
+            let id = String::from_utf8(bytes).map_err(|e| Refusal { position: start + e.utf8_error().valid_up_to(), reason: "id utf8" })?;
+            let amount = b.f64()?; let at = b.at;
+            let operation = match b.word()? { 0 => crate::SpeedOperation::AddValue, 1 => crate::SpeedOperation::AddMultipliedBase,
+                2 => crate::SpeedOperation::AddMultipliedTotal, _ => return Err(Refusal { position: at, reason: "operation" }) };
+            s.speed_modifiers.push(crate::SpeedModifier { id, amount, operation });
+        }
+        if b.at != words.len() { return Err(Refusal { position: b.at, reason: "extra word" }); }
+        Ok(s)
+    }
+}

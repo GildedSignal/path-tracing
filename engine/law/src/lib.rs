@@ -31,6 +31,7 @@ pub use state::{
     HurtCooldown,
     Input,
     PlayerState,
+    Refusal,
     Pose
 };
 pub use world::{
