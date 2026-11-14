@@ -68,6 +68,9 @@ $more = Join-Path $dir 'continue.md'
 for ($n = 1; $n -le $MaxResumes -and $session; $n++) {
   $tail = (Get-Content $report -Raw -ErrorAction SilentlyContinue)
   if ($tail -match 'STATUS: (DONE|BLOCKED)') { break }
+  # A spent meter is not a stopped job: resuming into it fails at once, four times (14 November).
+  $lastLog = Join-Path $dir $(if ($n -gt 1) { "log-$($n-1).jsonl" } else { 'log.jsonl' })
+  if (Select-String -Path $lastLog -Pattern 'hit your usage limit' -Quiet -ErrorAction SilentlyContinue) { "usage limit: not resuming"; break }
   Copy-Item $report (Join-Path $dir "last-$($n-1).md") -Force -ErrorAction SilentlyContinue
   $resumeArgs = @('exec', 'resume', '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', $report, $session, '-')
   Invoke-Codex $resumeArgs $more $n

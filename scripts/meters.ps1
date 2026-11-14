@@ -20,14 +20,18 @@ function Read-Meters {
     $pct = [regex]::Match([string]$line, '([\d.]+)% used').Groups[1].Value
     if ($pct) { $m['zai 5h'] = [double]$pct }
   }
-  $roll = Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-  if ($roll) {
-    $last = Select-String -Path $roll.FullName -Pattern '"rate_limits"' | Select-Object -Last 1
+  # Newest record whose limit_id is "codex" and carries numbers: Astra's sessions log a separate "premium"
+  # record with null windows, and the newest file may be one of those (14 November).
+  $rolls = Get-ChildItem "$env:USERPROFILE\.codex\sessions" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 20
+  foreach ($roll in $rolls) {
+    $last = Select-String -Path $roll.FullName -Pattern '"limit_id":"codex"' | Select-Object -Last 1
     if ($last) {
       $rl = ($last.Line | ConvertFrom-Json).payload.rate_limits
-      if ($rl.primary) { $m['codex 5h'] = [double]$rl.primary.used_percent }
+      if ($rl.primary) { $m['codex 5h'] = [double]$rl.primary.used_percent; $m['codex 5h resets'] = [DateTimeOffset]::FromUnixTimeSeconds($rl.primary.resets_at).LocalDateTime.ToString('dd HH:mm') }
       if ($rl.secondary) { $m['codex week'] = [double]$rl.secondary.used_percent }
+      $m['codex as of'] = $roll.LastWriteTime.ToString('HH:mm')
+      break
     }
   }
   # A 429 in the last five hours means that Antigravity meter is spent until the reset it names.
