@@ -15,6 +15,13 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 **Lessons that cost slots** (memory `terra-stops-at-step-one`): Terra halts the whole job at the first open question, so resolve every classification or representation question before launching, name which steps are independent, and relaunch with a continuation section, never a bare retry. Inline the one file an Antigravity job must read (clan.md trap). A judge's verdict goes to `jobs/<id>/last.md`, never only into a chat turn.
 
+## Start here (14 November, 12:20, before a compaction)
+
+- **Scheduled, detached:** 15:16 Astra resumes the 3.2d design (`jobs/3.2d-3-design`, worktree `D:\path-tracing-wt\sets`; its audit so far is `jobs/3.2d-3/last.md` on that worktree); 15:17 Terra starts job 3.3h (`D:\path-tracing-wt\thinking`). Big models first (S114).
+- **Running:** Argon on `jobs/butoon-diagnosis` (why the plan crouch-walks over buttons and plates). Its first run returned empty on one refused `read_file`; the rerun writes `report.md` as it goes and logs to `agy.log`: read both, and find the refused path in the log. GLM's queue (port batches) and lanes `port-peaceful-regen`, `port-boat-turn-trace`, `l0-freeze-tick-111`: read each `check.md` and commit `lab/wiki/`.
+- **Meters at 12:17** (`scripts/meters.ps1`): native 5 h 89% (resets 15:10), weekly 67%; Codex 5 h spent until 15:15, weekly 25%; Zai 50%; Antigravity Gemini 2%/1%, Argon weekly 18%, Claude-and-GPT weekly spent until 20 November. Antigravity is Sonnet only (S115).
+- **The play stack** that flew (`wt/3.3g-play`) is not on main: merging it is his call. His lab server and the bot client may still be running from the flight.
+
 ## Now (14 November, S104–S106)
 
 **Where we are.** The ground is built (the law at about 1 µs per tick, the world reader, footprints, the words in the code). A planner exists on `wt/planner` (job 3.2b): it certifies sentences on 8 of his 18 tracks, judged FAIL on its *claims* (the bound, thinking time, the backward method), not on its sentences, which the law replays tick by tick. **Nothing has been played in the game.** The shortest path to the first flight is therefore to fly 3.2b's certified sentences now (job 3.3c) while 3.2d replaces the planner behind the same call.
