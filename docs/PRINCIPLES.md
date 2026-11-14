@@ -291,6 +291,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "it should see a straight line and go oh i have no kit but not hungry so i get the modulus of my best tool"; presence before position; segments in parallel; "the bot should move instantly unless things are really hard"; nudge only where a local signal asks; "if it fail get better" | S120 | **Talking it through** (not yet built): checked that food stays 20/20.0 over the 800-block live run |
 | "it needs a cheap way to tell hey this seems hard let's take some time"; "changing your mind fast is extremely important especially when there's real players nearby"; tables built once; "send all of what we improved to astra" | S121 | **Followed:** S116–S121 sent to the 3.2d-3 design as an addendum (`jobs/3.2d-3-design/addendum.md`), with the straight-line gate frozen |
 | speed bridging, boat clutch over lava, pearls carried by momentum, the burning-boat lava bridge, leaving and re-entering a boat mid-fall "should emerge in the right conditions. to be logged" | S122 | **Logged:** [ladder.md](ladder.md) "Rediscovery: his list", each with what the law must hold for it to emerge and where it pays; none is coded by name |
+| "glm is not used enough." | S123 | **Measured, then followed:** at 3 lanes Zai stood at 24% used with 13% of its window elapsed (on pace to cap ~2 h early and idle); `glm-queue.ps1` now paces lanes to the meter, 1 to 8, so the window is spent by its reset, never before |
 
 ## Contradictions (kept side by side)
 
