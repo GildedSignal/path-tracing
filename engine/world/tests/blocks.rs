@@ -25,6 +25,33 @@ fn inside_cell_collision_matches_jar_bottom_cap() {
 }
 
 #[test]
+fn inside_cell_shape_is_keyed_in_recorded_footprint() {
+    use law::footprint::{Query, RecordingWorld};
+    let cap = model(&state("scaffolding[bottom=true,distance=1,waterlogged=false]")).unwrap();
+    let uncapped = model(&state("scaffolding[bottom=false,distance=1,waterlogged=false]")).unwrap();
+    let mut open = cap.clone();
+    open.inside_cell_shape = uncapped.inside_cell_shape.clone();
+    for (a, b) in [(&cap.shape, &open.shape), (cap.above_shape.as_ref().unwrap(), open.above_shape.as_ref().unwrap()),
+        (cap.below_shape.as_ref().unwrap(), open.below_shape.as_ref().unwrap()), (cap.sneak_shape.as_ref().unwrap(), open.sneak_shape.as_ref().unwrap())] {
+        assert_eq!(a.coords, b.coords);
+    }
+    assert_ne!(cap.inside_cell_shape.as_ref().unwrap().coords, open.inside_cell_shape.as_ref().unwrap().coords);
+    let mut world = BoxWorld::default();
+    world.set([0,0,0], cap.clone());
+    let initial = PlayerState { position: Vec3::new(0.5, 0.2, 0.5), velocity: Vec3::new(0.0,-0.2,0.0), ..Default::default() };
+    let input = Input { sneak: true, ..Default::default() };
+    let mut capped = initial.clone();
+    let record = RecordingWorld::new(&world).tick(&mut capped, &input);
+    let mask = record.footprint.reads[&[0,0,0]];
+    assert_ne!(mask & Query::Shape as u8, 0);
+    world.set([0,0,0], open.clone());
+    let mut uncapped = initial;
+    law::tick(&mut uncapped, &world, &input);
+    assert_ne!(capped.position.y.to_bits(), uncapped.position.y.to_bits());
+    assert_ne!(law::pattern::cell_digest(cap, true, mask), law::pattern::cell_digest(&open, true, mask));
+}
+
+#[test]
 fn descending_climbable_caps_motion_and_bottom_plate_stops_it() {
     let mut world = BoxWorld::default();
     let input = Input { sneak: true, ..Default::default() };
