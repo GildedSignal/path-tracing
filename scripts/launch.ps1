@@ -16,6 +16,8 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 if (-not (Test-Path (Join-Path $Root "jobs\$Job\prompt.md"))) { throw "No spec: jobs\$Job\prompt.md" }
+# S115: Antigravity is Sonnet only. Opus work runs on the native plan, through the integrator's Agent tool.
+if ($Who -eq 'opus') { throw 'Opus does not run on Antigravity (S115): use a native Opus sub-agent from the integrator.' }
 
 if ($Who -in 'terra','astra') {
   if (-not $Worktree) { throw 'A GPT job needs -Worktree' }

@@ -79,14 +79,14 @@ A companion's row is a hypothesis, settled the way everything here is settled â€
 | one full Codex 5-hour window | | ~15% of Codex's weekly | 10% â†’ 25% |
 | a corpus audit, a contradiction hunt | Argon (~300k in) | ~7% of Argon's own weekly | one audit |
 | a short judge with the diff inlined | Sonnet on Antigravity (~2 min) | small | 65k in, 16k out |
-| a big design | Opus on Antigravity | most of the Claude-and-GPT weekly | 233k in, 119k out, 2M cached; it also seems to have a 5-hour limit (13 November) |
+| a big design | **native Opus sub-agent** (S115: Antigravity is Sonnet only) | most of a weekly allowance, on whichever meter it lands | on Antigravity, 233k in, 119k out and 2M cached took most of the Claude-and-GPT weekly |
 | judging GPT's work | native Sonnet sub-agent | ~100k tokens for three diffs | batch several diffs per judge |
 | orchestration | native integrator | ~40% of its 5 h per hour at high context | 70% after 1 h 40 |
 | wide cheap lanes | Hydrogen | unknown | no run has survived its permission denials yet |
 | measurement | a plain command | no meter | flights, scaling and timings were all commands |
 
 Windows: Zai 5 h; Codex 5 h and weekly; Antigravity's Gemini models 5 h and weekly (2% and 1% used on 14 November), its Claude and GPT models one shared weekly, Argon its own weekly; the native plan 5 h, weekly, and weekly per model.
-**So: inside a band, spend the least contended meter; the native plan runs the integrator and is spent last.** "Fill the Anthropic context" means load the integrator with context, not drain its quota (S102).
+**So: inside a band, spend the least contended meter; the native plan runs the integrator and is spent last. On a shared meter, big models first** (S114): unspent capacity is lost at reset, and a small model cut off mid-task costs far less than a big one. On 14 November Terra ran first and Astra hit Codex's limit in the middle of the 3.2d design. So launch Astra (or Argon, or a native Opus) at the start of a window, and let Terra and the lanes fill what is left. "Fill the Anthropic context" means load the integrator with context, not drain its quota (S102).
 
 **The protocol, from what wasted the 14 November windows:**
 1. **Close every design question before a builder starts.** Four Terra runs wrote zero lines (3.3c, 3.3d twice, 3.2h) on an open classification or representation question: that is Designer or integrator work, done first.
