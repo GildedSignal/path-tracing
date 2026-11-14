@@ -22,6 +22,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
+# Through `powershell -File` an array arrives as one comma-joined string (launch.ps1 passes it so).
+$ReadDir = @($ReadDir | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
 $agy = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
 if (-not (Test-Path $agy)) { throw "agy.exe not found at $agy (install: irm https://antigravity.google/cli/install.ps1 | iex)" }
