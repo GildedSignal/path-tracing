@@ -16,3 +16,6 @@ redfakemaze -25 -64 67 -4 -58 76
 stonesimple 1 -64 22 9 -58 59
 stonestaircase -16 -64 39 -8 -46 59
 trapdoorparkour -30 -63 -47 -22 -53 4
+straight100 292 -64 -496 308 -58 -300
+straight300 292 -64 -496 308 -58 -80
+straight800 292 -64 -496 308 -58 476
