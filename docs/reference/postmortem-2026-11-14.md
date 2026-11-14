@@ -51,3 +51,10 @@ Asked for by Julien (S128): "make a post-mortem on sub-agent usage so that next 
 | a design | Astra | ~25–30% of Codex 5 h |
 | a lens | GLM | ~7–10% of Zai 5 h per lane-hour |
 | a red-team or a judge | native Opus / Sonnet | ~80–150k tokens of the native plan |
+
+## The guards added after it (S129)
+
+Julien: these failures "should NOT happen again, there should be tests". Now:
+- **scripts/test-antigravity.ps1** must pass before any Antigravity job: every launcher script parses; Opus is refused by `launch.ps1` and by `gemini.ps1` (checked by message, since a parse error also throws); a live Hydrogen-low probe (~20k tokens, under 1 point of the Gemini 5 h meter) reads by six path forms with no denial. Its first runs reproduced the empty-run failure in 11 s: **a relative path or a `file:///` link is denied and ends the run**. The contract now requires absolute drive-letter paths, and the probe passes.
+- **`launch.ps1`** refuses every Antigravity job until the probe's stamp matches the current `gemini.ps1` and `launch.ps1`.
+- **`gemini.ps1`** refuses to start a run its meter cannot afford (per-model budget: Argon 15, Hydrogen 15, Sonnet 10 points of remaining), and every two minutes kills a run that has taken more than its budget or whose report has not grown for 20 minutes, keeping what the report holds. The kill path has not yet fired on a live run.

@@ -53,6 +53,14 @@ if ($Who -in 'terra','astra') {
   # S125 (measured, agy /usage): Argon has its own weekly limit ("Gemini 4 Argon Weekly Limit", ~10% per
   # big run), while Hydrogen draws only on the Gemini models meter (99% left after five Argon runs). So
   # Argon runs one at a time on its own meter, and Hydrogen runs up to three lanes beside it.
+  # S129: no Antigravity job starts until scripts\test-antigravity.ps1 has passed against these exact
+  # scripts (a changed gemini.ps1 or launch.ps1 needs a new pass). The probe is what stands between a
+  # path-form or permission mistake and an empty Argon run.
+  $stamp = Join-Path $Root 'jobs\_probe-agy\passed.txt'
+  $hash = (Get-FileHash "$PSScriptRoot\gemini.ps1").Hash + (Get-FileHash "$PSScriptRoot\launch.ps1").Hash
+  if (-not (Test-Path $stamp) -or (Get-Content $stamp -TotalCount 1) -ne $hash) {
+    throw 'The Antigravity probe has not passed for these scripts: run .\scripts\test-antigravity.ps1 first (S129).'
+  }
   $units = @{ argon = 2; hydrogen = 1; opus = 2; sonnet = 1 }
   $meter = if ($Who -in 'opus','sonnet') { 'claude' } elseif ($Who -eq 'argon') { 'argon' } else { 'gemini' }
   $limit = @{ claude = 2; argon = 2; gemini = 3 }[$meter]

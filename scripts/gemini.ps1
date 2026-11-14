@@ -18,10 +18,33 @@ param(
   [string]$Model = 'gemini-4-argon-high',
   [string]$Write,
   [string[]]$ReadDir = @(),   # extra directories to read, e.g. a worktree under judgment
-  [int]$TimeoutMinutes = 60
+  [int]$TimeoutMinutes = 60,
+  # S129: the most a run may take from its meter (points of "remaining"), and how long its report may go
+  # without growing. Over either, the run is killed: an empty Argon run once cost ~10% of its week, and an
+  # Opus run the Claude meter's whole week, with nothing to show.
+  [int]$Budget = 0,
+  [int]$StallMinutes = 20
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
+if ($Model -match 'opus') { throw 'Opus does not run on Antigravity (S115, S129): it spent the Claude meter''s week with no output. Use a native Opus sub-agent.' }
+
+# The meter rows each model draws on, as `agy /usage` prints them (group, label: N% REMAINING).
+$rows = if ($Model -match 'argon') { @('Gemini 4 Argon|Gemini 4 Argon Weekly Limit', 'Gemini Models|Five Hour Limit Remaining') }
+        elseif ($Model -match 'hydrogen') { @('Gemini Models|Five Hour Limit Remaining', 'Gemini Models|Weekly Limit Remaining') }
+        else { @('Claude and GPT models|Weekly Limit Remaining') }
+if (-not $Budget) { $Budget = if ($Model -match 'argon') { 15 } elseif ($Model -match 'hydrogen') { 15 } else { 10 } }
+function Read-Remaining {
+  $agyExe = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+  $in = Join-Path $env:TEMP "agy-usage-in-$PID.txt"; $out = Join-Path $env:TEMP "agy-usage-out-$PID.txt"
+  [IO.File]::WriteAllText($in, "/usage`n")
+  Start-Process $agyExe -RedirectStandardInput $in -RedirectStandardOutput $out -RedirectStandardError "$out.err" -NoNewWindow -Wait
+  $m = @{}
+  foreach ($l in (Get-Content $out -ErrorAction SilentlyContinue)) {
+    $f = $l -split "`t"; if ($f.Count -ge 3 -and $f[2] -match '^(\d+)%$') { $m["$($f[0])|$($f[1])"] = [int]$Matches[1] }
+  }
+  $m
+}
 # Through `powershell -File` an array arrives as one comma-joined string (launch.ps1 passes it so).
 $ReadDir = @($ReadDir | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
@@ -42,7 +65,9 @@ $full = Join-Path $dir 'full-prompt.md'
 # as it goes; if the final response comes back empty, that file becomes last.md.
 $reportFile = Join-Path $dir 'report.md'
 # 14 November: a run that wrote only "Drafting in progress..." lost 208k tokens of reading to one denied read.
-$contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportFile``: it is the one file you may write. Create it at the start, and **append what you have found after every three or four files you read**, never only at the end: a denied read ends the run at once, and only what is already in that file survives. Your final message should repeat it."
+# S129, measured by scripts\test-antigravity.ps1: absolute drive-letter paths are read; a relative path or
+# a file:/// URL is denied, and one denial ends the run with nothing.
+$contract = "`n`n---`n`n**Read files only by absolute Windows paths with the drive letter** (``C:\...`` or ``D:\...``). A relative path or a ``file:///`` link is denied and ends your run at once with nothing kept: convert any link or relative path to an absolute drive-letter path before you read it.`n`n**Write your report as you go** into the file ``$reportFile``: it is the one file you may write. Create it at the start, and **append what you have found after every three or four files you read**, never only at the end: a denied read ends the run at once, and only what is already in that file survives. Your final message should repeat it."
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body$contract", $utf8)
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the
@@ -57,7 +82,10 @@ $contract = "`n`n---`n`n**Write your report as you go** into the file ``$reportF
 function Convert-PermPaths([string]$p) {
   $slash = ($p -replace '\\','/').TrimEnd('/') + '/'
   # The agent links files as file:///C:/Users/.../path%20tracing/..., and may read them in that form.
-  $forms = @($slash, ($slash -replace '^[A-Za-z]:',''))
+  # S129: the probe showed a file:/// URL read denied, ending the run; so every form an agent may use is
+  # granted: drive and no drive, lower-case drive, a leading slash before the drive, file:/// URLs, %20.
+  $drive = $slash; $lower = if ($slash -match '^[A-Za-z]:') { $slash.Substring(0,1).ToLower() + $slash.Substring(1) } else { $slash }
+  $forms = @($drive, $lower, ($slash -replace '^[A-Za-z]:',''), "/$drive", "file:///$drive", "file:///$lower", "file://$drive")
   $forms + @($forms | ForEach-Object { $_ -replace ' ','%20' }) | Select-Object -Unique
 }
 $allow = @(); foreach ($f in (Convert-PermPaths $Root)) { $allow += "read_file($f)" }
@@ -83,10 +111,35 @@ $quoted = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_
 $raw = Join-Path $dir 'result.json'
 $err = Join-Path $dir 'stderr.txt'
 $wd  = if ($Write) { $Write } else { $Root }
+# Before: a run its meter cannot afford dies at the limit half-way, with its tokens spent. Refuse it.
+$before = Read-Remaining
+foreach ($r in $rows) {
+  if (-not $before.ContainsKey($r)) { throw "agy /usage has no row '$r': cannot guard this run, so it does not start." }
+  if ($before[$r] -lt $Budget) { throw "Meter '$r' has $($before[$r])% left, under this run's budget of ${Budget}: not started (S129)." }
+}
 $sw = [Diagnostics.Stopwatch]::StartNew()
-$p = Start-Process $agy -ArgumentList $quoted -WorkingDirectory $wd -NoNewWindow -Wait -PassThru `
+$p = Start-Process $agy -ArgumentList $quoted -WorkingDirectory $wd -NoNewWindow -PassThru `
   -RedirectStandardInput $full -RedirectStandardOutput $raw -RedirectStandardError $err
+# During: every two minutes, kill the run if it has taken more than its budget from any of its meters, or
+# if its report has not grown for StallMinutes (it is reading without writing: what the empty runs did).
+$killed = ''; $grown = Get-Date; $size = 0
+while (-not $p.WaitForExit(120000)) {
+  $now = (Get-Item $reportFile -ErrorAction SilentlyContinue).Length
+  if ($now -gt $size) { $size = $now; $grown = Get-Date }
+  $left = Read-Remaining
+  foreach ($r in $rows) { if ($left.ContainsKey($r) -and $before[$r] - $left[$r] -gt $Budget) { $killed = "OVER BUDGET: '$r' fell from $($before[$r])% to $($left[$r])% (budget $Budget)" } }
+  if (-not $killed -and ((Get-Date) - $grown).TotalMinutes -gt $StallMinutes) { $killed = "STALLED: report.md has not grown for $StallMinutes minutes" }
+  if ($killed) {
+    Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $p.Id } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Add-Content -Encoding utf8 (Join-Path $dir 'killed.txt') "$(Get-Date -Format 'yyyy-MM-dd HH:mm') $killed"
+    "KILLED: $killed"; break
+  }
+}
 $sw.Stop()
+$after = Read-Remaining
+if ($killed -and (Get-Item $reportFile -ErrorAction SilentlyContinue).Length -gt 0) { Copy-Item $reportFile (Join-Path $dir 'last.md') -Force; "the report written before the kill is kept as last.md" }
+"meter cost: " + (($rows | ForEach-Object { "$_ $($before[$_] - $after[$_]) points" }) -join '; ')
 
 # The response becomes last.md, so a Google job leaves the same artefact a GPT job does.
 $status = 'NO OUTPUT'; $usage = ''
