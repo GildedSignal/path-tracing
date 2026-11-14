@@ -54,5 +54,9 @@ if ($Who -in 'terra','astra') {
 # Start-Process does not quote its arguments and this repo's path has a space (clan.md, trap 1).
 $q = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 $p = Start-Process powershell -ArgumentList $q -WorkingDirectory $Root -WindowStyle Hidden -PassThru
+# Every lane runs at Idle CPU priority and its children inherit it, so a live gate on the same machine
+# keeps its rate: L0 Preflight passed under full load this way on 14 November (S106), where the same
+# load at Normal priority missed the lab clock's rate floor (986 against 1,000 ticks per second).
+try { $p.PriorityClass = 'Idle' } catch {}
 Add-Content -Encoding utf8 (Join-Path $Root 'jobs\launch.log') "$(Get-Date -Format 'yyyy-MM-dd HH:mm') $Job $Who $model pid $($p.Id) $Worktree"
 "launched $Job on $Who ($model), pid $($p.Id)"

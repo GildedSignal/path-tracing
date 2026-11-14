@@ -1,0 +1,18 @@
+# Job 3.3g: `play-track`, the first flight's driver
+
+**Why and consumer.** The first flight (HANDOFF roadmap item 2): a certified sentence played by the bot in the game, on one of his tracks, measured by the track's own clock. Every phase ends in a flight he uses. Nothing has been played yet. The integrator runs it live as soon as this lands.
+
+**Worktree** `D:\path-tracing-wt\play`, branch `wt/3.3g-play`, from `wt/3.3e-plan-track` (`6c871ec`), which has `engine/plan/src/bin/plan-track.rs` (prints `SENTENCE <ticks> thinking <ms>` or `NO SENTENCE <reason>`; `--start settled` only; writes the exporter's JSONL: start bits, per-tick inputs with raw yaw and pitch bits, predicted state bits).
+
+**This job has one deliverable. Do not stop at an open choice:** take the stricter option, write the choice into your report, and finish.
+
+**Read.** `bot/tracks.md` (the track mode: arming on A, the run clock from leaving A to touching B, run rows in `lab/tracks/runs/<name>.jsonl`, `/msg PathBot track run <name>`); `bot/src/pathtracing/Tracks.java` (`startBot`, `settle`; after arming it calls `Bot.goTo`); `bot/src/pathtracing/Recorder.java` and `bot/recorder.md` (how a replay feeds recorded inputs tick by tick and records what happened); `scripts/rcon.ps1`; `lab/gates/record-fixtures.ps1` on branch `wt/l0-veto` (`D:\path-tracing-wt\l0-veto`) as the model for driving the bot from a script and waiting on its chat replies.
+
+**Deliverable.**
+1. **In the bot:** `/msg PathBot track play <name>` arms exactly as `track run` does and then, instead of `Bot.goTo`, replies `Armed <name>; waiting for a plan.` and waits on A. `/msg PathBot track plan <path>` then feeds that JSONL's inputs, one per client tick, from the next tick, through the same input path the recorder's replay uses, with recording on, and **without** any teleport or settle of its own (the bot is already settled on A). The track's own clock and run row work unchanged; the run row also records the plan file and its predicted T. Refusals, loudly in chat: a plan whose start position differs from the bot's position in any bit; a plan file that does not parse; a `track plan` without an armed `track play`.
+2. **`scripts/play-track.ps1 -Track <name> [-Mode 5] [-Rig <root>]`:** sends `track play`, waits for `Armed`, runs `plan-track <name> --start settled --mode <m> --out <rig>/lab/tracks/plans/<name>-<stamp>.jsonl` (wall clock from the `track play` command to the file written is the thinking time, and is printed), sends `track plan <path>` (or prints the `NO SENTENCE` reason and sends `track cancel`), waits for the run row, then prints one summary: predicted T, the clock's T, Julien's best T, thinking time, and the recording's path. If `engine/plan/src/bin/deviation.rs` exists on the branch, run it on the plan and the recording and print its first deviation; otherwise say it was skipped.
+3. **A dry run** (`-DryRun`) that does step 2 without the bot: it plans and prints what it would send. Run the dry run on `grassjumpeasy` and quote it.
+
+**Must not.** Nudge, re-anchor or correct the bot toward the plan: a deviation is the measurement. Add a tolerance. Change the law, the planner's search, a gate or a fixture. Start a server or client. Commit, push or merge. If `jobs/1.2-footprints/verify.ps1` is denied its log, apply the one-line `$output` change from `main`.
+
+**Done means.** The bot builds (`bot/build.ps1`); `cargo test --offline` from `engine/` passing; `verify.ps1` 12 of 12; the dry-run output; the exact command for a live run; the net lines; under 40 lines of report.

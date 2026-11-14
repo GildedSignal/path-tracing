@@ -14,3 +14,12 @@
 **Must not.** Add a tolerance, an epsilon, a retry or a nudge. Change the law's arithmetic, the planner's search, a gate or a fixture. Start a server or a client. Commit, push or merge.
 
 **Done means.** The deliverable and its tests passing; `cargo test --offline` from `engine/` passing (fix the `walk.rs:4` doctest import if it blocks you, and say so); `jobs/1.2-footprints/verify.ps1` 12 of 12; the net lines; under 40 lines of report.
+
+---
+
+## Continuation (your first run wrote no code)
+
+1. **The gate's log was a shared file** that parallel jobs locked. On your branch, change the one line in `jobs/1.2-footprints/verify.ps1` that sets `$output` to `$output = Join-Path 'D:\path-tracing-deps\footprints-verification' (Split-Path -Leaf $root)` (exactly as on `main` now). Nothing else in the gate changes.
+2. **Write the loader first; tests second. A missing real input never blocks the code.**
+3. **Test inputs:** the archived snapshots predate `isUsingItem`, and no saved `server-state.ps1` pairs exist yet. So build each test's inputs from a real archived snapshot (name the file) with the new fields added at their settled values, and a server-sample pair built from that same recording's recorded server resources (name the fields you took and from where). Say in the report that the first live play replaces these with real pairs. One edited copy per refusal kind, as before.
+4. Delete the untracked `target-loader/` your first run left.

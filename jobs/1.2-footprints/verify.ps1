@@ -2,7 +2,8 @@
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $engine = Join-Path $root 'engine'
-$output = 'D:\path-tracing-deps\footprints-verification'
+# One log folder per checkout: parallel jobs shared one and were denied each other's workspace.log (S104).
+$output = Join-Path 'D:\path-tracing-deps\footprints-verification' (Split-Path -Leaf $root)
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 function Cargo-Check([string]$Name, [string[]]$Arguments, [switch]$MustFail) {
