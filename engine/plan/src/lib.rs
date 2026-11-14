@@ -15,3 +15,4 @@ pub use reach::{Field, Reach};
 pub use search::{Options, Order, Outcome, Planner, Problem, Stats, Stopped};
 pub use time::{Free, Scheduled, Still, Timeline};
 pub use walk::{Certificate, Halt, Lane, Step, advance, certify, settle};
+pub mod deviation;
