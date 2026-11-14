@@ -362,7 +362,7 @@ fn time_layers(name: &str, world: &impl World, start: &PlayerState, program: &Pr
     let mut table = ProposalTable::default();
     for (start, segment) in &segments { table.learn(world, start, program, args, segment).unwrap(); }
     let proposals: Vec<Found> = segments.iter().map(|(start, _)| {
-        *table.proposals(world, start).first().expect("a hit")
+        *table.proposals(start).first().expect("a hit")
     }).collect();
     let table = RefCell::new(table);
     let certificates = RefCell::new(law::pattern::PatternTable::<()>::default());
@@ -395,7 +395,7 @@ fn time_layers(name: &str, world: &impl World, start: &PlayerState, program: &Pr
     }
     type Layer<'a> = (&'static str, Box<dyn Fn(usize) + 'a>);
     let layers: Vec<Layer> = vec![
-        ("lookup", Box::new(|i| { black_box(table.borrow_mut().proposals(world, &segments[i].0)); })),
+        ("lookup", Box::new(|i| { black_box(table.borrow_mut().proposals(&segments[i].0)); })),
         ("replay", Box::new(|i| { black_box(table.borrow_mut().replay(world, &segments[i].0, proposals[i]).unwrap()); })),
         ("recorded segment", Box::new(|i| { black_box(run_segment(world, &segments[i].0, program, args).unwrap()); })),
         ("law alone", Box::new(|i| { black_box(rerun(world, &segments[i].0, program, args, segments[i].1.ticks, |_, _| {})); })),
@@ -628,7 +628,7 @@ fn side_by_side<A: World, B: World>(name: &str, scan: &A, models: Option<&B>, st
     let mut proposals = Vec::new();
     if let Some(models) = models {
         for (start, segment) in s { table.learn(models, start, program, args, segment).unwrap(); }
-        proposals = s.iter().map(|(start, _)| *table.proposals(models, start).first().expect("a hit")).collect();
+        proposals = s.iter().map(|(start, _)| *table.proposals(start).first().expect("a hit")).collect();
     }
     let (table, certificates) = (RefCell::new(table), RefCell::new(law::pattern::PatternTable::<()>::default()));
     let (proposals, filled, footprints) = (&proposals, &filled, models.map(|m| s.iter().map(|(start, seg)| taped(m, start, program, args, seg.ticks)).collect::<Vec<_>>()));
@@ -657,7 +657,7 @@ fn side_by_side<A: World, B: World>(name: &str, scan: &A, models: Option<&B>, st
             })),
             ("models' world: the certificate alone", Box::new(move |i| {
                 black_box(certificates.borrow_mut().insert(models, &footprints.as_ref().unwrap()[i], &s[i].0, ()).unwrap()); })),
-            ("models' world: lookup", Box::new(move |i| { black_box(table.borrow_mut().proposals(models, &s[i].0)); })),
+            ("models' world: lookup", Box::new(move |i| { black_box(table.borrow_mut().proposals(&s[i].0)); })),
             ("models' world: replay (the branch)", Box::new(move |i| { black_box(table.borrow_mut().replay(models, &s[i].0, proposals[i]).unwrap()); })),
         ]);
     }

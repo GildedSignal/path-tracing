@@ -1,6 +1,7 @@
 //! The proposal table (vocabulary.md, sections 2, 3 and 11). The class proposes; the
 //! replay from the concrete state certifies. Proposals live under the class alone; the
-//! world part orders them and never excludes one. Nothing is filed by its exact start.
+//! lookup is by class alone (job 3.2b): a proposal keeps the cells its learning replay read for
+//! one purpose, saying when its certificate is broken (`holds`). Nothing is filed by its exact start.
 use std::collections::{HashMap, HashSet};
 use law::{PlayerState, World, pattern::{Key, PatternError, PatternTable}, state_reads::StateReads};
 use crate::{Arguments, Exit, Program, Segment, SegmentError, class::{self, ClassOf}, run_segment};
@@ -33,9 +34,9 @@ impl Proposal {
     }
     pub fn class(&self) -> u32 { self.class }
 }
-/// A proposal of the state's class. `here`: its world part holds at the state.
+/// A proposal of the state's class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Found { pub id: u32, pub here: bool }
+pub struct Found { pub id: u32 }
 
 /// A replayed segment. Its footprint is the certificate; a key is computed only if asked.
 #[derive(Clone, Debug)]
@@ -99,23 +100,38 @@ pub struct Piece { pub program: usize, pub arguments: Arguments, pub segment: Se
 pub struct Pieces {
     /// The distinct pieces: one per exit state, under the first program that reached it.
     pub pieces: Vec<Piece>,
+    /// Segments run through the law.
     pub runs: u32,
     pub refusals: u32,
     pub duplicates: u32,
+    /// Programs whose segment was another program's run: the same input, selected by a row
+    /// that cannot change inside a segment.
+    pub shared: u32,
+    /// Each refusal the law named, with its count.
+    pub refused: Vec<(SegmentError, u32)>,
 }
 /// The record's compile step (section 5): from a state, every program at every aim to
-/// its event, each certified by the run itself. A run the law refuses, by an error or by
-/// `unimplemented!`, is a refusal. Pieces that reach the same bits are one piece.
+/// its event, each certified by the run itself. Each distinct input runs once: programs
+/// whose rows cannot change inside a segment and that select the same input share the run.
+/// A run the law refuses is a named refusal. Pieces that reach the same bits are one piece.
 pub fn pieces<W: World>(world: &W, state: &PlayerState, programs: &[Program], arguments: &[Arguments]) -> Pieces {
     let mut found = Pieces::default();
     let mut seen = HashSet::new();
     for &arguments in arguments {
+        let mut inputs = HashSet::new();
         for (program, rows) in programs.iter().enumerate() {
+            if rows.event_bound() {
+                if let Some((_, i)) = rows.select(world, state, 0, arguments) {
+                    if !inputs.insert((i.forward, i.back, i.left, i.right, i.jump, i.sneak, i.sprint, i.yaw.to_bits(), i.pitch.to_bits())) { found.shared += 1; continue; }
+                }
+            }
             found.runs += 1;
-            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_segment(world, state, rows, arguments)));
-            match run {
-                Ok(Ok(segment)) => if seen.insert(segment.state.bits()) { found.pieces.push(Piece { program, arguments, segment }); } else { found.duplicates += 1; },
-                _ => found.refusals += 1,
+            match run_segment(world, state, rows, arguments) {
+                Ok(segment) => if seen.insert(segment.state.bits()) { found.pieces.push(Piece { program, arguments, segment }); } else { found.duplicates += 1; },
+                Err(error) => {
+                    found.refusals += 1;
+                    match found.refused.iter_mut().find(|known| known.0 == error) { Some(known) => known.1 += 1, None => found.refused.push((error, 1)) }
+                }
             }
         }
     }
@@ -135,9 +151,6 @@ pub struct ProposalTable {
     /// Class and cells -> the proposals whose world part that is.
     worlds: PatternTable<Vec<(u32, u32)>>,
     stamps: u32,
-    /// Whether lookups consult the world part to order proposals, and replays keep it
-    /// current. True is the record; false is there to price the ordering.
-    pub ordered: bool,
     pub counters: Counters,
     /// New proposals in each thousand decisions, in order (Heaps, section 11).
     pub growth: Vec<u32>,
@@ -148,7 +161,7 @@ impl Default for ProposalTable { fn default() -> Self { Self::new(class::class) 
 impl ProposalTable {
     pub fn new(class_of: ClassOf) -> Self {
         Self { class_of, programs: Vec::new(), masks: Vec::new(), ids: HashMap::new(), classes: Vec::new(), proposals: Vec::new(),
-            worlds: PatternTable::default(), stamps: 0, ordered: true, counters: Counters::default(), growth: Vec::new(), witnesses: Vec::new() }
+            worlds: PatternTable::default(), stamps: 0, counters: Counters::default(), growth: Vec::new(), witnesses: Vec::new() }
     }
     pub fn program(&self, index: u32) -> &Program { &self.programs[index as usize] }
     pub fn proposal(&self, id: u32) -> &Proposal { &self.proposals[id as usize] }
@@ -206,32 +219,26 @@ impl ProposalTable {
         Ok(id)
     }
 
-    /// Every proposal of the state's classes, those whose world part holds here first.
+    /// Every proposal of the state's classes, by the class alone: no cell is read.
     /// A miss is no proposal at all.
-    pub fn proposals(&mut self, world: &impl World, state: &PlayerState) -> Vec<Found> {
+    pub fn proposals(&mut self, state: &PlayerState) -> Vec<Found> {
         if self.counters.decisions % 1000 == 0 { self.growth.push(0); }
         self.counters.decisions += 1;
-        let (mut found, mut rest) = (Vec::new(), Vec::new());
+        let mut found = Vec::new();
         for index in 0..self.masks.len() {
             let words = (self.class_of)(state, self.masks[index]);
             let Some(&class) = self.ids.get(&words) else { continue };
-            let from = found.len();
-            for hit in if self.ordered { self.worlds.lookup_at(world, &class::start(state, words)) } else { Vec::new() } {
-                found.extend(hit.entry.value.iter().filter(|&&(id, stamp)| self.proposals[id as usize].stamp == stamp).map(|&(id, _)| Found { id, here: true }));
-            }
             let record = &mut self.classes[class as usize];
             record.decisions += 1;
-            rest.extend(record.proposals.iter().filter(|&&id| !found[from..].iter().any(|f| f.id == id)).map(|&id| Found { id, here: false }));
+            found.extend(record.proposals.iter().map(|&id| Found { id }));
         }
-        found.extend(rest);
         if found.is_empty() { self.counters.misses += 1; } else { self.counters.hits += 1; }
         self.counters.returned += found.len() as u64;
         found
     }
 
     /// The only way to a segment: the law runs from the concrete state. The outcome is
-    /// counted on the proposal; a surprise leaves its witness. A proposal whose world part
-    /// did not hold here, or that surprised, takes the cells this replay read.
+    /// counted on the proposal; a surprise leaves its witness.
     pub fn replay(&mut self, world: &impl World, state: &PlayerState, found: Found) -> Result<Certified, SegmentError> {
         let proposal = &self.proposals[found.id as usize];
         let (program, arguments, predicted, class) = (proposal.program, proposal.arguments, proposal.predicted(), proposal.class as usize);
@@ -248,17 +255,19 @@ impl ProposalTable {
             self.classes[class].surprises += 1;
             self.witnesses.push(Surprise { start: state.clone(), proposal: found.id, program, arguments, predicted, actual });
         }
-        if self.ordered && (!found.here || !as_proposed) {
-            let words = self.classes[class].words.clone();
-            match self.file(world, state, words, &segment, found.id) {
-                Ok((world, stamp)) => (self.proposals[found.id as usize].world, self.proposals[found.id as usize].stamp) = (world, stamp),
-                Err(error) => { self.classes[class].refusals += 1; return Err(error.into()); }
-            }
-        }
         let proposal = &mut self.proposals[found.id as usize];
         proposal.replays += 1;
         count(&mut proposal.outcomes, actual);
         Ok(Certified { segment, as_proposed })
+    }
+
+    /// Whether the proposal's certificate stands here: the cells its learning replay read,
+    /// taken from this state's block, hold the same contents. Validity only; never consulted
+    /// by a lookup.
+    pub fn holds(&mut self, world: &impl World, state: &PlayerState, id: u32) -> bool {
+        let proposal = &self.proposals[id as usize];
+        let (stamp, words) = (proposal.stamp, self.classes[proposal.class as usize].words.clone());
+        self.worlds.lookup_at(world, &class::start(state, words)).iter().any(|hit| hit.entry.value.contains(&(id, stamp)))
     }
 
     /// The consumer took this proposal's piece: `ticks` of its route ride on it.

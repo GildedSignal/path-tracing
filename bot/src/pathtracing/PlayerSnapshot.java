@@ -31,6 +31,7 @@ final class PlayerSnapshot {
         out.addProperty("verticalCollisionBelow", p.verticalCollisionBelow);
         out.addProperty("minorHorizontalCollision", p.minorHorizontalCollision);
         out.addProperty("isSprinting", p.isSprinting());
+        out.addProperty("isUsingItem", p.isUsingItem());
         out.addProperty("isShiftKeyDown", p.isShiftKeyDown());
         out.addProperty("pose", p.getPose().name());
         out.addProperty("crouching", p.isCrouching());

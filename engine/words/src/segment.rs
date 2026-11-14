@@ -53,6 +53,8 @@ pub enum SegmentError {
     /// The tick budget ran out with no event: nothing is invented.
     NoEvent { ticks: u32 },
     Pattern(PatternError),
+    /// The segment reached a rule the port lacks: the law refused by name.
+    Refused(law::Refusal),
 }
 impl From<PatternError> for SegmentError { fn from(e: PatternError) -> Self { Self::Pattern(e) } }
 
@@ -94,7 +96,7 @@ pub fn run_segment(world: &impl World, start: &PlayerState, program: &Program, a
     let exit = loop {
         if ticks == args.max_ticks { return Err(SegmentError::NoEvent { ticks }); }
         let before = state.clone();
-        law::tick(&mut state, &recording, &input);
+        law::try_tick(&mut state, &recording, &input).map_err(SegmentError::Refused)?;
         ticks += 1;
         guards = Guards { food: guards.food.min(state.food_level), health: guards.health.min(state.health) };
         let mut exit = events(&before, &state);

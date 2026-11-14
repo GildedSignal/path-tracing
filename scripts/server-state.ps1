@@ -42,7 +42,7 @@ foreach ($entry in (Split-Compound $Matches[1])) {
   $fields[$key] = $Matches[2]
 }
 $state = [ordered]@{ gameTimeBefore = $times[0]; gameTimeAfter = $times[1] }
-foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'foodTickTimer', 'playerGameType', 'Pos', 'Motion', 'fall_distance', 'TicksFrozen')) {
+foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhaustionLevel', 'foodTickTimer', 'playerGameType', 'Pos', 'Motion', 'fall_distance', 'TicksFrozen', 'Fire')) {
   # Vanilla omits TicksFrozen when zero.
   if (-not $fields.ContainsKey($field)) {
     if ($field -eq 'TicksFrozen') { $state[$field] = 0; continue }
@@ -55,4 +55,10 @@ foreach ($field in @('Health', 'foodLevel', 'foodSaturationLevel', 'foodExhausti
     $state[$field] = @($parts | ForEach-Object { Read-Number $_.Trim() })
   } else { $state[$field] = Read-Number $fields[$field] }
 }
+# Retain absence explicitly: deciding whether an omitted NBT tag means false is
+# the start-state loader's job, not the sampler's.
+$state['FallFlying'] = if ($fields.ContainsKey('FallFlying')) { Read-Number $fields['FallFlying'] } else { $null }
+$state['RootVehicle'] = $fields.ContainsKey('RootVehicle')
+$state['active_effects'] = if ($fields.ContainsKey('active_effects')) { $fields['active_effects'] } else { $null }
+$state['abilities'] = if ($fields.ContainsKey('abilities')) { $fields['abilities'] } else { $null }
 $state | ConvertTo-Json -Compress

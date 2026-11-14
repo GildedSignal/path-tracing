@@ -132,7 +132,7 @@ fn decide(track: &Track, table: &mut ProposalTable, stats: &mut Stats, state: &P
     let decision = table.counters.decisions;
     let audit = decision % AUDIT_EVERY == 0;
     let clock = Instant::now();
-    let found = table.proposals(world, state);
+    let found = table.proposals(state);
     let mut spent = us(clock);
     stats.lookup.push(spent);
     stats.late += late as u64;
@@ -153,7 +153,7 @@ fn decide(track: &Track, table: &mut ProposalTable, stats: &mut Stats, state: &P
     } else {
         stats.k.push(found.len() as f32);
         stats.late_hits += late as u64;
-        stats.here += found[0].here as u64;
+        stats.here += table.holds(world, state, found[0].id) as u64;
         let mut hit = Vec::new();
         for &proposal in &found {
             let clock = Instant::now();
@@ -215,9 +215,8 @@ fn decide(track: &Track, table: &mut ProposalTable, stats: &mut Stats, state: &P
     Some(own.state)
 }
 
-fn walk(track: &Track, name: &str, class_of: ClassOf, ordered: bool, programs: &[Program], aims: &[Arguments], record: Option<&PathBuf>) -> (Stats, ProposalTable) {
+fn walk(track: &Track, name: &str, class_of: ClassOf, programs: &[Program], aims: &[Arguments], record: Option<&PathBuf>) -> (Stats, ProposalTable) {
     let mut table = ProposalTable::new(class_of);
-    table.ordered = ordered;
     let mut stats = Stats::default();
     let mut sink = record.map(|dir| std::fs::File::create(dir.join(format!("witnesses-{}-{}.tsv", track.name, name.replace([' ', ','], "-")))).unwrap());
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
@@ -243,7 +242,7 @@ fn report(track: &str, name: &str, stats: &Stats, table: &ProposalTable) {
     let c = table.counters;
     let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
     let tag = format!("[{track}] {name}");
-    println!("hit rate {tag}: decisions={} hits={} misses={} hit={:.2}% (runs 33-64: {:.2}% of {}); first proposal's world part held on {:.1}% of hits; as proposed {:.1}% of {} replays",
+    println!("hit rate {tag}: decisions={} hits={} misses={} hit={:.2}% (runs 33-64: {:.2}% of {}); first proposal's certificate held here on {:.1}% of hits; as proposed {:.1}% of {} replays",
         c.decisions, c.hits, c.misses, pct(c.hits, c.decisions), pct(stats.late_hits, stats.late), stats.late, pct(stats.here, c.hits), pct(stats.as_proposed, stats.replays), stats.replays);
     println!("{tag} proposals replayed per decision: {}; distinct certified pieces per decision {:.2}", spread(&stats.k), stats.table_pieces as f64 / c.decisions.max(1) as f64);
     println!("{tag} us lookup: {}", spread(&stats.lookup));
@@ -285,18 +284,18 @@ fn the_class_of_version_2_against_version_1_on_the_tracks() {
     let record = std::env::var("VOCABULARY_RECORD").ok().map(PathBuf::from);
     let programs = tiny_programs();
     let aims: Vec<Arguments> = (0..64).map(|yaw_index| Arguments { yaw_index, ..Arguments::default() }).collect();
-    let variants: [(&str, ClassOf, bool); 3] = [("v1 class", v1_class, true), ("v2 class", class, true), ("v2 class, world part not consulted", class, false)];
+    let variants: [(&str, ClassOf); 2] = [("v1 class", v1_class), ("v2 class", class)];
     let mut totals: Vec<(&str, Stats, Counters, [u64; 3])> = variants.iter().map(|v| (v.0, Stats::default(), Counters::default(), [0; 3])).collect();
-    let mut ratios: [Vec<f32>; 3] = Default::default();
+    let mut ratios: [Vec<f32>; 2] = Default::default();
     for line in include_str!("../../world/tests/fixtures/tracks.txt").lines() {
         let name = line.split_whitespace().next().unwrap();
         if only.as_ref().is_some_and(|names| !names.iter().any(|n| n == name)) { continue; }
         let track = match track(line) { Ok(track) => track, Err(error) => { println!("[{name}] refused: {error}"); continue; } };
         println!("[{name}] loaded with pad {}, start column {:?}, aim {} of 64", track.pad, track.start, track.args.yaw_index);
-        for (variant, &(_, class_of, ordered)) in variants.iter().enumerate() {
+        for (variant, &(_, class_of)) in variants.iter().enumerate() {
             let clock = Instant::now();
             // The whole miss is priced once, beside the second walk: the states are the same.
-            let (stats, table) = walk(&track, totals[variant].0, class_of, ordered, &programs, if variant == 1 { &aims } else { &[] }, record.as_ref());
+            let (stats, table) = walk(&track, totals[variant].0, class_of, &programs, if variant == 1 { &aims } else { &[] }, record.as_ref());
             report(name, totals[variant].0, &stats, &table);
             println!("[{name}] {} walked in {:.1}s", totals[variant].0, clock.elapsed().as_secs_f64());
             if stats.table_ticks > 0 && stats.search_ticks > 0 {

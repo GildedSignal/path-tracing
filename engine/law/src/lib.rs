@@ -17,6 +17,8 @@ pub use movement::{
     calculate_fall_damage,
     calculate_fall_power,
     tick,
+    try_tick,
+    Refusal,
     tick_with_collision,
     tick_with_contact,
     tick_server_resources
@@ -31,7 +33,8 @@ pub use state::{
     HurtCooldown,
     Input,
     PlayerState,
-    Refusal,
+    // A state encoding refused by `PlayerState::from_bits`; `Refusal` is the law refusing an unported rule.
+    Refusal as BitsRefusal,
     Pose
 };
 pub use world::{

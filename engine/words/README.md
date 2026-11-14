@@ -14,14 +14,16 @@ Consumer: job 3.2b, the movement planner.
   clamp at the world's edge: its other comparisons are against cells.
 - **`ProposalTable`** keeps proposals under the class alone. A proposal is a program
   and its arguments, the outcomes its replays reached with their counts, and the
-  pattern key of the cells its last filed replay read (the world part).
-  - `proposals` returns every proposal of the state's classes, those whose world part
-    holds here first. A miss is no proposal at all.
+  pattern key of the cells its learning replay read (the world part).
+  - `proposals` returns every proposal of the state's classes and reads no cell (job
+    3.2b). A miss is no proposal at all. `holds` says whether a proposal's certificate
+    stands at a state: the one use of the world part.
   - `replay` is the only way to a segment: the law runs from the concrete state. "As
     proposed" is the predicted (most frequent) outcome. A surprise leaves a witness in
     `witnesses`: the start state, the program, the arguments, both outcomes.
-  - `invent` is the miss: every program at every aim to its event, each distinct piece
-    learned. `regret` audits a hit against the same invention and learns nothing.
+  - `invent` is the miss: every program at every aim to its event, each distinct input
+    run once and each distinct piece learned. A rule the port lacks is a named refusal
+    (`SegmentError::Refused`), from the law's `try_tick`. `regret` audits a hit against the same invention and learns nothing.
   - `counters`, `classes()` and `growth` hold section 11's counts; `walked` is the
     consumer saying which piece its route took.
   - Nothing is filed by its exact start. `Certified::key` computes a key when asked.
