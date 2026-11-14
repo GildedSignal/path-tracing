@@ -7,7 +7,7 @@
 # lens appended while the queue runs is picked up. A lens already started by this runner, or named in a
 # "start:" line of the log since the queue began, is not started twice. Lanes run at Idle CPU priority.
 # A lens must be COMMITTED before it starts: lanes run from a checkout of HEAD.
-param([Parameter(Mandatory)][string]$Queue, [int]$Lanes = 3, [int]$Minutes = 60)
+param([Parameter(Mandatory)][string]$Queue, [int]$Lanes = 3, [int]$MaxLanes = 8, [int]$Minutes = 60)
 $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\common.ps1"
 $log = Join-Path $Root 'lab\results\queue.log'
@@ -15,12 +15,39 @@ function Note($text) { Add-Content -Encoding utf8 $log "$(Get-Date -Format 'yyyy
 $began = Get-Date
 $started = @{}
 $running = @()
-Note "queue started from $Queue, $Lanes lanes"
+# Restart-safe (S123, "glm is not used enough"): a lens named in a "start:" line since the last runner
+# began is never started twice, and lanes are counted from the running glm-local processes, so lanes a
+# previous runner left running count against -Lanes.
+$previousLog = @(Get-Content $log -ErrorAction SilentlyContinue)
+$from = [Array]::FindLastIndex([string[]]$previousLog, [Predicate[string]]{ param($l) $l -match 'queue started' })
+if ($from -ge 0) { $previousLog[$from..($previousLog.Count - 1)] | ForEach-Object { if ($_ -match 'start: (\S+)$') { $started[$Matches[1]] = $true } } }
+# Paced to the meter (S123): Zai's 5-hour window should be spent by its reset, not before. A lane above
+# -Lanes may start while the share used is below the share of the window elapsed (minus one lane's ~10%
+# of headroom); at or above the line no lane starts, so running lanes drain. -MaxLanes caps it.
+function Get-ZaiPace {
+  $key = Get-GlmKey; if (-not $key) { return $null }
+  $env:ZAI_API_KEY = $key
+  $line = [string](& D:\path-tracing-deps\omp\omp.exe usage -p zai 2>$null | Select-String '5 Hours' | Select-Object -First 1)
+  Remove-Item Env:ZAI_API_KEY
+  $used = [regex]::Match($line, '([\d.]+)% used').Groups[1].Value
+  $r = [regex]::Match($line, 'resets in (?:(\d+)h)?(?:(\d+)m)?')
+  if (-not $used -or -not $r.Success) { return $null }
+  $left = [int]('0' + $r.Groups[1].Value) * 60 + [int]('0' + $r.Groups[2].Value)
+  [pscustomobject]@{ Used = [double]$used; Elapsed = 100 * (300 - $left) / 300 }
+}
+function Get-Lanes { @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'glm-local\.ps1' }).Count }
+Note "queue started from $Queue, $Lanes lanes ($($started.Count) lenses already started by the previous runner)"
 while ($true) {
   $running = @($running | Where-Object { -not $_.Process.HasExited })
   foreach ($done in @($script:previous | Where-Object { $_ -and $_.Process.HasExited })) { Note "end ($($done.Process.ExitCode)): $($done.Lens)" }
   $script:previous = $running
-  if ($running.Count -lt $Lanes) {
+  $lanesNow = Get-Lanes
+  $room = $lanesNow -lt $Lanes
+  if (-not $room -and $lanesNow -lt $MaxLanes) {
+    $pace = Get-ZaiPace
+    $room = $pace -and ($pace.Used + 10 -lt $pace.Elapsed)
+  }
+  if ($room) {
     $lenses = Get-Content (Join-Path $Root $Queue) | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } | ForEach-Object { $_.Trim() -split '\s+' }
     $next = $lenses | Where-Object { -not $started.ContainsKey($_) } | Select-Object -First 1
     if ($next) {
@@ -36,7 +63,7 @@ while ($true) {
       Start-Sleep -Seconds 61   # two runs started in the same minute would share a run id
       continue
     }
-    if ($running.Count -eq 0) { break }
+    if ((Get-Lanes) -eq 0) { break }
   }
   Start-Sleep -Seconds 60
 }
