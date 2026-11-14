@@ -165,10 +165,6 @@ fn tick_movement(
     let collision = travel(state, world, movement);
     world.observe_sweep(start_box, state.bounding_box());
     let contact = apply_block_effects(state, world, start);
-    // InsideBlockEffectType.FREEZE
-    if state.in_powder_snow && !state.leather_boots {
-        state.ticks_frozen = (state.ticks_frozen + 1).min(140);
-    }
     let before_pose = state.bounding_box();
     state.position.x = state.position.x.clamp(-29999999.0, 29999999.0);
     state.position.z = state.position.z.clamp(-29999999.0, 29999999.0);
@@ -952,6 +948,7 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
     if !world.has_inside_effects() {return contact;}
     let delta=state.position.minus(start);
     let mut visited=crate::blocks::SeenBlocks::new();
+    let mut effects=InsideEffects::default();
     let mut budget=16;
     let mut from=start;
     if let Some(original) = state.movement_this_tick.filter(|_| delta.length_sqr()>0.0) {
@@ -961,21 +958,38 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
                 continue;
             }
             let to=from.plus(Vec3::default().with(axis, distance));
-            budget-=inside_segment(state, world, from, to, &mut visited, budget);
+            budget-=inside_segment(state, world, from, to, &mut visited, &mut effects, budget);
             from=to;
         }
     } else {
-        budget-=inside_segment(state, world, start, state.position, &mut visited, 16);
+        budget-=inside_segment(state, world, start, state.position, &mut visited, &mut effects, 16);
     }
     if budget<=0 {
-        inside_segment(state, world, state.position, state.position, &mut visited, 1);
+        inside_segment(state, world, state.position, state.position, &mut visited, &mut effects, 1);
     }
+    effects.flush(state);
     contact
+}
+
+// InsideBlockEffectApplier.StepBasedCollector.advanceStep:0-17, flushStep:65-83;
+// InsideBlockEffectType.lambda$static$0:0-29.
+#[derive(Default)]
+struct InsideEffects { step: Option<i32>, freeze: bool }
+impl InsideEffects {
+    fn flush(&mut self, state: &mut PlayerState) {
+        if self.freeze && !state.leather_boots {
+            state.ticks_frozen = (state.ticks_frozen + 1).min(140);
+        }
+        self.freeze = false;
+    }
+    fn advance(&mut self, state: &mut PlayerState, step: i32) {
+        if self.step != Some(step) { self.flush(state); self.step = Some(step); }
+    }
 }
 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
 fn inside_segment(state: &mut PlayerState, world: &impl World, from: Vec3, to: Vec3,
-visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
+visited: &mut impl crate::blocks::BlockSet, effects: &mut InsideEffects, budget: i32) -> i32 {
     let bounds=Aabb::player(to, state.pose.height()).deflate(1.0e-5f32 as f64);
     let large=from.minus(to).length_sqr()>(1.0-1.0e-5f32 as f64)*(1.0-1.0e-5f32 as f64);
     let body=Aabb::player(from, state.pose.height());
@@ -998,11 +1012,13 @@ visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
         if !(inside || fluid_inside) || !visited.insert(p) {
             return true;
         }
+        // Entity.lambda$checkInsideBlocks$0:150-214 advances for every fresh cell.
+        effects.advance(state, step);
         if inside {
             let cube=Aabb {
                 min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0))
             };
-            inside_block(state, world, p, large||bounds.intersects(cube));
+            inside_block(state, world, p, large||bounds.intersects(cube), effects);
         }
         if fluid_inside {
             match block.fluid.kind {
@@ -1017,7 +1033,7 @@ visited: &mut impl crate::blocks::BlockSet, budget: i32) -> i32 {
 }
 
 // WebBlock.entityInside; PowderSnowBlock.entityInside; HoneyBlock.entityInside
-fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _intersects: bool) {
+fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _intersects: bool, effects: &mut InsideEffects) {
     let block=world.hook_block(p);
     if let Some(multiplier)=block.stuck_multiplier {
         stuck(state, multiplier);
@@ -1027,6 +1043,7 @@ fn inside_block(state: &mut PlayerState, world: &impl World, p: BlockPos, _inter
         },
         Inside::Cobweb=>stuck(state, Vec3::new(0.25, 0.05f32 as f64, 0.25)),
         Inside::PowderSnow=>{
+            effects.freeze=true;
             if world.hook_block(block_pos(state.position)).inside==Inside::PowderSnow {
                 stuck(state, Vec3::new(0.9f32 as f64, 1.5, 0.9f32 as f64));
             }
@@ -1410,6 +1427,23 @@ mod tests {
     }
 
     #[test]
+    fn freeze_collector_counts_sweep_steps_and_caps() {
+        let mut world = crate::BoxWorld::default();
+        for y in 64..=66 {
+            world.set([0, y, 0], Block { air: false, inside: Inside::PowderSnow, ..Block::default() });
+        }
+        for (start, end, frozen, expected) in [
+            (66.7, 64.2, 0, 3), (66.7, 64.2, 139, 140),
+            (65.5, 65.5, 0, 1), (65.7, 65.6, 0, 1),
+        ] {
+            let mut state = PlayerState { position: Vec3::new(0.5, end, 0.5), ticks_frozen: frozen,
+                movement_this_tick: Some(Vec3::new(0.0, end-start, 0.0)), ..PlayerState::default() };
+            apply_block_effects(&mut state, &world, Vec3::new(0.5, start, 0.5));
+            assert_eq!(state.ticks_frozen, expected, "{start} -> {end}");
+        }
+    }
+
+    #[test]
     fn fluid_only_intersection_is_visited_and_extinguishes() {
         let mut world = crate::BoxWorld::default();
         world.set([0, 0, 0], Block {
@@ -1424,18 +1458,19 @@ mod tests {
             ..PlayerState::default()
         };
         let mut visited = std::collections::BTreeSet::new();
+        let mut effects = InsideEffects::default();
         let position = state.position;
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut effects, 16);
         assert!(visited.contains(&[0, 0, 0]));
         assert_eq!(state.remaining_fire_ticks, 0);
         state.remaining_fire_ticks = 10;
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut effects, 16);
         assert_eq!(state.remaining_fire_ticks, 10);
         visited.clear();
         world.set([0, 0, 0], Block {
             air: false, inside_shape: Some(VoxelShape::default()), ..Block::default()
         });
-        inside_segment(&mut state, &world, position, position, &mut visited, 16);
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut effects, 16);
         assert!(visited.is_empty());
     }
 }

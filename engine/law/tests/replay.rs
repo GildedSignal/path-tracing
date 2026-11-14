@@ -551,6 +551,19 @@ fn check_server_end(state: &mut PlayerState, world: &impl World, expected: &Obje
 }
 
 #[test]
+#[ignore = "explicit recorded witness"]
+fn freeze_sweep_recording() {
+    let file = PathBuf::from(std::env::var_os("PATHTRACING_FREEZE_WITNESS").expect("witness path"));
+    let fixture = fs::read_to_string(file.with_extension("world.jsonl")).expect("witness world");
+    let text = fs::read_to_string(&file).expect("witness recording");
+    let header = Object::parse(text.lines().next().expect("recording header"));
+    let fixture = format!("{}\n{}", fixture, header.required("initialPlayer"));
+    let (world, mut state, _) = parse_world(&fixture);
+    let (ticks, _) = replay_text(&text, &world, &mut state);
+    println!("freeze sweep witness: {ticks} ticks replayed");
+}
+
+#[test]
 #[cfg_attr(not(has_recordings), ignore = "No recorder recordings in lab/fixtures; L0 has not run")]
 fn replay() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lab/fixtures");
