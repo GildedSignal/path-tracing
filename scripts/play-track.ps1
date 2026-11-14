@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [Parameter(Mandatory)][ValidatePattern('^[a-z0-9-]+$')][string]$Track,
   [ValidateSet('3','5','b')][string]$Mode = '5',
@@ -51,7 +51,11 @@ try {
   }
   Push-Location (Join-Path $Root 'engine')
   try {
-    $planner = & cargo run --offline --release -q -p plan --bin plan-track -- $Track --start settled --mode $Mode --out $plan
+    # Call the built binary: `cargo run` spent about 450 ms per click starting cargo and checking freshness,
+    # 61% of the measured thinking on stonesimple (14 November). Build it first with cargo build --release.
+    $exe = Join-Path $(if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $Root 'engine\target' }) 'release\plan-track.exe'
+    if (!(Test-Path -LiteralPath $exe)) { throw "Build the planner first: cargo build --offline --release -p plan --bins (missing $exe)" }
+    $planner = & $exe $Track --start settled --mode $Mode --out $plan
     $code = $LASTEXITCODE
   } finally { Pop-Location }
   $clock.Stop()
