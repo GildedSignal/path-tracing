@@ -286,6 +286,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "antigravity is sonnet only you can use opus" | S115 | **Followed:** `launch.ps1` refuses Opus on Antigravity; Opus work runs as a native sub-agent |
 | "are we properly representing things? ... gaming must have extremely smart solutions to this that we may have missed" | S116 | **Followed:** Argon research job `jobs/intersection-research` (collision, motion planning, voxel traversal, equivalence), set off by the button-and-plate crouch-walk |
 | "this should never happen anyway since we're doing things ES style" (re-testing tick by tick) | S117 | **Followed, and found broken in code:** the planner's `arith::free_tick` scans cells every tick of every arc; the 3.2d-3 design continuation now requires each worldtube checked once and rechecked only when an edit breaks its certificate |
+| "ticks are just an execution layer that's premeditated and only breaks when the certificate does"; "are we using the gpu fully" | S118 | **Followed:** Argon audit `jobs/es-audit` (every tick loop, cache and hot-path copy outside the law, verification and word compiling), ES cloned read-only to `D:\path-tracing-deps\emergent-space-engine`. GPU: not used yet, by design (`engine.md` "The machine": unqualified until a measured crossover); the audit says which code would qualify |
 
 ## Contradictions (kept side by side)
 
