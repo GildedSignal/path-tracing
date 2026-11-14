@@ -9,6 +9,9 @@ param(
   # what Terra stalls on.
   [string]$Model = 'gpt-6.1-terra',
   [string]$Resume,
+  # With -Resume: the message to send, instead of the whole prompt again (S121: his new turns reach a
+  # session that already holds the job's context).
+  [string]$Follow,
   # Pinned (clan.md 4b): Terra's factuality error is 16.7% at low effort against 4.3% at max, so an
   # unpinned default is unusable for anything load-bearing.
   [string]$Effort = 'high',
@@ -58,7 +61,7 @@ function Invoke-Codex($arguments, $stdin, $n) {
     -RedirectStandardInput $stdin -RedirectStandardOutput (Join-Path $dir $log) -RedirectStandardError (Join-Path $dir 'stderr.txt')
   "codex exited with $($p.ExitCode) (run $n)"
 }
-Invoke-Codex $codexArgs $full 0
+Invoke-Codex $codexArgs $(if ($Resume -and $Follow) { (Resolve-Path $Follow).Path } else { $full }) 0
 $report = Join-Path $dir 'last.md'
 $session = if ($Resume) { $Resume } else {
   $line = Get-Content (Join-Path $dir 'log.jsonl') -TotalCount 1 -ErrorAction SilentlyContinue

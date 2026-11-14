@@ -289,6 +289,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "ticks are just an execution layer that's premeditated and only breaks when the certificate does"; "are we using the gpu fully" | S118 | **Followed:** Argon audit `jobs/es-audit` (every tick loop, cache and hot-path copy outside the law, verification and word compiling), ES cloned read-only to `D:\path-tracing-deps\emergent-space-engine`. GPU: not used yet, by design (`engine.md` "The machine": unqualified until a measured crossover); the audit says which code would qualify |
 | "i don't use the pc you can use it" | S119 | **Followed:** the three straight tracks flown live that afternoon (0 corrections, 0 pushes over 2,315 ticks on 800 blocks) |
 | "it should see a straight line and go oh i have no kit but not hungry so i get the modulus of my best tool"; presence before position; segments in parallel; "the bot should move instantly unless things are really hard"; nudge only where a local signal asks; "if it fail get better" | S120 | **Talking it through** (not yet built): checked that food stays 20/20.0 over the 800-block live run |
+| "it needs a cheap way to tell hey this seems hard let's take some time"; "changing your mind fast is extremely important especially when there's real players nearby"; tables built once; "send all of what we improved to astra" | S121 | **Followed:** S116–S121 sent to the 3.2d-3 design as an addendum (`jobs/3.2d-3-design/addendum.md`), with the straight-line gate frozen |
 
 ## Contradictions (kept side by side)
 
