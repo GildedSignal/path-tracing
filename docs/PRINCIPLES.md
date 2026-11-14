@@ -284,6 +284,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | usage is "what each model uses roughly so that you know based on needs how you can use them"; "rough estimations … not a hard science just to anchor yourself"; and whether the spent Antigravity Claude meter was really the weekly one | S113 | **Followed:** [clan.md](clan.md) section 4 is a table of rough cost per need per model. **Answered:** the reset matches the weekly (20 November), but the week held three Claude runs, and a 13 November refusal suggests a 5-hour limit too, so "one Opus design spent the week" is corrected to "most of it" |
 | "start with big models because you'd rather have the small models cutoff than the bigs ones"; start with Argon | S114 | **Followed:** [clan.md](clan.md) section 4: on a shared meter the big model's work launches first (Astra before Terra; Argon at once on its own weekly). Argon took the `butoonpressureplates` diagnosis that afternoon |
 | "antigravity is sonnet only you can use opus" | S115 | **Followed:** `launch.ps1` refuses Opus on Antigravity; Opus work runs as a native sub-agent |
+| "are we properly representing things? ... gaming must have extremely smart solutions to this that we may have missed" | S116 | **Followed:** Argon research job `jobs/intersection-research` (collision, motion planning, voxel traversal, equivalence), set off by the button-and-plate crouch-walk |
 
 ## Contradictions (kept side by side)
 
