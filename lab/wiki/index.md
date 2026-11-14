@@ -16,7 +16,7 @@
 - [generative-function](generative-function.md) — lead: 1, rate-limited: 1, reproduced: 1; last 2026-11-13
 - [hook-catalogue](hook-catalogue.md) — rate-limited: 1, reproduced: 2; last 2026-11-09
 - [idiot-index](idiot-index.md) — reproduced: 1; last 2026-11-12
-- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 3; last 2026-11-12
+- [item-use-writes](item-use-writes.md) — lead: 2, reproduced: 4; last 2026-11-14
 - [jump-puzzle](jump-puzzle.md) — lead: 1, rate-limited: 1; last 2026-11-13
 - [l0-freeze-tick-111](l0-freeze-tick-111.md) — reproduced: 1; last 2026-11-14
 - [l0-hurtmarked-writes](l0-hurtmarked-writes.md) — reproduced: 1; last 2026-11-11
@@ -31,14 +31,17 @@
 - [port-boat-rider-attachment](port-boat-rider-attachment.md) — reproduced: 1; last 2026-11-13
 - [port-boat-surface-transition](port-boat-surface-transition.md) — reproduced: 1; last 2026-11-13
 - [port-boat-turn-trace](port-boat-turn-trace.md) — reproduced: 1; last 2026-11-14
+- [port-direct-pair-push](port-direct-pair-push.md) — reproduced: 1; last 2026-11-14
 - [port-door-interaction](port-door-interaction.md) — no dossier: 1; last 2026-11-13
 - [port-elytra-delta](port-elytra-delta.md) — reproduced: 1; last 2026-11-13
 - [port-entity-rules](port-entity-rules.md) — lead: 1, reproduced: 7; last 2026-11-13
+- [port-falling-block-landing-place](port-falling-block-landing-place.md) — reproduced: 1; last 2026-11-14
+- [port-flowing-water](port-flowing-water.md) — reproduced: 1; last 2026-11-14
 - [port-fluid-rules](port-fluid-rules.md) — lead: 3, reproduced: 5; last 2026-11-14
 - [port-movement-modes](port-movement-modes.md) — reproduced: 5; last 2026-11-14
 - [port-peaceful-regen](port-peaceful-regen.md) — reproduced: 1; last 2026-11-14
 - [port-place-replaceability](port-place-replaceability.md) — rate-limited: 1, reproduced: 2; last 2026-11-11
-- [port-update-order](port-update-order.md) — lead: 1, reproduced: 4; last 2026-11-12
+- [port-update-order](port-update-order.md) — lead: 1, reproduced: 5; last 2026-11-14
 - [port-use-effects-dump](port-use-effects-dump.md) — reproduced: 1; last 2026-11-13
 - [recorder-cost](recorder-cost.md) — reproduced: 1; last 2026-11-11
 - [server-player-readers](server-player-readers.md) — lead: 3, reproduced: 1; last 2026-11-11
@@ -53,6 +56,11 @@
 
 ## Reproduced results
 
+- 2026-11-14 [port-falling-block-landing-place](port-falling-block-landing-place.md) (local-20261114-1226-1-0-port-falling-block-landing-place): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the first grounded placement decision of `FallingBlockEntity.tick` is one server-only two-conjunct gate — entered at @241–250 by `onGround() || inWater`, reading the landing cell fresh at @258 and writing `setBlock(pos, car...
+- 2026-11-14 [port-flowing-water](port-flowing-water.md) (local-20261114-1225-1-0-port-flowing-water): In Mojang 26.2 (server jar at D:/path-tracing-lab/server/versions/26.2/server-26.2.jar) the flowing-water *query* law is bit-exact against the Rust port — the neighbor-to-current law `FlowingFluid.getFlow`, the surface-height law `getHeight/hasSameAbove`, and the player-side supplied current `Ent...
+- 2026-11-14 [port-direct-pair-push](port-direct-pair-push.md) (local-20261114-1224-1-0-port-direct-pair-push): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the `Entity.push(Entity)` pair gate is non-strict — `Mth.absMax(dx,dz) >= (double)0.01f` (`dload_6; ldc2_w 0.009999999776482582d; dcmpl; iflt 169`, code offsets 53–59) — proven by direct invocation on two inert constructor-...
+- 2026-11-14 [item-use-writes](item-use-writes.md) (local-20261114-1158-1-1-item-use-writes): In the 26.2 server jar (sha1 86765a5899bd9c96461036a628796b4245715058), the five Item use-family names have 70 declarations but the exact-descriptor family is 68 seeds (63 item-family + 5 ItemStack entry points, 51 classes; `use` = 29), and the 12 November strict own-class rule sees only 25 write...
+- 2026-11-14 [port-update-order](port-update-order.md) (local-20261114-1158-1-0-port-update-order): In Mojang 26.2 (server jar sha1 86765a5899bd9c96461036a628796b4245715058) the fourth non-fluid update family after the falling block (scheduled-tick), piston (block-event) and redstone wire (neighbor-recursion) is the **support-loss pop** — an attached block (ladder here) is destroyed synchronous...
 - 2026-11-14 [l0-freeze-tick-111](l0-freeze-tick-111.md) (local-20261114-1107-1-0-l0-freeze-tick-111): the +2 at tick 111 exists because 26.2's freeze counter is not "+1 per tick in powder snow" — the client's only local writer, the `InsideBlockEffectType.FREEZE` lambda, fires **once per distinct step index of the sub-tick inside-block sweep**, and the tick a player's leading edge crosses into a *...
 - 2026-11-14 [port-boat-turn-trace](port-boat-turn-trace.md) (local-20261114-1103-1-1-port-boat-turn-trace): The Rust port's occupied-boat turn recurrence is confirmed — running the 26.2 server jar's own `Mth.sin`/`Mth.cos` (called from the jar, never reimplemented) in the same 800-tick W+A recurrence reproduces the port's 800th-tick horizontal speed bits exactly (`4596625426452742353` = 0.2069846006315...
 - 2026-11-14 [port-peaceful-regen](port-peaceful-regen.md) (local-20261114-1103-1-0-port-peaceful-regen): In Mojang 26.2 (server jar sha1 `86765a5899bd9c96461036a628796b4245715058`) the peaceful regeneration branch is `ServerPlayer.tickRegeneration` (offsets 0–124, called by `Player.aiStep` offset 18) gated on `difficulty == PEACEFUL` and game rule `NATURAL_HEALTH_REGENERATION`, timed by `Entity.tick...
