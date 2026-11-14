@@ -1,6 +1,7 @@
 # Batches already run live in git history and in lab\results\queue.log; this file holds only what is still to run.
 # scripts\glm-queue.ps1 runs each lens as its own lane (three at once), in this order.
 # 14 November 15:20: movement first (the planner and the flights read it), then elytra and boats, then the world's own laws.
+port-freeze-step-fluid port-freeze-damage
 port-elytra-bits port-step-contact-witness trial-slab-upstep-candidate port-sprint-packet-split
 trial-sprint-jump-basis trial-sprint-replay-input port-contact-cooldown port-legacy-support-overhang
 port-elytra-climbable-branch port-elytra-cosine-domain trial-boat-water-surface-bits
