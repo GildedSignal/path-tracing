@@ -1,0 +1,12 @@
+# L0 diagnostic: the frozen counter rises by two in one client tick
+
+Use the staged Mojang 26.2 server and client jars under D:/path-tracing-lab (server: D:/path-tracing-lab/server/versions/26.2/server-26.2.jar; the client jar is in the staged dependency root D:/path-tracing-deps/data) and staged javap at D:/path-tracing-deps/data/java/java-runtime-epsilon/bin/javap.exe. L0's live gate refuses powder-snow run 3 (seed 91) at tick 111, on two machines and two days, quiet and loaded alike: the Rust law ends the tick with ticksFrozen 4, the real client with 5. The recorder logs, per client tick t, the counter at START and END and every SetEntityData(DATA_TICKS_FROZEN) packet the client applied, with its phase ("between" = after END of t-1 and before START of t). Observed (14 November, l0-veto-20261114):
+- t=108: start 0, end 0, inPowderSnow false
+- t=109: start 0, end 1, inPowderSnow true, wasInPowderSnow false
+- t=110: packets v=1 then v=2 between; start 2, end 3
+- t=111: packet v=3 between; start 3, end 5   <- +2 in one tick; the law adds +1
+- t=112: start 5, end 6
+- t=113: packet v=4 between; start 4, end 5
+- t=114: packets v=6, v=7 between; start 7, end 8
+On 11 November the same run's END counter read 1, 2, 4, 4, 6, 7 over ticks 109-114, also one more than the law at 111.
+Find, with class, method and bytecode offsets in the 26.2 CLIENT code path (LocalPlayer.tick/aiStep, LivingEntity.aiStep, Entity.baseTick, PowderSnowBlock.entityInside, Entity.setTicksFrozen and every other writer of DATA_TICKS_FROZEN reachable on the client), every place the client can change ticksFrozen within one tick, under which condition, and why tick 111 of this sequence would get two increments where 110 and 112 get one (for example a second writer gated on a field that first becomes true at 111, such as eye height inside the block or a freezing-damage branch, or a packet applied inside the tick rather than between ticks). Produce a jar-backed reproduction: drive the real client-side methods (or a faithful bytecode-cited simulation) through ticks 108-114 with the packets above at their phases, and print START and END per tick. It must give 5 at the end of 111. Name the rule the Rust law lacks. Leave the rig alone.
