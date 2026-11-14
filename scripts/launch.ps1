@@ -41,16 +41,20 @@ if ($Who -in 'terra','astra') {
   # S105: Antigravity's two meters each get a slot budget, counted in units: Gemini meter, one Argon (2)
   # or two Hydrogen (1 each); Claude meter, one Opus (2) or two Sonnet (1 each). Adjust only on a
   # measured drain (a 429 naming the reset), and write the change here and in clan.md.
+  # S125 (measured, agy /usage): Argon has its own weekly limit ("Gemini 4 Argon Weekly Limit", ~10% per
+  # big run), while Hydrogen draws only on the Gemini models meter (99% left after five Argon runs). So
+  # Argon runs one at a time on its own meter, and Hydrogen runs up to three lanes beside it.
   $units = @{ argon = 2; hydrogen = 1; opus = 2; sonnet = 1 }
-  $meter = if ($Who -in 'opus','sonnet') { 'claude' } else { 'gemini' }
+  $meter = if ($Who -in 'opus','sonnet') { 'claude' } elseif ($Who -eq 'argon') { 'argon' } else { 'gemini' }
+  $limit = @{ claude = 2; argon = 2; gemini = 3 }[$meter]
   $used = 0
   Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'gemini\.ps1' } | ForEach-Object {
     $m = [regex]::Match($_.CommandLine, '-Model (\S+)').Groups[1].Value
     $w = if ($m -match 'opus') { 'opus' } elseif ($m -match 'sonnet') { 'sonnet' } elseif ($m -match 'argon') { 'argon' } else { 'hydrogen' }
-    $wm = if ($w -in 'opus','sonnet') { 'claude' } else { 'gemini' }
+    $wm = if ($w -in 'opus','sonnet') { 'claude' } elseif ($w -eq 'argon') { 'argon' } else { 'gemini' }
     if ($wm -eq $meter) { $used += $units[$w] }
   }
-  if ($used + $units[$Who] -gt 2) { throw "Antigravity $meter meter full ($used of 2 units, S105). Wait for the running job." }
+  if ($used + $units[$Who] -gt $limit) { throw "Antigravity $meter meter full ($used of $limit units, S105/S125). Wait for the running job." }
   $model = @{ sonnet = 'claude-sonnet-5-5-high'; opus = 'claude-opus-5-5-high'
               argon = 'gemini-4-argon-high'; hydrogen = 'gemini-4-hydrogen-high' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gemini.ps1",'-Job',$Job,'-Model',$model)

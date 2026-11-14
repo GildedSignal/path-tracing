@@ -293,6 +293,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | speed bridging, boat clutch over lava, pearls carried by momentum, the burning-boat lava bridge, leaving and re-entering a boat mid-fall "should emerge in the right conditions. to be logged" | S122 | **Logged:** [ladder.md](ladder.md) "Rediscovery: his list", each with what the law must hold for it to emerge and where it pays; none is coded by name |
 | "glm is not used enough." | S123 | **Measured, then followed:** at 3 lanes Zai stood at 24% used with 13% of its window elapsed (on pace to cap ~2 h early and idle); `glm-queue.ps1` now paces lanes to the meter, 1 to 8, so the window is spent by its reset, never before |
 | "no lag is part of the execution let's no dismiss it we're doing real end to end" | S124 | **Followed:** T runs from the server tick of the click to arrival; the command's transport (rcon, chat, mod) and the planner's first answer count in it, measured and reported as costs to cut, never subtracted (3.2d-3 addendum 2) |
+| "use an opus sub-agent of yours to tackle the problem that we have of 3-4OOM thinking T too big for the straight lines"; "we need to leverage hydrogen more" | S125 | **Followed:** an Opus sub-agent builds the plain path on `wt/plain-path`; agy /usage shows Argon on its own weekly limit (46% used) and Hydrogen on the Gemini meter (1% used), so `launch.ps1` runs Argon one at a time on its own meter and Hydrogen up to three lanes beside it; three Hydrogen diagnoses of the no-sentence tracks |
 
 ## Contradictions (kept side by side)
 
