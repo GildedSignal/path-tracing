@@ -316,6 +316,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "why am i using A* in the first place? Wouldn't monte carlo like in chess be better?" | X15 | **Open:** zones-design: search only on ridges; Monte Carlo where the world is stochastic (Phase 9) |
 | "peaceful for now, we haven't done the mob port for now anyway and it would add complexity where we can't even do properly a single line." | S136 | **Followed:** every gate runs on peaceful; the Normal-difficulty line (food crossing, mobs) waits for the mob port |
 | "where are we in the new algo and the port and the plan in general? is hydrogen working?"; "ok then use hydrogen and terra" | S137 | **Followed:** Terra slices A (resident JNI channel, observed start) and B (one codec); Hydrogen `port-backlog` and `spec-premises` |
+| "ok tell me when the hard track is done i'll race it then" | S138 | **Followed:** Terra job `hard-track` (built backward from B, hardness certificates, witness under the law); he races it when built |
 
 ## Contradictions (kept side by side)
 
