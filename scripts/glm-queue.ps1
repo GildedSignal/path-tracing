@@ -52,6 +52,9 @@ while ($true) {
     $next = $lenses | Where-Object { -not $started.ContainsKey($_) } | Select-Object -First 1
     if ($next) {
       if (-not (git -C $Root ls-files "lab/lenses/$next.md")) { Note "skip (lens not committed): $next"; $started[$next] = $true; continue }
+      # A lens with a finished result folder never runs again, whatever the log says: on 15 November a
+      # restart re-ran port-freeze-step-fluid, finished the day before, because the queue was not pruned.
+      if (Get-ChildItem (Join-Path $Root 'lab\results') -Directory | Where-Object { $_.Name -match "^local-\d{8}-\d{4}-\d+-\d+-$([regex]::Escape($next))$" -and (Test-Path (Join-Path $_.FullName 'DONE')) }) { Note "skip (already done): $next"; $started[$next] = $true; continue }
       $started[$next] = $true
       $q = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\glm-local.ps1",'-Lenses',$next,'-Minutes',"$Minutes") |
            ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
