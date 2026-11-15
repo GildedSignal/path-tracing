@@ -1,4 +1,5 @@
 pub mod mining;
+pub mod codec;
 pub mod footprint;
 pub mod pattern;
 mod attributes;
