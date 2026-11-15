@@ -15,15 +15,14 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 **Lessons that cost slots** (memory `terra-stops-at-step-one`): Terra halts the whole job at the first open question, so resolve every classification or representation question before launching, name which steps are independent, and relaunch with a continuation section, never a bare retry. Inline the one file an Antigravity job must read (clan.md trap). A judge's verdict goes to `jobs/<id>/last.md`, never only into a chat turn.
 
-## Start here (14 November, 18:10, before a compaction)
+## Start here (15 November, midday)
 
-- **Read first:** [clan.md](clan.md) 5c and [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md) (the companion rules and the Antigravity guards, S128-S129). Antigravity jobs start only after `scripts/test-antigravity.ps1` passes for the current scripts; agents read by absolute drive-letter paths only (relative and `file:///` reads are denied and end the run).
-- **Unread, read next:** `jobs/ns-birch`, `jobs/ns-fences`, `jobs/ns-maze` (Hydrogen: why the planner finds no sentence on birchparkourmedium, fences, redfakemaze, fencemaze, amertystcoral; evidence in `jobs/nosentence-evidence`). Weigh them against S126-S127: the fences and redfakemaze kits are red herrings; birch needs timing.
-- **Running:** an Opus sub-agent builds the **plain path** on `wt/plain-path` (`D:\path-tracing-wt\plain`; two commits so far): presence check, held-input generator, modulus and remainder; gate: straight800 under 50 ms of end-to-end thinking (27.9 s today), T no worse, other tracks unchanged. Judge it (other family), then fly the straight tracks end to end. GLM: a detached runner paced to Zai's meter (1-8 lanes, `glm-queue.ps1`), queue in `lab/queue.txt`.
-- **Armed, detached:** at 20:19 Astra resumes `3.2d-3-design` with `addendum-2.md` (the Opus red-team's 13 fixes, `redteam-opus.md`; S124: T end to end from the click's server tick, lag counted). Then freeze the spec and give Terra its ~10 slices. From 18:20 to 23:30 a guard keeps our local processes at Idle: **he and someone else play heavy games this evening (S126); nothing live runs.**
-- **Done today:** the play stack merged and pushed (`09e1b52`; 186 tests, 13 of 13 mutants). 1.3d on `wt/l0-veto` (`9a76a7c`): live L0 kept 94 runs, seed 91 fixed; L0's one refusal is freeze damage (GLM `port-freeze-damage` reproduced? read its check). The straight tracks flew live with 0 corrections. 3.3h is superseded by the 3.2d design (its rejoin premise was false).
-- **Meters at 18:07:** Zai 57% (5 h, no weekly); Codex 5 h 88% until 20:17, weekly 39%; Argon weekly 46% used (own limit, ~10% a run); Gemini (Hydrogen) weekly 6%, 5 h 17%; Antigravity Claude spent until 20 November (Sonnet only there; Opus native).
-- **Commits after `09e1b52` are local, not pushed** (S125-S129: Hydrogen lanes, the post-mortem, the guards).
+- **Read first:** [clan.md](clan.md) 5c and [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md). Antigravity runs only after `scripts/test-antigravity.ps1` passes (stamp current at `b74229a`). Fixed today: a dry run no longer creates the worktree folder; every launch copies main's working fixture (tracked regions go stale in a checkout); `follow-up.ps1` takes absolute paths; `glm-queue` skips lenses already done. **Someone else uses the machine (S135): nothing in the foreground.**
+- **Plain path** (`wt/plain-path`, `eef0cd3`): Terra judge **FAIL** (`D:\path-tracing-wt\plain-judge\jobs\plain-path-judge\verdict.md`): per-tick work decides the fallback, an invented food bound, digest equality without bytes. Straight gates pass; straight800 29.11 ms cold, T 2248. Not merged.
+- **Design** `jobs/zones-design/design.md` (S130–S134: emergent zones, one role-class codec, one generator store, portals, the field promoted, a resident planner, the two extremes). An Opus red-team is running (`redteam-opus.md`). Then Astra folds it into 3.2d-3 (`D:\path-tracing-wt\sets\jobs\3.2d-3\last.md`, 138 lines, ten slices, done 14 November 21:27). **Terra waits for Astra (S134).**
+- **Inventory** `jobs/inventory-map/report.md` (Hydrogen): 35 adopted mechanisms, 6 built, 14 partial, 15 doc only, no threads anywhere in `engine/`; the uncited turns got register rows and the repeated requests are tracked below.
+- **GLM:** the runner died overnight after 22:54 (cause unknown) and was restarted at 11:43; 11 lenses left in `lab/queue.txt`. About 18 results from 14 November are unread (read each `check.md`). **Still unread:** `jobs/ns-birch`, `ns-fences`, `ns-maze` (S126–S127: the kits are red herrings; birch needs timing).
+- **Commits after `09e1b52` are local, not pushed.**
 ## Now (14 November, S104–S106)
 
 **Where we are.** The ground is built (the law at about 1 µs per tick, the world reader, footprints, the words in the code). A planner exists on `wt/planner` (job 3.2b): it certifies sentences on 8 of his 18 tracks, judged FAIL on its *claims* (the bound, thinking time, the backward method), not on its sentences, which the law replays tick by tick. **Nothing has been played in the game.** The shortest path to the first flight is therefore to fly 3.2b's certified sentences now (job 3.3c) while 3.2d replaces the planner behind the same call.
@@ -61,6 +60,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 8. **The state-read hook costs the law 3–5%** (609 against 590 ns per tick).
 9. **3.2a's "second column" test is near-tautological**; the class redesign replaces it.
 10. **Unmodeled readers:** `LocalPlayer.aiStep:348` resets `sprintTriggerTime` (the double-tap sprint window) through `isSlowDueToUsingItem`; the law has no such state. Boat turn: the port's Mth-table speed is a record until GLM `port-boat-turn-trace` runs the jar's own table.
+11. **S38's bug was never traced:** "bug, when doing a track it deletes sulfur spike from my inventory" (5 November).
 
 **Open for Julien:** the class (S67–S69): whether it is now where he wants it. The debug world as a one-world check of the block table (parked, S67). `omp auth import` would put Codex into `omp usage` too, but moves his OAuth tokens; not needed now that `meters.ps1` reads Codex's own logs. Two files are deleted in the working tree and not by this session: `Set GLM key.cmd` and `Stop GPT.cmd` (README and `glm-local.ps1` still name the first).
 
@@ -92,6 +92,17 @@ T over his time and over the bracket's upper bound; first-move latency at p99; c
 | An idiot-index pass, Fermi floors at micro, meso, macro and holistically (S83) | integrator, after the first flight | GLM `idiot-index` gives the census; talk it through with him before any build |
 | Primary sources read directly; cases and extremes; his book list and Readwise (S86, S87, S89) | integrator | learning.md section 7 |
 | Use every meter before the integrator's runs out (S100, S104) | integrator | `launch.ps1`, `status.ps1`, `meters.ps1 -WatchAt 80`; queue detached work before the window ends |
+| No made-up numbers: cuts, zones and sizes emerge from the law and the need (S67, S124, S132) | integrator | every spec; each red-team checks it |
+| ES-faithful: ticks are execution, never thinking (S44, S58, S83, S117, S118) | integrator | zones-design R0 and R4; every judge checks it |
+| Threads and the GPU (S6, S44, S54, S118, S131): none in `engine/` today | integrator | zones-design R5, then the wavefront |
+| Whether search is needed; a map clear enough to need no policy (S39, S97, X9, X15, X16, S130–S132) | integrator | zones-design 3.5: decide only on ridges |
+| The two extremes: a million-block straight line, the hardest tool parkour (S32, S111, S120, S131–S132) | integrator; Terra builds the parkour after Astra | zones-design section 0 |
+| Move at once unless it is hard; thinking ≪ 1 tick (S90, S110, S120, S124, S131) | integrator | plain path, then zones-design R0–R2 |
+| Change your mind fast near players (S6, X16, S121) | integrator | zones-design R6: cones against the corridor |
+| Speedrun and parkour techniques, ZPD puzzles (S32, S87–S89, S97–S98, X10, S122) | integrator | ladder.md Rediscovery; learning.md Phase 3 |
+| Boats and elytra (S6, S17, S96–S98, S122) and interactions ported in full (S44, S46, S51, S108) | GLM lanes, Terra | Slice B, R-brach |
+| Combat, building, farms, the LLM overseer and dialogue (S23–S24, S32, S44, S46, S97, X11–X12) | integrator, later | Roadmap 6 |
+| Questions he can answer, with their context (S78, S100) | integrator | each turn's one question |
 
 ## When a job ends
 
