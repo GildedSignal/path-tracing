@@ -1,8 +1,8 @@
 # Batches already run live in git history and in lab\results\queue.log; this file holds only what is still to run.
 # scripts\glm-queue.ps1 runs each lens as its own lane (three at once), in this order.
 # 14 November 15:20: movement first (the planner and the flights read it), then elytra and boats, then the world's own laws.
+# 15 November: the zones red-team's premises first (T4a, T7, T11), then the 14 November ports.
+trial-food-crossing trial-offset-monotone port-wormhole-facts
 port-breaking-threshold port-mining-abort-target port-break-stop-boundary
 port-push-threshold port-ordered-push-query port-push-order-noncommuting port-entity-contact
 port-collapse-schedule port-collapse-due-tick port-schedule-order-tie port-amethyst-state
-# 15 November: the zones red-team's premises (T4a, T7, T11).
-trial-food-crossing trial-offset-monotone port-wormhole-facts
