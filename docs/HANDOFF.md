@@ -13,8 +13,6 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 `.\scripts\launch.ps1 <job> <terra|astra|sonnet|opus|argon|hydrogen> [-Worktree D:\path-tracing-wt\<name>] [-ReadDir <dir>]` starts any companion detached, makes a GPT worktree if missing, and **refuses** to exceed a slot: four GPT (two with Astra); on Antigravity (S105) one Argon or two Hydrogen, and one Opus or two Sonnet. A job is a folder: `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out. GLM: `scripts\glm-queue.ps1 -Queue lab\queue.txt` (re-reads the file before each batch), or `scripts\glm-local.ps1 -Lenses "<a b>"` for a lane now. Capacities and the usage protocol: [clan.md](clan.md) section 4, measured 14 November.
 
-**Lessons that cost slots** (memory `terra-stops-at-step-one`): Terra halts the whole job at the first open question, so resolve every classification or representation question before launching, name which steps are independent, and relaunch with a continuation section, never a bare retry. Inline the one file an Antigravity job must read (clan.md trap). A judge's verdict goes to `jobs/<id>/last.md`, never only into a chat turn.
-
 ## Start here (15 November, midday)
 
 - **Read first:** [clan.md](clan.md) 5c and [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md). Antigravity runs only after `scripts/test-antigravity.ps1` passes (stamp current at `b74229a`). Fixed today: a dry run no longer creates the worktree folder; every launch copies main's working fixture (tracked regions go stale in a checkout); `follow-up.ps1` takes absolute paths; `glm-queue` skips lenses already done. **Someone else uses the machine (S135): nothing in the foreground.**
