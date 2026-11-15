@@ -35,9 +35,6 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 | Job | Who, where | State and next action |
 |---|---|---|
-| 3.3c start, plan, play | Terra, `wt/playback` | Run 1 stopped at step 1 (`last-run1.md`: a field table, all useful). The continuation classifies every `PlayerState::bits()` field: observed, server-sampled, settled (two server samples ≥ 20 ticks apart, bit-identical resources, so the hurt counter is 0), dead at start (written before read), or refused. Then a `plan-track` binary, the 18-track export, `scripts/play-track.ps1` dry-run, the deviation report. **Then Julien runs the first live play on a quiet machine.** Judge: Sonnet |
-| 3.2d-3 design | Opus on Antigravity, read-only | What a set *is*, the preimage, the backward solver, the token, cut into Terra-sized steps with machine gates. Next: a Terra red-team of the design, then Terra builds pass 3 on `wt/3.2d-sets` (passes 1–2 there: `0c543a3`, `32180e2`) |
-| 1.4k inside-cell mutant | Terra, `wt/1.4k-inside-cell-mutant`, uncommitted | **Done:** the footprint gate is now 13 of 13; the key notices the fifth collision context (a synthetic cell, since no exported pair differs only there). Next: `launch.ps1 1.4k-judge sonnet -ReadDir D:\path-tracing-wt\inside-cell` once the Claude meter frees, then merge |
 | anomaly-1 step-up | Hydrogen (its first job: the bake-off row) | how L0's control reported a mutant caught that GLM showed cannot be caught on block terrain |
 | GLM | queue (6 port batches) + `port-peaceful-regen`, `port-boat-turn-trace` | read every `check.md` and `checker.log` (429) before trusting a lead; commit `lab/wiki/` |
 
