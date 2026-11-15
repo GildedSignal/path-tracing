@@ -148,7 +148,7 @@ public final class Recorder {
     static Path recordTrack(Minecraft mc, Path directory, String track) throws IOException {
         if (active()) throw new IllegalStateException("A recording or replay is already running.");
         requireQualifiedClock(mc);
-        JsonObject metadata = TickInput.holdSettings(mc);
+        JsonObject metadata = TickInput.settings(mc);
         if (departureRow == null || departureInitial == null
             || departureRow.get("tickCount").getAsInt() != mc.player.tickCount) {
             throw new IllegalStateException("Departure tick unavailable; run timed without a recording.");
@@ -184,7 +184,7 @@ public final class Recorder {
 
     private static void open(Minecraft mc, String runName, Path path) throws IOException {
         requireQualifiedClock(mc);
-        JsonObject metadata = TickInput.holdSettings(mc);
+        JsonObject metadata = TickInput.settings(mc);
         metadata.addProperty("type", "recording");
         if (Files.exists(path)) throw new java.nio.file.FileAlreadyExistsException(path.toString(), null, "Output already exists");
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
