@@ -1,0 +1,13 @@
+# ticks yaw keys: F/B/L/R, S sprint, C sneak, J held jump, G jump only on ground, - idle
+12 -90 F
+260 -90 FJ
+41 -90 FSG
+2 -90 FS
+1 -90 FSJ
+28 -90 FS
+31 0 FS
+65 90 FS
+7 0 FS
+1 0 FSJ
+118 0 FJ
+17 0 FS

@@ -1,0 +1,6 @@
+CARGO_TARGET_DIR=D:\path-tracing-target\hard-track
+HARD_RECORD=1
+working directory: engine/
+powershell -NoProfile -File jobs/hard-track/build-facts.ps1 (offline javap and fill-volume audit)
+cargo test --offline
+exit=0
