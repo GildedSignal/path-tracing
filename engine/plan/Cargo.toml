@@ -7,3 +7,7 @@ edition = "2024"
 law = { path = "../law" }
 words = { path = "../words" }
 world = { path = "../world" }
+
+[[test]]
+name = "zones_prereqs"
+path = "tests/zones_prereqs/main.rs"
