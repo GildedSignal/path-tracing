@@ -317,6 +317,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "peaceful for now, we haven't done the mob port for now anyway and it would add complexity where we can't even do properly a single line." | S136 | **Followed:** every gate runs on peaceful; the Normal-difficulty line (food crossing, mobs) waits for the mob port |
 | "where are we in the new algo and the port and the plan in general? is hydrogen working?"; "ok then use hydrogen and terra" | S137 | **Followed:** Terra slices A (resident JNI channel, observed start) and B (one codec); Hydrogen `port-backlog` and `spec-premises` |
 | "ok tell me when the hard track is done i'll race it then" | S138 | **Followed:** Terra job `hard-track` (built backward from B, hardness certificates, witness under the law); he races it when built |
+| "built it and make it into a track that i can race already set up with the mod" | S139 | **Followed:** built in his world over RCON (x −110…−60, z −110…−60; the box was empty), registered as `lab/tracks/hardtrack.json`; witness T 579 on the race clock |
 
 ## Contradictions (kept side by side)
 
