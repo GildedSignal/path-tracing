@@ -11,8 +11,12 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 $dir = Join-Path $Root "jobs\$Job"
-$pattern = "gpt\.ps1.*-Job $([regex]::Escape($Job))\b"
-while (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match $pattern -and $_.ProcessId -ne $PID }) { Start-Sleep 10 }
+# Wait for the job's own run and for every follow-up queued before this one: a follow-up runs gpt.ps1
+# inside its own process, so matching gpt.ps1 alone let two resumes of one session run at once
+# (15 November, 12:16 and 12:23: the second message was lost). Older follow-ups go first.
+$pattern = "(gpt|follow-up)\.ps1.*-Job $([regex]::Escape($Job))\b"
+$me = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CreationDate
+while (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match $pattern -and $_.ProcessId -ne $PID -and $_.CreationDate -lt $me }) { Start-Sleep 10 }
 $line = Get-Content (Join-Path $dir 'log.jsonl') -TotalCount 1
 if ($line -notmatch '"thread_id":"([^"]+)"') { throw "No session id in $dir\log.jsonl" }
 $session = $Matches[1]

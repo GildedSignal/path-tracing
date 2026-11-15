@@ -6,3 +6,5 @@ trial-food-crossing trial-offset-monotone port-wormhole-facts
 port-breaking-threshold port-mining-abort-target port-break-stop-boundary
 port-push-threshold port-ordered-push-query port-push-order-noncommuting port-entity-contact
 port-collapse-schedule port-collapse-due-tick port-schedule-order-tie port-amethyst-state
+# 15 November 14:19: these five hit the Zai 5-hour limit (429, resets 16 November 00:11); their folders are kept as *-zai-limit.
+port-collapse-schedule port-entity-contact port-collapse-due-tick port-schedule-order-tie port-amethyst-state
