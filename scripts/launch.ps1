@@ -39,9 +39,11 @@ if ($Who -in 'terra','astra') {
     if (-not (Test-Path $Worktree)) { throw "worktree failed: $Worktree from $Base" }
   }
   # The fixture world is git-ignored, so a new worktree lacks it and its track tests fail (14 November,
-  # three times). Copy main's whenever the worktree has none.
+  # three times). Copy main's whenever the worktree has none. Never in a dry run: on 15 November the dry
+  # run's copy created the worktree folder, so the real launch skipped `git worktree add` and Terra
+  # started in a folder that was not a checkout.
   $fixture = 'engine\world\tests\fixtures\world'
-  if ((Test-Path (Join-Path $Root $fixture)) -and -not (Test-Path (Join-Path $Worktree $fixture))) {
+  if (-not $DryRun -and (Test-Path (Join-Path $Root $fixture)) -and -not (Test-Path (Join-Path $Worktree $fixture))) {
     robocopy (Join-Path $Root $fixture) (Join-Path $Worktree $fixture) /E /NFL /NDL /NJH /NJS /NP | Out-Null
   }
   $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6-astra' }[$Who]
