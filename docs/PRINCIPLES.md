@@ -327,7 +327,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "do hydrogen 6 and 5" | S146 | **Followed:** Hydrogen `docs-truth` and `glm-digest`, both reported |
 | "alright someone has shut down the computer, you'll need to start new runs i think you have little usage left" | S147 | **Followed:** the three reports and 1.3e had finished before the shutdown; Terra P1 and the GLM runner re-armed, detached |
 | "we'll need to improve the port after keeping the same behavior but adapting them to our non tick based system, will give massive gain, actually i suppose from now on we could start that" | S148 | **Proposed:** the tick law stays the oracle; each ported mechanic also gets an event form (its events, a closed form or memo between them) certified bit-exact against it; P1–P4 are the first four |
-| "i got 434 ticks on hydrogen's track" | S149 | **Anomaly:** 469 then 434, against the witness's 579, so the witness is far from optimal and 434 is the T to beat. His inputs were not recorded: `TickInput.java:19-21` refuses `sprintWindow` 7, as on 32 of his 44 runs |
+| "i got 434 ticks on hydrogen's track" | S149 | **Anomaly:** 469 then 434, against the witness's 579, so the witness is far from optimal and 434 is the T to beat. His inputs were not recorded: `TickInput.java:19-21` refuses `sprintWindow` 7, as on 32 of his 44 runs. S150: he "Found a shortcut", so a reach or decoy certificate in `jobs/hard-track/report.md` is false |
 
 ## Contradictions (kept side by side)
 
