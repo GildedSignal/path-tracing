@@ -144,6 +144,7 @@ Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-20
 6. Read-only companions get their evidence made for them (failure lines, block dumps, logs): they cannot run commands.
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
+9. Terra halts the whole job at its first open question: settle every design question in the prompt ("decisions already made"), name the independent steps, and resume with a continuation, never a bare retry. A verdict goes to `jobs/<id>/last.md`, never only into chat.
 
 ## 6. How Google is reached, and the one decision it needs
 
