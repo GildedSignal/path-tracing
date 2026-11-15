@@ -17,9 +17,14 @@ $dir = Join-Path $Root "jobs\$Job"
 $pattern = "(gpt|follow-up)\.ps1.*-Job $([regex]::Escape($Job))\b"
 $me = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CreationDate
 while (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match $pattern -and $_.ProcessId -ne $PID -and $_.CreationDate -lt $me }) { Start-Sleep 10 }
-$line = Get-Content (Join-Path $dir 'log.jsonl') -TotalCount 1
-if ($line -notmatch '"thread_id":"([^"]+)"') { throw "No session id in $dir\log.jsonl" }
-$session = $Matches[1]
+# A first run's log opens with the session id; a resumed run's log may not (15 November), so search the
+# whole log, then the launch log's last "resumes session" line for this job.
+$hit = Select-String -Path (Join-Path $dir 'log.jsonl') -Pattern '"thread_id":"([^"]+)"' -List -ErrorAction SilentlyContinue
+$session = if ($hit) { $hit.Matches[0].Groups[1].Value } else {
+  $resumed = Select-String -Path (Join-Path $Root 'jobs\launch.log') -Pattern "$([regex]::Escape($Job)) follow-up .* resumes session (\S+)" | Select-Object -Last 1
+  if ($resumed) { $resumed.Matches[0].Groups[1].Value }
+}
+if (-not $session) { throw "No session id in $dir\log.jsonl or jobs\launch.log" }
 $stamp = Get-Date -Format 'HHmm'
 Copy-Item (Join-Path $dir 'last.md') (Join-Path $dir "last-before-follow-$stamp.md") -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $dir 'log.jsonl') (Join-Path $dir "log-before-follow-$stamp.jsonl") -Force -ErrorAction SilentlyContinue
