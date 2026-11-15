@@ -4,3 +4,5 @@
 port-breaking-threshold port-mining-abort-target port-break-stop-boundary
 port-push-threshold port-ordered-push-query port-push-order-noncommuting port-entity-contact
 port-collapse-schedule port-collapse-due-tick port-schedule-order-tie port-amethyst-state
+# 15 November: the zones red-team's premises (T4a, T7, T11).
+trial-food-crossing trial-offset-monotone port-wormhole-facts
