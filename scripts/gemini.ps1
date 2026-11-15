@@ -47,6 +47,10 @@ function Read-Remaining {
 }
 # Through `powershell -File` an array arrives as one comma-joined string (launch.ps1 passes it so).
 $ReadDir = @($ReadDir | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+# Every run may read the project's own data roots on D: (all worktrees, the evidence, the lab's jars and
+# decompiles): specs cite them, and one ungranted path ends a headless run with nothing (15 November:
+# spec-premises died on the plain-path judge's worktree, which its -ReadDir did not name).
+$ReadDir += @('D:\path-tracing-wt', 'D:\path-tracing-evidence', 'D:\path-tracing-lab') | Where-Object { Test-Path $_ }
 
 $agy = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
 if (-not (Test-Path $agy)) { throw "agy.exe not found at $agy (install: irm https://antigravity.google/cli/install.ps1 | iex)" }
@@ -158,6 +162,9 @@ if ((Get-Item $raw -ErrorAction SilentlyContinue).Length -gt 0) {
     if ($j.denied_actions) { "note: $(@($j.denied_actions).Count) denied action(s), recovered - the report is non-empty" }
   } else {
     $status = 'EMPTY'
+    # A detached run's console is seen by no one, so mark the folder: a partial report must never pass for
+    # a finished one (15 November: spec-premises ended at batch 3 on a denial and looked done).
+    [IO.File]::WriteAllText((Join-Path $dir 'incomplete.txt'), "$(Get-Date -Format 'yyyy-MM-dd HH:mm') empty final response; denied: $(@($j.denied_actions | ForEach-Object { $_.action }) -join ', ')`n", $utf8)
     if ((Get-Item $reportFile -ErrorAction SilentlyContinue).Length -gt 0) {
       Copy-Item $reportFile (Join-Path $dir 'last.md') -Force
       $status = 'EMPTY RESPONSE, REPORT KEPT'
