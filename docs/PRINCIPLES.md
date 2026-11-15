@@ -314,6 +314,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "fighting too matters"; "i want to be the best in the world at everything in minecraft with that bot" … "then once everything is done with perfect knowledge i'll be able to cook something from incomplete knowledge and then from just the screen's info data" | X11, X12 | **Open, later:** combat in Roadmap 6; incomplete knowledge and screen-only vision are not yet in any doc |
 | "is there some kind of unification that can do better for cheaper that i'm missing?" | X14 | **Answered:** [learning.md](learning.md) (S93); again in zones-design (S130–S134) |
 | "why am i using A* in the first place? Wouldn't monte carlo like in chess be better?" | X15 | **Open:** zones-design: search only on ridges; Monte Carlo where the world is stochastic (Phase 9) |
+| "peaceful for now, we haven't done the mob port for now anyway and it would add complexity where we can't even do properly a single line." | S136 | **Followed:** every gate runs on peaceful; the Normal-difficulty line (food crossing, mobs) waits for the mob port |
 
 ## Contradictions (kept side by side)
 
