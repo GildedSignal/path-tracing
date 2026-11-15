@@ -1012,15 +1012,17 @@ visited: &mut impl crate::blocks::BlockSet, effects: &mut InsideEffects, budget:
         if !(inside || fluid_inside) || !visited.insert(p) {
             return true;
         }
-        // Entity.lambda$checkInsideBlocks$0:150-214 advances for every fresh cell.
-        effects.advance(state, step);
         if inside {
+            // Entity.lambda$checkInsideBlocks$0:194-214: advance on the block branch.
+            effects.advance(state, step);
             let cube=Aabb {
                 min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0))
             };
             inside_block(state, world, p, large||bounds.intersects(cube), effects);
         }
         if fluid_inside {
+            // Entity.lambda$checkInsideBlocks$0:287-313: the fluid branch advances independently.
+            effects.advance(state, step);
             match block.fluid.kind {
                 FluidKind::Water => state.remaining_fire_ticks = state.remaining_fire_ticks.min(0),
                 FluidKind::Lava => unimplemented!("FluidState.entityInside: LavaFluid CLEAR_FREEZE, LAVA_IGNITE and deferred lava damage"),
@@ -1170,6 +1172,20 @@ pub enum ServerResourceEvent {
     UnmodifiedContactDamage(ContactDamage),
     Regeneration(i32),
     FoodTick,
+}
+
+/// Server-side freeze recurrence after travel. The caller supplies the server's
+/// counter and same-tick powder-snow flag; the returned damage is a request,
+/// not a resolved health or cooldown outcome.
+pub fn server_freeze_step(ticks_frozen: i32, in_powder_snow: bool, can_freeze: bool,
+    feet_non_air: bool, tick_count: i32) -> (i32, Option<f64>, Option<f32>) {
+    // LivingEntity.aiStep:697-722; Entity.baseTick:75-85.
+    let frozen = if in_powder_snow && can_freeze { ticks_frozen } else { (ticks_frozen - 2).max(0) };
+    // LivingEntity.removeFrost/tryAddFrost:1045-1096; Entity.getPercentFrozen:0-17.
+    let frost = (feet_non_air && frozen > 0).then(|| (-0.05f32 * (frozen.min(140) as f32 / 140.0f32)) as f64);
+    // LivingEntity.aiStep:733-768; Entity.isFullyFrozen:0-16.
+    let damage = (tick_count % 40 == 0 && frozen >= 140 && can_freeze).then_some(1.0f32);
+    (frozen, frost, damage)
 }
 
 pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, event: ServerResourceEvent) {

@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $engine = Join-Path $root 'engine'
-$output = 'D:\path-tracing-deps\footprints-verification'
+$output = if ($env:PATHTRACING_FOOTPRINTS_OUTPUT) { $env:PATHTRACING_FOOTPRINTS_OUTPUT } else { 'D:\path-tracing-deps\footprints-verification' }
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 
 function Cargo-Check([string]$Name, [string[]]$Arguments, [switch]$MustFail) {

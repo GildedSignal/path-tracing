@@ -478,6 +478,20 @@ fn client_freeze_hook_does_not_compute_frost_speed() {
 }
 
 #[test]
+fn server_freeze_boundary_and_decay() {
+    assert_eq!(server_freeze_step(140, true, true, true, 160),
+        (140, Some(-0.05f32 as f64), Some(1.0)));
+    assert_eq!(server_freeze_step(140, true, true, true, 159).2, None);
+    assert_eq!(server_freeze_step(139, true, true, true, 160).2, None);
+    let (counter, frost, damage) = server_freeze_step(140, false, true, true, 160);
+    assert_eq!(counter, 138);
+    assert_eq!(frost.unwrap().to_bits(), ((-0.05f32 * (138.0f32 / 140.0)) as f64).to_bits());
+    assert_eq!(damage, None);
+    assert_eq!(server_freeze_step(1, false, true, false, 160), (0, None, None));
+    assert_eq!(server_freeze_step(140, true, false, true, 160).2, None);
+}
+
+#[test]
 fn supplied_frost_applies_without_support_and_attribute_clamps() {
     let mut state = PlayerState {
         position: Vec3::new(0.5, 10.0, 0.5),

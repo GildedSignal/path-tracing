@@ -16,6 +16,7 @@ pub use movement::{
     apply_grounded_step,
     apply_position_packet,
     apply_server_resource_event,
+    server_freeze_step,
     calculate_fall_damage,
     calculate_fall_power,
     tick,
