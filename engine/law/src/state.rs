@@ -278,6 +278,19 @@ impl Bits<'_> {
     fn vec3(&mut self) -> Result<Vec3, Refusal> { Ok(Vec3::new(self.f64()?, self.f64()?, self.f64()?)) }
 }
 impl PlayerState {
+    /// Decode an observation only when every encoded word is known.  The mask
+    /// follows the variable-length `bits` schema, including option tags and
+    /// modifier bytes; unknown values cannot be replaced with defaults.
+    pub fn from_observed_bits(words: &[u64], known: &[bool]) -> Result<Self, Refusal> {
+        if known.len() != words.len() {
+            return Err(Refusal { position: known.len().min(words.len()), reason: "known mask length" });
+        }
+        if let Some(position) = known.iter().position(|known| !known) {
+            return Err(Refusal { position, reason: "unknown word" });
+        }
+        Self::from_bits(words)
+    }
+
     /// Decode exactly the representation returned by `bits`.
     pub fn from_bits(words: &[u64]) -> Result<Self, Refusal> {
         let mut b = Bits { words, at: 0 };

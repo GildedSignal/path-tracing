@@ -7,4 +7,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(LivingEntity.class)
 public interface LivingStateAccess {
     @Accessor("noJumpDelay") int pathtracing$noJumpDelay();
+    @Accessor("lastHurt") float pathtracing$lastRawHit();
 }
