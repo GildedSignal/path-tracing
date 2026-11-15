@@ -11,8 +11,49 @@ import pathtracing.mixin.EntityStateAccess;
 import pathtracing.mixin.FoodStateAccess;
 import pathtracing.mixin.LivingStateAccess;
 
-/** Captured at START before applying input zero, after replay settling. */
+/** Actual client snapshot; each caller identifies its input boundary. */
 final class PlayerSnapshot {
+    static long[] context(Minecraft mc,long at) {
+        JsonObject facts = new JsonObject();
+        facts.addProperty("dimension",mc.level.dimension().identifier().toString());
+        facts.addProperty("player",mc.player.getUUID().toString());
+        facts.addProperty("mode",mc.gameMode.getPlayerMode().getName());
+        facts.addProperty("pose",mc.player.getPose().name());
+        var slots = new java.util.ArrayList<net.minecraft.world.item.ItemStack>();
+        for (int slot=TrackInventory.FIRST;slot<TrackInventory.FIRST+TrackInventory.SIZE;slot++) slots.add(mc.player.inventoryMenu.getSlot(slot).getItem().copy());
+        facts.add("kit",TrackInventoryCodec.encode(slots,mc.player.getInventory().getSelectedSlot(),mc.level.registryAccess()).json());
+        byte[] bytes=facts.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        long[] meta=new long[7+bytes.length];
+        meta[0]=ResidentSource.session; meta[1]=at; meta[2]=0;
+        meta[3]=0; meta[4]=0; // No invented authoritative server tick.
+        meta[5]=ResidentSource.revision; meta[6]=bytes.length;
+        for(int i=0;i<bytes.length;i++) meta[7+i]=Byte.toUnsignedLong(bytes[i]);
+        return meta;
+    }
+    /** R0 cold observation, without replay/settling or an invented server row. */
+    static StateBits.Observation observed(Minecraft mc) {
+        JsonObject out = capture(mc);
+        var p = mc.player;
+        out.addProperty("noPhysics",p.noPhysics);
+        out.addProperty("remainingFireTicks",p.getRemainingFireTicks());
+        out.addProperty("fallFlying",p.isFallFlying());
+        out.addProperty("riding",p.isPassenger());
+        out.addProperty("boat",p.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat);
+        out.addProperty("effects",!p.getActiveEffects().isEmpty());
+        out.addProperty("flying",p.getAbilities().flying);
+        out.addProperty("mainSupportingBlockKnown",true);
+        // try_tick overwrites movement_this_tick before its first read.
+        out.addProperty("movementThisTickProjected",true);
+        if (!p.isUsingItem()) {
+            out.addProperty("useItemSpeedMultiplierAbsent",true);
+            out.addProperty("useItemCanSprintAbsent",true);
+        }
+        // Local FoodData is not the dedicated server's exhaustion/timer.
+        out.remove("exhaustionBits"); out.remove("foodTickTimer");
+        // The server's independent hurt cooldown is not the hurt animation.
+        return StateBits.encode(out);
+    }
+
     static JsonObject capture(Minecraft mc) {
         var p = mc.player;
         var entity = (EntityStateAccess) p;
@@ -23,6 +64,8 @@ final class PlayerSnapshot {
         out.add("position", TraceJson.vector(p.position()));
         out.add("velocity", TraceJson.vector(p.getDeltaMovement()));
         out.add("inputs", TickInput.capture(mc).json());
+        TraceJson.number(out.getAsJsonObject("inputs"),"yaw",p.getYRot());
+        TraceJson.number(out.getAsJsonObject("inputs"),"pitch",p.getXRot());
         TraceJson.number(out, "yRot", p.getYRot());
         TraceJson.number(out, "xRot", p.getXRot());
         out.addProperty("onGround", p.onGround());

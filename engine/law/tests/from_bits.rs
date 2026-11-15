@@ -27,3 +27,23 @@ fn refuses_invalid_values_and_lengths() {
     bits[n-3] = 255; assert_eq!(PlayerState::from_bits(&bits).unwrap_err().reason, "id utf8");
     bits[n-3] = 97; bits[n-1] = 3; assert_eq!(PlayerState::from_bits(&bits).unwrap_err().reason, "operation");
 }
+
+#[test]
+fn observation_requires_every_word_and_the_exact_mask_length() {
+    let bits = PlayerState {
+        movement_this_tick: Some(Vec3::new(1.0, -0.0, 3.0)),
+        speed_modifiers: vec![SpeedModifier { id: "minecraft:test".into(), amount: -1.0, operation: SpeedOperation::AddValue }],
+        ..PlayerState::default()
+    }.bits();
+    let mut known = vec![true; bits.len()];
+    assert_eq!(PlayerState::from_observed_bits(&bits, &known).unwrap().bits(), bits);
+    for position in 0..bits.len() {
+        known[position] = false;
+        let refusal = PlayerState::from_observed_bits(&bits, &known).unwrap_err();
+        assert_eq!((refusal.position, refusal.reason), (position, "unknown word"));
+        known[position] = true;
+    }
+    assert_eq!(PlayerState::from_observed_bits(&bits, &known[..known.len()-1]).unwrap_err().reason, "known mask length");
+    known.push(true);
+    assert_eq!(PlayerState::from_observed_bits(&bits, &known).unwrap_err().reason, "known mask length");
+}
