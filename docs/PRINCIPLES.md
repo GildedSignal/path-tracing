@@ -318,6 +318,14 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "where are we in the new algo and the port and the plan in general? is hydrogen working?"; "ok then use hydrogen and terra" | S137 | **Followed:** Terra slices A (resident JNI channel, observed start) and B (one codec); Hydrogen `port-backlog` and `spec-premises` |
 | "ok tell me when the hard track is done i'll race it then" | S138 | **Followed:** Terra job `hard-track` (built backward from B, hardness certificates, witness under the law); he races it when built |
 | "built it and make it into a track that i can race already set up with the mod" | S139 | **Followed:** built in his world over RCON (x −110…−60, z −110…−60; the box was empty), registered as `lab/tracks/hardtrack.json`; witness T 579 on the race clock |
+| "someone else is using the computer so do other things in the mean time i'll test myself via the \"play\" shortcut." | S140 | **Followed:** everything detached at Idle; he races the hard track through Play.cmd |
+| "you can sneak in one terra" | S141 | **Followed:** Terra `1.3e-freeze-damage` on `wt/l0-veto` (DONE: powder-snow run 7 and the 94 kept runs replay exactly) |
+| "oh btw where are we with the new \"path finding algo\"?" | S142 | **Answered:** slices A and B on `wt/3.2d-3`; a playable algorithm needs D, E and F |
+| "don't use more sub-agents of yours you're at 97% weekly" | S143 | **Followed:** no native sub-agents; judging goes to Terra, or to Antigravity Sonnet from 20 November |
+| "for the server proper shutdown add a script that i can run like the \"play\" one"; "i said that someone else was on the computer i can't run on it"; "use hydrogen more, propose what it can do" | S144 | **Followed:** `Stop server.cmd`; the server stopped; Hydrogen `spec-fixes` and six proposals |
+| "normally how do we add words?" | S145 | **Answered:** a program is a predicate-to-inputs row in `engine/words/src/program.rs`, certified by replay |
+| "do hydrogen 6 and 5" | S146 | **Followed:** Hydrogen `docs-truth` and `glm-digest`, both reported |
+| "alright someone has shut down the computer, you'll need to start new runs i think you have little usage left" | S147 | **Followed:** the three reports and 1.3e had finished before the shutdown; Terra P1 and the GLM runner re-armed, detached |
 
 ## Contradictions (kept side by side)
 
