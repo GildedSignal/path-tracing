@@ -31,6 +31,17 @@ final class TrackInventory {
         return new TrackInventory(slots.stream().map(s -> parse(s).getStringOr("id", "").equals("minecraft:stick") ? "{}" : s).toList(), selected);
     }
 
+    TrackInventory withRaceStick(String name) {
+        var copy = new ArrayList<>(withoutSticks().slots);
+        for (int slot = 36; slot <= 44; slot++) {
+            if (parse(copy.get(slot - FIRST)).isEmpty()) {
+                copy.set(slot - FIRST, "{id:\"minecraft:stick\",count:1}");
+                return new TrackInventory(copy, slot - 36);
+            }
+        }
+        throw new IllegalStateException("Track " + name + " has no empty hotbar slot for the stick.");
+    }
+
     JsonObject json() {
         JsonObject out = new JsonObject();
         out.addProperty("version", 1);

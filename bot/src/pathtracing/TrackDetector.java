@@ -16,6 +16,7 @@ final class TrackDetector {
     private long startGameTime;
     private long ticks;
     private long gameTicks;
+    private boolean rearmRequested;
 
     Event sample(boolean onA, boolean touchesB, boolean abandoned, long tick, long gameTime) {
         if (abandoned) {
@@ -31,7 +32,9 @@ final class TrackDetector {
             armed = true;
             ticks = 0;
             gameTicks = 0;
-            return wasRunning ? Event.REARM : wasArmed ? Event.NONE : Event.ARMED;
+            boolean refill = rearmRequested;
+            rearmRequested = false;
+            return wasRunning || refill ? Event.REARM : wasArmed ? Event.NONE : Event.ARMED;
         }
         Event event = Event.NONE;
         if (armed) {
@@ -53,6 +56,7 @@ final class TrackDetector {
     }
 
     boolean active() { return armed || running; }
+    void requestRearm() { rearmRequested = true; }
     boolean running() { return running; }
     long ticks() { return ticks; }
     long gameTicks() { return gameTicks; }
@@ -62,5 +66,6 @@ final class TrackDetector {
         running = false;
         ticks = 0;
         gameTicks = 0;
+        rearmRequested = false;
     }
 }

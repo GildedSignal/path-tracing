@@ -62,6 +62,36 @@ public final class Tracks {
     private static Map<String, Integer> toolkit = Map.of();
     private static TrackMode human;
     private static TrackHumanClient humanClient;
+    private static boolean resetting;
+    private static long resetTick;
+
+    static boolean stickInHumanMode(Minecraft mc, boolean sneak) {
+        if (human == null || !human.active() || isBot()) return false;
+        if (sneak) { command(mc, "exit"); return true; }
+        if (selected == null || !human.ready()) return true;
+        if (DETECTOR.running()) say(mc, "Reset.");
+        discardRecording(mc);
+        run = null;
+        USED.clear();
+        DETECTOR.requestRearm();
+        resetting = true;
+        resetTick = clock;
+        var a = selected.a();
+        humanClient.command("tp @s " + (a.x() + 0.5) + " " + (a.y() + 1.0) + " " + (a.z() + 0.5)
+            + " " + mc.player.getYRot() + " " + mc.player.getXRot());
+        return true;
+    }
+
+    static boolean startAtClickedA(Minecraft mc, BlockPos block) {
+        try {
+            reload();
+            var match = tracks.stream().filter(t -> t.dimension().equals(dimension(mc))
+                && t.a().x() == block.getX() && t.a().y() == block.getY() && t.a().z() == block.getZ()).findFirst();
+            if (match.isEmpty()) return false;
+            mc.getConnection().sendCommand("msg " + PathTracingMod.BOT + " track run " + match.get().name());
+        } catch (IOException | RuntimeException failure) { say(mc, "Track files: " + failure.getMessage()); }
+        return true;
+    }
 
     static void register() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) -> {
@@ -225,6 +255,11 @@ public final class Tracks {
     private static void tickBody(Minecraft mc) throws IOException {
         clock++;
         if (mc.player == null || mc.level == null) return;
+        if (resetting) {
+            if (selected != null && selected.dimension().equals(dimension(mc)) && onA(mc, selected)) resetting = false;
+            else if (clock - resetTick < 200) return;
+            else { resetting = false; say(mc, "Reset teleport was not confirmed."); cancel(mc, true); return; }
+        }
         if (!isBot()) {
             TrackMode mode = human(mc);
             if (selected != null && mode.active() && !mode.restoring() && mode.state() != TrackMode.State.FAILED && abandoned(mc)) {
@@ -422,6 +457,7 @@ public final class Tracks {
                 .filter(t -> t.dimension().equals(dimension(mc)) && onA(mc, t)).toList();
         } finally {
             previousBox = null;
+            resetting = false;
             generation++;
             settling = false;
             boolean wasBot = botAttempt;
@@ -447,7 +483,7 @@ public final class Tracks {
         if (preparation != null) throw new IllegalStateException("Track preparation is still running.");
         if (Recorder.active() && recording == null) throw new IllegalStateException("A recording or replay is already running.");
         TrackStore.Track track = STORE.read(name);
-        if (!track.dimension().equals(dimension(mc))) throw new IllegalStateException("Bot must be in the track's dimension.");
+        if (!track.dimension().matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) throw new IOException("Invalid track dimension: " + track.dimension());
         Map<String, Integer> kit = STORE.toolkit(track, PathTracingMod.OWNER);
         JsonObject humanBest = STORE.humanBest(track, PathTracingMod.BOT);
         String mode = humanBest == null ? mc.gameMode.getPlayerMode().getName() : humanBest.get("gameMode").getAsString();
@@ -474,7 +510,7 @@ public final class Tracks {
         commands.add("clear " + player);
         kit.forEach((item, count) -> commands.add("give " + player + " " + item + " " + count));
         var a = track.a();
-        commands.add("tp " + player + " " + (a.x() + 0.5) + " " + (a.y() + 1.0) + " " + (a.z() + 0.5));
+        commands.add("execute in " + track.dimension() + " run tp " + player + " " + (a.x() + 0.5) + " " + (a.y() + 1.0) + " " + (a.z() + 0.5));
         int request = generation;
         preparation = CompletableFuture.runAsync(() -> {
             try { TrackRcon.execute(STORE.rig, commands, () -> request != generation); }

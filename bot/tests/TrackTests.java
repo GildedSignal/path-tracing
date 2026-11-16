@@ -29,6 +29,11 @@ public final class TrackTests {
             return;
         }
         detector();
+        for (String name : List.of("hard_track_2", "a-b")) TrackStore.validateName(name);
+        for (String name : List.of("A", "a b", "a/b")) {
+            try { TrackStore.validateName(name); throw new AssertionError("Accepted invalid name: " + name); }
+            catch (IllegalArgumentException expected) { checks++; }
+        }
         usage();
         recordings(root.resolve("recordings"));
         files(root.resolve("files"));
@@ -98,6 +103,15 @@ public final class TrackTests {
         event(detector, false, false, false, 61, 411, TrackDetector.Event.START);
         event(detector, false, TrackDetector.touchesB(above, below, b), false, 62, 412, TrackDetector.Event.STOP);
         check(detector.ticks() == 1, "Swept contact stops on the first crossing sample");
+        detector.reset();
+        event(detector, true, false, false, 70, 420, TrackDetector.Event.ARMED);
+        detector.requestRearm();
+        event(detector, true, false, false, 71, 421, TrackDetector.Event.REARM);
+        event(detector, true, false, false, 72, 422, TrackDetector.Event.NONE);
+        event(detector, false, false, false, 73, 423, TrackDetector.Event.START);
+        detector.requestRearm();
+        event(detector, true, true, false, 74, 424, TrackDetector.Event.REARM);
+        check(!detector.running() && detector.ticks() == 0, "Stick reset uses the on-A rearm event and cannot finish at B");
     }
 
     private static void usage() {
@@ -169,7 +183,7 @@ public final class TrackTests {
         check(store.list().equals(List.of(track)), "Track listing");
         try { store.create(track); throw new AssertionError("Overwrite accepted"); }
         catch (IOException expected) { checks++; }
-        for (String name : List.of("../escape", "UPPER", "bad_name", "x/y", "")) {
+        for (String name : List.of("../escape", "UPPER", "x/y", "")) {
             try { store.read(name); throw new AssertionError("Invalid name accepted"); }
             catch (IllegalArgumentException expected) { checks++; }
         }

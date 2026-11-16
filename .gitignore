@@ -4,6 +4,9 @@ clients/
 bot/build/
 bot/lib/
 rig.lock
+maps.json
+maps.json.lock
+maps.json.*.tmp
 jobs/*/log.jsonl
 jobs/*/stderr.txt
 jobs/*/full-prompt.md

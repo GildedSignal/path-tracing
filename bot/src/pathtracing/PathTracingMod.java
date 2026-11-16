@@ -10,6 +10,7 @@ public final class PathTracingMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         Tracks.register();
+        Maps.register();
         switch (System.getProperty("pathtracing.role", "")) {
             case "player" -> Pointer.register();
             case "bot" -> Bot.register();

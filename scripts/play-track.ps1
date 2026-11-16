@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)][ValidatePattern('^[a-z0-9-]+$')][string]$Track,
+  [Parameter(Mandatory)][ValidatePattern('\A[a-z0-9_-]+\z', Options=0)][string]$Track,
   [ValidateSet('3','5','b')][string]$Mode = '5',
   [string]$Rig,
   [switch]$DryRun

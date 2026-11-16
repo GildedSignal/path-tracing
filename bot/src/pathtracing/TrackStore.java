@@ -49,7 +49,7 @@ final class TrackStore {
     }
 
     static void validateName(String name) {
-        if (!name.matches("[a-z0-9-]+")) throw new IllegalArgumentException("Track names use [a-z0-9-]+.");
+        if (!name.matches("[a-z0-9_-]+")) throw new IllegalArgumentException("Track names use [a-z0-9_-]+.");
     }
 
     private Path file(String name) {
@@ -93,7 +93,7 @@ final class TrackStore {
         if (!Files.isDirectory(directory)) return List.of();
         List<Track> out = new ArrayList<>();
         try (var paths = Files.list(directory)) {
-            for (Path path : paths.filter(p -> p.getFileName().toString().matches("[a-z0-9-]+\\.json")).sorted().toList()) {
+            for (Path path : paths.filter(p -> p.getFileName().toString().matches("[a-z0-9_-]+\\.json")).sorted().toList()) {
                 String name = path.getFileName().toString();
                 out.add(read(name.substring(0, name.length() - 5)));
             }
