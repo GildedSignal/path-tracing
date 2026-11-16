@@ -1,6 +1,6 @@
 # Parkour tracks
 
-Start both clients through scripts/launch-client.ps1. In yours, `/track new <name>` (names: [a-z0-9-]+).
+Start both clients through scripts/launch-client.ps1. In yours, `/track new <name>` (names: [a-z0-9_-]+).
 Right-click A's block, then a different B block with your stick. Sneak + right-click cancels.
 Green particles mark A, red particles mark B, within render distance in your client.
 Use `/track list`, `/track best <name>`, `/track delete <name>`, `/track cancel`, `/track exit` and `/track restore`.

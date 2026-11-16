@@ -11,13 +11,20 @@ fn point_of(json: &str, key: &str) -> [i32; 3] {
 }
 pub fn track(line: &str) -> Result<Track, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    track_at(line, &root.join("../../lab/tracks"), &root.join("../world/tests/fixtures/world"))
+}
+
+/// The same flight input, with saved track records and the dimension view chosen by the caller.
+pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -> Result<Track, String> {
     let mut fields = line.split_whitespace();
-    let name = fields.next().unwrap().to_owned();
-    let n: Vec<i32> = fields.map(|v| v.parse().unwrap()).collect();
-    let json = std::fs::read_to_string(root.join(format!("../../lab/tracks/{name}.json"))).map_err(|e| e.to_string())?;
+    let name = fields.next().ok_or("missing track name")?.to_owned();
+    if name.is_empty() || !name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-') { return Err("track names use [a-z0-9_-]+".into()); }
+    let n = fields.map(str::parse::<i32>).collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    if n.len() != 6 { return Err("track bounds need six coordinates".into()); }
+    let json = std::fs::read_to_string(tracks.join(format!("{name}.json"))).map_err(|e| e.to_string())?;
     let (a, b) = (point_of(&json, "A"), point_of(&json, "B"));
     // Julien's times: every finished run of his on this track, and what the best one used.
-    let runs = std::fs::read_to_string(root.join(format!("../../lab/tracks/runs/{name}.jsonl"))).unwrap_or_default();
+    let runs = std::fs::read_to_string(tracks.join(format!("runs/{name}.jsonl"))).unwrap_or_default();
     let mut his = Vec::new();
     let mut items = String::new();
     for run in runs.lines() {
@@ -31,7 +38,7 @@ pub fn track(line: &str) -> Result<Track, String> {
         let (min, max) = ([n[0] - pad, n[1], n[2] - pad], [n[3] + pad, n[4] + 8, n[5] + pad]);
         // Three cells inside what was loaded: the law's collision scan reads that far past the body.
         let margin = 3;
-        match world::WorldSnapshot::load(root.join("../world/tests/fixtures/world"), min, max) {
+        match world::WorldSnapshot::load(world, min, max) {
             Ok(world) => return Ok(Track { name, world, read: (min, max), body: ([min[0] + margin, min[1] + 1, min[2] + margin], [max[0] - margin, max[1] - 3, max[2] - margin]), a, b, his, items, pad }),
             Err(error) => last = format!("{error:?}"),
         }

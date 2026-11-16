@@ -26,6 +26,7 @@ final class Pointer {
         // Consume the click before vanilla sees it, so the stick never interacts with the block.
         while (mc.options.keyUse.consumeClick()) {
             mc.options.keyUse.setDown(false);
+            if (Tracks.stickInHumanMode(mc, player.isShiftKeyDown())) continue;
             if (player.isShiftKeyDown()) {
                 if (Tracks.selecting()) {
                     Tracks.click(mc, BlockPos.ZERO, true);
@@ -44,6 +45,7 @@ final class Pointer {
                 Tracks.click(mc, block.getBlockPos(), false);
                 continue;
             }
+            if (Tracks.startAtClickedA(mc, block.getBlockPos())) continue;
             // The cell in front of the face you pointed at: on a floor, the air cell the bot should stand in.
             BlockPos goal = block.getBlockPos().relative(block.getDirection());
             send(mc, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ());

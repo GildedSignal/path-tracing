@@ -25,6 +25,7 @@ final class TrackMode {
     private final String player;
     private TrackStore.Session session;
     private TrackInventory kit;
+    private String trackName;
     private TrackInventory target;
     private String targetMode;
     private boolean restoring;
@@ -50,7 +51,7 @@ final class TrackMode {
     String kitHash() { return TrackStore.sha256(kit.json()); }
 
     boolean validateStart() {
-        if (ready() && port.mode().equals("survival") && kit.sameItems(port.inventory())) return true;
+        if (ready() && port.mode().equals("survival") && kit.withoutSticks().sameItems(port.inventory().withoutSticks())) return true;
         fail("A run must leave A in survival with the kit.");
         return false;
     }
@@ -94,6 +95,8 @@ final class TrackMode {
                 store.writeKit(name, kit);
                 port.say("Track " + name + " kit saved from your inventory (sticks removed).");
             } else port.checkRestorable(kit);
+            kit.withRaceStick(name); // Refuse before saving a session or changing the inventory.
+            trackName = name;
             TrackStore.Session saved = new TrackStore.Session(before, observed.mode());
             store.writeSession(player, saved);
             session = saved;
@@ -130,7 +133,7 @@ final class TrackMode {
     private void prepare(boolean restore) {
         generation++;
         restoring = restore;
-        target = restore ? session.inventory() : kit;
+        target = restore ? session.inventory() : kit.withRaceStick(trackName);
         targetMode = restore ? session.gameMode() : "survival";
         state = State.ALIVE;
         deadline = now + 200;

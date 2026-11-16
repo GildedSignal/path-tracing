@@ -130,7 +130,7 @@ final class TrackModeTests {
         port.server = original;
         port.answer();
         check(mode.state() == TrackMode.State.FAILED && store.readSession("human").inventory().equals(withSpike)
-            && port.client.equals(kit), "A spike missing from final readback keeps the session and does not confirm a local copy");
+            && port.client.equals(kit.withRaceStick("course")), "A spike missing from final readback keeps the session and does not confirm a local copy");
         check(port.messages.getLast().contains("Slot 15") && port.messages.getLast().contains("minecraft:sulfur_spike")
             && port.messages.getLast().contains("/track restore"), "Restore failure names the slot, item, and command");
         port.reply = true;
@@ -185,6 +185,12 @@ final class TrackModeTests {
         items.set(40, item("{id:'minecraft:shield',count:1," + components + "}"));
         original = TrackInventoryCodec.encode(items, 7, registries);
         kit = original.withoutSticks();
+        var race = kit.withRaceStick("course");
+        check(race.selected == 0 && race.slot(36).getStringOr("id", "").equals("minecraft:stick"), "Race stick occupies and selects the first empty hotbar slot");
+        var occupied = new ArrayList<>(Collections.nCopies(41, "{}"));
+        for (int slot = 36; slot <= 44; slot++) occupied.set(slot - TrackInventory.FIRST, "{id:\"minecraft:stone\",count:1}");
+        try { new TrackInventory(occupied, 0).withRaceStick("course"); throw new AssertionError("Full hotbar accepted"); }
+        catch (IllegalStateException expected) { check(expected.getMessage().contains("course"), "Full hotbar refusal names the track"); }
         check(original.slot(36).getStringOr("id", "").equals("minecraft:stick") && kit.slot(36).isEmpty(), "Named sticks are removed without changing the original");
         check(!kit.equals(original), "Negative control: a kit retaining a stick differs");
         check(kit.selected == 7 && kit.slot(5).equals(original.slot(5)) && kit.slot(45).equals(original.slot(45)), "Kit retains armour, offhand, data and selection");
@@ -325,7 +331,7 @@ final class TrackModeTests {
         check(store.readSession("human").inventory().equals(original) && port.applications == 0 && port.commands.isEmpty(), "Entry saves before any change");
         check(port.messages.stream().anyMatch(s -> s.contains("kit saved")), "First entry announces captured kit");
         ready(mode, 1);
-        check(port.server.equals(kit) && port.serverMode.equals("survival") && port.full, "Entry prepares survival with kit and full resources");
+        check(port.server.equals(kit.withRaceStick("course")) && port.serverMode.equals("survival") && port.full, "Entry prepares survival with kit and full resources");
         check(mode.kitHash().equals(TrackStore.sha256(store.readKit("course").json())), "Run uses stored kit hash");
         check(mode.validateStart(), "Survival kit permits departure");
         try { mode.replaceKit("course", true); throw new AssertionError("Run kit replacement allowed"); }
@@ -337,7 +343,7 @@ final class TrackModeTests {
         port.full = false;
         mode.rearm();
         ready(mode, 20);
-        check(port.applications == 2 && port.server.equals(kit) && port.full, "Re-arm restores kit and full resources again");
+        check(port.applications == 2 && port.server.equals(kit.withRaceStick("course")) && port.full, "Re-arm restores kit and full resources again");
         // Freeze the kit for the attempt even if another client replaces its file.
         store.writeKit("course", new TrackInventory(Collections.nCopies(41, "{}"), 0));
         check(mode.kitHash().equals(TrackStore.sha256(kit.json())), "Run hash remains that of the applied kit");
@@ -353,7 +359,7 @@ final class TrackModeTests {
         run.addProperty("trackCreated", "creation");
         store.save("course", run);
         mode.exit();
-        check(store.history("course").getFirst().get("T").getAsLong() == 7 && port.server.equals(kit), "Finished run is recorded before restoring");
+        check(store.history("course").getFirst().get("T").getAsLong() == 7 && port.server.equals(kit.withRaceStick("course")), "Finished run is recorded before restoring");
         exited(mode, port, 50);
         check(store.history("course").getFirst().get("gameMode").getAsString().equals("survival"), "Run records survival rather than restored mode");
         try { mode.replaceKit("course", true); throw new AssertionError("Run flag ignored"); }
@@ -465,7 +471,7 @@ final class TrackModeTests {
         for (long tick = 40; tick < 50 && mode.active(); tick++) mode.tick(tick);
         mode.enter("course");
         ready(mode, 60);
-        port.client = original;
+        port.client = new TrackInventory(Collections.nCopies(41, "{}"), 0);
         check(!mode.validateStart() && mode.state() == TrackMode.State.FAILED, "Departure with changed kit is refused");
     }
 
