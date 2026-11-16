@@ -1,10 +1,10 @@
 ﻿# U1: the kernel (slices C and D, with `count` on every word)
 
-**Your spec** is section 2 of `C:\Users\PASCAL\Desktop\path tracing\jobs\u1-spec\report.md`: the header, decisions 1–6, the files, the components, the tests and the gate. Read it all, and section 3. The plan it serves, approved by Julien (S165, S166, S169): `docs\learning.md` section 0, `docs\representation.md` sections 10–11, `docs\scales.md`, `docs\vocabulary.md` (version 3), `docs\HANDOFF.md` (U1).
+**Your spec** is the integrator's, `C:\Users\PASCAL\Desktop\path tracing\jobs\u1\spec.md`. It adopts section 2 of the draft `jobs\u1-spec\report.md` (read that too) and overrides it in five places; where they disagree, `spec.md` wins. The kernel's judge (`jobs\kernel-judge\last.md`) passed P2 and P4 with findings: P4's food threshold `6` is typed in its assertions; in U1, take every threshold from the law. The plan it serves, approved by Julien (S165, S166, S169): `docs\learning.md` section 0, `docs\representation.md` sections 10–11, `docs\scales.md`, `docs\vocabulary.md` (version 3), `docs\HANDOFF.md` (U1).
 
 **Why:** Julien (S131): "the terrains complexity should be a mirror of compute's complexity here our path should take µs not tens of ms". And (S161): "we can't have two paths like that "easy" or "hard" it should be the same mechanism". U1 builds the kernel that every zone uses, behind the single entry point `solve`.
 
-**You are the builder of the algorithm's core, chosen for it (S174: "opus and astra for important things").** The spec was drafted by Hydrogen. Where it is wrong, weak or under-determined, use your judgement to make the kernel right under the plan's rules. Record each such decision and its reason in `last.md`. Do not stop on it.
+**You are the builder of the algorithm's core, chosen for it (S174: "opus and astra for important things").** Where the spec is still under-determined, use your judgement under the plan's rules. Record each such decision and its reason in `last.md`, and do not stop on it.
 
 ## Decisions already made (do not reopen them)
 
