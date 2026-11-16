@@ -85,9 +85,7 @@ if ($Who -in 'terra','astra') {
 $q = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 if ($DryRun) { "dry run: slots allow $Job on $Who ($model); would run: powershell $($q -join ' ')"; return }
 $p = Start-Process powershell -ArgumentList $q -WorkingDirectory $Root -WindowStyle Hidden -PassThru
-# Every lane runs at Idle CPU priority and its children inherit it, so a live gate on the same machine
-# keeps its rate: L0 Preflight passed under full load this way on 14 November (S106), where the same
-# load at Normal priority missed the lab clock's rate floor (986 against 1,000 ticks per second).
-try { $p.PriorityClass = 'Idle' } catch {}
+# Lanes run at Normal priority (S158, "no need for low priority"). Before a live gate, lower them to Idle:
+# at Normal, L0 Preflight missed the lab clock's rate floor (986 against 1,000 ticks per second; S106).
 Add-Content -Encoding utf8 (Join-Path $Root 'jobs\launch.log') "$(Get-Date -Format 'yyyy-MM-dd HH:mm') $Job $Who $model pid $($p.Id) $Worktree"
 "launched $Job on $Who ($model), pid $($p.Id)"

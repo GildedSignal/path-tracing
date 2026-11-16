@@ -29,5 +29,5 @@ $stamp = Get-Date -Format 'HHmm'
 Copy-Item (Join-Path $dir 'last.md') (Join-Path $dir "last-before-follow-$stamp.md") -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $dir 'log.jsonl') (Join-Path $dir "log-before-follow-$stamp.jsonl") -Force -ErrorAction SilentlyContinue
 Add-Content -Encoding utf8 (Join-Path $Root 'jobs\launch.log') "$(Get-Date -Format 'yyyy-MM-dd HH:mm') $Job follow-up ($Message) resumes session $session"
-try { (Get-Process -Id $PID).PriorityClass = 'Idle' } catch {}
+# Normal priority (S158, "no need for low priority"). Before a live gate, lower the lanes to Idle (S106).
 & "$PSScriptRoot\gpt.ps1" -Job $Job -Worktree $Worktree -Model $Model -Resume $session -Follow $(if ([IO.Path]::IsPathRooted($Message)) { $Message } else { Join-Path $Root $Message })

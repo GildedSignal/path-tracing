@@ -5,7 +5,7 @@
 # ran one two-lens batch at a time, waited for the slower lane and paused ten minutes, so GLM averaged
 # ~1.5 lanes while its 5-hour window holds ~3 in parallel). The file is re-read before every start, so a
 # lens appended while the queue runs is picked up. A lens already started by this runner, or named in a
-# "start:" line of the log since the queue began, is not started twice. Lanes run at Idle CPU priority.
+# "start:" line of the log since the queue began, is not started twice. Lanes run at Normal priority (S158).
 # A lens must be COMMITTED before it starts: lanes run from a checkout of HEAD.
 param([Parameter(Mandatory)][string]$Queue, [int]$Lanes = 3, [int]$MaxLanes = 8, [int]$Minutes = 60)
 $ErrorActionPreference = 'Continue'
@@ -59,7 +59,7 @@ while ($true) {
       $q = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\glm-local.ps1",'-Lenses',$next,'-Minutes',"$Minutes") |
            ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
       $p = Start-Process powershell -ArgumentList $q -WorkingDirectory $Root -WindowStyle Hidden -PassThru
-      try { $p.PriorityClass = 'Idle' } catch {}
+      # Normal priority (S158); before a live gate, lower the lanes to Idle (S106).
       $running += [pscustomobject]@{ Lens = $next; Process = $p }
       $script:previous = $running
       Note "start: $next"
