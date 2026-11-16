@@ -24,8 +24,8 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 | Hard tasks | GPT `gpt-6-astra`, sparingly | what Terra stalls on: convergent math, hard design within a spec |
 | Judge | Sonnet 5.5 for GPT's work; GPT Terra for Claude's | gates and merges, by the other family in a fresh context |
 | Runner | Claude Haiku 5.5 | ladder runs, log digests, completeness checks |
-| Lab | GLM 5.3 through omp, as many lanes as its token window sustains (S47) | ground-layer laws, deviation triage, breakers, worst cases, tracks, R&D, primary research, red-teams; only results a machine can check ([lab/glm.md](lab/glm.md)) |
-| Google | Argon and Hydrogen through Antigravity, from 13 November (S102) | Argon reads: the corpus traversal, the untrusted channel, his primary sources. Hydrogen is a second wide lane. Neither builds and neither judges ([docs/clan.md](docs/clan.md)) |
+| Lab | GLM 5.3 through omp (S47) | **the port only** (S173: "glm is not very strong"): jar-backed port deltas, each checkable by a machine ([lab/glm.md](lab/glm.md)). Questions and premise tests go to Hydrogen or Terra |
+| Google | Argon and Hydrogen through Antigravity, from 13 November (S102) | Hydrogen takes the complex questions (S173), Argon reads: the corpus traversal, the untrusted channel, his primary sources. Hydrogen is a second wide lane. Neither builds and neither judges ([docs/clan.md](docs/clan.md)) |
 | The spare meter | Opus 5.5 and Sonnet 5.5 **through Antigravity** | the same minds on a meter that is not Julien's Anthropic plan: prefer it for judging and red-teaming, and keep the native plan as the reserve |
 
 Fable orchestrates from 10 November (S63); this lifts the 4 November "no Fable". It first reviews the plan and looks for improvements, then carries the orchestrating.
