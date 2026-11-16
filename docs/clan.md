@@ -140,7 +140,7 @@ Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-20
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`; Antigravity `report.md` every few files). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
 4. Reading goes to Hydrogen first; Argon only for the hardest reads (its own weekly limit, ~10 runs); design Astra, build Terra, red-team native Opus, judge native Sonnet, lab GLM paced by `glm-queue`.
-5. Read meters raw (`meters.ps1`, `agy /usage`, `omp usage`) before stating them, naming which column is used or remaining.
+5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM, Antigravity) in the same message, before every launch** (S168; on 16 November the native plan reached 92% unseen because `meters.ps1` cannot read it). Launch no native sub-agent above 80% of the native 5-hour window.
 6. Read-only companions get their evidence made for them (failure lines, block dumps, logs): they cannot run commands.
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
