@@ -112,3 +112,32 @@ Fable 5.2 sub-agent, 16 November. Authority: S165 ("this is a beautiful plan i a
 - **`engine.md`'s hardware line** does not state the 96 MB L3 that scales.md 4.7 now relies on.
 - **`jobs/3.2d-3/spec.md`** still describes slices E, H and K as written. It is a job file, not a living doc; HANDOFF now says which slices stand. Its lines on U2's food super-period and a monotone portal map rest on refuted premises (audit D8).
 - **`docs/footprints.md`, `server.md`, `clan.md`** were not read in the plan run and are unchanged. vocabulary.md's new "worldtube: the footprint, with its ticks" leans on footprints.md; someone who has read it should confirm the wording.
+
+## The learning fold (S169: "the learning plan looks fine for now so i approve it")
+
+Source: [learning-review.md](learning-review.md). Same rules: no code, no commit, no launch.
+
+| File | Before | After | Budget |
+|---|---|---|---|
+| `docs/learning.md` | 129 | 153 | 200 |
+| `docs/PRINCIPLES.md` | 343 | 344 | (one new row, S169) |
+| `docs/HANDOFF.md` | 120 | 120 | 120 (unchanged: no U-step changes) |
+
+**`docs/learning.md`**
+- The status line names the third approval (S169).
+- **Section 2** is retitled "Learning: one queue, one operation, one record". A preamble states the rule, the budget (free compute inside certified words, with its Fermi inputs; deadline work first, the rest R&D and play, no slice chosen), the queue, the real-time swap rule, the minimum effective dose, and that acting is never delayed. **The nine numbered steps keep their numbers,** because `goal.rs` and other docs cite them (2.3, 2.5, 2.7, 2.9); their content changed:
+  - step 2: demand is a missing set or an open bracket, fed also by regret, surprises that helped, and the census;
+  - step 3: a family's known member lends its breakpoints;
+  - step 4: the four statuses, and learning by merging;
+  - step 5: smaller circles (derive a family's envelope, then delete its stored patterns);
+  - step 6: one exam, not two;
+  - step 8: "kind" defined; confirmation rides on ordinary trips;
+  - step 9: play as a source of queue items with skin in the game; body play only confirms, only where safe.
+- **Section 4:** the three fragile rows are marked, with their guards (alternates kept at each joint; law hash and witness on every entry; play as the stressor); a new row for the store; three incentive rows (the queue, play, a slow first word); the asymmetry test with his highlight.
+- **Section 5:** the "not found yet / the law lacks it" case is answered by the statuses; two new open cases (a mid-flight swap against other bots' reservations; the census's bound).
+- **Section 6:** kill tests 18–24 (the review's L1–L7).
+- **Section 7:** how far his highlights were read.
+
+**Superseded in place:** "a small slice of idle time" as a chosen quantity (his 12 November decision that the slice stays is kept, with a note that its size now emerges); the second exam; "Play is the idle slice with a body".
+
+**Not placed.** From the review, left in `learning-review.md` only: the full table mapping Waitzkin, Ferriss and Naval idea by idea; the incentive rows already guarded elsewhere (hit rate, switches, his time as the bar, lower bounds); Lindy (a modest fit); the "second mistake" (cascades), which stays "open: no model" in section 4. `scales.md` 4.1 still describes R&D's objective without saying its budget emerges; a one-line pointer to learning.md section 2 would close that, and scales.md was not on this fold's list.
