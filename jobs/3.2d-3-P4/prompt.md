@@ -6,7 +6,7 @@
 
 ## Decisions already made (do not reopen them)
 1. **Your worktree** is the one this launch gives you, branched from `wt/3.2d-3-P1`: slices A and B, plus P1's `engine\plan\tests\zones_prereqs\` harness with an empty `t4.rs`. Every path the spec writes under `D:\path-tracing-wt\3.2d-3\` is the same path in your worktree. Use `CARGO_TARGET_DIR=D:\path-tracing-target\3.2d-3-P4`.
-2. **You edit only** `engine\plan\tests\zones_prereqs\t2.rs` and `jobs\3.2d-3-P4\*`. P2 runs at the same time on `t2.rs`; you may also edit `jobs/3.2d-3/verify.ps1` for `-Case T4Food` only.
+2. **You edit only** `engine\plan\tests\zones_prereqs\t4.rs` and `jobs\3.2d-3-P4\*`. P2 runs at the same time on `t2.rs`; you may also edit `jobs/3.2d-3/verify.ps1` for `-Case T4Food` only.
 3. **Use P1's measured values** where the spec needs the transient and cycle: 263 transient ticks and a 12-tick cycle. They are in `jobs\3.2d-3-P1\last.md` in your worktree.
 4. **Peaceful only** (S136). **No game, server or client** is launched. Everything is `cargo --offline`.
 5. **A failed premise is the result:** if the guard event is not exact, or a premise of the spec is false (a file, function or line that is not there), write what you found in `last.md` and end `STATUS: DONE`. Never loosen an assertion, add a tolerance, or change engine source.
