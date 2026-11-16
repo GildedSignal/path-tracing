@@ -10,3 +10,5 @@ port-push-threshold port-ordered-push-query port-push-order-noncommuting port-en
 port-collapse-schedule port-collapse-due-tick port-schedule-order-tie port-amethyst-state
 # 15 November 14:19: these five hit the Zai 5-hour limit (429, resets 16 November 00:11); their folders are kept as *-zai-limit.
 port-collapse-schedule port-entity-contact port-collapse-due-tick port-schedule-order-tie port-amethyst-state
+# 16 November 20:10: U2's premises, kill tests 11 (plateaus are few) and 10 (the map holds his shortcut), first.
+trial-plateau-refined trial-plateau-entry-speed hardtrack-face-reach reach-face-overhang
