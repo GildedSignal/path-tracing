@@ -1,0 +1,11 @@
+[package]
+name = "kt10"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+law = { path = "D:/path-tracing-wt/hard-track-2/engine/law" }
+plan = { path = "D:/path-tracing-wt/hard-track-2/engine/plan" }
+world = { path = "D:/path-tracing-wt/hard-track-2/engine/world" }
+
+[workspace]
