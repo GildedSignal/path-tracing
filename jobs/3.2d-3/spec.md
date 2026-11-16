@@ -1,3 +1,5 @@
+> **Superseded (16 November, S165):** this spec forked easy ground from hard (slices E and H; [postmortem](../../docs/reference/postmortem-2026-11-16.md)). The plan is [docs/plan.md](../../docs/plan.md). Kept for its history and its premises.
+
 ﻿# 3.2d-3, addendum 3 — R0/R1/R2/R4 only
 **Consumer:** S131's simple extreme and today's 21 tracks; retain the hard tool-heavy extreme as a separate, explicitly unbuilt door. Design only: no implementation/test result is claimed here.
 **Read order/evidence:** main jobs/zones-design/design.md, its redteam-opus.md, then D:/path-tracing-wt/plain-judge/jobs/plain-path-judge/verdict.md; reference S130–S135, vocabulary §4 and HANDOFF anomaly 2. S124's live end-to-end clock remains in force.

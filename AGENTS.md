@@ -1,7 +1,7 @@
 # How we work
 
 **Read [docs/PRINCIPLES.md](docs/PRINCIPLES.md) first, and re-read every doc named here after each compaction or new session (S164): a summary and HANDOFF's "start here" carry jobs, not the plan.** It holds the goal and Julien's philosophy, and they are always on.
-Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, [docs/scales.md](docs/scales.md), every scale under one rule (S65), and [docs/HANDOFF.md](docs/HANDOFF.md), for the state and the roadmap. After that:
+Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emergent-space-engine](https://github.com/GildedSignal/emergent-space-engine)): worldtubes, certificates, light cones, generators, multipoles. Read the ES docs before any representation decision (S58). Then read [docs/representation.md](docs/representation.md), the framework, [docs/scales.md](docs/scales.md), every scale under one rule (S65), [docs/plan.md](docs/plan.md), the plan in plain names, and [docs/HANDOFF.md](docs/HANDOFF.md), for the state. After that:
 - **[docs/clan.md](docs/clan.md) before you give anyone a job**: which band a job is in, which companion takes it, the meter order, and the exact launch command for each with the traps that have cost us hours;
 - [docs/learning.md](docs/learning.md) for the unified idea (approved 12 November, S93) and [docs/vocabulary.md](docs/vocabulary.md) for the word record;
 - [docs/engine.md](docs/engine.md) for the law and the engine's contract;

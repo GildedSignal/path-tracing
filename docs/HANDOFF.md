@@ -4,7 +4,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 ## First ten minutes
 
-1. **Read, in order:** [AGENTS.md](../AGENTS.md); [PRINCIPLES.md](PRINCIPLES.md) (the goal, his philosophy, the register of his turns); this file; **[clan.md](clan.md) before giving anyone a job**; [learning.md](learning.md) (the unified idea, approved 12 November); [vocabulary.md](vocabulary.md); [representation.md](representation.md) and [scales.md](scales.md); [engine.md](engine.md), [footprints.md](footprints.md), [ladder.md](ladder.md), [server.md](server.md) as the task needs.
+1. **Read, in order:** [AGENTS.md](../AGENTS.md); [PRINCIPLES.md](PRINCIPLES.md) (the goal, his philosophy, the register of his turns); this file; **[plan.md](plan.md), the plan**; **[clan.md](clan.md) before giving anyone a job**; [learning.md](learning.md) (the unified idea, approved 12 November); [vocabulary.md](vocabulary.md); [representation.md](representation.md) and [scales.md](scales.md); [engine.md](engine.md), [footprints.md](footprints.md), [ladder.md](ladder.md), [server.md](server.md) as the task needs.
 2. **His words:** [reference/julien-2026-11-10.md](reference/julien-2026-11-10.md) (S64–S105, X7–X16; S103 was never recorded verbatim). New turns go there verbatim, with a register row in PRINCIPLES.
 3. **The whole plan:** `C:\Users\PASCAL\.claude\plans\wiggly-questing-lemur.md` (outside the repo; the roadmap below is its summary).
 4. **Run** `.\scripts\status.ps1` (every lane, both queues, every report not yet committed) and `.\scripts\meters.ps1` (each meter's %). Start `.\scripts\meters.ps1 -WatchAt 80` in the background: it exits, and so wakes you, when any meter reaches 80% (S106). `git log -8 --oneline`; `lab/wiki/index.md` for what GLM has settled.
@@ -13,15 +13,13 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 `.\scripts\launch.ps1 <job> <terra|astra|sonnet|opus|argon|hydrogen> [-Worktree D:\path-tracing-wt\<name>] [-ReadDir <dir>]` starts any companion detached, makes a GPT worktree if missing, and **refuses** to exceed a slot: four GPT (two with Astra); on Antigravity (S105) one Argon or two Hydrogen, and one Opus or two Sonnet. A job is a folder: `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out. GLM: `scripts\glm-queue.ps1 -Queue lab\queue.txt` (re-reads the file before each batch), or `scripts\glm-local.ps1 -Lenses "<a b>"` for a lane now. Capacities and the usage protocol: [clan.md](clan.md) section 4, measured 14 November.
 
-## Start here (16 November: the unified plan approved; the items below it date from 15 November)
+## Start here (16 November, evening)
 
-- **Read first:** [clan.md](clan.md) 5c and [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md). Antigravity runs only after `scripts/test-antigravity.ps1` passes (stamp current at `b74229a`). Fixed today: a dry run no longer creates the worktree folder; every launch copies main's working fixture (tracked regions go stale in a checkout); `follow-up.ps1` takes absolute paths; `glm-queue` skips lenses already done. **Someone else uses the machine (S135): nothing in the foreground.**
-- **The unified plan is approved (16 November, S165; S166 confirms its twelve recommendations).** One loop for every terrain: [learning.md](learning.md) section 0; the space: [representation.md](representation.md) section 10; the scales and the machine: [scales.md](scales.md) 2, 4.3, 4.7; the word record, version 3: [vocabulary.md](vocabulary.md). The order of work is U0–U9 under the roadmap below. Source and evidence: `jobs/unified-plan/` (plan, audit, sources, questions, fold). **Stopped:** the plain path (`wt/plain-path`, judged FAIL, not merged) and the 3.2d-3 spec's slices E and H: they were the fork (`reference/postmortem-2026-11-16.md`). Check every spec, design and judge prompt against learning.md section 0 before accepting it.
-- **Slices A (resident channel, observed bits) and B (one codec) are built and judged PASS WITH FINDINGS** (`jobs/3.2d-3-{A,B}-judge/last.md`), on the integration branch `wt/3.2d-3` (`D:\path-tracing-wt\3.2d-3`), **not main**: A deletes the Java `goto`/`come` planner and its new path refuses until U3 and U4, so main keeps the old flying path. **P1 passed** (`jobs/3.2d-3-P1-judge/last.md`, findings resolved on `wt/3.2d-3-P1`: 263-tick transient, 12-tick cycle). **Next:** P2–P4, then U1 and U2 together. Read `jobs/port-backlog/report.md` (nine Terra batches, law bugs) and `jobs/event-forms/report.md`.
-- **`hardtrack` is built in his world** (S139: A gold at −107 −60 −107, B diamond; `lab/tracks/hardtrack.json`). **It is easy-medium by his ruling, not a hard track** (S166; his definition is in learning.md section 0). His best is 428 ticks by a shortcut its certificates missed (`jobs/hard-track/shortcut.md`); the witness is 579; today's planner finds no sentence. The server runs hidden: `.\scripts\rcon.ps1 stop`.
-- **S143: the native Anthropic plan is at 97% weekly. No native sub-agents.** Judges go to Terra or, from 20 November, Antigravity's Sonnet.
-- **Inventory** `jobs/inventory-map/report.md` (Hydrogen): 35 adopted mechanisms, 6 built, 14 partial, 15 doc only, no threads anywhere in `engine/`; the uncited turns got register rows and the repeated requests are tracked below.
-- **GLM:** the runner died overnight after 22:54 (cause unknown) and was restarted at 11:43; 11 lenses left in `lab/queue.txt`. About 18 results from 14 November are unread (read each `check.md`). **Still unread:** `jobs/ns-birch`, `ns-fences`, `ns-maze` (S126–S127: the kits are red herrings; birch needs timing).
+- **The plan is [plan.md](plan.md):** the goal, where the design lives, what exists, the order of work in plain names, who does what. Read it after this file's "First ten minutes", and after every compaction re-read the docs, not only this file (S164).
+- **Running:** Astra builds the core (step 1, `jobs/u1`, spec `jobs/u1/spec.md`). Hydrogen: the plain-names audit (`jobs/names-audit`) and his tracks as the first flight's test set (`jobs/flight-corpus`). **Next:** Opus red-teams joints and sets (step 2) after the native window resets; the integrator then writes that step's spec.
+- **Waiting for a judge:** the clicked face as B's target, planner side (`wt/track-face`; the mod side is in his game); the rebuilt hard track (`wt/hard-track-2`); freeze damage (`wt/l0-veto`).
+- **Rules learned today:** the usage check is `get_usage` plus `meters.ps1` before every launch (S168); never resume a long-context agent for a small edit (S177); specs are the integrator's, never Hydrogen's (S175); Opus and Astra for the important work, GLM for the port only (S173, S174); when he asks to explain, explain, don't act (S179).
+- **His world:** eight maps imported as dimensions (`/map`), 51 tracks raced with recorded inputs. `hardtrack` is easy-medium by his ruling (S166).
 - **Commits after `09e1b52` are local, not pushed.**
 ## Now (the flights of 14 November; older session notes are in git)
 
@@ -60,22 +58,9 @@ Every phase ends in a **flight** he uses in the game, and has a **kill criterion
 5. **Slice C, one mind in the server, five bots sharing one tool** ([server.md](server.md)). Flight: he watches five bots cooperate; also 10–50 bots as players (S53).
 6. **Then scale, by the scoreboard:** the far field (multipoles), tube tickets and lazy bots, more tools, the swarm at 10³ and 10⁴, the economy and building, then the cherry (learned ordering, the LLM overseer, the GPU, the human-limits profile, his easter eggs, S66).
 
-### The order of work, in place of 3.2d-3's slices C–K (S165; `jobs/unified-plan/plan.md` section 10)
+### The order of work
 
-**Stands:** slices A and B; P1–P4, renamed the kernel, since they test what every zone uses; C, D, F, G. **Replaced:** E (the plain adapter) and H (the old planner per "exceptional span"); K's gates; the spec's "later doors". Each step ends in a flight and is a rung that can fail. U1 and U2 run together; the port pulls U5 and U8.
-
-| # | Step | Gate (kill tests: [learning.md](learning.md) section 6) |
-|---|---|---|
-| U0 | the plan folded into the living docs | done 16 November (`jobs/unified-plan/fold.md`) |
-| U1 | the kernel: slices C and D, with `count` an argument of every word; Frazzoli's paper read in full first | the million-line thinking gate through `solve` (test 17) |
-| U2 | joints and sets: the set record (red-teamed first, a one-way door), reach between faces, one worldtube check per arc | tests 10 and 11; the stalled joint on `fences` |
-| U3 | the loop: `solve`, the slide signal, the kit's cone | tests 8, 9, 14; his 21 tracks and `hardtrack` on one binary; he races it |
-| U4 | the runner and the wheel: slices F and G, the rolling horizon | test 15; a retarget at tick 1000 |
-| U5 | the kit's verbs: place, break, interact in `Input` and the law; edits as tolls with debts; the ledger | his five blocked tracks; R-lego |
-| U6 | the far map: portal tables by content hash, labels, landmarks, the blur by effect on T | tests 12, 13 and the overturn rate; R-far at 10³ then 10⁴ |
-| U7 | wildcards: cones on the wheel | a player crosses the corridor and one segment is rethought |
-| U8 | carried gaits and wormholes: boat, elytra, pearl, portal | test 16; R-brach; his list ([ladder.md](ladder.md)) |
-| U9 | threads for the loop's parts, then the GPU for learning's batches, each after a measured crossover (the round trip is measured first) | cost per bot at N bots |
+It lives in [plan.md](plan.md): the steps in plain names, what each is, its gate and where it stands (S179).
 
 ## Scoreboard
 

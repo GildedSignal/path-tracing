@@ -82,6 +82,8 @@ Not yet adopted from ES's method: the merge command and the commit hooks (`metho
 
 When a rung below is frozen, it is frozen as a ladder: its extreme tracks, each with rungs about 10× apart, plus its chaotic track.
 
+**The gates of the plan's steps** are the kill tests in [learning.md](learning.md) section 6, and each step names its own in [plan.md](plan.md). A kill test freezes here as a rung when its step's judge passes. **Where to test** (S97): parkour (width), dropper (one long arc), clutch (an operator word under a deadline), boat racing (momentum's memory), elytra (R-brach), puzzle maps (words writing what words read), PvE later; he picks the maps (S101, S156) and sets their start and end with the stick.
+
 | Rung | Phase | What it stresses | Status |
 |---|---|---|---|
 | L0 | 1 | **The law.** Fixtures for each terrain class: full blocks, slabs and stairs, step-ups, ceilings, ladders and vines, water, ice and blue ice, slime, soul sand, honey, cobweb, powder snow, and edges for the sneak back-off. Many random input sequences each. **Pass:** bit-identical positions and velocities on every tick; damage and exhaustion equal the server's; server corrections are recorded server events (the replay applies the teleport and continues), counted per course and reported as the veto rate, never a law mismatch (Julien, S62; a correction depends on packet timing against the server's tick); every mutant caught (axis tie order, step-up, the sneak back-off at edges, ceiling bonks) | to freeze before 1.5 runs |
