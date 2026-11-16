@@ -1,0 +1,7 @@
+working_directory=engine
+CARGO_TARGET_DIR=D:\path-tracing-target\hard-track-2
+HARD_RECORD=1
+cargo test --offline -p plan --test hard_track -- --nocapture
+exit=0 wall_seconds=34.1077839
+cargo test --offline --workspace
+exit=0 wall_seconds=83.9937078

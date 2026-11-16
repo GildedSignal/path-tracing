@@ -54,3 +54,57 @@
 /fill -81 -60 -89 -76 -20 -89 minecraft:stone
 /fill -79 -33 -91 -78 -25 -91 minecraft:stone
 /fill -79 -33 -92 -78 -25 -92 minecraft:ladder[facing=north,waterlogged=false]
+# Whole-box containment: roof and wall tops form one sealed solid boundary.
+/fill -109 -20 -109 -61 -20 -61 minecraft:stone
+# The initial ladder has a shaft with a single high exit.
+/fill -108 -59 -108 -108 -20 -105 minecraft:stone
+/fill -107 -59 -108 -105 -20 -108 minecraft:stone
+/fill -107 -59 -105 -105 -20 -105 minecraft:stone
+# Separate the high forks from the low finish, including every early departure.
+/fill -109 -60 -100 -72 -20 -100 minecraft:stone
+/fill -100 -23 -104 -72 -20 -104 minecraft:stone
+/fill -104 -60 -108 -77 -20 -108 minecraft:stone
+/fill -100 -60 -105 -77 -20 -105 minecraft:stone
+# All other divider tops join the roof rather than supplying intermediate steps.
+/fill -73 -23 -103 -73 -20 -100 minecraft:stone
+/fill -70 -24 -109 -70 -20 -95 minecraft:stone
+/fill -77 -23 -109 -77 -20 -109 minecraft:stone
+/fill -75 -24 -95 -70 -20 -95 minecraft:stone
+/fill -85 -31 -99 -85 -20 -96 minecraft:stone
+# The only transfer from the east chute to the west exit passes BELOW the exit.
+/fill -73 -39 -103 -73 -20 -96 minecraft:stone
+# Put fork 1's false accelerator below its entry sill: it cannot jump back up.
+/fill -104 -29 -103 -84 -29 -102 minecraft:air
+/fill -104 -26 -103 -86 -26 -102 minecraft:air
+/fill -104 -29 -103 -101 -29 -101 minecraft:stone
+/fill -101 -60 -103 -101 -30 -102 minecraft:stone
+/fill -100 -32 -103 -84 -32 -102 minecraft:blue_ice
+/fill -99 -29 -103 -86 -20 -102 minecraft:stone
+/fill -100 -60 -101 -77 -20 -101 minecraft:stone
+# Remove the former east stop and well: the high arm now follows the east boundary.
+/fill -70 -60 -108 -70 -20 -95 minecraft:air
+/fill -74 -48 -99 -71 -48 -96 minecraft:air
+/fill -73 -39 -103 -73 -20 -96 minecraft:air
+# Reinstate the closed decoy pocket wall after removing the old well divider.
+/fill -73 -60 -103 -73 -20 -100 minecraft:stone
+# Long-jump landing followed by the high east-boundary approach to the same rebound.
+/fill -76 -30 -108 -61 -30 -104 minecraft:stone
+/fill -100 -60 -104 -63 -20 -104 minecraft:stone
+/fill -62 -30 -103 -61 -30 -71 minecraft:stone
+/fill -63 -39 -103 -63 -20 -62 minecraft:stone
+# The southeast well and its west exit; every high-to-low transfer crosses below -39.
+/fill -64 -48 -65 -61 -48 -62 minecraft:slime_block
+/fill -66 -60 -61 -60 -20 -61 minecraft:stone
+/fill -66 -60 -95 -66 -20 -62 minecraft:stone
+/fill -65 -60 -99 -65 -38 -62 minecraft:stone
+# Low return corridor: north first, then west to the original suspended-ladder fork.
+/fill -85 -38 -99 -65 -38 -96 minecraft:stone
+# Isolate the unreachable upper false ladder behind a visible solid glass cover.
+/fill -80 -35 -95 -77 -35 -90 minecraft:glass
+/fill -80 -35 -96 -77 -20 -96 minecraft:glass
+# Keep the transfer opening below the exit while granting enough time to clear it on rebound.
+/fill -63 -39 -103 -63 -38 -62 minecraft:air
+# Catch the diagonal entry while retaining the certified separation from the launch deck.
+/fill -64 -48 -66 -61 -48 -66 minecraft:slime_block
+# Complete containment after every removal and corridor edit above.
+/fill -109 -20 -109 -61 -20 -61 minecraft:stone

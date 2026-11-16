@@ -1,0 +1,12 @@
+{
+    "commit":  "6bc429159b061ee855eeb99f33a74c411cf609f9",
+    "target":  "D:\\path-tracing-target\\hard-track-2",
+    "hard_track_exit":  0,
+    "workspace_exit":  0,
+    "workspace_passed":  191,
+    "workspace_ignored":  19,
+    "launcher_dry_run_exit":  1,
+    "launcher_error":  "Get-CimInstance Win32_Process: HRESULT 0x80041003, access denied",
+    "inputs":  "baseline-inputs.sha256",
+    "completed_utc":  "2026-11-15T20:45:11.6797158Z"
+}

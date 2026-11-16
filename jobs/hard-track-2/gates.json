@@ -1,0 +1,22 @@
+{
+    "commit":  "6bc429159b061ee855eeb99f33a74c411cf609f9",
+    "hard_track":  {
+                       "exit":  0,
+                       "seconds":  34.1077839
+                   },
+    "workspace":  {
+                      "exit":  0,
+                      "seconds":  83.9937078
+                  },
+    "hard_track_counts":  {
+                              "passed":  5,
+                              "ignored":  1
+                          },
+    "workspace_counts":  {
+                             "passed":  191,
+                             "ignored":  19
+                         },
+    "target":  "D:\\path-tracing-target\\hard-track-2",
+    "completed_utc":  "2026-11-16T09:20:19.4353313Z",
+    "track_refusals":  0
+}
