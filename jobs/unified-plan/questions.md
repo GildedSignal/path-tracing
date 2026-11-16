@@ -1,5 +1,7 @@
 # The decisions that are his
 
+**Answered (S166): "his recs from the questions seem sensible."** The recommendations of Q1–Q11 are adopted and written into the docs, each marked "(S166)" ([fold.md](fold.md)). Q12 is a question to him and stays open. In Q6, "the hard track" is `hardtrack`, which he rules easy-medium (S166).
+
 Designer: Fable 5.2 sub-agent, 16 November. Each question has its context, the options, what each changes, and my recommendation (S78: "properly formulate your questions"). They are ordered by what they unblock. [plan.md](plan.md) is the proposal; [audit.md](audit.md) is the evidence.
 
 ## Q1. Is this the mechanism?

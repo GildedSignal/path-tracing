@@ -7,6 +7,19 @@ Approved by Julien on 10 November (S64, S65). It extends [representation.md](rep
 **Every claim is a certificate with a bracket:** a lower bound nothing can beat, an upper bound something has witnessed, the footprint it read, and the deadline of the decision it feeds. Compute goes to the bracket whose narrowing could change the decision due soonest (ES's slack). A trip's T already works this way. The change: a cell's crossing time, a word class's best speed, a build's makespan and an item's price work this way too.
 - **How scales serve each other:** coarse hands down deadlines and where precision is needed; fine hands up exact costs, new words and surprises.
 - **Creativity, the far field and testing become one activity:** closing brackets.
+- **The planner is this rule** (approved S165; [learning.md](learning.md) section 0). A bracket that is already closed opens nothing below it: "We don't play enough with all the scales in a way that tells you to stop thinking about the lower level ones" (S131). The kind of gap chooses the kind of work: "conditions to fill to use more compute or different type of compute" (S131). One message crosses a scale, in both directions: a certificate with its bracket, footprint and deadline.
+
+| Scale | Hands up | Hands down |
+|---|---|---|
+| Tick (the client, the only per-tick runner) | deviations at events; packets | nothing |
+| Joint | exact T per plateau, width, the slide signal | which plateau is wanted |
+| Site | a portal table by entry class; its content hash | which portals the corridor uses; the deadline |
+| Zone | a closed bracket and its event list | where the big word must end |
+| Trip | the bracket gap and its cause | the corridor, the deadlines |
+| World | lower bounds from the kit's cone; what an item is worth | what the kit could hold (S96: "keep it for there") |
+| Vocabulary | new words; surprises | what to learn next (T × traffic) |
+
+The objects are defined in [representation.md](representation.md) section 10.
 
 **Three speeds.** Information is instant (the one mind). Bodies move at c: 0.36 blocks per tick sprint-jumping, about 1 on blue ice under a ceiling. The world changes at about zero away from players. The design lives in the two gaps:
 - information ≫ bodies: everything is planned before a body moves (his "turn based", S44);
@@ -24,9 +37,9 @@ c ties space to time, so the scales form one ladder. Three families sit off it: 
 | 0 | < 1 | < 1 (machine time) | collision thresholds, the hot loop | Mojang's floats; packed integers | no allocation, no lock, integer ticks | law built; layout 4.7 |
 | 1 | 1, the body | 1 | motion, packets, re-anchoring | the tick recurrence | replay; the server's veto as an event | built, L0 in flight |
 | 2 | 1 to 10 | 10 (a gait cycle is 12) | a jump, a tool use | segment: class, program, footprint, width | compile once, certify by replay | 3.2a |
-| 3 | 10 to 10² (reach 4.5, a site) | 10² (a chunk takes 45 at sprint-jump) | words, crowds, fluids settling, chunk tickets | chains of segment ids, worldtubes | search certified segments; tickets follow tubes | 3.2b; 4.2 |
-| 4 | 10² to 10³ (view 192, a region 512) | 10³ | a trip, a live bubble, infrastructure paying or not | medium regions: hull and bracket; one field per goal | follow the field; ski rental | 4.3, 4.4 |
-| 5 | 10³ to 10⁴ (Nether ×8) | 10⁴ (a day is 24,000) | long trips, supply lines, hubs, food range | opening-angle hierarchy, portals, price fields | refine by decision; auction | 4.3, 4.6 |
+| 3 | 10 to 10² (reach 4.5, a site) | 10² (a chunk takes 45 at sprint-jump) | words, crowds, fluids settling, chunk tickets | joints and their sets, worldtubes | sets backward, the point forward; tickets follow tubes | U2, U3; 4.2 |
+| 4 | 10² to 10³ (view 192, a region 512) | 10³ | a trip, a live bubble, infrastructure paying or not | zones (a word and a count); one field per goal | follow the field; ski rental | U1; 4.3, 4.4 |
+| 5 | 10³ to 10⁴ (Nether ×8) | 10⁴ (a day is 24,000) | long trips, supply lines, hubs, food range | portal tables, labels, wormhole edges, price fields | refine by decision; auction | U6; 4.3, 4.6 |
 | 6 | a build | 10⁵ to 10⁶ | a commission, amortization | the blueprint as W(t), the build front | reverse demolition; least slack first | 4.5 |
 | 7 | none | 10⁷ and more | the vocabulary, the law, game updates, our own loop | generators keyed by pattern, versioned by law | R&D; deviations; a jar diff per update | 4.1 |
 
@@ -64,6 +77,8 @@ On his server vanilla loads 625 chunks around a player and ticks 441, because a 
 
 - **Far in T: blurry by right.** Least-time paths are stationary (Fermat), so being wrong about where a far detail sits costs second order. With cells that grow in proportion to distance (opening angle θ, as in Barnes-Hut and ES's rings), the worst loss is about θ²/4 of T: 0.4% at θ = 1/8. A 10⁴-block trip then needs about 10³ cells in open terrain, not 3×10⁶ columns; rough terrain adds cells only where their brackets could change the route. His own highlight says it: a small heading error costs little if corrected early and often.
   - **Topology exact, geometry coarse.** A far cell must say exactly which faces connect and which way. That part is first order. Its bracket is composed once from its children's, in (min, +), and shared by content hash.
+  - **What the blur must keep** (S64: "what far away even mean"; S84: "i'll miss the thin bridge"). A far feature is kept if removing it would move a bracket by more than the slack of the decision it feeds, and dropped otherwise. It is measured by its effect on T, never its size in blocks, so a one-block bridge over a chasm is kept at any distance and a field of flowers is not. No number of ours is in the rule; the slack is the allocator's. The mathematics is persistence (Edelsbrunner, Letscher, Zomorodian 2002). (S166.) Kill test 13 in learning.md.
+  - **The multipole, in the form min-plus allows.** A cluster of joints seen from far is one source: its least offset plus the distance to its centre, wrong by at most the cluster's own radius in ticks. Near, it is opened. Seen from outside it is the site's portal table.
   - **A region's content is a hull, never an average.** In open ground the fastest sustained motion in each direction is the convex hull of the gait velocities, per toolkit class. That is its lower bound; a witnessed chain is its upper bound. Open regions need no table at all: rays go straight and bend at interfaces, as light does and as ant trails do (leads.md). Tables exist only at constrictions (passes, doors, portals).
   - **Many-to-many** (the scheduler's need, S24): sites talk cluster to cluster through portals, with local corrections inside a site. This is the multipole request in the form min-plus allows.
   - **Every field computed is kept as a landmark** that tightens the bounds of every later query (ALT). Hubs become landmarks by being used.
@@ -106,7 +121,11 @@ Demolition from the outside in is always accessible. Reversed, it is a build ord
 - **A bot's hot state is about 24 bytes** (segment id, phase, anchor, start tick): 10⁴ bots fit in L2.
 - **The planning world lives in class space:** maybe 1 to 6 KB per chunk, so 10k × 10k fits in 0.4 to 2 GB against 12 to 39 GB in the JVM. The engine holds the map; the server holds tubes.
 - **Times are integer ticks,** stored as small deltas, so min-plus runs 16 lanes wide.
-- **The slack queue is a timing wheel;** a block edit finds its certificates through an inverted index per section.
+- **The slack queue is a timing wheel;** a block edit finds its certificates through an inverted index per section. A wildcard's cone is one entry on it: checked at the earliest tick it can reach a worldtube, never every tick.
+- **Latency before throughput** (S124). Thinking that fits before the next dispatch opportunity costs zero ticks, so the acting path is sized in microseconds and guarded at p99: no allocation, no lock, one pinned thread, results published by a pointer swap.
+- **The L3 is the resource:** 96 MB on this machine, a hit about 10 ns against about 80 for memory (Fermi inputs). The hot set (the generator store, the active corridor's sets and labels, the presence planes) must fit it.
+- **Shaped like its access.** A set is a sorted array of breakpoints, found by a 16-lane compare and a popcount with no branch. A label is two parallel arrays swept once. A presence plane is a bitboard: a section is eight 512-bit words.
+- **Threads, then the GPU.** The loop's parts go to the other cores; learning runs on idle cores by slack. A GPU round trip is about 100 µs (a Fermi input; a small job measures it first), so it never sits on the acting path. It takes learning's batches (joint patterns by the hundred thousand, waves over large sites) after a measured crossover. (S166.)
 - **Backtest, paper, live** are our offline loop, sandbox and server. Slippage is the deviation rate.
 
 ### 4.8 Testing: checks that need no oracle
@@ -128,12 +147,14 @@ A crash mid-mission leaves water flowing and blocks placed. Obligations are writ
 - Discs, observation and validation for bots.
 - Networks before the proposal table's hit rate asks for one. The GPU before a measured crossover.
 - Any catalogue.
+- A second path for any kind of terrain (S161; learning.md section 0).
 
 ## 5. Sources (leads, cited from memory: each one adopted goes through the foundations-primary lens first)
 
 | Who | What they saw | Lands in |
 |---|---|---|
 | Fermat; Barnes and Hut; ants | stationary paths forgive far errors; opening angle | 4.3 |
+| Abraham, Delling, Goldberg, Werneck; Sethian; Edelsbrunner, Letscher, Zomorodian (read in part: `jobs/unified-plan/sources.md`) | labels answer with no graph search; a wave ordered by T never revisits; persistence | 2, 4.3, 4.7 |
 | Poincaré, *Science et méthode* | invention is the sieve, not the combinations | 4.1 |
 | Simon, "The Architecture of Complexity" | stable subassemblies make deep things findable | 4.1 |
 | Corey; Newell and Simon | work backward from the target | 4.1 |

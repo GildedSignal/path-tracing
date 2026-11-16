@@ -57,7 +57,7 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 
 | ES | Here |
 |---|---|
-| certificate | an edge of the geometry or an entry in a portal table: "this crossing takes k ticks from these entry states, within width w", valid until a dependency changes |
+| certificate | a word between two joints, or an entry in a site's portal table: "this crossing takes k ticks from these entry plateaus, within width w", valid until a dependency changes. Its worldtube is checked once, when it is made ([vocabulary.md](vocabulary.md) section 2) |
 | dependencies | the block footprint the claim read, plus the toolkit it assumed |
 | event | a contact (landing, wall, ceiling), an edit (a block placed or broken, by anyone), a command (a new goal), a toolkit change |
 | slack | the ticks until the bot's light cone reaches the certificate, minus the work to repair it. Least slack is renewed first |
@@ -81,13 +81,13 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 
 "it's also ok if we're not perfect … error bars in their head and update based on feedback" (X2):
 - Each move is certified with a width: how far the entry state may be off and still reach the same future.
-- The executor re-anchors on the observed state every tick.
-- The planner re-solves locally only when the bot leaves its tube.
+- The client is the only per-tick runner. At each event the executor compares the observed state with the certificate's prediction, by the deviation stream's own comparator, and re-anchors on what it observed.
+- The planner re-solves locally only when a certificate breaks: the bot leaves its tube, an edit lands in a footprint, or a wildcard's cone reaches a worldtube.
 - Narrow moves are where precision is spent; wide ones are never refined.
 
 ## Continuous where it helps
 
-Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine may jump from event to event. Every certificate it issues is still checked against the ticked law.
+Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine jumps from event to event (S118: "ticks are just an execution layer that's premeditated and only breaks when the certificate does"). The ticked law stays the oracle: a certificate is checked against it once, when it is made, and each ported mechanic gets an event form certified bit-exact against it (S148; `jobs/event-forms/report.md`).
 
 **Store the generator, not the generated** (ES 6). What is stored is the recurrence and its parameters (friction, drag, jump power, a ladder's rectangle, the modifiers), keyed by those parameters and shared by every place and bot that uses them. Arcs and trajectories are derived when looked at, never stored tick by tick. Differences below `aiStep`'s thresholds (9×10⁻⁶ on h², 0.003 vertically) vanish in the law itself, so states that differ only there merge.
 
@@ -99,13 +99,16 @@ Between events, motion is a closed-form recurrence: velocity is a geometric seri
 - the toolkit;
 - goals.
 
-**Outputs:**
-- tick-stamped controls (move, strafe, jump, sneak, sprint, yaw, pitch, hotbar, use, attack), each with the certified tube it relies on;
-- the predicted T.
+**Outputs** (changed with the unified plan, S165):
+- a plan of words: for each, the program, its arguments with its `count`, its stop and event predicates, the certificate with its worldtube, and its obligations. No per-tick array of inputs or positions: the client runs the words (move, strafe, jump, sneak, sprint, yaw, pitch, hotbar, use, attack);
+- the predicted T, and the bracket it sits in.
+
+**The lower bound is the kit's.** The light cone that bounds T is the least over the kit's terms: legs at their c, each wormhole as (to its mouth) + toll + (from its exit), each carried gait at its own c ([representation.md](representation.md) section 10). `Goal::C` today assumes no item, so it holds for bare legs only.
 
 **Guarantees:**
 - deterministic: the same inputs give the same plan;
-- anytime: a first plan within one tick of the goal arriving, refined while the bot moves;
+- one mechanism: the same entry point and the same stages for every terrain ([learning.md](learning.md) section 0);
+- anytime: the first word is emitted when its own bracket closes, within one tick of the goal arriving wherever that bracket is closed at the click; the rest is thought while the bot moves, and T counts end to end from the click's server tick (S124);
 - the exactness classes above;
 - the planner never runs on the game's thread.
 
@@ -115,7 +118,7 @@ Between events, motion is a closed-form recurrence: velocity is a geometric seri
 
 **Compute split:**
 - The float law runs on the CPU threads.
-- The GPU runs through Vulkan. It takes integer min-plus over ticks (exact and associative, so it is safe there) and bitboard light cones.
+- The GPU runs through Vulkan. It takes integer min-plus over ticks (exact and associative, so it is safe there) and bitboard light cones, **in learning's batches only**: an acting query is microseconds and a GPU round trip about 100 µs, so it never sits on the acting path ([scales.md](scales.md) 4.7; S166).
 - Float work on the GPU is advisory.
 
 **Toolchain:** Rust through rustup with the GNU toolchain. There is no C++ toolset or Windows SDK on this machine. The toolchain and build output live on D:, because C: has about 10 GB free.

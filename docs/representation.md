@@ -20,6 +20,16 @@ How the bots see the world, so that creative travel, cooperation and building co
 
   The vocabulary's size and the server decide the outcome.
 
+- **Thinking floors** for the one loop ([learning.md](learning.md) section 0; approved S165). Inputs: the law's tick 0.6–0.95 µs; an arc certificate about 0.7 µs; a memory miss about 80 ns; a new joint pattern about 10³ verifications × 12 ticks ≈ 12 ms of one core; the gait 4.276 blocks per 12 ticks. Derivations: `jobs/unified-plan/plan.md` section 7.
+
+  | Case | Thinking floor | Measured |
+  |---|---|---|
+  | one million blocks, plain, bare legs, Peaceful | about 5 µs (one label, one memo, about 20 binade events, a two-yaw count) | straight800: 27–29 ms cold |
+  | his 21 tracks | 10–100 µs warm; 12 ms per new joint pattern, once | 0.69–30.5 s |
+  | `hardtrack` (easy-medium by his ruling, S166) | 0.5–1 ms warm; cold learning fits inside its 260-tick first ladder | no sentence |
+  | 10⁴ varied blocks | first word about 100 µs; planning outruns the body by about 3×10⁵ | not run |
+  | 10⁴ bots | 0.03 core; 240 KB hot | — |
+
 ## 1. One law, three grains
 
 Mojang's code and the server are nature and the judge. **The law** is the generative structure we write to reproduce them (S46). It comes at three grains, each a coarse summary of the one below, as molecules give gas dynamics and gas dynamics gives fluid flow:
@@ -46,8 +56,7 @@ Each place is looked at with the coarsest grain whose error cannot change the de
 - **Memory follows distinctions** (ES's H_live). The number of new distinctions per second (edits, deviations, new patterns), not the bot count, decides what fits.
 - **The planner's coordinate is T itself:** wavefronts are lines of equal T, and every route goes down T. Building T is the work; following it is free (the clay mug, principle 7).
 - **Why the vocabulary is small** (S46): every regime has drag (air, water, ground friction, boats, elytra), so every regime settles to a steady motion. A sprint-jump is a 12-tick cycle at 7.127 m/s; an elytra glide at fixed pitch settles to one speed and one sink rate; a boat on ice settles to its top speed.
-  - Words are few per regime, and regimes add rather than multiply.
-  - Continuous choices (pitch, aim) are a word's arguments, not new words.
+  - Words are few per regime, and regimes add rather than multiply. Continuous choices (pitch, aim) are a word's arguments, not new words.
   - First evidence (9 November, the probe beside the law): 54 tiny feedback programs gave 10–15 attractors per ground type. Among them, unnamed, were the head-hitter (9.734 m/s, period 3) and the ice tunnel (19.345 m/s). Held keys missed both; jumping only while on the ground found them.
 - *Killed if:* words per regime ≫ 10³ on the legs ladder.
 
@@ -74,11 +83,7 @@ A **word** is a feedback program: keys, aim and item use chosen from what the bo
 - New words come from gaps, from R&D, and from LLM proposals (farms, hubs). The law verifies them; use keeps them.
 - The record is frozen in `vocabulary.md` (Phase 3.1).
 
-**The cache's unit is the segment, not the word** (Designer, 9 November).
-- A segment runs from one event to the next: a gait cycle, a transition, or an operator. A long word is a chain of interned segment ids, as in Hashlife, with costs summed in (min, +).
-- Why: a whole-word key on natural terrain matches with probability about 0.9 per column, so a 30-block word matches with about 0.9⁶⁰ ≈ 0.2%, and one changed block would void the whole word. Per segment, plains give about 10⁵–10⁶ distinct patterns, which a swarm's warm cache covers.
-- Aim is continuous, so words take a discrete set of aims; otherwise the key is never consulted.
-- A coarse tier is reserved: model classes merged where replay shows they behave the same (short grass and air, say), always confirmed by replay, and split on the first mismatch. Found, not given; filled after measuring.
+**The cache's unit is the segment, not the word** (Designer, 9 November): a segment runs from one event to the next, a long word is a chain of interned segment ids as in Hashlife, and every word takes a count ([vocabulary.md](vocabulary.md) sections 1 and 5). Per segment, plains give about 10⁵–10⁶ distinct patterns, which a swarm's warm cache covers. Classes that behave the same under the kit's verbs merge (section 10).
 
 *Killed if:* on natural terrain the table certifies no more ticks per µs than the same search without it, its regret exceeds the bracket the class states, or the vocabulary grows as fast as the pieces walked ([vocabulary.md](vocabulary.md), section 11). A hit rate cannot kill it: an empty class would score 100%. Or a narrow word fails within its width under the measured noise.
 
@@ -118,14 +123,14 @@ Consequences:
 | Bit-parallel (min, +) (ES) | the light cone spreads by shift and OR over occupancy bitmaps: one step for 64 cells per operation |
 | The allocator: one queue ordered by slack (ES 12) | each bot's next decision deadline against the compute it needs; idle time precomputes words and recompresses; first-move latency at p99 is its measure |
 
-**The far field** (multipoles, a tracked request) is the medium's bounds or landmark distances. The gap between lower and upper bound is the stated error. Min-plus has no general low-rank expansion (the subcubic-equivalence wall, foundations research), so compression comes from bounds, refined where the gap could change a decision.
+**The far field** (multipoles, a tracked request) is the medium's bounds, portal tables and labels. The gap between lower and upper bound is the stated error. Min-plus has no general low-rank expansion (the subcubic-equivalence wall, foundations research), so compression comes from bounds, refined where the gap could change a decision, and from keeping a far feature by its effect on T, never its size ([scales.md](scales.md) 4.3).
 
 ## 6. Creativity, cheap and shared
 
-- **Pulled by need.** Discovery starts where the medium's T sits far above what the light cone allows, and where bots need to cross. A specific effect has few producers (a way up: water, ladders, vines, scaffolding, blocks), so working backward branches about 5 ways per step. One cliff costs about 10³ simulated ticks this way, against about 10⁸ when tool uses are tried at every searched state.
+- **Pulled by need.** Discovery starts where the bracket is widest: the medium's T far above what the kit's light cone allows, where bots need to cross. A specific effect has few producers, so working backward branches about 5 ways per step ([scales.md](scales.md) 4.1, which holds how creativity arises, stays and compounds).
 - **Found once, used by all.** A discovery becomes a word in the medium; every bot sees the road, and the pattern key shares it.
 - **Chains.** The relaxed medium (every tool effect available where it could apply, at its least cost) makes each preparatory step look downhill.
-- **R&D** (S46). A fixed slice of compute explores new effects ahead of demand, on the sandbox server, ranked by the T they would save if demand appeared. Its words are kept for their option value. It's a barbell: most compute goes to demand, a small slice to cheap trials with rare large payoffs.
+- **R&D** (S46) is a barbell: most compute goes to demand, a small slice to cheap trials with rare large payoffs, kept for their option value.
 - *Killed if:* discovery needs ≫ 10³ verifications per gap.
 
 ## 7. One mind in the server
@@ -145,23 +150,50 @@ Bots always join a server Julien fully controls, and he sees them as real player
 ## 8. Missions, restoration, prices
 
 - **Missions** (S46). A mission minimizes real time to completion, including its cleanup; planning time counts; a trip is a mission of one. Restoration is per mission: at completion the world is as it was (identical block states, fluids, redstone; no item left lying; inventories whole), so obligations pass to the nearest capable bot. Irreversible effects are barriers (claim of S32 kept). An order may relax this later.
-- **Prices are fields.** An item's price is the T to get another one from its nearest source (chest, farm, mob). Farms are words that lower prices, and cheap tools make the swarm more creative. This answers S13.
+- **Prices are fields.** An item's price is the T to get another one from its nearest source (chest, farm, mob). Farms are words that lower prices, and cheap tools make the swarm more creative. This answers S13. Until sources exist, a consumable has a budget per command: zero by default, and on a track the count he carried (S28). (S166.)
 - **Health and food** regenerate: they are constraints, not prices.
 
 ## 9. Building is the same problem
 
-- A blueprint is a list of edits known in advance.
-- A worker's goal is any spot from which its block is in reach and in sight.
-- A block can go in at max(its support exists, a worker arrives) + placing time: (max, +) over (min, +) travel.
-- The schedule keeps as many productive work spots open as possible. Scaffolding words are valued by the work spots they open.
-- Workers plan against the forecast world W(t).
+A blueprint is a list of edits known in advance, and workers plan against the forecast world W(t). A worker's goal is any spot from which its block is in reach and in sight. A block can go in at max(its support exists, a worker arrives) + placing time: (max, +) over (min, +) travel. The schedule keeps as many productive work spots open as possible, and scaffolding words are valued by the work spots they open. The build order: [scales.md](scales.md) 4.5.
+
+## 10. The space under a kit: a crystal with defects
+
+Approved S165. It answers S40 ("we're not really doing x,y,z but something else my question is what is this something else?") and it is ES's thesis, "symmetry is compression", applied to terrain. The loop that reads this space is [learning.md](learning.md) section 0.
+
+**Four folds** remove the dimensions of the raw problem (the law's state × the inventory × the world's edits × the tick):
+
+| Fold | His words | What it removes |
+|---|---|---|
+| Symmetry: translation over uniform ground | "i get the modulus of my best tool" (S120) | position: a gait is (word, phase, count) |
+| Dissipation: every regime has drag | "i think the regimes should fall out of hand" (S40) | velocity, beyond momentum's memory |
+| Events: one small rule between contacts | "ticks are just an execution layer" (S118) | ticks |
+| Kit classes: a block is its answers to the kit's verbs | "A flower is air." "unless i need to place a block and it bothers me" (S134) | the block alphabet |
+
+- **Momentum's memory is derived.** A sprint-jump cycle on stone shrinks a velocity difference by 0.546 × 0.91¹¹ ≈ 0.19, about 2.4 bits; 53 bits ÷ 2.4 ≈ 22 cycles ≈ 268 ticks, against 263 measured (job 3.2d-3-P1). Closer than that, order matters and the state is carried; farther, a place has a cost per gait.
+- **Words live in velocity space** (S131: "maybe we control in derivative directly?"). There the tick is `v ← d·v + a·u(yaw)`, a contraction onto the gait; position is its running sum, read out by exact integer maps per binade.
+
+**The objects.**
+- **Zone:** the extent over which one word's certificate holds, found by one corridor query from where the bot is toward where it goes. Never a partition drawn in advance (S132: "they should arise based of needs, some regions are more compressible than others"; X9).
+- **Joint** (the node): where one word may end and another begin: an event of the law at a face. Lips, landings, class boundaries, a wormhole's mouth, the cell an edit would change. The standable cell is not a node (S91: "blocks don't have intrinsic T cost"); it stays nature's address.
+- **Set** (what a joint holds): the arriving states from which a known sentence reaches the target, as the law's own comparisons: the yes-or-no class, plus **plateaus** of the one coordinate a held word leaves free, each an interval between two single-ulp breakpoints found by bisection and two replays, with its T and its next word. It carries its premises (S95) and the prices of what is in hand (S96).
+- **Edge:** a word between two joints, with T as a step function of the entry plateau.
+- **Site:** joints closer together than momentum's memory. It hands upward one portal table (entry class → exit class, T), shared by content hash. A plain has no sites.
+- **Label:** a joint's T to and from a few hubs, goal-free; two labels answer a far query in one merged sweep. **Field:** T-to-go on joints for one goal, shared by every bot going there (S19).
+
+**The kit, folded in** (section 4: no new search code per tool).
+- **Edits are tolls with a debt** (S32). Under a kit that can restore it, a wall is a slow medium: "a wall is a two second delay not a wall" (X4), plus the T to put the identical block back (S12). Routes bend at its interface by Fermat's rule. Edits whose undo closes inside the gait's period (place ahead, break behind) are gaits with their own speed; the rest are ledger debts (scales.md 4.9). Allowed on tracks whenever restoration before arrival is certified; elsewhere only with a kit given for it, until the ledger has flown. (S166.)
+- **Wormholes** (S132: "a nether portal is a manifold … as if it is always there but you need to do a weird path to access it"). A pearl is an edge not bounded by the legs' c, whose landing is a cone (its spread is random), with its item, 5 damage and a 20-tick cooldown. A portal is an edge that exists once built: 80 ticks of wait, an 8:1 chart, a debt on both sheets; the weird path is the compound word that builds it.
+- **The light cone is the kit's:** the least over legs at their c, each wormhole as (to its mouth) + toll + (from its exit), and each carried gait (boat, elytra) at its own c. A bound that assumes no item is false for a kit that holds one.
+- **Other players** are wildcards with cones. A certificate is checked against a cone once, at the earliest tick the cone can reach its worldtube (S121).
+
+## 11. Kept from earlier drafts (the register points here)
+
+- **The four questions** (X3). Break a wall or go around: the wall is a medium with a toll and a debt or it is a defect, and the bracket decides. One-high holes: the hole's cells fail the body's shape query, for that pose. A bucket is excellent where its edge undercuts the bracket. Sprinting is needed where the landing's set holds only sprint-speed plateaus.
+- **Local consistency, repair in both directions** (S23). T-to-go at a joint equals the least over its edges of (the edge's T + T-to-go beyond). An edit that lowers a T spreads by one more `min`; one that raises it voids only the sets whose premises read the change (learning.md section 1; engine.md, "Local repair").
+- **Ridges** (S23; S132: "water can branch on saddle points"). The bot flows down T-to-go and decides only where two words differ. In whole ticks most ties are worthless and are broken by a fixed order at no cost; a real saddle is a joint where the choice moves T by a tick or more.
+- **Still open:** goals as reach regions (a builder's goal is any spot from which its block is in reach, section 9).
 
 ## The hard-to-undo choices (red-teamed before they freeze)
 
-- the word record and its canonical pattern key;
-- footprints recorded by the law;
-- determinism, with randomness as an input;
-- the server boundary (Phase 2.1);
-- mission and obligation semantics.
-
-Everything else can be changed and is built when the scoreboard calls for it.
+The set record (plateaus, premises, prices) and the label format (section 10); the word record and its canonical pattern key; footprints recorded by the law; determinism, with randomness as an input; the server boundary (Phase 2.1); mission and obligation semantics. Everything else can be changed and is built when the scoreboard calls for it.

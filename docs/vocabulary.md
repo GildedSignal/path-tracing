@@ -1,8 +1,9 @@
-# The vocabulary: the word record (version 2, 11 November)
+# The vocabulary: the word record (version 3, 16 November)
 
 The word is the one object (representation.md, section 3): an edge for the search, a certificate, a cache entry, a worldtube and a training datum. This spec fixes its record, and it changes only by a new version.
 - **Version 1** (frozen 9 November, S60) took the Designer's seven changes to draft 1, which keyed segments on the exact start bits: food, exhaustion and position never repeat, so its hit rate on natural terrain was about 0% by construction.
 - **Version 2** (11 November, S79–S81) takes the red-team's five changes to the class (a Fable sub-agent in the Designer's role), approved by Julien: the class is the law's facts with no chosen number; the search never merges by class; idle time audits hits for lock-in; a gait is an exact recurrence; kill lines that can fire.
+- **Version 3** (16 November, S101, S165, S166) is two changes, for every word on every terrain: **no decision at a body-block change** (section 4), and **`count` is an argument of every word** (section 5). With them a worldtube is checked once (section 2) and the search's nodes are joints (section 10). The planner that reads this record is [learning.md](learning.md) section 0.
 
 ## 1. Segments and words
 
@@ -15,8 +16,9 @@ The word is the one object (representation.md, section 3): an edge for the searc
 
 The cache does two different jobs, kept apart:
 - **The class** (section 3) names a piece so that it is recognised. A hit is a **proposal**: a program, its arguments, the exit kind and a tick range.
-- **The certificate** is the concrete segment, replayed through the law from the bot's real state, with the footprint that replay records (footprints.md). Nothing reaches the executor without a replay. Nothing is filed by its exact start except a gait's cycle (section 6).
-- **Why always replay:** a certified replay costs about 11 µs and a lookup about 5 (job 1.6, measured). What the cache saves is the **search**: inventing a piece from about 54 programs × aims is about 10⁴ law ticks, at about 2 µs per tick on real terrain about 20 ms (derived, not measured). A wrong proposal costs one replay ("the simulation decides, heuristics schedule", ES 22).
+- **The certificate** is the concrete piece with its worldtube: the footprint, with its ticks, that the law recorded for it (footprints.md). Nothing is filed by its exact start except a gait's cycle (section 6).
+- **A worldtube is checked once, when its certificate is made** (S117: re-testing tick by tick "should never happen anyway since we're doing things ES style"; S120: "why so unsure? that's not trusting your work, if it fail get better simple as that"; S79: "of course a parabola should be one certificate"). The law replays a piece in two cases only: a joint pattern seen for the first time, which is learning, and a broken certificate. Otherwise a set's plateau (representation.md section 10) says which certified piece the arriving state takes. The server judges afterward. Narrow joints stay sealed by bit-exact gates (SR-71). (S166.)
+- **What the cache saves is the search:** inventing a piece from about 54 programs × aims is about 10⁴ law ticks, about 20 ms at 2 µs per tick on real terrain (derived, not measured), against a certified replay at about 11 µs and a lookup at about 5 (job 1.6, measured). A wrong proposal costs one replay ("the simulation decides, heuristics schedule", ES 22).
 - **ES's lesson holds:** ES rejected a quantized memo for kicks because re-rounding at every kick is a random walk (ES 13). Here the class only proposes, and the bits come from the replay, so errors never compound.
 - **Every surprise is data** (Julien, S81). A proposal whose replay reaches another exit shows where the class is too coarse; a replay the client or the server contradicts shows where the law is wrong or incomplete, or where the server does something we did not consider (the deviation stream, engine.md). Each is logged with its replay as the witness and never suppressed: this is how the port finds its own gaps.
 
@@ -38,7 +40,7 @@ A segment ends at the first tick where **any discrete field of the state changes
 - the booleans (on ground, collisions, in fluid, climbable, and the others);
 - pose, sprinting, and the supporting block's cell or contents;
 - the program's active row;
-- **or the body's block changes** (a segment ends here; the planner does not choose here, section 12.4, S101).
+- **or the body's block changes.** A segment ends here, for recognition. **The planner never chooses here, for any word on any terrain** (version 3; S101): the running word continues, and a switch happens only at a joint, where the exact state enters the next word's set.
 
 This one rule catches what a list misses: stone to ice, soul sand or honey; step-ups onto carpet, slabs or mud, where `on_ground` stays true; cobwebs and berry bushes; losing sprint; taking damage. The block-change cut keeps segments short for recognition; a segment without a bound would bring back the whole-word key (0.9ⁿ). Members of one class that reach different exits are a width question (section 7), not a determinism one. Whether a certificate must end where a piece ends is open (section 12).
 
@@ -52,6 +54,7 @@ This one rule catches what a list misses: stone to ice, soul sand or honey; step
 
   Predicates are reads, so they enter the class.
 - **Inputs:** the keys, the aim, item use, and **block interaction** (doors, trapdoors, gates, buttons).
+- **Arguments:** the aim, and **`count`: how many times the word runs.** Every word takes it (version 3). A gait is a word with a large count; a jump is a word with count 1; nothing else separates them, so no terrain has its own kind of word. The count comes from one corridor query: the first cycle whose shifted footprint reads a cell that differs (GLM `gait-corridor`, reproduced), or the goal. It is "the modulus of my best tool" (S120).
 - **Aims** are sine-table indices on a grid of 64 yaws, which loses about 0.1% of heading against about 2% at 16. Narrow segments refine their aim by local search and keep it as an argument. There's no list of named technique aims: a catalogue would block rediscovery (ES 4).
 - **Compiling:** gaits are the attractors of tiny programs per regime (the 9 November probe found 10–15 per ground type). Transitions come from a local exact search between gaits.
 
@@ -59,7 +62,7 @@ This one rule catches what a list misses: stone to ice, soul sand or honey; step
 
 - **A gait is an exact recurrence:** after one cycle of its program, every field of the state but position has the same bits, and position has advanced by the cycle's displacement. A yes-or-no class alone cannot pick gaits out, since every steady walk is a cycle of classes; the bits do.
 - **A long run** is the cycle repeated, and a bot is (segment, phase), the phase being the tick count modulo the period, as in ES's cycle memo: the cycle's increments live once in the shared cache. This is the one place where exact starts recur, so the exact-start store keeps gait cycles only.
-- **Each cycle is still replayed** until section 12's question 2 is answered.
+- **A cycle is not replayed per use.** On uniform ground the run is its count, certified by the corridor query and exact floor arithmetic (section 12, item 2); the known events inside it (a binade crossed, a food guard, a loaded lease, a yaw switch) are a merged list, each a check, none a decision.
 
 ## 7. Width: the price of risk, not a gate
 
@@ -75,7 +78,7 @@ The executor re-anchors at every event by replaying from the observed state, so 
 |---|---|
 | class | the facts of section 3 |
 | world part | the pattern key of the cells the last replay read; it orders proposals |
-| program, arguments | what to run (section 5) |
+| program, arguments | what to run, the aim and the `count` (section 5) |
 | exit | the exit kind (the discrete field that changed) and the tick range seen |
 | cost | ticks, from the replay |
 | width | delay tolerance and clearance (section 7) |
@@ -94,9 +97,10 @@ The executor re-anchors at every event by replaying from the observed state, so 
 
 ## 10. Search with this record
 
-- **Nodes** are concrete states. Expansions are the proposals of the node's class, each certified by replay.
-- **The closed set and every pruning use exact states, or a proof of dominance under the law, never the class** (ES 22: pruning is deciding). A sprinting and a standing arrival in one block are different states; merging them is R-brach's kill ("states were merged too coarsely at speed").
-- **Fermi for a 1,000-block route:** about 300 decisions × k proposals replayed × 10 for A*'s overhead × (5 + 11 µs); with k = 10, about 0.5 s. k is counted, not assumed (section 11).
+- **In acting, nodes are joints and what a joint holds is a set** (representation.md section 10); the loop is learning.md section 0. Decisions are counted at switches, never per block or per jump.
+- **In learning, nodes are concrete states,** for one joint pattern at a time. Expansions are the proposals of the node's class, each certified by replay.
+- **Every pruning uses exact states, or a proof of dominance under the law, never the class** (ES 22: pruning is deciding). A sprinting and a standing arrival in one block are different states; merging them is R-brach's kill ("states were merged too coarsely at speed"). Two states merge only inside one plateau, where the law's comparisons give them the same future.
+- **Fermi:** representation.md, "Thinking floors". The version 2 figure (a 1,000-block route at about 0.5 s, from 300 decisions × 10 proposals × A*'s overhead) is superseded: a 1,000-block run on uniform ground is one word and a count.
 - **The allocator** (one queue ordered by slack, representation.md, section 5) schedules compilation; idle time compiles ahead and searches a sample of hits for regret.
 
 ## 11. Counters and kill tests
@@ -105,7 +109,7 @@ The executor re-anchors at every event by replaying from the observed state, so 
 - **Regret:** idle time searches a sample of hits and counts the ticks a better piece would have saved (lock-in: a hit suppresses the search, and the replay certifies that a move works, never that it is the best; the ants of scales.md 4.4). It is the class grain's overturn rate. **Kill:** regret beyond the bracket the class states.
 - **The vocabulary's growth** (Julien, S81): invention should bend like Heaps' law (new words per thousand pieces walked fall as the walk grows) and use should follow Zipf (a few words carry most ticks), so each invention is amortized. The failure mode is words that don't generalize: data created for nothing. Count words used once, and new words per thousand pieces along the walk. **Kill:** the vocabulary grows as fast as the pieces walked, with no bend, on natural terrain.
 - **Segments per regime:** kill at ≫ 10³.
-- **Certification:** every reused segment was replayed bit for bit; the audit checks it.
+- **Certification:** every certificate in use was made by a bit-for-bit replay and none of its footprint has changed since; the audit checks it.
 - **The first flight:** the bot races Julien's 18 tracks on certified chains, with his T as the bar.
 
 ## 12. Open
@@ -114,4 +118,4 @@ The executor re-anchors at every event by replaying from the observed state, so 
 2. **Gait cycles: answered on uniform ground** (S81, GLM `gait-modulo`, reproduced). The state minus position recurs bit for bit and the block crossings follow from one cycle's per-tick increments by exact floor arithmetic, clamped ticks snapped onto their plane; float position drifts about 1e-11 blocks per cycle, so a replay re-anchors within about 10⁵ cycles. The cycle memo keeps increments and clamp phases, not ticks per piece. Open: how far a gait stays valid, as one query on the ground's generator (lane `gait-corridor`), and mixed terrain.
 3. **Exactness as a choice** (S83). The server computes every tick anyway; a word whose miss is recoverable may use cheaper math and be corrected by the deviation stream (SR-71). Which words, and at what measured deviation, is not decided.
 
-4. **The body-block cut is ours, not the law's** (S97). "The body's block changes" ends a segment where the law makes no comparison; it makes a decision about every 1.5 ticks, and the planner then offers 24 pieces × 64 aims at each. Its reason was recognition (section 4: without a bound the whole-word key returns). Gaits as exact recurrences and one corridor query on the ground's generator may carry that reason instead. **Approved by Julien for version 3 (S101), as the Opus red-team narrowed it:** segments, certificates and the proposal table keep the cut (recognition stays per segment); the planner does not choose there: the running word continues, and a switch fires when the exact state enters the next word's takeoff set. It lands with job 3.2d.
+4. **The body-block cut is ours, not the law's** (S97). "The body's block changes" ends a segment where the law makes no comparison; it makes a decision about every 1.5 ticks, and the planner then offers 24 pieces × 64 aims at each. Its reason was recognition (section 4: without a bound the whole-word key returns). Gaits as exact recurrences and one corridor query on the ground's generator may carry that reason instead. **Closed in version 3** (S101, S165): segments and the proposal table keep the cut for recognition; the planner does not choose there, on any terrain (section 4). The 3.2d-3 spec had kept the old behaviour for "exceptional spans"; that exception is gone.
