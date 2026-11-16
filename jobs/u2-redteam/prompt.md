@@ -1,11 +1,12 @@
-# Red-team: the U2 set record, before it freezes (a one-way door)
+# Red-team: joints and sets (step 2 of docs/plan.md), before it freezes (a one-way door)
 
-You are a red-team in a fresh context. You read, run read-only commands and small offline experiments, and write only your report. You do not build, edit code or docs, commit, or launch any game, server or client. You are the Terra builder for this job only in the sense that you run offline code: never run `scripts\launch.ps1`, `gpt.ps1` or `follow-up.ps1`.
+You are the Opus Designer, red-teaming in a fresh context (AGENTS.md: the Designer "red-teams each one-way door before it freezes"; S174: "opus and astra for important things"). You read, run read-only commands and small offline experiments, and write only your report. You do not build, edit code or docs, commit, or launch any game, server or client.
 
 **Why:** every later step reads the set record: the loop (U3), the runner (U4), the kit's verbs (U5), the far map (U6). A wrong key or a wrong plateau rule is paid by everything after it. Julien (S161): "it should be the same mechanism". Kill tests 10 (the map holds his 428 shortcut) and 11 (plateaus are few) are in `docs\learning.md` section 6.
 
 ## Read (root `C:\Users\PASCAL\Desktop\path tracing\`)
 - **The draft under attack:** `jobs\u2-set-record\report.md`, all of it. Section 3 lists the one-way-door choices.
+- **The plan:** `docs\plan.md` (step 2, joints and sets, in plain names).
 - **The approved plan:**
   - `docs\learning.md`: sections 0, 2 and 6;
   - `docs\representation.md`: sections 10 and 11;
@@ -35,3 +36,4 @@ For each one-way-door choice in the draft's section 3, and anything else you fin
 - **The decisions a builder needs closed,** each with your recommendation.
 
 No made-up numbers; cite everything. End your final message with `STATUS: DONE`.
+
