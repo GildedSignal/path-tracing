@@ -17,6 +17,7 @@ $PackOptions = Join-Path $PrismData 'instances\immersive-minecraft\.minecraft\op
 
 $McVersion     = '26.2'
 $LoaderVersion = '0.19.5'
+$VanillaServerJar = Join-Path $Rig "server\.fabric\server\$McVersion-server.jar"
 
 $ServerHost  = '127.0.0.1'
 $ServerPort  = if ($env:PATHTRACING_SERVER_PORT) { [int]$env:PATHTRACING_SERVER_PORT } else { 25565 }

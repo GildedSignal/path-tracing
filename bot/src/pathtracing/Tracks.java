@@ -68,7 +68,13 @@ public final class Tracks {
     static boolean stickInHumanMode(Minecraft mc, boolean sneak) {
         if (human == null || !human.active() || isBot()) return false;
         if (sneak) { command(mc, "exit"); return true; }
-        if (selected == null || !human.ready()) return true;
+        if (selected == null || !human.ready()) {
+            say(mc, human.restoring() ? "Cannot reset while your saved inventory is being restored."
+                : selected == null ? "Cannot reset: no track is selected. Use /track exit."
+                : human.state() == TrackMode.State.FAILED ? "Cannot reset: track mode stopped. Use /track restore or /track exit."
+                : "Cannot reset " + selected.name() + ": wait on A until the track kit is ready.");
+            return true;
+        }
         if (DETECTOR.running()) say(mc, "Reset.");
         discardRecording(mc);
         run = null;
@@ -484,6 +490,9 @@ public final class Tracks {
         if (Recorder.active() && recording == null) throw new IllegalStateException("A recording or replay is already running.");
         TrackStore.Track track = STORE.read(name);
         if (!track.dimension().matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) throw new IOException("Invalid track dimension: " + track.dimension());
+        if (mc.getConnection().levels().stream().noneMatch(level -> level.identifier().toString().equals(track.dimension()))) {
+            throw new IOException("Track dimension is not available on this server: " + track.dimension());
+        }
         Map<String, Integer> kit = STORE.toolkit(track, PathTracingMod.OWNER);
         JsonObject humanBest = STORE.humanBest(track, PathTracingMod.BOT);
         String mode = humanBest == null ? mc.gameMode.getPlayerMode().getName() : humanBest.get("gameMode").getAsString();

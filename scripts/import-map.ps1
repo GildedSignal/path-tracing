@@ -3,17 +3,20 @@ param(
   [Parameter(Mandatory)][string]$Source,
   [Parameter(Mandatory)][ValidatePattern('\A[a-z0-9_-]+\z', Options=0)][string]$Name,
   [string]$TestRig,
+  [string]$TestRoot,
   [string]$ServerJar
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
+if (-not $ServerJar) { $ServerJar = $VanillaServerJar }
 if ($Name -ceq 'overworld') { throw 'The name overworld is reserved.' }
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 $test = !!$TestRig
 if ($test) {
-  $testRoot = [IO.Path]::GetFullPath('D:\path-tracing-target\maps-stick\')
+  if (-not $TestRoot) { $TestRoot = Join-Path $Root 'bot\build\map-tests' }
+  $allowedTestRoot = [IO.Path]::GetFullPath($TestRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
   $Rig = [IO.Path]::GetFullPath($TestRig)
-  if (-not $Rig.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'TestRig must be inside D:\path-tracing-target\maps-stick.' }
+  if (-not $Rig.StartsWith($allowedTestRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "TestRig must be inside TestRoot: $allowedTestRoot" }
   Write-Host "Would stop the server; skipped for TestRig $Rig. Importing only into this temporary rig."
 } else {
   if (Test-Port $ServerHost $ServerPort) {
@@ -31,10 +34,11 @@ $dimension = Join-Path $pack "data\pathtracing\dimension\$Name.json"
 $registry = Join-Path $Rig 'maps.json'
 $registryLock = [IO.File]::Open("$registry.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
-$maps = @()
-if (Test-Path -LiteralPath $registry) { $maps = @(Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json) }
+$maps = [Collections.Generic.List[object]]::new()
+if (Test-Path -LiteralPath $registry) {
+  foreach ($map in (Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json)) { $maps.Add($map) }
+}
 if (($maps | Where-Object { $_.name -ceq $Name }) -or (Test-Path -LiteralPath $target) -or (Test-Path -LiteralPath $dimension)) { throw "Map already exists: $Name" }
-if (-not $ServerJar) { $ServerJar = Join-Path $Rig 'server\.fabric\server\26.2-server.jar' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead($ServerJar)
 try {
@@ -80,10 +84,10 @@ try {
   } finally { $dimensionFile.Dispose() }
   $meta = @{pack=@{description='Path tracing maps'; min_format=@($version.pack_version.data_major,$version.pack_version.data_minor); max_format=@($version.pack_version.data_major,$version.pack_version.data_minor)}} | ConvertTo-Json -Depth 5
   [IO.File]::WriteAllText((Join-Path $pack 'pack.mcmeta'), $meta, [Text.UTF8Encoding]::new($false))
-  $maps += @{name=$Name; spawn=$spawn; source=$sourcePath; imported=[DateTime]::UtcNow.ToString('o')}
+  $maps.Add([pscustomobject]@{name=$Name; spawn=$spawn; source=$sourcePath; imported=[DateTime]::UtcNow.ToString('o')})
   $nextRegistry = Join-Path $Rig ('maps.json.' + [Guid]::NewGuid().ToString('N') + '.tmp')
   try {
-    [IO.File]::WriteAllText($nextRegistry, (ConvertTo-Json -InputObject @($maps) -Depth 5), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($nextRegistry, (ConvertTo-Json -InputObject ($maps.ToArray()) -Depth 5), [Text.UTF8Encoding]::new($false))
     if (Test-Path -LiteralPath $registry) { [IO.File]::Replace($nextRegistry, $registry, [NullString]::Value) }
     else { [IO.File]::Move($nextRegistry, $registry) }
   } finally { if (Test-Path -LiteralPath $nextRegistry) { Remove-Item -LiteralPath $nextRegistry } }

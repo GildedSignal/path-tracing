@@ -1,10 +1,11 @@
 # Offline gates for Julien racing downloaded maps and the bot racing the same tracks.
-param([string]$Destination)
+param([string]$Destination, [string]$TestRoot = 'D:\path-tracing-target\maps-stick')
 $ErrorActionPreference = 'Stop'
 $codeRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
-if (-not $Destination) { $Destination = 'D:\path-tracing-target\maps-stick\gate-' + [Guid]::NewGuid().ToString('N') }
+if (-not $Destination) { $Destination = Join-Path $TestRoot ('gate-' + [Guid]::NewGuid().ToString('N')) }
 $Destination = [IO.Path]::GetFullPath($Destination)
-if (-not $Destination.StartsWith('D:\path-tracing-target\maps-stick\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Gate records must stay within the maps-stick target.' }
+$allowedTestRoot = [IO.Path]::GetFullPath($TestRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+if (-not $Destination.StartsWith($allowedTestRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Gate records must stay within TestRoot: $allowedTestRoot" }
 if (Test-Path -LiteralPath $Destination) { throw 'Use a fresh gate record folder.' }
 New-Item -ItemType Directory -Path $Destination | Out-Null
 $oldTarget = $env:CARGO_TARGET_DIR
@@ -25,9 +26,9 @@ try {
   $record.gates += @{command='cargo test --offline --workspace'; result='PASS'}
   & "$codeRoot\bot\tests\test-tracks.ps1"
   $record.gates += @{command='bot/tests/test-tracks.ps1'; result='PASS'; namesAccepted=@('hard_track_2','a-b'); namesRefused=@('A','a b','a/b')}
-  & "$codeRoot\bot\tests\test-maps.ps1" -Destination (Join-Path $Destination 'import') -Planner "$env:CARGO_TARGET_DIR\debug\plan-track.exe"
+  & "$codeRoot\bot\tests\test-maps.ps1" -Destination (Join-Path $Destination 'import') -TestRoot $Destination -Planner "$env:CARGO_TARGET_DIR\debug\plan-track.exe"
   $record.gates += @{command='bot/tests/test-maps.ps1'; result='PASS'; record='import/record.json'}
-  foreach ($script in @('scripts\import-map.ps1','scripts\track-world-view.ps1','scripts\play-track.ps1','bot\tests\test-maps.ps1','jobs\maps-stick\verify.ps1')) {
+  foreach ($script in @('scripts\common.ps1','scripts\import-map.ps1','scripts\track-world-view.ps1','scripts\play-track.ps1','bot\tests\test-maps.ps1','jobs\maps-stick\verify.ps1')) {
     $tokens = $null; $errors = $null
     $file = Join-Path $codeRoot $script
     [void][Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)

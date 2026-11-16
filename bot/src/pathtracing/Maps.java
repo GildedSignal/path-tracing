@@ -1,8 +1,6 @@
 package pathtracing;
 
-import com.google.gson.JsonParser;
 import com.mojang.brigadier.arguments.StringArgumentType;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.TreeMap;
@@ -23,16 +21,8 @@ final class Maps {
         var mc = Minecraft.getInstance();
         try {
             Path rig = Path.of(System.getProperty("pathtracing.rig", "."));
-            Map<String, int[]> maps = new TreeMap<>();
+            Map<String, int[]> maps = new TreeMap<>(MapRegistry.read(rig.resolve("maps.json")));
             maps.put("overworld", MapSpawn.read(rig.resolve("server/world/level.dat")));
-            Path file = rig.resolve("maps.json");
-            if (Files.exists(file)) for (var entry : JsonParser.parseString(Files.readString(file)).getAsJsonArray()) {
-                var map = entry.getAsJsonObject();
-                String key = map.get("name").getAsString();
-                TrackStore.validateName(key);
-                var spawn = map.getAsJsonArray("spawn");
-                maps.put(key, new int[] {spawn.get(0).getAsInt(), spawn.get(1).getAsInt(), spawn.get(2).getAsInt()});
-            }
             if (name == null) {
                 maps.keySet().forEach(key -> mc.player.sendSystemMessage(Component.literal(key).withStyle(
                     style -> style.withUnderlined(true).withClickEvent(new ClickEvent.RunCommand("/map " + key)))));

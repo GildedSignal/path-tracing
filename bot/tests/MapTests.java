@@ -17,10 +17,38 @@ public final class MapTests {
         if (!value) throw new AssertionError(message);
     }
 
+    private static void registry(Path file, int count) throws Exception {
+        var maps = MapRegistry.read(file);
+        var names = List.of("hard_track_2", "a-b", "third_map");
+        int[][] spawns = {{0, -60, 0}, {12, 80, -7}, {-8, 72, 9}};
+        check(maps.size() == count, "Flat registry has " + count + " maps through the /map reader");
+        for (int i = 0; i < count; i++) {
+            check(Arrays.equals(maps.get(names.get(i)), spawns[i]), "Registry name and spawn: " + names.get(i));
+        }
+    }
+
     public static void main(String[] args) throws Exception {
+        if (args[0].equals("--set-spawn")) {
+            Path file = Path.of(args[1]);
+            var level = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
+            level.getCompound("Data").orElseThrow().getCompound("spawn").orElseThrow()
+                .putIntArray("pos", new int[] {Integer.parseInt(args[2]), Integer.parseInt(args[3]), Integer.parseInt(args[4])});
+            NbtIo.writeCompressed(level, file);
+            return;
+        }
+        if (args[0].equals("--registry")) {
+            registry(Path.of(args[1]), Integer.parseInt(args[2]));
+            System.out.println("Passed /map registry read-back for " + args[2] + " maps.");
+            return;
+        }
         Path rig = Path.of(args[0]);
         Path world = rig.resolve("server/world");
         Path root = rig.getParent();
+        registry(rig.resolve("maps.json"), 3);
+        Path malformed = root.resolve("rejected-registry.json");
+        Files.writeString(malformed, "[{\"value\":[],\"Count\":1}]");
+        try { MapRegistry.read(malformed); throw new AssertionError("PowerShell array wrapper accepted as a map"); }
+        catch (java.io.IOException expected) { check(expected.getMessage().contains("name and spawn"), "Malformed registry reports its shape instead of a null error"); }
         int[] spawn = MapSpawn.read(world.resolve("level.dat"));
         check(Arrays.equals(spawn, new int[] {0, -60, 0}), "Current vanilla spawn layout");
         var legacy = new CompoundTag();
