@@ -1,0 +1,1 @@
+﻿Continue the same job from where you stopped (the computer was shut down mid-run; your worktree keeps your edits). Re-read your last messages, finish what remains of "Done means", run the gates, and write last.md. You are the Terra builder: never run launch.ps1, gpt.ps1 or follow-up.ps1. End with `STATUS: DONE` or `STATUS: BLOCKED: <why>`.
