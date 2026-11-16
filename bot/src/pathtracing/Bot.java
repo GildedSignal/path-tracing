@@ -27,6 +27,7 @@ final class Bot {
     private static final int STUCK_TICKS = 60;
 
     private static List<BlockPos> path = List.of();
+    private static TrackStore.Track trackTarget;
     private static int next;
     private static double bestDistance;
     private static int sinceProgress;
@@ -106,6 +107,7 @@ final class Bot {
     }
 
     static void goTo(Minecraft mc, BlockPos goal) {
+        trackTarget = null;
         BlockPos start = mc.player.blockPosition();
         long t0 = System.nanoTime();
         List<BlockPos> planned = PLANNER.plan(mc.level, start, goal);
@@ -121,6 +123,12 @@ final class Bot {
         reply(mc, String.format("Going to %s: %d steps, planned in %.1f ms.", goal.toShortString(), planned.size(), ms));
     }
 
+    static void goToTrack(Minecraft mc, TrackStore.Track track) {
+        var target = TrackDetector.aim(mc.player.getBoundingBox(), mc.player.position(), track.b(), track.bFace());
+        goTo(mc, BlockPos.containing(target));
+        if (!path.isEmpty()) trackTarget = track;
+    }
+
     private static void tick(Minecraft mc) {
         // Creative players double-tap jump into flight; the bot has to walk like everyone else.
         if (survivalIn >= 0 && survivalIn-- == 0 && mc.getConnection() != null) mc.getConnection().sendCommand("gamemode survival");
@@ -128,16 +136,20 @@ final class Bot {
         if (path.isEmpty()) return;
         var player = mc.player;
         if (player == null) {
-            path = List.of();
+            clearFollowPath();
             return;
         }
         Vec3 pos = player.position();
         BlockPos target = path.get(next);
-        double dx = target.getX() + 0.5 - pos.x;
-        double dz = target.getZ() + 0.5 - pos.z;
+        boolean trackFinish = trackTarget != null && next == path.size() - 1;
+        Vec3 aim = trackFinish ? TrackDetector.aim(player.getBoundingBox(), pos, trackTarget.b(), trackTarget.bFace())
+            : new Vec3(target.getX() + 0.5, target.getY(), target.getZ() + 0.5);
+        double dx = aim.x - pos.x;
+        double dz = aim.z - pos.z;
         double distance = Math.sqrt(dx * dx + dz * dz);
 
-        if (distance < REACHED && Math.abs(pos.y - target.getY()) < 1) {
+        // A track ends only when Tracks samples its selected face, never by proximity.
+        if (!trackFinish && distance < REACHED && Math.abs(pos.y - aim.y) < 1) {
             if (++next == path.size()) {
                 stop(mc, "Arrived at " + target.toShortString() + ".");
                 return;
@@ -160,18 +172,19 @@ final class Bot {
         float previousYaw = player.getYRot();
         player.setYRot(player.getYRot() + Math.clamp(turn, -TURN_PER_TICK, TURN_PER_TICK));
         Tracks.firstInput(mc, player.getYRot() != previousYaw);
-        boolean jump = player.onGround() && (player.horizontalCollision || target.getY() > pos.y + 0.5);
+        boolean jump = player.onGround() && (player.horizontalCollision || aim.y > pos.y + 0.5);
         keys(mc, Math.abs(turn) < 60, jump);
     }
 
     private static void stop(Minecraft mc, String why) {
-        path = List.of();
+        clearFollowPath();
         keys(mc, false, false);
         reply(mc, why);
     }
 
     static void clearFollowPath() {
         path = List.of();
+        trackTarget = null;
     }
 
     static void trackMode() { survivalIn = -1; }

@@ -65,7 +65,7 @@ fn sentence(world: &BoxWorld, parts: &[Part], trace: bool) -> Vec<PlayerState> {
 const A:[i32;3]=[-107,-60,-107];
 const B:[i32;3]=[-84,-25,-88];
 fn touch(states:&[PlayerState])->Option<usize> {
-    states.windows(2).position(|s|plan::Goal {cell:B}.touched(&s[0],&s[1])).map(|i|i+1)
+    states.windows(2).position(|s|plan::Goal {cell:B, face:None}.touched(&s[0],&s[1])).map(|i|i+1)
 }
 fn digest(states:&[PlayerState])->u64 {
     states.iter().flat_map(|s|s.bits()).flat_map(u64::to_le_bytes).fold(0xcbf29ce484222325,|h,b|(h^b as u64).wrapping_mul(0x100000001b3))
@@ -88,7 +88,7 @@ fn hard_track_witness() {
         program:match part.keys.as_str() {"F"=>18,"FJ"=>21,"FS"=>27,"FSJ"=>30,"FSG"=>33,keys=>panic!("no existing program for {keys}")},
         args:words::Arguments {refined_yaw:Some(part.yaw),..Default::default()},ticks:part.ticks,lane:plan::Lane::Replay,
     }).collect::<Vec<_>>();
-    let certificate=plan::certify(&Still(&world),&words::tiny_programs(),&states[0],&steps,&plan::Goal {cell:B},Some(A),false).unwrap();
+    let certificate=plan::certify(&Still(&world),&words::tiny_programs(),&states[0],&steps,&plan::Goal {cell:B, face:None},Some(A),false).unwrap();
     assert_eq!((certificate.ticks,certificate.clock),(583,Some(579)));
     assert_eq!(certificate.end.bits(),states[583].bits());
     let left=states.iter().position(|s| !(s.on_ground && s.main_supporting_block==Some(A))).unwrap();
@@ -235,7 +235,7 @@ fn current_planner_mode_5() {
     let reach=Reach::compile(world.block(A),&programs,extent,40.0).unwrap();
     let compile=reach.compile_us/1e6;
     let clock=std::time::Instant::now();
-    let goal=Goal {cell:B};
+    let goal=Goal {cell:B, face:None};
     let field=Field::build(&world,&reach,body,&goal,start.main_supporting_block,(0,None));
     let field_seconds=clock.elapsed().as_secs_f64();
     let field_stats=(field.standable,field.reached,field.checks,field.cells.get(&A).map(|c|c.t));

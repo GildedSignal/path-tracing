@@ -13,7 +13,7 @@ $sourceRoot = Join-Path $Root 'bot\src\pathtracing'
 if ($LASTEXITCODE) { throw 'Track test compilation failed' }
 $testRig = Join-Path $testBuild ([Guid]::NewGuid().ToString('N'))
 & "$Jdk\java.exe" -cp "$testBuild;$classpath" pathtracing.TrackTests $testRig `
-  "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar"
+  "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar" "$PSScriptRoot\fixtures\face-touch.txt"
 if ($LASTEXITCODE) { throw 'Track tests failed' }
 foreach ($script in @('scripts\launch-client.ps1', 'bot\build.ps1', 'bot\tests\test-tracks.ps1')) {
   $tokens = $null

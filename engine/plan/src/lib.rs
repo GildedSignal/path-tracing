@@ -9,7 +9,7 @@ pub mod reach;
 pub mod search;
 pub mod time;
 pub mod walk;
-pub use goal::Goal;
+pub use goal::{Face, Goal};
 pub use polish::{Slide, slide};
 pub use reach::{Field, Reach};
 pub use search::{Options, Order, Outcome, Planner, Problem, Stats, Stopped};

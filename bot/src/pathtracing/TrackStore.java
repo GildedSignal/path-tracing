@@ -38,7 +38,10 @@ final class TrackStore {
         }
     }
 
-    record Track(String name, Cell a, Cell b, String dimension, String created, String creator) { }
+    record Track(String name, Cell a, Cell b, String dimension, String created, String creator, String bFace) {
+        Track(String name, Cell a, Cell b, String dimension, String created, String creator) { this(name, a, b, dimension, created, creator, null); }
+        Track { if (bFace != null && !List.of("up", "down", "north", "south", "east", "west").contains(bFace)) throw new IllegalArgumentException("Invalid B face: " + bFace); }
+    }
 
     final Path rig;
     private final Path directory;
@@ -62,6 +65,7 @@ final class TrackStore {
         JsonObject out = new JsonObject();
         out.add("A", track.a.json());
         out.add("B", track.b.json());
+        if (track.bFace != null) out.addProperty("bFace", track.bFace);
         out.addProperty("dimension", track.dimension);
         out.addProperty("created", track.created);
         out.addProperty("creator", track.creator);
@@ -86,7 +90,7 @@ final class TrackStore {
     Track read(String name) throws IOException {
         JsonObject in = JsonParser.parseString(Files.readString(file(name))).getAsJsonObject();
         return new Track(name, Cell.read(in.getAsJsonArray("A")), Cell.read(in.getAsJsonArray("B")),
-            in.get("dimension").getAsString(), in.get("created").getAsString(), in.get("creator").getAsString());
+            in.get("dimension").getAsString(), in.get("created").getAsString(), in.get("creator").getAsString(), in.has("bFace") ? in.get("bFace").getAsString() : null);
     }
 
     List<Track> list() throws IOException {

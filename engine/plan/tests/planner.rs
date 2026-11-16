@@ -13,7 +13,7 @@ fn a_sentence_on_a_floor_is_certified_and_its_tube_carries_ticks() {
     floor(&mut world, [-4, -1, -4], [4, -1, 16]);
     let timeline = Still(&world);
     let start = settle(&timeline, [0.5, 0.0, 0.5], 0).unwrap();
-    let goal = Goal { cell: [0, -1, 9] };
+    let goal = Goal { cell: [0, -1, 9], face: None };
     let body = ([-3, -3, -3], [3, 4, 15]);
     let reach = Reach::compile(&Block::full(), &tiny_programs(), 20.0, 8.0).unwrap();
     println!("reach: tools={} contacts={} landings={} kept={} compile={:.0} ms", reach.tools, reach.contacts, reach.landings, reach.kept, reach.compile_us / 1e3);
@@ -47,7 +47,7 @@ fn a_platform_that_exists_only_on_a_schedule_is_crossed_while_it_stands() {
     floor(&mut bridged, [0, -1, 2], [0, -1, 8]);
     let timeline = Scheduled::new(gap.clone()).then(40, bridged).then(200, gap.clone());
     let start = settle(&timeline, [0.5, 0.0, 0.5], 0).unwrap();
-    let goal = Goal { cell: [0, -1, 10] };
+    let goal = Goal { cell: [0, -1, 10], face: None };
     let body = ([-2, -3, -2], [2, 3, 12]);
     let reach = Reach::compile(&Block::full(), &tiny_programs(), 16.0, 4.0).unwrap();
     let mut field: Option<Field> = None;
@@ -114,7 +114,7 @@ fn a_gait_cycle_advances_by_its_increments_on_uniform_ground() {
 fn a_broken_premise_invalidates_only_the_sets_that_read_it() {
     let mut world = BoxWorld::default();
     floor(&mut world, [-4, -1, -4], [4, -1, 16]);
-    let goal = Goal { cell: [0, -1, 9] };
+    let goal = Goal { cell: [0, -1, 9], face: None };
     let body = ([-3, -3, -3], [3, 4, 15]);
     let reach = Reach::compile(&Block::full(), &tiny_programs(), 20.0, 8.0).unwrap();
     let mut field = Field::build(&world, &reach, body, &goal, None, (0, None));

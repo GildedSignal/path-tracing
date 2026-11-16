@@ -202,7 +202,7 @@ impl Field {
         let mut open = BinaryHeap::new();
         for (id, cell) in cells.iter_mut().enumerate() {
             let [x, _, z] = cell.support;
-            if (x - goal.cell[0]).abs() <= 1 && (z - goal.cell[2]).abs() <= 1 && cell.y < zone.max.y && cell.y + PlayerState::default().pose.height() as f64 > zone.min.y {
+            if (x - goal.cell[0]).abs() <= 1 && (z - goal.cell[2]).abs() <= 1 && cell.y <= zone.max.y && cell.y + PlayerState::default().pose.height() as f64 >= zone.min.y {
                 cell.t = 0;
                 field.goals += 1;
                 open.push(Reverse((0u32, id as u32)));
