@@ -350,6 +350,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "so you used 60% of the window to write it into the doc something that it had already written?"; "how many levels you fucked up" | S177–S178 | **Followed:** memory rule: no long-context resume for a small edit |
 | "say names i'm over those made up names"; "have a plan.md in the doc"; "don't let hydrogen sit iddle"; "please do housekeeping"; "when i ask to explain you explain you don't do" | S179 | **Followed:** [plan.md](plan.md) in plain names; Hydrogen's `names-audit` and `flight-corpus`; this housekeeping |
 | "Explain it first"; "looks good" | S181–S182 | **Followed:** a set is keyed by the exact arriving state, plus plateaus of one coordinate ([representation.md](representation.md):179), after the joints-and-sets red-team (`jobs/u2-redteam/report.md`) |
+| "Yes, adopt it" (families and points; resources and the supporting block out of the key) | S188 | **Followed:** [representation.md](representation.md):179 and [learning.md](learning.md) kill test 11, from `jobs/set-rederive/proposal.md`; the builder's change waits in one job with the simplest case (S187) |
 
 ## Contradictions (kept side by side)
 

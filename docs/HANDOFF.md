@@ -43,6 +43,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 9. **3.2a's "second column" test is near-tautological**; the class redesign replaces it.
 10. **Unmodeled readers:** `LocalPlayer.aiStep:348` resets `sprintTriggerTime` (the double-tap sprint window) through `isSlowDueToUsingItem`; the law has no such state. Boat turn: the port's Mth-table speed is a record until GLM `port-boat-turn-trace` runs the jar's own table.
 11. **S38's bug was never traced:** "bug, when doing a track it deletes sulfur spike from my inventory" (5 November).
+12. **Sprint at an exactly axis-aligned wall depends on rounding** (17 November, `jobs/set-rederive/proposal.md`): `movement.rs:818`'s minor-collision test takes `acos` of a cosine that is 1 up to rounding, so above 1 it is NaN and sprint drops. It is Mojang's own behaviour, ported faithfully; only axis-aligned yaws hit it, and the bot's yaw grid holds them. Sets carry it as two points, never as cuts.
 
 **Open for Julien:** whether "i added other things" (S162) names anything beyond S116–S134 (`jobs/unified-plan/questions.md` Q12); the class (S67–S69): whether it is now where he wants it. The debug world as a one-world check of the block table (parked, S67). `omp auth import` would put Codex into `omp usage` too, but moves his OAuth tokens; not needed now that `meters.ps1` reads Codex's own logs. Two files are deleted in the working tree and not by this session: `Set GLM key.cmd` and `Stop GPT.cmd` (README and `glm-local.ps1` still name the first).
 
