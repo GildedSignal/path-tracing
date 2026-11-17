@@ -58,7 +58,7 @@ The bot reaches the point Julien clicks in the least time T, counted from the cl
 - **The clicked face as B's target** (S170): the mod part is in his game. The planner part waits for a judge (`wt/track-face`).
 - **The rebuilt hard track** (`wt/hard-track-2`): built, waiting for a judge. Julien rates it easy-medium.
 - **Freeze damage in the law** (`wt/l0-veto`, job `1.3e`): built, waiting for a judge since 15 November.
-- **His maps:** eight imported as dimensions, switched with `/map`; 51 tracks raced on 16 November with their inputs recorded.
+- **His maps:** eight imported as dimensions, switched with `/map`. The good ones are those with tracks on them (S193): `infinity_tower`, `diversity_parkour`, `parkour_race`, `frosted_ices`. 51 tracks raced on 16 November with their inputs recorded. Wanted next: droppers, elytra courses and maps whose progression survives the import (S192; `jobs/map-scout-2`).
 
 ## Who does what (AGENTS.md, S174, S173)
 
