@@ -60,20 +60,23 @@ Each pass is a separate run. **You render your own commands** with the preview r
 
 Run exactly this, from any directory (PowerShell; every argument quoted):
 
+First join the passes so far, in order (this pass: 2 and 3), then render the joined file:
+
 ```
-& 'D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\java.exe' '-Djava.awt.headless=true' 'D:\path-tracing-wt\hearth-small\tools\preview\Preview.java' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\pass-2.txt' 400 -61 -20 440 -16 20 'D:\path-tracing-deps\minecraft-26.2-client.jar' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views.txt' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views\pass-2'
+Get-Content 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\pass-2.txt', 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\pass-3.txt' | Set-Content -Encoding ascii 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\so-far.txt'
+& 'D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\java.exe' '-Djava.awt.headless=true' 'D:\path-tracing-wt\hearth-small\tools\preview\Preview.java' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\so-far.txt' 400 -61 -20 440 -16 20 'D:\path-tracing-deps\minecraft-26.2-client.jar' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views.txt' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views\pass-3'
 ```
 
-It takes about 10 seconds and writes one PNG per line of `views.txt`, plus `views.md`, into `views\pass-2\`. Open the PNGs with your file tool and look at them. Do not use `scripts\preview.ps1`: its JDK path is refused in the sandbox. The renderer draws unknown blocks as plain cubes and names them in `views.md`: an unknown id there is a typo to fix. You may write only in `C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\` and `D:\path-tracing-wt\hearth-small\`. Place nothing in the game.
+It takes about 10 seconds and writes one PNG per line of `views.txt`, plus `views.md`, into `views\pass-3\`. Pass 2's images are in `views\pass-2\`. Open the PNGs with your file tool and look at them. Do not use `scripts\preview.ps1`: its JDK path is refused in the sandbox. The renderer draws unknown blocks as plain cubes and names them in `views.md`: an unknown id there is a typo to fix. You may write only in `C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\` and `D:\path-tracing-wt\hearth-small\`. Place nothing in the game.
 
-## This run is pass 2: landform and massing
+## This run is pass 3: structure and envelope
 
-Pass 1 is done: your `design.md`, `views.txt` and `report-pass-1.md` in this folder. Re-read them, the brief and his taste first.
+Passes 1 and 2 are done: `design.md`, `views.txt`, `pass-2.txt`, `report-pass-1.md` and `report-pass-2.md` in this folder, and pass 2's images in `views\pass-2\`. Re-read them, the brief and his taste first. Your own list of what pass 3 must do is at the end of `report-pass-2.md`; your recommended plan changes there (the tighter, lower spruce wing) apply now.
 
-1. Write `pass-2.txt`: the spur, the ravine, the road and the bridge's surviving abutment, and the building as plain volumes in at most four materials, without openings or details. `/fill` and `/setblock` only, absolute coordinates inside the box, ids checked in `blocks.tsv`.
-2. Render. Look at every view. Write in `report.md` what reads well, what reads badly and what surprised you: the proportions, the silhouette against the sky, the ravine's depth, the walk from the road (stations 1 to 7), whether the dominant roof dominates.
-3. Fix the massing and render again, at least twice, until the proportions are right. Keep each render's notes in `report.md` (render 1, render 2, …).
-4. Change `views.txt` if a view would help.
-5. End `report.md` with the command count, the materials, what pass 3 must do, and what you would change in the plan.
+1. Open pass 2's images and write in `report.md` what they show before you change anything.
+2. Write `pass-3.txt`: walls and frame; the roofs in stairs and slabs (eaves, ridges, the chimney); the openings (the low door, the two-block alcove window, the warm windows); the broken bridge; the steps and paths, every step climbable without a jump. A later pass may replace earlier blocks: say which and why.
+3. Render (join, then render, as above). Look at every view, by day and by night, including stations 5–7 now that the interiors open. Write what reads well, what reads badly and what surprised you.
+4. Fix and render again, at least twice. Keep each render's notes in `report.md` (render 1, render 2, …). Check every stair's facing and half, every door's two halves, nothing floating.
+5. End `report.md` with the command count of `pass-3.txt`, what pass 4 must do, and what you would change in the plan.
 
 Write `report.md` as you go. Launch nothing else.

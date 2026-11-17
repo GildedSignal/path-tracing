@@ -1,0 +1,149 @@
+# The Last Hearth (Small) — Pass 2: Landform and Massing
+# Materials (4): minecraft:stone, minecraft:stone_bricks, minecraft:spruce_planks, minecraft:deepslate_tiles
+# Box: x 400..440, y -61..-16, z -20..20
+
+# === 1. RAVINE FLOOR & CHASM (x=426..431) ===
+/fill 426 -61 -20 431 -61 20 minecraft:stone
+
+# === 2. WEST ROCKY SPUR & HEADLAND PLATEAU ===
+# Base spur footprint (y=-61..-60) with organic irregular perimeter
+/fill 406 -61 -16 425 -60 17 minecraft:stone
+/fill 402 -61 -9 405 -61 11 minecraft:stone
+/fill 408 -61 -18 424 -61 -17 minecraft:stone
+/fill 411 -61 18 423 -61 19 minecraft:stone
+
+# Headland plateau at y=-53 strictly under Building, Porch Terrace (z=-11..-1) and Bridgehead (x=416..425, z=-1..2)
+/fill 410 -60 -11 425 -53 -1 minecraft:stone
+/fill 416 -60 0 425 -53 2 minecraft:stone
+# Rocky shoulder anchoring the west end of the spruce wing (x=408..409, z=-11..-3)
+/fill 409 -60 -11 409 -53 -3 minecraft:stone
+/fill 408 -60 -10 408 -55 -4 minecraft:stone
+/setblock 409 -52 -8 minecraft:stone
+/setblock 409 -52 -7 minecraft:stone
+/setblock 409 -52 -6 minecraft:stone
+
+# North rocky flank sloping naturally toward z=-19
+/fill 412 -60 -13 425 -55 -12 minecraft:stone
+/fill 415 -60 -15 424 -57 -14 minecraft:stone
+/fill 411 -60 -15 414 -58 -14 minecraft:stone
+/fill 414 -60 -17 424 -59 -16 minecraft:stone
+
+# Gradual west spur slope UNDER the climbing road (never rising above road height on the NW sightline)
+/fill 414 -60 -1 415 -54 2 minecraft:stone
+/fill 412 -60 -2 413 -55 2 minecraft:stone
+/fill 410 -60 -3 411 -56 3 minecraft:stone
+/fill 408 -60 -5 409 -57 4 minecraft:stone
+/fill 406 -60 -7 407 -58 5 minecraft:stone
+/fill 404 -60 -6 405 -59 5 minecraft:stone
+/fill 402 -60 -4 403 -60 6 minecraft:stone
+
+# South-east flank beside bridgehead (x=418..425, z=3..17)
+/fill 418 -60 3 425 -54 7 minecraft:stone
+/fill 419 -60 8 425 -56 12 minecraft:stone
+/fill 418 -60 13 424 -58 16 minecraft:stone
+
+# South-west crag: asymmetric diagonal ridge (SE-NW) + landslide talus
+/fill 407 -60 6 417 -55 16 minecraft:stone
+/fill 409 -54 7 417 -52 16 minecraft:stone
+/fill 411 -51 8 417 -50 15 minecraft:stone
+/fill 413 -49 10 417 -48 15 minecraft:stone
+/fill 414 -47 11 416 -46 14 minecraft:stone
+/fill 410 -51 8 412 -49 11 minecraft:stone
+/fill 405 -60 7 406 -58 13 minecraft:stone
+# Talus apron spilling irregularly onto south edge of road (x=408..415, z=2..6)
+/fill 410 -56 2 415 -54 5 minecraft:stone
+/fill 412 -53 3 415 -53 6 minecraft:stone
+/setblock 413 -52 4 minecraft:stone
+/setblock 414 -52 3 minecraft:stone
+/setblock 411 -54 2 minecraft:stone
+
+# === 3. EAST CLIFFSIDE (x=432..440, asymmetric ravine walls + diagonal pass) ===
+# Lower ravine wall along x=432..440
+/fill 432 -61 -18 440 -54 18 minecraft:stone
+/fill 432 -53 -15 440 -52 16 minecraft:stone
+# Higher South-East crag ridge overlooking the chasm (z=4..16, peaking y=-41)
+/fill 432 -51 4 440 -48 15 minecraft:stone
+/fill 433 -47 5 440 -45 15 minecraft:stone
+/fill 435 -44 7 440 -43 14 minecraft:stone
+/fill 437 -42 9 440 -41 13 minecraft:stone
+# Lower North-East shoulder stepped back from chasm so iso-NE sees into ravine (z=-15..-4, peaking y=-46)
+/fill 433 -51 -14 440 -50 -4 minecraft:stone
+/fill 435 -49 -14 440 -48 -5 minecraft:stone
+/fill 437 -47 -13 440 -46 -7 minecraft:stone
+# Diagonal mountain-pass saddle behind east abutment (z=-3..3)
+/fill 432 -53 -3 435 -53 3 minecraft:stone
+/fill 436 -52 -3 437 -52 3 minecraft:stone
+/fill 438 -51 -4 440 -50 3 minecraft:stone
+/fill 438 -49 2 440 -49 3 minecraft:stone
+
+# === 4. OLD ROAD, DETOUR TERRACE & BROKEN BRIDGE ABUTMENTS ===
+# Climbing western road (fully exposed, never buried by spur stone)
+/fill 400 -61 3 401 -61 5 minecraft:stone_bricks
+/fill 402 -61 3 403 -60 5 minecraft:stone_bricks
+/fill 404 -61 2 405 -59 4 minecraft:stone_bricks
+/fill 406 -61 2 407 -58 4 minecraft:stone_bricks
+/fill 408 -61 1 409 -57 3 minecraft:stone_bricks
+/fill 410 -61 1 411 -56 3 minecraft:stone_bricks
+/fill 412 -61 0 413 -55 2 minecraft:stone_bricks
+/fill 414 -61 -1 415 -54 1 minecraft:stone_bricks
+/fill 416 -61 -1 419 -53 1 minecraft:stone_bricks
+# Carve clean headroom/air above the climbing road (x=400..416)
+/fill 400 -60 3 401 -55 5 minecraft:air
+/fill 402 -59 3 403 -55 5 minecraft:air
+/fill 404 -58 2 405 -54 4 minecraft:air
+/fill 406 -57 2 407 -53 4 minecraft:air
+/fill 408 -56 1 409 -52 3 minecraft:air
+/fill 410 -55 1 411 -51 3 minecraft:air
+/fill 412 -54 0 413 -50 2 minecraft:air
+/fill 414 -53 -1 415 -49 1 minecraft:air
+
+# Road retaining curb along south drop (x=402..409, hugging road edge)
+/fill 402 -61 6 403 -60 6 minecraft:stone_bricks
+/fill 404 -61 5 407 -59 5 minecraft:stone_bricks
+/fill 408 -61 4 409 -58 4 minecraft:stone_bricks
+# Terrace & detour paving north of road (x=410..416, z=-3..-1) + low west terrace curb
+/fill 410 -53 -3 416 -53 -1 minecraft:stone_bricks
+/fill 409 -52 -3 409 -52 -2 minecraft:stone_bricks
+# West bridge abutment (x=420..425, z=-1..2)
+/fill 420 -61 -1 425 -53 2 minecraft:stone_bricks
+# East bridge abutment (x=432..435, z=-1..2) & abandoned east pass road
+/fill 432 -61 -1 435 -53 2 minecraft:stone_bricks
+/fill 436 -52 -1 437 -52 1 minecraft:stone_bricks
+/fill 438 -51 -2 439 -50 0 minecraft:stone_bricks
+/setblock 440 -50 -2 minecraft:stone_bricks
+/setblock 440 -50 -1 minecraft:stone_bricks
+
+# === 5. BUILDING VOLUMES (PLAIN MASSES, NO OPENINGS) ===
+# Stone Tollhouse Core (x=417..424, y=-52..-46, z=-10..-2)
+/fill 417 -52 -10 424 -46 -2 minecraft:stone_bricks
+# Gatehouse Arch Bay mass spanning carriageway (x=417..419, y=-52..-47, z=-1..2)
+/fill 417 -52 -1 419 -47 2 minecraft:stone_bricks
+# East Alcove projection toward ravine (x=425, y=-52..-48, z=-7..-5)
+/fill 425 -52 -7 425 -48 -5 minecraft:stone_bricks
+
+# Dominant N-S Gable Roof over Stone Core (ridge x=420..421 at y=-40; eaves x=416..425 at y=-46)
+/fill 416 -46 -11 425 -46 -1 minecraft:deepslate_tiles
+/fill 417 -45 -11 424 -45 -1 minecraft:deepslate_tiles
+/fill 418 -44 -11 423 -43 -1 minecraft:deepslate_tiles
+/fill 419 -42 -11 422 -41 -1 minecraft:deepslate_tiles
+/fill 420 -40 -11 421 -40 -1 minecraft:deepslate_tiles
+# North & South stone gable infills (strictly inside roof slopes)
+/fill 418 -45 -10 423 -45 -10 minecraft:stone_bricks
+/fill 419 -44 -10 422 -43 -10 minecraft:stone_bricks
+/fill 420 -42 -10 421 -41 -10 minecraft:stone_bricks
+/fill 418 -45 -2 423 -45 -2 minecraft:stone_bricks
+/fill 419 -44 -2 422 -43 -2 minecraft:stone_bricks
+/fill 420 -42 -2 421 -41 -2 minecraft:stone_bricks
+# Chimney mass rising cleanly on north gable (x=420..421, z=-10, y=-46..-37)
+/fill 420 -46 -10 421 -37 -10 minecraft:stone_bricks
+
+# Later Spruce Wing (smaller & lower: x=411..416, y=-52..-49, z=-9..-4)
+/fill 411 -52 -9 416 -49 -4 minecraft:spruce_planks
+# Smaller E-W Cross-Gable Roof over Spruce Wing (eaves y=-48, ridge y=-45 at z=-7..-6)
+/fill 410 -48 -10 416 -48 -3 minecraft:spruce_planks
+/fill 410 -47 -9 416 -47 -4 minecraft:spruce_planks
+/fill 410 -46 -8 416 -46 -5 minecraft:spruce_planks
+/fill 410 -45 -7 416 -45 -6 minecraft:spruce_planks
+
+# Porch Lean-to Canopy (x=411..416, y=-49, z=-3..-2)
+/fill 411 -49 -3 416 -49 -2 minecraft:spruce_planks

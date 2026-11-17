@@ -1,0 +1,19 @@
+iso NE day
+iso NW day
+iso SW day
+iso SW night
+plan top
+plan -51
+elev N
+elev S
+elev W
+section x 420
+section z -6
+eye 400 -60 4 246 -8 75 day s1-approach-day
+eye 400 -60 4 246 -8 75 night s1-approach-night
+eye 412 -54 1 255 -5 75 day s2-arch
+eye 422 -52 0 270 12 75 day s3-bridge
+eye 416 -52 -2.5 115 -2 75 day s4-porch
+eye 412 -52 -5.5 265 0 80 night s5-vestibule
+eye 419 -52 -4 205 -6 80 night s6-hearth
+eye 422.5 -52 -6.5 270 4 70 day s7-alcove
