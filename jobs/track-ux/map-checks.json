@@ -1,0 +1,33 @@
+{
+    "registryCounts":  [
+                           0,
+                           1,
+                           2,
+                           3
+                       ],
+    "spawns":  [
+                   "0,-60,0",
+                   "12,80,-7",
+                   "-8,72,9"
+               ],
+    "fixture":  "D:\\path-tracing-wt\\track-ux\\engine\\world\\tests\\fixtures\\world",
+    "destination":  "D:\\path-tracing-wt\\track-ux\\bot\\build\\map-tests\\maps-cf7c7bd90e0348049e8c2a0fbdddf5e1",
+    "command":  "bot/tests/test-maps.ps1",
+    "refusals":  [
+                     "duplicate",
+                     "A",
+                     "a b",
+                     "a/b",
+                     "minecraft:the_nether",
+                     "non-dimension datapack resource",
+                     "PowerShell array wrapper"
+                 ],
+    "result":  "PASS",
+    "planner":  "",
+    "names":  [
+                  "hard_track_2",
+                  "a-b",
+                  "third_map"
+              ],
+    "serverJar":  "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\.fabric\\server\\26.2-server.jar"
+}

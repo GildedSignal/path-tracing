@@ -8,11 +8,15 @@ import net.minecraft.nbt.NbtIo;
 /** Read both current and older vanilla spawn layouts with Mojang's NBT reader. */
 final class MapSpawn {
     static int[] read(Path path) throws IOException {
-        var data = NbtIo.readCompressed(path, NbtAccounter.unlimitedHeap()).getCompound("Data").orElseThrow();
+        return read(NbtIo.readCompressed(path, NbtAccounter.unlimitedHeap()));
+    }
+
+    static int[] read(net.minecraft.nbt.CompoundTag level) throws IOException {
+        var data = level.getCompound("Data").orElseThrow();
         var spawn = data.getCompound("spawn");
         if (spawn.isPresent()) {
             var pos = spawn.get().getIntArray("pos").orElseThrow();
-            if (pos.length != 3) throw new IOException("Invalid spawn position in " + path);
+            if (pos.length != 3) throw new IOException("Invalid spawn position");
             return pos;
         }
         return new int[] { data.getInt("SpawnX").orElseThrow(), data.getInt("SpawnY").orElseThrow(), data.getInt("SpawnZ").orElseThrow() };

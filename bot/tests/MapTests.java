@@ -42,6 +42,9 @@ public final class MapTests {
             return;
         }
         Path rig = Path.of(args[0]);
+        net.minecraft.SharedConstants.tryDetectVersion();
+        net.minecraft.server.Bootstrap.bootStrap();
+        spawnColumns();
         Path world = rig.resolve("server/world");
         Path root = rig.getParent();
         registry(rig.resolve("maps.json"), 3);
@@ -57,6 +60,9 @@ public final class MapTests {
         legacy.put("Data", data);
         NbtIo.writeCompressed(legacy, root.resolve("legacy.dat"));
         check(Arrays.equals(MapSpawn.read(root.resolve("legacy.dat")), new int[] {12, 80, -7}), "Legacy vanilla spawn layout");
+        var dimension = new MapSpawnAudit.Dimension(world.resolve("dimensions/pathtracing/hard_track_2"));
+        var corrected = MapSpawnAudit.checked(dimension, new int[] {0, -64, 0});
+        check(corrected != null && MapSpawnAudit.standable(dimension, corrected[0], corrected[1], corrected[2]), "Read-only Anvil decoder finds and verifies a standing cell in the imported dimension");
         for (String name : List.of("hard_track_2", "a-b")) {
             TrackStore.validateName(name);
             check(TrackWorldView.region(world, "pathtracing:" + name).equals(world.resolve("dimensions/pathtracing/" + name + "/region")), "Imported region: " + name);
@@ -85,5 +91,30 @@ public final class MapTests {
         catch (java.io.IOException expected) { check(expected.getMessage().contains("more than map dimensions"), "Other datapack resources cannot bypass the world reader gate"); }
         Files.delete(unexpected);
         System.out.println("Passed " + checks + " offline map checks.");
+    }
+
+    private static void spawnColumns() {
+        var cells = new java.util.HashMap<net.minecraft.core.BlockPos, net.minecraft.world.level.block.state.BlockState>();
+        var world = new net.minecraft.world.level.BlockGetter() {
+            public int getHeight() { return 384; }
+            public int getMinY() { return -64; }
+            public net.minecraft.world.level.block.entity.BlockEntity getBlockEntity(net.minecraft.core.BlockPos p) { return null; }
+            public net.minecraft.world.level.block.state.BlockState getBlockState(net.minecraft.core.BlockPos p) {
+                return cells.getOrDefault(p, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+            }
+            public net.minecraft.world.level.material.FluidState getFluidState(net.minecraft.core.BlockPos p) { return getBlockState(p).getFluidState(); }
+        };
+        int[] spawn = {-7, 70, 15};
+        check(MapSpawnAudit.checked(world, spawn) == null, "An empty column is reported without inventing a spawn");
+        cells.put(new net.minecraft.core.BlockPos(-7, 67, 15), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        cells.put(new net.minecraft.core.BlockPos(-7, 71, 15), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        check(Arrays.equals(MapSpawnAudit.checked(world, spawn), new int[] {-7, 72, 15}), "Nearest cell searches upwards before an equal-distance downward cell");
+        cells.remove(new net.minecraft.core.BlockPos(-7, 71, 15));
+        check(Arrays.equals(MapSpawnAudit.checked(world, spawn), new int[] {-7, 68, 15}), "Nearest lower cell is found when the upper search has none");
+        check(Arrays.equals(MapSpawnAudit.checked(world, new int[] {-7, 68, 15}), new int[] {-7, 68, 15}), "An already standable spawn is retained");
+        cells.put(new net.minecraft.core.BlockPos(-7, 69, 15), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        check(!MapSpawnAudit.standable(world, -7, 68, 15), "Planted head obstruction invalidates a standing cell");
+        cells.put(new net.minecraft.core.BlockPos(-7, 68, 15), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        check(!MapSpawnAudit.standable(world, -7, 68, 15), "Planted feet obstruction invalidates a standing cell");
     }
 }

@@ -30,11 +30,12 @@ final class TrackMode {
     private String targetMode;
     private boolean restoring;
     private boolean recovered;
+    private String failureReason;
     private int generation;
     private long deadline;
     private long now;
-    private long serverUpdates;
-    private long refillAfter;
+    private boolean healthConfirmed;
+    private boolean foodConfirmed;
     private State state = State.IDLE;
 
     TrackMode(TrackStore store, String player, Port port) {
@@ -47,7 +48,16 @@ final class TrackMode {
     boolean active() { return state != State.IDLE; }
     boolean ready() { return state == State.READY; }
     boolean restoring() { return restoring; }
-    void serverTick() { serverUpdates++; }
+    String reason() {
+        if (state == State.FAILED || state == State.IDLE) return failureReason == null ? "track mode is idle" : failureReason;
+        return restoring ? "restoring the saved inventory and game mode" : "waiting for the server to confirm the survival kit";
+    }
+    // Removal of each one-tick instant effect is the server's completion event.
+    void refillEffectRemoved(boolean health) {
+        if (state != State.TARGET && state != State.REFILL) return;
+        if (health) healthConfirmed = true; else foodConfirmed = true;
+        advance();
+    }
     String kitHash() { return TrackStore.sha256(kit.json()); }
 
     boolean validateStart() {
@@ -65,6 +75,7 @@ final class TrackMode {
 
     void enter(String name) {
         if (active()) throw new IllegalStateException("Already in track mode.");
+        failureReason = null;
         state = State.CAPTURE;
         deadline = now + 200;
         int request = ++generation;
@@ -126,8 +137,9 @@ final class TrackMode {
             state = State.IDLE;
         }
         if (session == null) session = store.readSession(player);
-        if (session != null) prepare(true);
-        return session != null;
+        if (session == null) return false;
+        prepare(true);
+        return true;
     }
 
     private void prepare(boolean restore) {
@@ -138,10 +150,15 @@ final class TrackMode {
         state = State.ALIVE;
         deadline = now + 200;
         if (!port.alive()) port.say("Track restore waits for respawn; saved session retained.");
+        advance();
     }
 
     void tick(long tick) {
         now = tick;
+        advance();
+    }
+
+    private void advance() {
         if (state == State.IDLE || state == State.FAILED || state == State.READY) return;
         try {
             if (state == State.ALIVE) {
@@ -157,14 +174,13 @@ final class TrackMode {
                 port.apply(target);
                 int request = generation;
                 port.query(observed -> acceptInventory(request, observed), reason -> queryFailed(request, reason));
-            } else if (state == State.TARGET && port.mode().equals(targetMode)) {
+            }
+            if (state == State.TARGET && port.mode().equals(targetMode)) {
                 if (!restoring) {
-                    // Instant effects run on the server's player tick. A later time packet is
-                    // a server-tick barrier; client saturation is not reliably synchronised.
-                    refillAfter = serverUpdates;
                     state = State.REFILL;
                 } else verify();
-            } else if (state == State.REFILL && serverUpdates > refillAfter) {
+            }
+            if (state == State.REFILL && healthConfirmed && foodConfirmed) {
                 verify();
             }
         } catch (RuntimeException failure) { fail(failure.getMessage()); }
@@ -194,12 +210,14 @@ final class TrackMode {
             }
             if (!restoring) {
                 port.confirm(target);
+                healthConfirmed = foodConfirmed = false;
                 port.command("effect give @s minecraft:instant_health 1 10 true");
                 port.command("effect give @s minecraft:saturation 1 20 true");
             }
             state = State.TARGET;
             deadline = now + 200;
             if (!port.mode().equals(targetMode)) port.command("gamemode " + targetMode);
+            advance();
         } catch (RuntimeException failure) { fail(failure.getMessage()); }
     }
 
@@ -230,6 +248,7 @@ final class TrackMode {
 
     void fail(String reason) {
         generation++;
+        failureReason = reason;
         if (state == State.CAPTURE) {
             state = State.IDLE;
             port.say("Track mode could not start: " + reason);

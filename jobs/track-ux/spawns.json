@@ -1,0 +1,277 @@
+[
+  {
+    "name": "diversity_parkour",
+    "old": [
+      8,
+      -64,
+      8
+    ],
+    "sourceSpawn": [
+      8,
+      -64,
+      8
+    ],
+    "sourceSpawnData": "{dimension:\"minecraft:overworld\",pitch:0.0f,pos:[I;8,-64,8],yaw:0.0f}",
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\diversity_parkour.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\diversity_parkour\\region\\r.0.0.mca": "6ff20c7358a0eb3fff867b5b15d4a4048dbd503f2c372a235e2c0f78f5b56848"
+    },
+    "status": "CHECKED",
+    "new": [
+      8,
+      0,
+      8
+    ]
+  },
+  {
+    "name": "parkour_race",
+    "old": [
+      30,
+      72,
+      3
+    ],
+    "sourceSpawn": [
+      30,
+      72,
+      3
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\parkour_race.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\parkour_race\\region\\r.0.0.mca": "d773eb0efa9917fe283f7f513be8e115294b2c14b00ecf0dccdabb3ca58d78e2"
+    },
+    "status": "CHECKED",
+    "new": [
+      30,
+      72,
+      3
+    ]
+  },
+  {
+    "name": "frosted_ices",
+    "old": [
+      -1013,
+      84,
+      337
+    ],
+    "sourceSpawn": [
+      -1013,
+      84,
+      337
+    ],
+    "sourceSpawnData": "{dimension:\"minecraft:overworld\",pitch:0.0f,pos:[I;-1013,84,337],yaw:90.0f}",
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\frosted_ices.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\frosted_ices\\region\\r.-2.0.mca": "eb7b855cd857e6fa0a73e52a91149c165414e22e51b1560f741841f53b2ff4d8"
+    },
+    "status": "CHECKED",
+    "new": [
+      -1013,
+      83,
+      337
+    ]
+  },
+  {
+    "name": "infinity_tower",
+    "old": [
+      0,
+      -60,
+      6
+    ],
+    "sourceSpawn": [
+      0,
+      -60,
+      6
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\infinity_tower.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\infinity_tower\\region\\r.0.0.mca": "8d13a31cffa10381e5b2deece06bd26c258849df6bae3748779ebc51835da55f"
+    },
+    "status": "CHECKED",
+    "new": [
+      0,
+      -60,
+      6
+    ]
+  },
+  {
+    "name": "delightful_dropper_2",
+    "old": [
+      0,
+      66,
+      0
+    ],
+    "sourceSpawn": [
+      0,
+      66,
+      0
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\delightful_dropper_2.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\delightful_dropper_2\\region\\r.0.0.mca": "e3d61c82de15fc2580ed4baaf84eeed2e71a3fc4b9088c6b34378b4036388245"
+    },
+    "status": "CHECKED",
+    "new": [
+      0,
+      66,
+      0
+    ]
+  },
+  {
+    "name": "easy_dropper",
+    "old": [
+      112,
+      54,
+      240
+    ],
+    "sourceSpawn": [
+      112,
+      54,
+      240
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\easy_dropper.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\easy_dropper\\region\\r.0.0.mca": "43f260154f8deef182c88281ce564a4e9d3fbe59f25ef2e238e13082cb9d2e5f"
+    },
+    "status": "CHECKED",
+    "new": [
+      112,
+      54,
+      240
+    ]
+  },
+  {
+    "name": "elytra_challenge_2",
+    "old": [
+      8,
+      239,
+      8
+    ],
+    "sourceSpawn": [
+      8,
+      239,
+      8
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\elytra_challenge_2.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\elytra_challenge_2\\region\\r.0.0.mca": "129f7fb515d49bc109d526dd43d53f0e824c563ed9c433c301a9c67e5f9ba140"
+    },
+    "status": "CHECKED",
+    "new": [
+      8,
+      239,
+      8
+    ]
+  },
+  {
+    "name": "elytra_challenge_3",
+    "old": [
+      0,
+      247,
+      0
+    ],
+    "sourceSpawn": [
+      0,
+      247,
+      0
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\elytra_challenge_3.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\elytra_challenge_3\\region\\r.0.0.mca": "28106ce8338bdb40690b95e33466a745fbd45ace1d1fee93398a9a3abbcaa37d"
+    },
+    "status": "CHECKED",
+    "new": [
+      0,
+      247,
+      0
+    ]
+  },
+  {
+    "name": "parkour_rectangle_3",
+    "old": [
+      -98,
+      137,
+      168
+    ],
+    "sourceSpawn": [
+      -98,
+      137,
+      168
+    ],
+    "sourceSpawnData": "{dimension:\"minecraft:overworld\",pitch:0.0f,pos:[I;-98,137,168],yaw:-180.0f}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\parkour_rectangle_3.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\parkour_rectangle_3\\region\\r.-1.0.mca": "9c4900765081936d048a2203388477e89bd71d0d941c0cc9d55258bff1c33a4b"
+    },
+    "status": "CHECKED",
+    "new": [
+      -98,
+      137,
+      168
+    ]
+  },
+  {
+    "name": "race_the_rainbow",
+    "old": [
+      8,
+      76,
+      8
+    ],
+    "sourceSpawn": [
+      8,
+      76,
+      8
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\race_the_rainbow.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\race_the_rainbow\\region\\r.0.0.mca": "02cdace5a0613e01f1747445b8056e3885dd180e54e12bd0ac5f2f553bad088c"
+    },
+    "status": "CHECKED",
+    "new": [
+      8,
+      76,
+      8
+    ]
+  },
+  {
+    "name": "the_drop_2",
+    "old": [
+      0,
+      0,
+      0
+    ],
+    "sourceSpawn": [
+      0,
+      0,
+      0
+    ],
+    "sourceSpawnData": "{}",
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\the_drop_2.zip",
+    "registrySha256": "c4a3c4209ed99f9ecd175bd9703ee3c431cae8b06c23ba67ab004e068787b6af",
+    "regionsSha256": {
+      "C:\\Users\\PASCAL\\Desktop\\path tracing\\server\\world\\dimensions\\pathtracing\\the_drop_2\\region\\r.0.0.mca": "a10758ef7e77b14a74d71a2879e21f1c706f620e0d319ff3aeb630c5fb109a21"
+    },
+    "status": "CHECKED",
+    "new": [
+      0,
+      0,
+      0
+    ]
+  }
+]

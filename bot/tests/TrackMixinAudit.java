@@ -19,6 +19,18 @@ final class TrackMixinAudit {
     static void run(Path modPath, Path gamePath) throws IOException {
         int injections = 0;
         try (var mod = new JarFile(modPath.toFile()); var game = new JarFile(gamePath.toFile())) {
+            require(calls(read(mod, "pathtracing/Tracks"), "pathtracing/RaceCommands", "tracks"), "Track registration uses the tested command tree");
+            require(calls(read(mod, "pathtracing/Maps"), "pathtracing/RaceCommands", "maps"), "Map registration uses the tested command tree");
+            require(calls(read(mod, "pathtracing/Tracks"), "pathtracing/TrackHumanRace", "tick"), "Client tick uses the tested human lifecycle");
+            var removed = read(game, "net/minecraft/server/level/ServerPlayer").methods.stream()
+                .filter(m -> m.name.equals("onEffectsRemoved")).findFirst().orElseThrow();
+            require(callIndex(removed, "net/minecraft/network/protocol/game/ClientboundRemoveMobEffectPacket", "<init>") >= 0,
+                "Mojang sends removal packets for completed player effects");
+            var effectTick = read(game, "net/minecraft/world/effect/MobEffectInstance").methods.stream()
+                .filter(m -> m.name.equals("tickServer")).findFirst().orElseThrow();
+            int apply = callIndex(effectTick, "net/minecraft/world/effect/MobEffect", "applyEffectTick");
+            require(apply >= 0 && apply < callIndex(effectTick, "net/minecraft/world/effect/MobEffectInstance", "tickDownDuration"),
+                "Effect application precedes expiry, the refill barrier");
             for (String name : List.of("TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin", "ClientPacketListenerMixin")) {
                 ClassNode mixin = read(mod, "pathtracing/mixin/" + name);
                 AnnotationNode declaration = annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations).stream()
@@ -66,6 +78,17 @@ final class TrackMixinAudit {
         }
         require(injections == 36, "Expected 36 checked injections, got " + injections);
         System.out.println("Verified " + injections + " compiled track injections against Minecraft 26.2.");
+    }
+
+    private static boolean calls(ClassNode type, String owner, String name) {
+        return type.methods.stream().anyMatch(method -> callIndex(method, owner, name) >= 0);
+    }
+
+    private static int callIndex(MethodNode method, String owner, String name) {
+        for (int i = 0; i < method.instructions.size(); i++) {
+            if (method.instructions.get(i) instanceof MethodInsnNode call && call.owner.equals(owner) && call.name.equals(name)) return i;
+        }
+        return -1;
     }
 
     private static ClassNode read(JarFile jar, String name) throws IOException {

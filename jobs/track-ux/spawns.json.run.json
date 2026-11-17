@@ -1,0 +1,10 @@
+{
+    "outputSha256":  "00E406E6BF06F7510A6A6CD6FAA664EF7CCFC985A6C1889511F969CD75A6EC80",
+    "inputRegistrySha256":  "C4A3C4209ED99F9ECD175BD9703EE3C431CAE8B06C23BA67AB004E068787B6AF",
+    "result":  "PASS",
+    "rig":  "C:\\Users\\PASCAL\\Desktop\\path tracing",
+    "command":  "scripts/audit-map-spawns.ps1",
+    "port":  25565,
+    "portClosedBeforeAndAfter":  true,
+    "rowsSha256":  "7D479EC00AB8A9EA96901F8E6AD4AD2244EA6FF0EE6EC178EDB281505CA008A1"
+}

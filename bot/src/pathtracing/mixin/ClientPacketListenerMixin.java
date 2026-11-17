@@ -11,7 +11,7 @@ import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
-import net.minecraft.network.protocol.game.ClientboundSetTimePacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveMobEffectPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateAttributesPacket;
 import net.minecraft.client.Minecraft;
@@ -40,9 +40,9 @@ abstract class ClientPacketListenerMixin {
         var p = Minecraft.getInstance().player;
         if (SprintDiagnostic.ENABLED && p != null && packet.id() == p.getId()) SprintDiagnostic.observe("entity-data-packet-return", p);
     }
-    @Inject(method = "handleSetTime", at = @At("RETURN"))
-    private void pathtracing$serverTick(ClientboundSetTimePacket packet, CallbackInfo ci) {
-        Tracks.serverTick();
+    @Inject(method = "handleRemoveMobEffect", at = @At("RETURN"))
+    private void pathtracing$refilled(ClientboundRemoveMobEffectPacket packet, CallbackInfo ci) {
+        Tracks.refillEffectRemoved(packet);
     }
 
     // RETURN runs after vanilla's main-thread check; HEAD would see each queued packet twice.

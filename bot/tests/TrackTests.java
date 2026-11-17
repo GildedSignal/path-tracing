@@ -28,6 +28,8 @@ public final class TrackTests {
             for (int index = 0; index < 100; index++) store.append("race", run("human", index + 1, Map.of(), "creation"));
             return;
         }
+        var suggestions = NameSuggestions.suggest(new com.mojang.brigadier.suggestion.SuggestionsBuilder("ha", 0), List.of("hard", "hat", "track")).join();
+        check(suggestions.getList().stream().map(x -> x.getText()).toList().equals(List.of("hard", "hat")), "Suggestions contain exactly the prefix matches");
         detector();
         for (String name : List.of("hard_track_2", "a-b")) TrackStore.validateName(name);
         for (String name : List.of("A", "a b", "a/b")) {

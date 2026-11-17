@@ -1,22 +1,18 @@
 package pathtracing;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.TreeMap;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 
 final class Maps {
     static void register() {
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) -> dispatcher.register(
-            ClientCommands.literal("map").executes(c -> run(null)).then(
-                ClientCommands.argument("name", StringArgumentType.word()).executes(c -> run(StringArgumentType.getString(c, "name"))))));
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) -> RaceCommands.maps(dispatcher,
+            Path.of(System.getProperty("pathtracing.rig", "."), "maps.json"), Maps::run));
     }
-
     private static int run(String name) {
         var mc = Minecraft.getInstance();
         try {

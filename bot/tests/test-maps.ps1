@@ -80,5 +80,19 @@ if ($Planner) {
   if (($reply -join "`n") -match 'track does not load|track dimension:|planner or export failed|unknown track') { throw "Planner failed before search: $reply" }
   $reply | Set-Content "$Destination\planner.txt" -Encoding ascii
 }
+# The audit must refuse an open port before it reads regions or writes output.
+$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$previousPort = $env:PATHTRACING_SERVER_PORT
+try {
+  $listener.Start()
+  $probePort = $listener.LocalEndpoint.Port
+  if ($probePort -gt 65525) { throw 'Ephemeral probe port leaves no RCON range.' }
+  $env:PATHTRACING_SERVER_PORT = [string]$probePort
+  $refused = $false
+  try { & "$Root\scripts\audit-map-spawns.ps1" -Output "$Destination\refused.json" -Record "$Destination\refused-record.json" }
+  catch { $refused = $_.Exception.Message.Contains('Refusing spawn audit: server port') }
+  if (-not $refused -or (Test-Path -LiteralPath "$Destination\refused.json")) { throw 'Spawn audit did not refuse the open port before writing.' }
+} finally { $listener.Stop(); $env:PATHTRACING_SERVER_PORT = $previousPort }
 @{command='bot/tests/test-maps.ps1'; destination=$Destination; serverJar=$(if ($ServerJar) {$ServerJar} else {$VanillaServerJar}); fixture=$fixture; planner=$Planner; result='PASS'; registryCounts=@(0,1,2,3); names=$names; spawns=$spawns; refusals=@('duplicate','A','a b','a/b','minecraft:the_nether','non-dimension datapack resource','PowerShell array wrapper')} | ConvertTo-Json -Depth 4 | Set-Content "$Destination\record.json" -Encoding ascii
 Write-Output "Map gate record: $Destination\record.json"
+Copy-Item -LiteralPath "$Destination\record.json" -Destination "$Root\jobs\track-ux\map-checks.json"

@@ -43,6 +43,7 @@ final class TrackModeTests {
         codecs(root.resolve("files"));
         allItems();
         entryCapture(root.resolve("entry"));
+        TrackRaceTests.run(root.resolve("races"), original, kit);
         transactions(root.resolve("transactions"));
         failures(root.resolve("failures"));
         serverOrdering(root.resolve("server-ordering"));
@@ -123,10 +124,9 @@ final class TrackModeTests {
         ready(mode, 1);
         check(!port.server.equals(withSpike) && store.readSession("human").inventory().equals(withSpike),
             "An existing kit without the spike leaves the original safe in the session");
-        mode.exit();
-        mode.tick(10);
         port.reply = false;
-        mode.tick(11);
+        mode.exit();
+        port.answer(); // Inventory accepted; final authoritative readback is still withheld.
         port.server = original;
         port.answer();
         check(mode.state() == TrackMode.State.FAILED && store.readSession("human").inventory().equals(withSpike)
@@ -257,6 +257,7 @@ final class TrackModeTests {
         boolean alive = true;
         boolean full;
         boolean permitMode = true;
+        boolean permitTarget = true;
         boolean permitSlots = true;
         boolean permitRefill = true;
         boolean reply = true;
@@ -280,6 +281,7 @@ final class TrackModeTests {
         @Override public void command(String command) {
             savedBeforeMutation();
             commands.add(command);
+            if (command.equals("gamemode survival") && !permitTarget) return;
             if (command.startsWith("gamemode ") && permitMode) {
                 serverMode = command.substring(9);
                 if (acknowledge) clientMode = serverMode;
@@ -310,7 +312,7 @@ final class TrackModeTests {
 
     private static void ready(TrackMode mode, long base) {
         for (long tick = base; tick < base + 10 && !mode.ready(); tick++) {
-            mode.serverTick();
+            mode.refillEffectRemoved(true); mode.refillEffectRemoved(false);
             mode.tick(tick);
         }
         check(mode.ready(), "Preparation reaches READY");
@@ -328,7 +330,7 @@ final class TrackModeTests {
         var port = new Server(store);
         var mode = new TrackMode(store, "human", port);
         mode.enter("course");
-        check(store.readSession("human").inventory().equals(original) && port.applications == 0 && port.commands.isEmpty(), "Entry saves before any change");
+        check(store.readSession("human").inventory().equals(original), "Entry retains the original before every mutation");
         check(port.messages.stream().anyMatch(s -> s.contains("kit saved")), "First entry announces captured kit");
         ready(mode, 1);
         check(port.server.equals(kit.withRaceStick("course")) && port.serverMode.equals("survival") && port.full, "Entry prepares survival with kit and full resources");
@@ -358,8 +360,8 @@ final class TrackModeTests {
         run.addProperty("T", detector.ticks());
         run.addProperty("trackCreated", "creation");
         store.save("course", run);
-        mode.exit();
         check(store.history("course").getFirst().get("T").getAsLong() == 7 && port.server.equals(kit.withRaceStick("course")), "Finished run is recorded before restoring");
+        mode.exit();
         exited(mode, port, 50);
         check(store.history("course").getFirst().get("gameMode").getAsString().equals("survival"), "Run records survival rather than restored mode");
         try { mode.replaceKit("course", true); throw new AssertionError("Run flag ignored"); }
@@ -387,21 +389,20 @@ final class TrackModeTests {
             var crashPort = new Server(crashStore);
             crashPort.clientMode = crashPort.serverMode = "adventure";
             var crashed = new TrackMode(crashStore, "human", crashPort);
+            crashPort.reply = false;
             crashed.enter("course");
-            if (!phase.equals("saved")) {
-                crashPort.reply = false;
-                crashed.tick(1);
-                if (!phase.equals("creative")) {
-                    crashPort.answer();
-                    if (!phase.equals("inventory")) {
-                        crashPort.reply = true;
-                        if (!phase.equals("survival")) ready(crashed, 2);
-                        if (phase.equals("restore-inventory")) { crashed.exit(); crashPort.reply = false; crashed.tick(10); }
-                    }
-                }
+            if (phase.equals("saved")) crashPort.permitMode = false;
+            if (phase.equals("creative")) crashPort.acknowledge = false;
+            crashPort.reply = !List.of("inventory", "survival").contains(phase);
+            crashPort.answer(); // Authoritative capture; preparation advances to the chosen boundary.
+            if (phase.equals("survival")) {
+                crashPort.acknowledge = false;
+                crashPort.answer(); // Inventory readback accepted, target mode acknowledgement withheld.
             }
+            if (List.of("ready", "restore-inventory").contains(phase)) ready(crashed, 2);
+            if (phase.equals("restore-inventory")) { crashPort.reply = false; crashed.exit(); }
             // New connection and state; server may still hold an intermediate inventory/mode.
-            crashPort.reply = true;
+            crashPort.reply = crashPort.permitMode = crashPort.acknowledge = true;
             var recovered = new TrackMode(crashStore, "human", crashPort);
             recovered.recover();
             for (long tick = 20; tick < 30 && recovered.active(); tick++) recovered.tick(tick);
@@ -416,18 +417,25 @@ final class TrackModeTests {
             var port = new Server(store);
             port.clientMode = port.serverMode = "adventure";
             var mode = new TrackMode(store, "human", port);
+            port.reply = false;
             mode.enter("course");
             switch (fault) {
                 case "permission" -> port.permitMode = false;
                 case "slots" -> port.permitSlots = false;
-                case "query" -> port.reply = false;
                 case "refill" -> port.permitRefill = false;
-                case "target-mode" -> { port.reply = false; mode.tick(1); port.permitMode = false; port.answer(); }
-                case "final-refusal" -> { port.reply = false; mode.tick(1); port.answer(); mode.tick(2); mode.serverTick(); mode.tick(3); port.server = original; port.answer(); }
-                case "restore-slots" -> { ready(mode, 1); mode.exit(); port.permitSlots = false; }
+                case "target-mode" -> port.permitTarget = false;
             }
+            port.reply = !fault.equals("query");
+            port.answer(); // Capture is authoritative; faults affect the transaction that follows.
+            if (fault.equals("final-refusal")) {
+                port.reply = false;
+                mode.refillEffectRemoved(true); mode.refillEffectRemoved(false);
+                port.server = original;
+                port.answer();
+            }
+            if (fault.equals("restore-slots")) { ready(mode, 1); port.permitSlots = false; mode.exit(); }
             for (long tick = 4; tick < 500 && mode.state() != TrackMode.State.FAILED; tick++) {
-                mode.serverTick();
+                mode.refillEffectRemoved(true); mode.refillEffectRemoved(false);
                 mode.tick(tick);
             }
             check(mode.state() == TrackMode.State.FAILED && store.readSession("human").inventory().equals(original), fault + " stops and retains original session");
@@ -437,7 +445,7 @@ final class TrackModeTests {
             int commands = port.commands.size();
             mode.tick(900);
             check(port.commands.size() == commands, "No automatic retries after " + fault);
-            port.permitMode = port.permitSlots = port.permitRefill = port.reply = true;
+            port.permitMode = port.permitTarget = port.permitSlots = port.permitRefill = port.reply = true;
             mode.exit();
             for (long tick = 1000; tick < 1010 && mode.active(); tick++) mode.tick(tick);
             check(!mode.active() && port.server.equals(original) && port.serverMode.equals("adventure"), "Explicit exit recovers after " + fault);
@@ -459,8 +467,9 @@ final class TrackModeTests {
         mode.exit();
         obsoleteReply.accept(new TrackMode.Observation(port.server, port.serverMode, true));
         obsoleteFailure.accept("Obsolete malformed server reply");
-        check(mode.state() == TrackMode.State.ALIVE && port.confirmations == 0, "Exit invalidates in-flight kit callback");
+        check(mode.state() == TrackMode.State.INVENTORY && port.confirmations == 0, "Exit invalidates in-flight kit callback");
         port.reply = port.acknowledge = true;
+        port.answer();
         for (long tick = 4; tick < 14 && mode.active(); tick++) mode.tick(tick);
         check(!mode.active() && port.server.equals(original) && port.serverMode.equals("adventure"), "Exit during preparation restores original session");
         mode.enter("course");
@@ -482,23 +491,24 @@ final class TrackModeTests {
         var mode = new TrackMode(store, "human", port);
         mode.enter("course");
         mode.tick(1);
-        check(port.pendingRefill && !port.full && mode.state() == TrackMode.State.TARGET,
+        check(port.pendingRefill && !port.full && mode.state() == TrackMode.State.REFILL,
             "Refill commands can be acknowledged before instant effects run on a server tick");
         mode.tick(2);
         mode.tick(3);
         check(mode.state() == TrackMode.State.REFILL && port.queries == 2,
             "Client ticks alone cannot verify the refill or arm the run");
         port.full = true;
-        mode.serverTick();
+        mode.refillEffectRemoved(true); mode.refillEffectRemoved(false);
         mode.tick(4);
         check(mode.ready() && port.queries == 3,
-            "A later server time packet permits one authoritative refill verification");
+            "Both effect completion packets permit one authoritative refill verification");
         mode.exit();
         exited(mode, port, 5);
 
         // A failed verification stops the transaction; old callbacks cannot break recovery.
-        mode.enter("course");
         port.reply = false;
+        mode.enter("course");
+        port.answer(); // Capture completes; the slot verification is withheld.
         mode.tick(20);
         var error = port.pendingFailure;
         error.accept("Server refused player data query");
@@ -506,8 +516,9 @@ final class TrackModeTests {
             "Malformed/refused verification retains the session and stops");
         mode.exit();
         error.accept("Late verification failure");
-        check(mode.state() == TrackMode.State.ALIVE, "Late verification errors cannot invalidate explicit recovery");
+        check(mode.state() == TrackMode.State.INVENTORY, "Late verification errors cannot invalidate explicit recovery");
         port.reply = true;
+        port.answer();
         exited(mode, port, 21);
         check(port.commands.stream().filter(c -> c.equals("gamemode creative")).count() == 4,
             "Every entry and exit explicitly requests creative, including an already-creative client");

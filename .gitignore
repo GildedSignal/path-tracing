@@ -5,6 +5,7 @@ bot/build/
 bot/lib/
 rig.lock
 maps.json
+!jobs/track-ux/maps.json
 maps.json.lock
 maps.json.*.tmp
 jobs/*/log.jsonl

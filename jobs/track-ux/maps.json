@@ -1,0 +1,112 @@
+[
+  {
+    "name": "diversity_parkour",
+    "spawn": [
+      8,
+      0,
+      8
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\diversity_parkour.zip",
+    "imported": "2026-11-16T15:38:00.4737631Z"
+  },
+  {
+    "name": "parkour_race",
+    "spawn": [
+      30,
+      72,
+      3
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\parkour_race.zip",
+    "imported": "2026-11-16T15:38:06.5240258Z"
+  },
+  {
+    "name": "frosted_ices",
+    "spawn": [
+      -1013,
+      83,
+      337
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\frosted_ices.zip",
+    "imported": "2026-11-16T15:38:14.0621535Z"
+  },
+  {
+    "name": "infinity_tower",
+    "spawn": [
+      0,
+      -60,
+      6
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261116\\infinity_tower.zip",
+    "imported": "2026-11-16T15:38:15.8938221Z"
+  },
+  {
+    "name": "delightful_dropper_2",
+    "spawn": [
+      0,
+      66,
+      0
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\delightful_dropper_2.zip",
+    "imported": "2026-11-17T11:59:50.8340551Z"
+  },
+  {
+    "name": "easy_dropper",
+    "spawn": [
+      112,
+      54,
+      240
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\easy_dropper.zip",
+    "imported": "2026-11-17T11:59:52.6089610Z"
+  },
+  {
+    "name": "elytra_challenge_2",
+    "spawn": [
+      8,
+      239,
+      8
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\elytra_challenge_2.zip",
+    "imported": "2026-11-17T11:59:54.3412209Z"
+  },
+  {
+    "name": "elytra_challenge_3",
+    "spawn": [
+      0,
+      247,
+      0
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\elytra_challenge_3.zip",
+    "imported": "2026-11-17T11:59:56.0940190Z"
+  },
+  {
+    "name": "parkour_rectangle_3",
+    "spawn": [
+      -98,
+      137,
+      168
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\parkour_rectangle_3.zip",
+    "imported": "2026-11-17T11:59:58.1319137Z"
+  },
+  {
+    "name": "race_the_rainbow",
+    "spawn": [
+      8,
+      76,
+      8
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\race_the_rainbow.zip",
+    "imported": "2026-11-17T12:00:00.5568522Z"
+  },
+  {
+    "name": "the_drop_2",
+    "spawn": [
+      0,
+      0,
+      0
+    ],
+    "source": "D:\\path-tracing-maps\\downloads-20261117\\the_drop_2.zip",
+    "imported": "2026-11-17T12:00:02.4302614Z"
+  }
+]
