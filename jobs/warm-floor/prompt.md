@@ -8,6 +8,15 @@ Julien asked what a million-block straight line would take in 100 ns (S212–S21
 
 Read also: `AGENTS.md` (no patches, no new search code, one mechanism, seal only what can't be corrected), `docs/plan.md`, `docs/learning.md` sections 0 and 6 (the kill tests), `docs/representation.md` section 10, `docs/engine.md` ("How it computes": store the generator), `docs/vocabulary.md`, and `jobs/u2b/last.md` with `jobs/u2b/verify.ps1` (every gate you must keep green).
 
+## Layer 0: the judge's three medium findings on your base (first)
+
+The Sonnet judge passed `e6de417` with findings (`C:\Users\PASCAL\Desktop\path tracing\jobs\u2b-judge\last.md`, read it). Fix these before layer 1:
+1. **One mechanism.** `engine/plan/src/solve.rs:140` picks one axis by `|dx|>=|dz|`, then a direction, then one zone face, and solves only that axis's crossing. The base used the generic `kernel_touch`. A touch of B is the first tick at which the body's box meets the target zone on every axis; derive it on both axes the same way, with no dominant-axis choice. Add a planted case that turns red under the old branch (a goal whose minor axis crosses last) and green after.
+2. **The frozen gate's full extent.** `pins_point_hold.rs` (SHA256 `B78EAAF3…FF82`) stays byte-unchanged, but what it asserts also lives in `engine/plan/tests/u2b/pin_gate.rs` and `premises.rs` (the oracle `run`, the fixtures, the expected counts 5/7/7/8/12/2/2). Record those two files' SHA256 at `e6de417` in `jobs/warm-floor/verify.ps1` and make it refuse when they change.
+3. **The recurrence guard.** The `#[ignore]` on `u2_contact_oracle_before_freeze` also hid its one real assertion: `law::contact::tick` equals `law::try_tick` bit for bit. Move that equality into a test that runs in the normal loop (all fixtures, all ticks); leave the printing diagnostic ignored.
+
+The judge's low findings (a dead Hold observation at `shapes.rs:399`, the literal 1e-7 beside `CONTACT_ZERO`, the old reds still in the tree) are for the phase cleanup, not for you.
+
 ## Layer 1: measure honestly (first; nothing else changes until it is in)
 
 1. **The headline is the interleaved warm solve.** For the three million-block goals (axis X, axis Z, oblique; the cells in `tests/zones_prereqs/u1.rs` and `tests/u2b_cost.rs`), report warm solves both ways: back to back, and each preceded by a cold solve on a fresh store (the U1 harness's way, `u1.rs:60-69`). n ≥ 100 each; min, median, p99, max, all samples. Windows' timer ticks at 100 ns: time a batch where a single sample is under 10 µs.
