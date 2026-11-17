@@ -356,6 +356,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "layers after layers starting from the most fundamental things is the proper way to go, bottom-up leads to better emergence rather than top-down which tends to be a set of wishes grounded in thoughts and prayers" | S191 | **Followed:** [plan.md](plan.md)'s order: the core, joints and sets, the simplest case right, then the loop on real tracks; learning and redstone after |
 | "hydrogen's build a very good. this will be used as a benchmark for the building of the swarm" (the pagoda, S195) | S197 | **Adopted:** [plan.md](plan.md) "Later"; blueprint `jobs/pagoda/build.txt` |
 | "yes lunch the opus and terra" (after u2b stopped on the pin premise) | S198–S199 | **Followed:** Opus re-derives the pinned exit (`jobs/pin-rederive`); Terra finishes the track fixes (`jobs/track-ux/continue-2.md`) |
+| "why are we doing a x y for heaving when we could use complex numbers? the player acts as a ball of influence not as a cube and it does so at each step" | S200 | **Answered** in chat, 17 November: between contacts the horizontal tick is one complex affine map and its reach is a disc; contacts are the box on the grid, axis by axis (`shapes.rs:87`), where the bits come from. **Open:** a disc frame for free motion and bounds, the grid only at contacts |
 
 ## Contradictions (kept side by side)
 
