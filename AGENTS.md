@@ -21,7 +21,7 @@ Most of it comes from **ES**, Julien's Emergent Space engine ([GildedSignal/emer
 | Integrator | Claude, main session: Fable 5.1 from 10 November (S63), Opus 5.5 before | orchestrates; specs, the word record, adjudication, merges, docs, the register |
 | Designer | Claude Opus 5.5 sub-agent, fresh context | red-teams each one-way door before it freezes |
 | Core builder | GPT `gpt-6-astra` through `codex exec` (S174, S209) | the core and the important builds, convergent math, hard design within a spec; the Codex window is hers ("maximize astra") |
-| Backfill builder | GPT `gpt-6.1-terra` through `codex exec` (S47, S209) | specs that leave nothing open, tooling, the leftover ~20% of the Codex window (S99: Sol 6 was not used; S215: Sol 6.2 is back on the table as a builder once we have access) |
+| Backfill builder | GPT `gpt-6.1-terra` through `codex exec` (S47, S209) | specs that leave nothing open, tooling, the leftover ~20% of the Codex window (S99: Sol 6 was not used; Sol 6.2 is available from 17 November, S217: `launch.ps1 <id> sol`) |
 | Judge | Sonnet 5.5 for GPT's work; GPT Terra for Claude's | gates and merges, by the other family in a fresh context |
 | Runner | Claude Haiku 5.5 | ladder runs, log digests, completeness checks |
 | Lab | GLM 5.3 through omp (S47) | **the port only** (S173: "glm is not very strong"): jar-backed port deltas, each checkable by a machine ([lab/glm.md](lab/glm.md)). Questions and premise tests go to Hydrogen or Terra |

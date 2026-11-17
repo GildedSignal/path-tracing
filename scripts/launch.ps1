@@ -8,7 +8,7 @@
 # Every job leaves jobs/<id>/last.md; `.\scripts\status.ps1` shows what runs and what waits to be read.
 param(
   [Parameter(Mandatory, Position = 0)][string]$Job,
-  [Parameter(Mandatory, Position = 1)][ValidateSet('terra','astra','sonnet','opus','argon','hydrogen')][string]$Who,
+  [Parameter(Mandatory, Position = 1)][ValidateSet('terra','astra','sol','sonnet','opus','argon','hydrogen')][string]$Who,
   [string]$Worktree,
   [string]$Base = 'main',
   [string[]]$ReadDir = @(),
@@ -22,15 +22,16 @@ if (-not (Test-Path (Join-Path $Root "jobs\$Job\prompt.md"))) { throw "No spec: 
 # S115: Antigravity is Sonnet only. Opus work runs on the native plan, through the integrator's Agent tool.
 if ($Who -eq 'opus') { throw 'Opus does not run on Antigravity (S115): use a native Opus sub-agent from the integrator.' }
 
-if ($Who -in 'terra','astra') {
+if ($Who -in 'terra','astra','sol') {
   if (-not $Worktree) { throw 'A GPT job needs -Worktree' }
-  # AGENTS: one GPT job beside Astra, four Terra at most, fresh first prompts only.
+  # AGENTS: one GPT job beside Astra, four Terra at most, fresh first prompts only. Sol 6.2 (S215, S217)
+  # counts as a big model like Astra until its cost per run is measured.
   # Count jobs, not codex processes: between a job's resume runs no codex.exe exists for a moment, and
   # 1.3d launched into such a gap beside Astra and 3.3h (14 November, 15:22). A follow-up runs gpt.ps1
   # inside follow-up.ps1 and is Astra unless it names another model.
   $running = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match '(gpt|follow-up)\.ps1' })
-  $astra = @($running | Where-Object { $_.CommandLine -match 'astra' -or ($_.CommandLine -match 'follow-up\.ps1' -and $_.CommandLine -notmatch 'terra') }).Count
-  if ($running.Count -ge 4 -or ($astra -and $running.Count -ge 2) -or ($Who -eq 'astra' -and $running.Count -ge 2)) {
+  $astra = @($running | Where-Object { $_.CommandLine -match 'astra|sol' -or ($_.CommandLine -match 'follow-up\.ps1' -and $_.CommandLine -notmatch 'terra') }).Count
+  if ($running.Count -ge 4 -or ($astra -and $running.Count -ge 2) -or ($Who -in 'astra','sol' -and $running.Count -ge 2)) {
     throw "GPT lane full: $($running.Count) running ($astra Astra). Wait, or queue it in jobs\queue.txt."
   }
   if (-not (Test-Path $Worktree) -and -not $DryRun) {
@@ -48,7 +49,7 @@ if ($Who -in 'terra','astra') {
   if (-not $DryRun -and (Test-Path (Join-Path $Root $fixture))) {
     robocopy (Join-Path $Root $fixture) (Join-Path $Worktree $fixture) /E /NFL /NDL /NJH /NJS /NP | Out-Null
   }
-  $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6-astra' }[$Who]
+  $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6-astra'; sol = 'gpt-6.2-sol' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gpt.ps1",'-Job',$Job,'-Worktree',$Worktree,'-Model',$model)
 } else {
   # S105: Antigravity's two meters each get a slot budget, counted in units: Gemini meter, one Argon (2)

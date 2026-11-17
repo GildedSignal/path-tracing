@@ -377,6 +377,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "the goal is basically to reduce the T total spent on a whole map on which a swarm is operating"; "a world doesn't change that much … BUT tools do change how you move in that world, an elytra is game changing especially when paired with farms"; "before we're really trading the compute vs lookup we need to dissolve the idiot index" | S214 | **Answered:** `jobs/hundred-ns/report.md` (native Opus, 17 November): the idiot index, the swarm Fermi, the four ideas red-teamed; layers await his word |
 | "sol 6.2 and astra 6.2 just dropped … would be back on the table for sol … i'd wait before i get access to them before lunching them. sol will be a great builder i suppose." | S215 | **Followed:** no launch on either until access is confirmed by one probe; then Sol 6.2 is tried as a builder (lifting S99 for 6.2) and Astra moves to 6.2 |
 | "just let it finish..." (the cold Astra resume two stale waiters launched at 19:32) | S216 | **Followed:** Astra finishes u2b; the integrator commits her final state and the judge reviews that, not `95552dc` |
+| "seems like sol6.2 is a strong builder and i have it now" | S217 | **Followed:** one probe confirmed `gpt-6.2-sol` (Astra 6.2 not yet offered to his account); `launch.ps1` takes `sol`, counted as a big model like Astra until its cost per run is measured |
 
 ## Contradictions (kept side by side)
 
