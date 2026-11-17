@@ -1,6 +1,6 @@
 # The loop on his tracks (step 3 of the plan)
 
-Builders (S225): **Sol 6.2 builds Part A** (his tracks as inputs and the harness), now; **Astra 6.2 builds Part B** (closing the loop in `solve`) after her current job, every new command on flat ground in microseconds (`jobs/warm-floor`), is judged. Written by the integrator, red-teamed by Opus before launch. Every fact below that came from a companion's report was checked by the integrator against the code on 17 November; the rest is cited to his words or the docs.
+Builders (S225): **Sol 6.2 builds Part A** (his tracks as inputs and the harness), now; **Astra 6.2 builds Part B** (closing the loop in `solve`) after her current job, every new command on flat ground in microseconds (`jobs/warm-floor`), is judged. Written and checked by the integrator; no Opus red-team (S226: the native week is nearly spent). Every fact below that came from a companion's report was checked by the integrator against the code on 17 November; the rest is cited to his words or the docs.
 
 ## Why
 
