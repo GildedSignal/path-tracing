@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory)][string]$Job,
   [Parameter(Mandatory)][string]$Worktree,
   [Parameter(Mandatory)][string]$Message,
-  [string]$Model = 'gpt-6-astra'
+  [string]$Model = 'gpt-6.2-astra'
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"

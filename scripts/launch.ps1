@@ -51,7 +51,7 @@ if ($Who -in 'terra','astra','sol') {
   if (-not $DryRun -and (Test-Path (Join-Path $Root $fixture))) {
     robocopy (Join-Path $Root $fixture) (Join-Path $Worktree $fixture) /E /NFL /NDL /NJH /NJS /NP | Out-Null
   }
-  $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6-astra'; sol = 'gpt-6.2-sol' }[$Who]
+  $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6.2-astra'; sol = 'gpt-6.2-sol' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gpt.ps1",'-Job',$Job,'-Worktree',$Worktree,'-Model',$model)
 } else {
   # S105: Antigravity's two meters each get a slot budget, counted in units: Gemini meter, one Argon (2)

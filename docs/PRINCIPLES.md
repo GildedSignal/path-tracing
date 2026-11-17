@@ -379,6 +379,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "just let it finish..." (the cold Astra resume two stale waiters launched at 19:32) | S216 | **Followed:** Astra finishes u2b; the integrator commits her final state and the judge reviews that, not `95552dc` |
 | "seems like sol6.2 is a strong builder and i have it now" | S217 | **Followed:** one probe confirmed `gpt-6.2-sol` (Astra 6.2 not yet offered to his account); `launch.ps1` takes `sol`, counted as a big model like Astra until its cost per run is measured |
 | "Yes, Sol builds 1–4" (Opus's layers: honest measurement, the yaw-free generator, data shaped like the read, one walk per axis) | S218 | **Followed:** `jobs/warm-floor` (Sol 6.2), on Astra's final u2b state once her resume ends |
+| "astra 6.2 is available for now" | S219 | **Followed:** one probe confirmed `gpt-6.2-astra`; `launch.ps1` and `follow-up.ps1` use it for new Astra jobs (the running u2b resume stays on Astra 6) |
 
 ## Contradictions (kept side by side)
 
