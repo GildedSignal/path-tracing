@@ -1,0 +1,13 @@
+[package]
+name = "pinx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+law = { path = "D:/path-tracing-wt/u2b-astra/engine/law" }
+words = { path = "D:/path-tracing-wt/u2b-astra/engine/words" }
+world = { path = "D:/path-tracing-wt/u2b-astra/engine/world" }
+plan = { path = "D:/path-tracing-wt/u2b-astra/engine/plan" }
+
+[profile.release]
+codegen-units = 1
