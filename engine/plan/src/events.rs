@@ -105,28 +105,29 @@ impl Graph {
 pub(crate) struct Family {pub region:Region,pub base:i128,pub delta:i128,pub count:u64,pub tick:u64,pub stride:u64,pub before:i128,pub after:i128,pub phase:usize}
 #[derive(Clone, Debug)]
 pub(crate) enum Piece {Family(Family),Boundary {tick:u64,before:f64,after:f64,phase:usize}}
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(crate) struct Fold {pub value:f64,pub segments:usize,pub pieces:Vec<Piece>}
 // Loops enumerate binary64 events, two parity states, or fixed word phases.
 // No loop bound is the requested cycle count.
-fn fold_map(map:&Map,start:f64,ticks:u64)->Fold {
+fn walk_map(map:&Map,start:f64,ticks:u64,mut emit:impl FnMut(Piece))->(f64,usize) {
     let ds=&map.ds;
-    assert!(!ds.is_empty());let mut p=start;let mut t=0;let mut pieces=Vec::new();let mut segments=0;
+    assert!(!ds.is_empty());let mut p=start;let mut t=0;let mut segments=0;
     if ds.iter().all(|d|*d==0.0) {
         // At most one word changes signed-zero ownership.
         for j in 0..ticks.min(ds.len() as u64) {p+=ds[j as usize];}
-        return Fold {value:p,segments:1,pieces};
+        return (p,1);
     }
     while t<ticks {
         segments+=1;let (region,k)=Region::at(p);let phase=t as usize%ds.len();
         let Some(graph)=map.graph(phase,region,k) else {
-            let next=p+ds[phase];assert!(next.is_finite());pieces.push(Piece::Boundary {tick:t+1,before:p,after:next,phase});p=next;t+=1;continue;
+            let next=p+ds[phase];assert!(next.is_finite());emit(Piece::Boundary {tick:t+1,before:p,after:next,phase});p=next;t+=1;continue;
         };
         let cycles=graph.safe_cycles(region,k,(ticks-t)/ds.len() as u64);let mut base=k;
         for (i,&index) in graph.order.iter().enumerate() {
             if i as u64>=cycles {break;}
             let node=&graph.nodes[index];let count=if i<graph.prefix {1} else {1+(cycles-1-i as u64)/graph.period as u64};
-            for j in 0..ds.len() {pieces.push(Piece::Family(Family {region,base,
+            for j in 0..ds.len() {emit(Piece::Family(Family {region,base,
                 delta:if i<graph.prefix {0} else {graph.total},count,tick:t+i as u64*ds.len() as u64+j as u64+1,
                 stride:graph.period as u64*ds.len() as u64,before:node.offset[j],after:node.offset[j+1],phase:(phase+j)%ds.len()}));}
             base+=node.delta;
@@ -139,15 +140,20 @@ fn fold_map(map:&Map,start:f64,ticks:u64)->Fold {
             if next<=region.lo || next>=region.hi {
                 if progressed>0 {p=region.value(current+node.offset[j]);}
                 let next=p+ds[(phase+j)%ds.len()];assert!(next.is_finite());
-                pieces.push(Piece::Boundary {tick:t+j as u64+1,before:p,after:next,phase:(phase+j)%ds.len()});p=next;progressed=j+1;break;
+                emit(Piece::Boundary {tick:t+j as u64+1,before:p,after:next,phase:(phase+j)%ds.len()});p=next;progressed=j+1;break;
             }
-            pieces.push(Piece::Family(Family {region,base:current,delta:0,count:1,tick:t+j as u64+1,stride:0,
+            emit(Piece::Family(Family {region,base:current,delta:0,count:1,tick:t+j as u64+1,stride:0,
                 before:node.offset[j],after:node.offset[j+1],phase:(phase+j)%ds.len()}));progressed=j+1;
             if progressed==available {p=region.value(next);}
         }
         assert!(progressed>0);t+=progressed as u64;
     }
-    Fold {value:p,segments,pieces}
+    (p,segments)
+}
+#[cfg(test)]
+fn fold_map(map:&Map,start:f64,ticks:u64)->Fold {
+    let mut pieces=Vec::new();let (value,segments)=walk_map(map,start,ticks,|p|pieces.push(p));
+    Fold {value,segments,pieces}
 }
 /// A generator's exact maps are shared across all coordinates, commands and
 /// counts in the same binade/parity regime. No position or goal is a cache key.
@@ -164,7 +170,13 @@ impl Map {
         let borrow=self.graphs.borrow();if borrow.get(&key).unwrap().is_none() {return None;}
         Some(Ref::map(borrow,|m|m.get(&key).unwrap().as_ref().unwrap()))
     }
+    #[cfg(test)]
     pub(crate) fn fold(&self,start:f64,ticks:u64)->Fold {fold_map(self,start,ticks)}
+    pub(crate) fn boundaries(&self,start:f64,ticks:u64)->(usize,Vec<u64>) {
+        let mut boundaries=Vec::new();
+        let (_,segments)=walk_map(self,start,ticks,|p|if let Piece::Boundary {tick,..}=p {boundaries.push(tick);});
+        (segments,boundaries)
+    }
     pub fn advance(&self,start:f64,ticks:u64)->f64 {advance_map(self,start,ticks)}
 }
 fn ceil_div(n:i128,d:i128)->i128 {-(-n).div_euclid(d)}
@@ -174,18 +186,18 @@ fn ceil_div(n:i128,d:i128)->i128 {-(-n).div_euclid(d)}
 pub fn horizon(from:&PlayerState,goal:Goal,increments:impl Iterator<Item=Vec3>+Clone,velocity:Vec3)->u64 {
     let axis=if velocity.x.abs()>=velocity.z.abs() {0} else {2};
     let get=|v:Vec3|if axis==0 {v.x} else {v.z};
-    let sign=get(velocity).signum();if sign==0.0 {return u32::MAX as u64;}
+    let sign=get(velocity).signum();if sign==0.0 {return words::Arguments::MAX_TICKS;}
     let biggest=increments.clone().map(|v|get(v).abs()).fold(0.0f64,f64::max);
     let zone=goal.zone();let r=from.bounding_box().max.minus(from.position);
     let edge=if sign>0.0 {get(zone.max)+get(r)+biggest} else {-get(zone.min)+get(r)+biggest};
     let far=edge.next_up();let start=sign*get(from.position);
     if start>far {return 0;}
     let exp=Binary64::of(start.abs().max(far.abs())).exp;
-    let Some((base,_))=quotient(start,exp) else {return u32::MAX as u64;};
-    let Some((end,_))=quotient(far,exp) else {return u32::MAX as u64;};
+    let Some((base,_))=quotient(start,exp) else {return words::Arguments::MAX_TICKS;};
+    let Some((end,_))=quotient(far,exp) else {return words::Arguments::MAX_TICKS;};
     let lower=increments.map(|v|quotient(sign*get(v),exp).map(|v|v.0-1).unwrap_or(0)).min().unwrap_or(0);
-    if lower<=0 {return u32::MAX as u64;}
-    ceil_div(end+1-base,lower).max(0).min(u32::MAX as i128) as u64
+    if lower<=0 {return words::Arguments::MAX_TICKS;}
+    ceil_div(end+1-base,lower).max(0).min(words::Arguments::MAX_TICKS as i128) as u64
 }
 
 /// Scalar form of P2: do not allocate the inverse's affine families when only
@@ -238,20 +250,21 @@ fn runs(start:f64,map:&Map,ticks:u64)->Vec<AxisRun> {
     let ds=&map.ds;
     let p=ds.len() as u64;
     if ds.iter().all(|&d|d==0.0) {return (0..p.min(ticks)).map(|phase|AxisRun {time:phase+1,stride:p,count:1+(ticks-phase-1)/p,values:Values::Exact(start,start)}).collect();}
-    map.fold(start,ticks).pieces.into_iter().map(|piece|match piece {
+    let mut out=Vec::new();
+    walk_map(map,start,ticks,|piece|out.push(match piece {
         Piece::Family(f)=>{debug_assert_eq!(f.phase as u64,(f.tick-1)%p);AxisRun {time:f.tick,stride:if f.stride==0 {p} else {f.stride},count:f.count,
             values:Values::Integer {region:f.region,base:f.base,delta:f.delta,before:f.before,after:f.after}}},
         Piece::Boundary {tick,before,after,phase}=>{debug_assert_eq!(phase as u64,(tick-1)%p);AxisRun {time:tick,stride:p,count:1,values:Values::Exact(before,after)}},
-    }).collect()
+    }));out
 }
-fn phase_pair(phases:&[PlayerState],phase:usize,x:(f64,f64),z:(f64,f64),goal:Goal,relax_y:bool)->(PlayerState,PlayerState) {
-    let mut a=phases[phase].clone();let mut b=phases[(phase+1)%phases.len()].clone();
-    a.position.x=x.0;b.position.x=x.1;a.position.z=z.0;b.position.z=z.1;
+fn phase_pair(phases:&[PlayerState],phase:usize,x:(f64,f64),z:(f64,f64),goal:Goal,relax_y:bool)->(law::Aabb,law::Aabb) {
+    let a=&phases[phase];let b=&phases[(phase+1)%phases.len()];
+    let mut ap=Vec3::new(x.0,a.position.y,z.0);let mut bp=Vec3::new(x.1,b.position.y,z.1);
     if relax_y {
         let zone=goal.zone();let y=(zone.min.y+zone.max.y-a.pose.height() as f64)/2.0;
-        a.position.y=y;b.position.y=y;
+        ap.y=y;bp.y=y;
     }
-    (a,b)
+    (law::Aabb::player(ap,a.pose.height()),law::Aabb::player(bp,b.pose.height()))
 }
 // Derive one coordinate's integer interval using the goal as the oracle. This
 // is the sole inverse acceptance definition: no AABB detector is copied here.
@@ -260,7 +273,7 @@ fn window(values:&Values,count:u64,axis:usize,phases:&[PlayerState],phase:usize,
     let predicate=|r:u64| {
         let v=values.pair(r);
         let (x,z)=if axis==0 {(v,(center.z,center.z))} else {((center.x,center.x),v)};
-        let (a,b)=phase_pair(phases,phase,x,z,goal,relax_y);goal.touched(&a,&b)
+        let (a,b)=phase_pair(phases,phase,x,z,goal,relax_y);goal.touched_boxes(a,b)
     };
     let seed=match *values {
         Values::Exact(_,_)=>if predicate(0) {0} else {return None;},
@@ -283,9 +296,24 @@ fn window(values:&Values,count:u64,axis:usize,phases:&[PlayerState],phase:usize,
             }
         }
     };
-    let mut lo=0;let mut hi=seed;
+    // Bracket from the accepted seed. A goal window is usually a few cycles
+    // wide even when the requested trip spans millions of ticks. Exponential
+    // bracketing is exact on this monotone affine family and uses the same
+    // acceptance oracle; there is no geometric epsilon or probe grid.
+    let mut hi=seed;let mut step=1u64;
+    let mut lo=loop {
+        let probe=seed.saturating_sub(step);
+        if !predicate(probe) {break probe+1;}
+        hi=probe;if probe==0 {break 0;}
+        step=step.saturating_mul(2);
+    };
     while lo<hi {let m=lo+(hi-lo)/2;if predicate(m) {hi=m;} else {lo=m+1;}}
-    let first=lo;lo=seed;hi=count;
+    let first=lo;lo=seed;step=1;
+    hi=loop {
+        let probe=seed.saturating_add(step).min(count);
+        if probe==count || !predicate(probe) {break probe;}
+        lo=probe;step=step.saturating_mul(2);
+    };
     while lo+1<hi {let m=lo+(hi-lo)/2;if predicate(m) {lo=m;} else {hi=m;}}
     Some((first,lo))
 }
@@ -315,6 +343,29 @@ pub fn first_touch_maps(from:&PlayerState,xmap:&Map,zmap:&Map,phases:&[PlayerSta
         let Some((zl,zh))=window(&zv,count,1,phases,phase,goal,relax_y) else {continue;};
         let r=xl.max(zl);if r>xh.min(zh) {continue;}
         let (a,b)=phase_pair(phases,phase,xv.pair(r),zv.pair(r),goal,relax_y);
-        if goal.touched(&a,&b) {let t=time+r*stride;best=Some(best.map_or(t,|old:u64|old.min(t)));}
+        if goal.touched_boxes(a,b) {let t=time+r*stride;best=Some(best.map_or(t,|old:u64|old.min(t)));}
     }}best
+}
+
+#[cfg(test)]
+mod fold_checks {
+    use super::*;
+    #[test]
+    fn folded_maps_equal_native_addition_and_endpoint() {
+        let mut checks=0;
+        for ds in [vec![0.0,-0.0],vec![0.25+2.0f64.powi(-47)],vec![0.3,0.2,-0.01],vec![-0.4,-0.3],vec![f64::from_bits(1)]] {
+            let map=Map::new(ds.clone());
+            for start in [-1000.0,-0.0,0.0,0.5,100.0,1023.75] {for ticks in [1,2,17,263,10003] {
+                let folded=map.fold(start,ticks);let mut native=start;
+                for t in 0..ticks {native+=ds[t as usize%ds.len()];}
+                assert_eq!(folded.value.to_bits(),native.to_bits());
+                assert_eq!(folded.value.to_bits(),map.advance(start,ticks).to_bits());
+                let (segments,boundaries)=map.boundaries(start,ticks);
+                assert_eq!(segments,folded.segments);
+                assert_eq!(boundaries,folded.pieces.iter().filter_map(|p|if let Piece::Boundary {tick,..}=p {Some(*tick)} else {None}).collect::<Vec<_>>());
+                checks+=1;
+            }}
+        }
+        println!("U2_MAPS cases={checks} worst_error_ulp=0");
+    }
 }

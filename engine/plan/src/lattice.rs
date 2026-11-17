@@ -43,7 +43,7 @@ fn ratio_floor(a:Dyadic,b:Dyadic)->i128 {
         for i in 0..256u32 {if p[(i/64) as usize]&(1u64<<(i%64))!=0 {assert!(i+other<256);d[((i+other)/64) as usize]|=1u64<<((i+other)%64);}}
         d
     };
-    let (mut lo,mut hi)=(0u32,u32::MAX);
+    let (mut lo,mut hi)=(0u32,words::Arguments::MAX_COUNT);
     while lo<hi {let m=lo+((hi as u64-lo as u64+1)/2) as u32;
         if denominator(m).iter().rev().cmp(n.iter().rev()).is_le() {lo=m;} else {hi=m-1;}}
     if negative {-(lo as i128)-i128::from(denominator(lo)!=n)} else {lo as i128}

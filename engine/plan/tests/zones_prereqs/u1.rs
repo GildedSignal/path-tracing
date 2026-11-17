@@ -43,6 +43,7 @@ fn u1_native_ten_thousand() {
 #[test]
 fn u1_kill_test_17_million_line_peaceful() {
     let (source,start)=setup();
+    let counted=plan::source::MeteredWorld::new(&source);
     assert_eq!(source.difficulty(),0);
     let n=if cfg!(debug_assertions) {3} else {100};
     for cell in [[1_000_000,-61,0],[0,-61,1_000_000],[1_000_000,-61,330_000]] {
@@ -57,14 +58,16 @@ fn u1_kill_test_17_million_line_peaceful() {
         replay(&source,&before_last,&tail,goal);
         for _ in 0..n {
             let fresh=GeneratorStore::default();let mut fresh_codec=Interner::default();source.reset_costs();
-            let clock=Instant::now();let p=ready(solve(&start,goal,Kit::BareLegs,&source,&fresh,&mut fresh_codec,u64::MAX));
+            counted.take_ticks();let clock=Instant::now();let p=ready(solve(&start,goal,Kit::BareLegs,&counted,&fresh,&mut fresh_codec,u64::MAX));
             cold.push(clock.elapsed().as_nanos());
+            assert_eq!(counted.take_ticks(),fresh.preparation_ticks(),"law ticks bypassed store metering");
             if let Some(t)=cold_ticks {assert_eq!(fresh.preparation_ticks(),t);} else {cold_ticks=Some(fresh.preparation_ticks());}
             assert_eq!(p.ticks,cold_plan.ticks);assert_eq!(source.costs().corridors,1);
             let ticks=store.preparation_ticks();source.reset_costs();let clock=Instant::now();
-            let result=solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);
+            let result=solve(&start,goal,Kit::BareLegs,&counted,&store,&mut codec,u64::MAX);
             assert!(!result.stages.iter().any(|s|matches!(s,Stage::Learn {..})));
             let p=ready(result);warm.push(clock.elapsed().as_nanos());
+            assert_eq!(counted.take_ticks(),0,"warm solve executed native ticks");
             profiles.push([p.thinking.entry_ns,p.thinking.bearing_ns,p.thinking.inverse_ns,p.thinking.output_ns]);
             assert_eq!(store.preparation_ticks(),ticks);assert_eq!(p.ticks,cold_plan.ticks);
             assert_eq!(source.costs().corridors,1);
@@ -119,12 +122,24 @@ fn u1_work_tracks_events_and_scars() {
 fn u1_kill_test_8_one_mechanism_and_scar_cut() {
     let (mut source,start)=setup();let store=GeneratorStore::default();let mut codec=Interner::default();let goal=Goal {cell:[1000,-61,0]};
     ready(solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX));
-    source.reset_costs();let clean=solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);
+    source.reset_costs();store.reset_reads();let metered=plan::source::MeteredWorld::new(&source);
+    let clean=solve(&start,goal,Kit::BareLegs,&metered,&store,&mut codec,u64::MAX);
+    assert_eq!(metered.ticks(),0,"warm solve executed native law ticks");
+    let clean_reads=store.reads();
+    assert!(clean_reads.kernels>0,"solve bypassed the generator store");
+    assert_eq!(clean_reads.bundle_hits,1,"warm solve did not consume its bundle");
     assert_eq!(&clean.stages[..3],&[Stage::Bracket,Stage::ClosedCheck,Stage::Extend]);
     for s in [Stage::Cut,Stage::Compose,Stage::Allocate] {assert!(clean.stages.contains(&s));}
-    assert!(matches!(clean.outcome,PlanOutcome::Ready(_)));assert_eq!(source.costs().corridors,1);
-    source.scars.insert([500,-60,0],Block::full());source.reset_costs();
-    let scar=solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);
+    let p=match &clean.outcome {PlanOutcome::Ready(p)=>p,_=>panic!("not ready")};
+    assert_eq!(source.costs().corridors,1,"solve bypassed the corridor query");
+    assert_eq!(p.words.iter().map(|w|w.ticks as u64).sum::<u64>(),p.ticks);
+    assert!(p.words.iter().any(|w|w.args.count>1));
+    replay(&source,&start,p,goal);
+    source.scars.insert([500,-60,0],Block::full());source.reset_costs();store.reset_reads();
+    let metered=plan::source::MeteredWorld::new(&source);
+    let scar=solve(&start,goal,Kit::BareLegs,&metered,&store,&mut codec,u64::MAX);
+    assert_eq!(metered.ticks(),0,"scar solve executed native law ticks");
+    assert_eq!(store.reads(),clean_reads,"clean and scarred solves read different generators");
     assert_eq!(&scar.stages[..3],&[Stage::Bracket,Stage::ClosedCheck,Stage::Extend]);
     assert_eq!(scar.stages.last(),Some(&Stage::Cut));assert_eq!(source.costs().corridors,1);
     assert!(matches!(scar.outcome,PlanOutcome::NeedsJoints {exception:[500,-60,0],..}));

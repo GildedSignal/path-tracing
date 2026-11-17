@@ -12,6 +12,48 @@ pub trait CorridorSource: World + Source {
     fn corridor_query(&self, codec:&mut Interner, label:LabelId, min:BlockPos, max:BlockPos)->CorridorResult;
 }
 
+/// Counts the shared native tick entry, including refused calls.
+/// Delegation preserves the source's collision acceleration and all observations.
+pub struct MeteredWorld<'a,W> {pub world:&'a W,ticks:Cell<u64>}
+impl<'a,W> MeteredWorld<'a,W> {
+    pub fn new(world:&'a W)->Self {Self {world,ticks:Cell::new(0)}}
+    pub fn ticks(&self)->u64 {self.ticks.get()}
+    pub fn take_ticks(&self)->u64 {self.ticks.replace(0)}
+}
+impl<W:World> World for MeteredWorld<'_,W> {
+    fn observe_tick(&self) {self.ticks.set(self.ticks.get()+1);self.world.observe_tick();}
+    fn block(&self,p:BlockPos)->&Block {self.world.block(p)}
+    fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}
+    fn fluid_block(&self,p:BlockPos)->&Block {self.world.fluid_block(p)}
+    fn raw_fluid_block(&self,p:BlockPos)->Option<&Block> {self.world.raw_fluid_block(p)}
+    fn model_id(&self,p:BlockPos)->Option<u16> {self.world.model_id(p)}
+    fn loaded(&self,p:BlockPos)->bool {self.world.loaded(p)}
+    fn difficulty(&self)->u8 {self.world.difficulty()}
+    fn natural_regeneration(&self)->bool {self.world.natural_regeneration()}
+    fn min_y(&self)->i32 {self.world.min_y()}
+    fn fast_lava(&self)->bool {self.world.fast_lava()}
+    fn has_fluid(&self)->bool {self.world.has_fluid()}
+    fn has_inside_effects(&self)->bool {self.world.has_inside_effects()}
+    fn read_state(&self,f:law::state_reads::StateField) {
+        self.world.read_state(f);
+    }
+    fn write_state(&self,f:law::state_reads::StateField) {self.world.write_state(f)}
+    fn observe_region(&self,q:law::footprint::Query,lo:BlockPos,hi:BlockPos) {self.world.observe_region(q,lo,hi)}
+    fn observe_sweep(&self,a:law::Aabb,b:law::Aabb) {self.world.observe_sweep(a,b)}
+    fn collision_cell_bounds(&self,b:law::Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> {self.world.collision_cell_bounds(b,lo,hi)}
+    fn visit_collision_cells(&self,b:law::Aabb,lo:BlockPos,hi:BlockPos,visit:impl FnMut(BlockPos)->bool)->bool {self.world.visit_collision_cells(b,lo,hi,visit)}
+    fn collision_shape(&self,p:BlockPos,c:law::CollisionContext)->&law::VoxelShape {self.world.collision_shape(p,c)}
+    fn extra_collisions(&self,b:law::Aabb,c:law::CollisionContext)->Vec<law::VoxelShape> {self.world.extra_collisions(b,c)}
+    fn visit_extra_collisions(&self,b:law::Aabb,c:law::CollisionContext,v:impl FnMut(law::shapes::ShapeView<'_>)->bool)->bool {self.world.visit_extra_collisions(b,c,v)}
+}
+impl<W:Source> Source for MeteredWorld<'_,W> {
+    fn cell(&self,t:u64,p:BlockPos,m:u8)->Result<Canonical,Refusal> {self.world.cell(t,p,m)}
+    fn environment(&self,t:u64,q:&EnvironmentRead)->Result<Canonical,Refusal> {self.world.environment(t,q)}
+}
+impl<W:CorridorSource> CorridorSource for MeteredWorld<'_,W> {
+    fn corridor_query(&self,c:&mut Interner,l:LabelId,lo:BlockPos,hi:BlockPos)->CorridorResult {self.world.corridor_query(c,l,lo,hi)}
+}
+
 pub fn label(codec:&mut Interner, world:&impl World, state:&PlayerState)->Result<LabelId,Refusal> {
     let feet=[state.position.x.floor() as i32,state.position.y.floor() as i32,state.position.z.floor() as i32];
     let support=state.main_supporting_block.unwrap_or([feet[0],feet[1]-1,feet[2]]);

@@ -104,7 +104,7 @@ fn local_role_planes_ignore_distant_cobweb_and_refuse_missing_bits() {
     let state = PlayerState { position: Vec3::new(0.5,0.0,0.5), on_ground: true, ..PlayerState::default() };
     let mut original = state.clone();
     let fp = RecordingWorld::new(&world).tick(&mut original, &Input::default()).footprint;
-    let binding = Binding::new(&state, b"local-inside-tube", 1);
+    let binding = Binding::new(&state, b"local-inside-tube", law::LAW_HASH);
     let mut certs = ReadCertificates::default();
     let id = certs.capture(&mut codec, binding.clone(), &[(0,&fp)], &source(&world)).unwrap();
     world.set([20,0,20], web.clone());
@@ -123,7 +123,7 @@ fn exact_edits_state_version_scope_and_owner_are_enforced() {
     let mut world = BoxWorld::default();
     world.difficulty = 0;
     let state = PlayerState::default();
-    let binding = Binding::new(&state, b"word/kit/context", 7);
+    let binding = Binding::new(&state, b"word/kit/context", law::LAW_HASH);
     let mut fp = Footprint::default();
     fp.reads.insert([0;3], Query::Shape as u8);
     let mut certificates = ReadCertificates::default();
@@ -131,9 +131,9 @@ fn exact_edits_state_version_scope_and_owner_are_enforced() {
     let Answer::Yes(proof) = certificates.answer(id, &binding) else { panic!("read certificate") };
     assert_eq!(certificates.validate(&proof, id, &binding), Ok(()));
     let mut changed = state.clone(); changed.velocity.x = 1.0;
-    assert!(matches!(certificates.answer(id, &Binding::new(&changed, b"word/kit/context", 7)), Answer::Unknown(Refusal::StateOrContext)));
-    assert!(matches!(certificates.answer(id, &Binding::new(&state, b"word/kit/context", 8)), Answer::Unknown(Refusal::Version)));
-    assert!(matches!(certificates.answer(id, &Binding::new(&state, b"different-word", 7)), Answer::Unknown(Refusal::StateOrContext)));
+    assert!(matches!(certificates.answer(id, &Binding::new(&changed, b"word/kit/context", law::LAW_HASH)), Answer::Unknown(Refusal::StateOrContext)));
+    assert!(matches!(certificates.answer(id, &Binding::new(&state, b"word/kit/context", [0;32])), Answer::Unknown(Refusal::Version)));
+    assert!(matches!(certificates.answer(id, &Binding::new(&state, b"different-word", law::LAW_HASH)), Answer::Unknown(Refusal::StateOrContext)));
     let mut other = ReadCertificates::default();
     other.capture(&mut codec, binding.clone(), &[(2, &fp)], &source(&world)).unwrap();
     assert_eq!(other.validate(&proof, id, &binding), Err(Refusal::UnknownCertificate));
@@ -156,7 +156,7 @@ fn exact_edits_state_version_scope_and_owner_are_enforced() {
 fn environment_schedule_and_lost_coverage_are_exact_and_unknown_never_becomes_no() {
     let mut codec = Interner::default();
     let mut world = BoxWorld::default(); world.difficulty = 0;
-    let binding = Binding::new(&PlayerState::default(), b"environment-read", 1);
+    let binding = Binding::new(&PlayerState::default(), b"environment-read", law::LAW_HASH);
     let mut fp = Footprint::default();
     fp.environment.push(law::footprint::EnvironmentRead::MinY(world.minimum_y));
     let mut certs = ReadCertificates::default();
@@ -189,7 +189,7 @@ fn native_wall_release_and_sneak_backoff_reads_invalidate() {
         let fp = RecordingWorld::new(&world).tick(&mut before, &input).footprint;
         let position = if sneak { [1,-1,0] } else { [1,0,0] };
         assert!(fp.reads[&position] & Query::Shape as u8 != 0, "sneak={sneak}: {position:?}");
-        let binding = Binding::new(&state, b"native-read-witness", 1);
+        let binding = Binding::new(&state, b"native-read-witness", law::LAW_HASH);
         let mut codec = Interner::default();
         let mut certs = ReadCertificates::default();
         let id = certs.capture(&mut codec, binding.clone(), &[(0,&fp)], &source(&world)).unwrap();

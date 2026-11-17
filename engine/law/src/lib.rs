@@ -1,4 +1,5 @@
 pub mod mining;
+include!(concat!(env!("OUT_DIR"),"/law_hash.rs"));
 pub mod codec;
 pub mod footprint;
 pub mod pattern;

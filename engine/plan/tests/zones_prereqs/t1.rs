@@ -1,4 +1,4 @@
-﻿use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, time::Instant};
+use std::{collections::HashMap, sync::atomic::{AtomicUsize, Ordering}, time::Instant};
 use law::{Block, BlockPos, PlayerState, World, codec::{self, Interner, Label, LegsRole, StateQuestion}, footprint::RecordingWorld, state_reads::{StateField as F, StateReads}};
 use law::codec::proof::{Binding, ReadCertificates, SnapshotSource};
 use plan::{flight::track, settle, Still};
@@ -6,6 +6,7 @@ use words::{Arguments, tiny_programs};
 
 struct Counted<'a, W> { world: &'a W, reads: AtomicUsize, ticks: AtomicUsize }
 impl<W: World> World for Counted<'_, W> {
+    fn observe_tick(&self) {self.ticks.fetch_add(1,Ordering::Relaxed);self.world.observe_tick();}
     fn block(&self, p: BlockPos) -> &Block { self.reads.fetch_add(1, Ordering::Relaxed); self.world.block(p) }
     fn read_state(&self, f: F) { self.reads.fetch_add(1, Ordering::Relaxed); self.world.read_state(f); }
     fn write_state(&self, f: F) { self.world.write_state(f); }
@@ -87,7 +88,7 @@ fn t1_observed_transient() {
         let recording = RecordingWorld::new(&world);
         let metered = Counted { world: &recording, reads: AtomicUsize::new(0), ticks: AtomicUsize::new(0) };
         let input = program.select(&metered, &state, (states.len()-1) as u32, args).unwrap().1;
-        metered.ticks.fetch_add(1, Ordering::Relaxed); law::try_tick(&mut state, &metered, &input).unwrap();
+        law::try_tick(&mut state, &metered, &input).unwrap();
         assert!(metered.reads.load(Ordering::Relaxed) > 0);
         footprints.push(recording.take()); states.push(state.clone());
         if let Some(&f) = seen.get(&cycle_key(&state)) { break (f, states.len()-1-f); }
@@ -104,7 +105,7 @@ fn t1_observed_transient() {
     let source = SnapshotSource { world: &world, ticks: (0, 4096), min: [285,-64,-490], max: [322,-48,-360] };
     let refs: Vec<_> = footprints.iter().enumerate().map(|(i,f)| (i as u64,f)).collect();
     let mut certs = ReadCertificates::default();
-    let cert = certs.capture(&mut codec, Binding::new(start, b"F S j a s n", 0), &refs, &source).unwrap();
+    let cert = certs.capture(&mut codec, Binding::new(start, b"F S j a s n", law::LAW_HASH), &refs, &source).unwrap();
     println!("prepared_entries={} certificate_cells={} cycle_increment=({:?},{:?})", memo.len(), certs.cells(cert).unwrap().len(), states[first+period].position.x-states[first].position.x, states[first+period].position.z-states[first].position.z);
     let mut times = Vec::new(); let mut failures = Vec::new();
     for (i,j,s) in &starts {
@@ -125,7 +126,7 @@ fn t1_observed_transient() {
         times.push(clock.elapsed().as_nanos());
         let hot = counted.reads.load(Ordering::Relaxed)-before; let hot_ticks = counted.ticks.load(Ordering::Relaxed)-tick_before;
         let mut reference = s.clone();
-        for n in 0..first { let input = program.select(&counted, &reference, n as u32, args).unwrap().1; counted.ticks.fetch_add(1, Ordering::Relaxed); law::try_tick(&mut reference, &counted, &input).unwrap(); }
+        for n in 0..first { let input = program.select(&counted, &reference, n as u32, args).unwrap().1; law::try_tick(&mut reference, &counted, &input).unwrap(); }
         if k != key { failures.push(format!("track={i} start={j} memo key mismatch {k:?} != {key:?}")); continue; }
         if hot != 0 || hot_ticks != 0 { failures.push(format!("track={i} start={j} hot world reads={hot} hot_tick_calls={hot_ticks}")); }
         let a = applied.unwrap();

@@ -49,11 +49,14 @@ pub struct Binding {
     state: Box<[u64]>,
     word_context: Box<[u8]>,
     schema: Box<[u8]>,
-    version: u64,
+    law_hash: [u8;32],
 }
 impl Binding {
-    pub fn new(state: &PlayerState, word_context: &[u8], version: u64) -> Self {
-        Self { state: state.bits().into(), word_context: word_context.into(), schema: SCHEMA.into(), version }
+    pub fn new(state: &PlayerState, word_context: &[u8], law_hash: [u8;32]) -> Self {
+        Self { state: state.bits().into(), word_context: word_context.into(), schema: SCHEMA.into(), law_hash }
+    }
+    pub fn plateau(pattern:super::JointPatternId,index:u32,law_hash:[u8;32])->Self {
+        Self {state:Box::new([]),word_context:[pattern.0.to_le_bytes(),index.to_le_bytes()].concat().into(),schema:SCHEMA.into(),law_hash}
     }
 }
 
@@ -132,7 +135,7 @@ impl ReadCertificates {
     pub fn answer(&self, id: usize, binding: &Binding) -> Answer<ReadsHold> {
         let Some(record) = self.records.get(id) else { return Answer::Unknown(Refusal::UnknownCertificate) };
         if record.binding.schema != binding.schema { return Answer::Unknown(Refusal::Schema); }
-        if record.binding.version != binding.version { return Answer::Unknown(Refusal::Version); }
+        if record.binding.law_hash != binding.law_hash || binding.law_hash!=crate::LAW_HASH { return Answer::Unknown(Refusal::Version); }
         if record.binding != *binding { return Answer::Unknown(Refusal::StateOrContext); }
         let proof = Proof { owner: self.owner.clone(), certificate: id, revision: record.revision, question: PhantomData };
         match &record.invalid { None => Answer::Yes(proof), Some(Refusal::Changed) => Answer::No(proof), Some(r) => Answer::Unknown(r.clone()) }

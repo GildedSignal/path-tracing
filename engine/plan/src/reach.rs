@@ -198,11 +198,11 @@ impl Field {
         let own: Vec<usize> = cells.iter().map(|cell| cell.premises.len()).collect();
         let mut field = Field { cells: HashMap::new(), standable: cells.len(), reached: 0, goals: 0, checks: 0, build_us: 0.0, asked: HashMap::new(), unreached: Vec::new(), joins: 0, broken: 0 };
         // The goal's own set: the cells where a standing body's box meets the region.
-        let zone = goal.zone();
         let mut open = BinaryHeap::new();
         for (id, cell) in cells.iter_mut().enumerate() {
             let [x, _, z] = cell.support;
-            if (x - goal.cell[0]).abs() <= 1 && (z - goal.cell[2]).abs() <= 1 && cell.y < zone.max.y && cell.y + PlayerState::default().pose.height() as f64 > zone.min.y {
+            let body=Aabb::player(Vec3::new(x as f64+0.5,cell.y,z as f64+0.5),PlayerState::default().pose.height());
+            if goal.touched_boxes(body,body) {
                 cell.t = 0;
                 field.goals += 1;
                 open.push(Reverse((0u32, id as u32)));

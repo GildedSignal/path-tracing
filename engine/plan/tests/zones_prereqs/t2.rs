@@ -1,4 +1,4 @@
-﻿//! P2 consumer: exact word maps and detector preimages for the zone kernel.
+//! P2 consumer: exact word maps and detector preimages for the zone kernel.
 use law::{PlayerState, Vec3};
 use plan::Goal;
 use std::{collections::HashMap, time::Instant};
@@ -157,24 +157,45 @@ fn phase_box(phases:&[PlayerState],phase:usize,x:f64)->law::Aabb {
     let s=&phases[phase];law::Aabb::player(Vec3::new(x,s.position.y,s.position.z),s.pose.height())
 }
 fn signed(b:Binary64)->i128 {if b.negative {-(b.mantissa as i128)} else {b.mantissa as i128}}
-// First integer k for which RN(k*2^exp + add) > edge. For finite Goal cells
-// and the law's body dimensions, the exact midpoint subtraction fits i128.
-// Huge scaling results are saturated only OUTSIDE the mantissa/count domain.
+// Exact signed dyadic sum for the midpoint subtraction, across binary64's
+// whole exponent range. The old i128 alignment overflowed at the zero edge
+// once the goal epsilon was removed. Native addition remains the independent oracle.
+const LIMBS:usize=((f64::MAX_EXP-f64::MIN_EXP+f64::MANTISSA_DIGITS as i32+1) as usize).div_ceil(64);
+fn compare(a:&[u64;LIMBS],b:&[u64;LIMBS])->std::cmp::Ordering {a.iter().rev().cmp(b.iter().rev())}
+fn subtract(a:&mut [u64;LIMBS],b:&[u64;LIMBS]) {
+    let mut borrow=false;
+    for i in 0..LIMBS {let (v,b0)=a[i].overflowing_sub(b[i]);let (v,b1)=v.overflowing_sub(borrow as u64);a[i]=v;borrow=b0||b1;}
+    assert!(!borrow);
+}
 fn inverse_edge(exp:i32,add:f64,edge:f64)->i128 {
     let a=Binary64::of(edge);let b=Binary64::of(edge.next_up());let c=Binary64::of(add);
-    let e=a.exp.min(b.exp);
-    let midpoint=(signed(a)<<(a.exp-e))+(signed(b)<<(b.exp-e));let midpoint_exp=e-1;
-    let common=midpoint_exp.min(c.exp);
-    let n=(midpoint<<(midpoint_exp-common))-(signed(c)<<(c.exp-common));
-    let shift=common-exp;
-    let (floor,ceil)=if n==0 {(0,0)} else if shift>=0 {
-        if 128-n.unsigned_abs().leading_zeros() as i32+shift>126 {
-            let outside=if n>0 {i128::MAX/2} else {i128::MIN/2};(outside,outside)
-        } else {let v=n<<shift;(v,v)}
-    } else if -shift>126 {if n>0 {(0,1)} else {(-1,0)}}
-    else {let d=1i128<<(-shift);(n.div_euclid(d),ceil_div(n,d))};
-    // A midpoint rounds toward the even endpoint. If edge is even, equality
-    // still rounds to edge; otherwise the midpoint already rounds above edge.
+    let terms=[(signed(a),a.exp-1),(signed(b),b.exp-1),(-signed(c),c.exp)];
+    let common=terms.iter().filter(|(n,_)|*n!=0).map(|(_,e)|*e).min().unwrap_or(0);
+    let mut magnitude=[0u64;LIMBS];let mut negative=false;
+    for (n,e) in terms {
+        if n==0 {continue;}
+        let mut term=[0u64;LIMBS];let shift=(e-common) as usize;let nabs=n.unsigned_abs();
+        for bit in 0..128 {if nabs&(1u128<<bit)!=0 {let at=bit+shift;term[at/64]|=1u64<<(at%64);}}
+        if negative==(n<0) {
+            let mut carry=false;
+            for i in 0..LIMBS {let (v,c0)=magnitude[i].overflowing_add(term[i]);let (v,c1)=v.overflowing_add(carry as u64);magnitude[i]=v;carry=c0||c1;}
+            assert!(!carry);
+        } else if compare(&magnitude,&term).is_ge() {subtract(&mut magnitude,&term);}
+        else {subtract(&mut term,&magnitude);magnitude=term;negative=n<0;}
+    }
+    let highest=magnitude.iter().rposition(|&w|w!=0).map(|i|i*64+63-magnitude[i].leading_zeros() as usize);
+    let (floor,ceil)=if let Some(highest)=highest {
+        let shift=common-exp;
+        if highest as i32+shift>125 {
+            let outside=if negative {i128::MIN/2} else {i128::MAX/2};(outside,outside)
+        } else {
+            let bit=|i:usize|i<LIMBS*64 && magnitude[i/64]&(1u64<<(i%64))!=0;
+            let mut integer=0i128;
+            for i in 0..126 {let source=i as i32-shift;if source>=0 && bit(source as usize) {integer|=1i128<<i;}}
+            let remainder=shift<0 && (0..(-shift) as usize).any(bit);
+            if negative {(-integer-remainder as i128,-integer)} else {(integer,integer+remainder as i128)}
+        }
+    } else {(0,0)};
     if edge.to_bits()&1==0 {floor+1} else {ceil}
 }
 fn first_touch(fold:&Fold,phases:&[PlayerState],goal:Goal)->Option<u64> {
@@ -186,16 +207,19 @@ fn first_touch(fold:&Fold,phases:&[PlayerState],goal:Goal)->Option<u64> {
             }
             Piece::Family(f)=> {
                 let tube=plan::goal::hull(phases[f.phase].bounding_box(),phases[(f.phase+1)%P].bounding_box());
-                if tube.min.y>=zone.max.y || tube.max.y<=zone.min.y || tube.min.z>=zone.max.z || tube.max.z<=zone.min.z {continue;}
+                if tube.min.y>zone.max.y || tube.max.y<zone.min.y || tube.min.z>zone.max.z || tube.max.z<zone.min.z {continue;}
                 // Positive-axis domain; the same families feed future two-yaw work.
                 assert!(f.after>=f.before && f.delta>=0);
                 let last=f.base+(f.count-1) as i128*f.delta;
-                if phase_box(phases,(f.phase+1)%P,f.region.value(last+f.after)).max.x<=zone.min.x
-                    || phase_box(phases,f.phase,f.region.value(f.base+f.before)).min.x>=zone.max.x {continue;}
-                let low=f.region.lo+1-f.before.min(f.after);let high=f.region.hi-1-f.before.max(f.after);if low>high {continue;}
+                if phase_box(phases,(f.phase+1)%P,f.region.value(last+f.after)).max.x<zone.min.x
+                    || phase_box(phases,f.phase,f.region.value(f.base+f.before)).min.x>zone.max.x {continue;}
+                // Family endpoints may lie on a binade boundary. The fold
+                // already proves its generated interval; the inverse must not
+                // discard the boundary's exact goal touch.
+                let low=f.region.lo-f.before.min(f.after);let high=f.region.hi-f.before.max(f.after);if low>high {continue;}
                 let radius=law::Aabb::player(Vec3::default(),phases[f.phase].pose.height()).max.x;
-                let enter=(inverse_edge(f.region.exp,radius,zone.min.x)-f.after).max(low);
-                let exit=(inverse_edge(f.region.exp,-radius,zone.max.x.next_down())-f.before-1).min(high);
+                let enter=(inverse_edge(f.region.exp,radius,zone.min.x.next_down())-f.after).max(low);
+                let exit=(inverse_edge(f.region.exp,-radius,zone.max.x)-f.before-1).min(high);
                 if enter>exit {continue;}
                 let r=if f.delta==0 {if f.base<enter || f.base>exit {continue;}0} else {ceil_div(enter-f.base,f.delta).max(0)};
                 if r>=f.count as i128 || f.base+r*f.delta>exit {continue;}Some(f.tick+r as u64*f.stride)
@@ -215,7 +239,7 @@ struct Prepared {world:law::BoxWorld,phases:Vec<PlayerState>,ds:Vec<f64>,input:l
 fn detector_count_limit(p:&Prepared,start:f64,goal:Goal)->u64 {
     let radius=law::Aabb::player(Vec3::default(),p.phases[0].pose.height()).max.x;
     let zone=goal.zone();let (region,_)=Region::at(zone.max.x);
-    let beyond=inverse_edge(region.exp,-radius,zone.max.x.next_down());
+    let beyond=inverse_edge(region.exp,-radius,zone.max.x);
     assert!(beyond>region.lo && beyond<region.hi);
     let far=region.value(beyond)+p.ds.iter().copied().reduce(f64::max).unwrap();
     assert!(far<region.value(region.hi)); // Last addition cannot need a coarser U.
@@ -354,9 +378,9 @@ fn t2_binade() {
         let projected=fold(x,&ds,1);assert_eq!(projected.value.to_bits(),after.position.x.to_bits());
         assert_eq!(after.position.y.to_bits(),phases[1].position.y.to_bits());assert_eq!(after.position.z.to_bits(),phases[1].position.z.to_bits());
         assert_eq!(motor(&after),motor(&phases[1]));
-        assert_eq!(first_touch(&projected,&phases,goal),goal.touched(&before,&after).then_some(1));edge_checks+=1;
+        assert_eq!(first_touch(&projected,&phases,goal),goal.touched(&before,&after).then_some(1),"phase={phase} x={x:?} bits={:x} before={:?} after={:?} pieces={:?}",x.to_bits(),before.position,after.position,projected.pieces);edge_checks+=1;
     }}}
-    let mut witness=p.phases[0].clone();witness.position=Vec3::new(-0.301000005,-60.0,-479.5);assert!(goal.touched(&witness,&witness));
+    let mut witness=p.phases[0].clone();witness.position=Vec3::new(zone.min.x-radius,-60.0,-479.5);assert!(goal.touched(&witness,&witness));
     println!("ASSERT detector law radius={radius:?} height={:?} edge_neighbours={edge_checks} PASS",witness.pose.height());
     println!("ASSERT comparisons positions+motor={comparisons} inverse={inverse_comparisons} PASS");
     for distance in [100,10_000,1_000_000] {

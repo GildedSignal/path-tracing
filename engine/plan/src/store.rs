@@ -5,9 +5,12 @@ use words::Arguments;
 use crate::{events,lattice};
 use std::borrow::Cow;
 
-pub const SPRINT_JUMP:u16=30;
-pub const SPRINT:u16=27;
-pub const WALK:u16=18;
+use words::program::{tiny_program_id,HeldPredicate::{Never,Always}};
+pub const SPRINT_JUMP:u16=tiny_program_id(0,true,Always,Never);
+pub const SPRINT:u16=tiny_program_id(0,true,Never,Never);
+pub const WALK:u16=tiny_program_id(0,false,Never,Never);
+#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
+pub struct StoreReads {pub kernels:u64,pub bundles:u64,pub bundle_hits:u64}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
 pub struct MotorKeyId(pub u32);
 pub fn sprint_allowed(s:&PlayerState)->bool {
@@ -138,32 +141,37 @@ pub struct WordBundle {
 type Bucket=(LabelId,u16,u16,u32);
 #[derive(Default)]
 struct Inner {motors:HashMap<Vec<u8>,MotorKeyId>,entries:HashMap<Bucket,Vec<(MotorKeyId,Arc<WordKernel>)>>,prepared:HashSet<(LabelId,u16,u16)>,bundles:HashMap<(LabelId,MotorKeyId,u16,u16,u16),Arc<WordBundle>>}
-pub struct GeneratorStore {inner:RefCell<Inner>,ticks:Cell<u64>,codec_key:Vec<u8>,codec_binding:Cell<Option<codec::ClassId>>}
+pub struct GeneratorStore {pub joints:RefCell<crate::joints::JointStore>,inner:RefCell<Inner>,ticks:Cell<u64>,reads:Cell<StoreReads>,codec_key:Vec<u8>,codec_binding:Cell<Option<codec::StateClassId>>}
 impl Default for GeneratorStore {
     fn default()->Self {
         static NEXT:AtomicU64=AtomicU64::new(0);
         let mut key=b"generator-store-owner/1".to_vec();key.extend(NEXT.fetch_add(1,Ordering::Relaxed).to_le_bytes());
-        Self {inner:RefCell::default(),ticks:Cell::new(0),codec_key:key,codec_binding:Cell::new(None)}
+        Self {joints:RefCell::default(),inner:RefCell::default(),ticks:Cell::new(0),reads:Cell::default(),codec_key:key,codec_binding:Cell::new(None)}
     }
 }
 impl GeneratorStore {
     /// LabelId and ClassId are local to one codec. One owner marker (not one
     /// class per motor key) prevents accidental reuse in another ID namespace.
     pub fn bind_codec(&self,codec:&mut codec::Interner)->bool {
-        if let Some(id)=self.codec_binding.get() {return codec.find(&self.codec_key)==Some(id);}
-        let Some(id)=codec.intern(&self.codec_key) else {return false;};self.codec_binding.set(Some(id));true
+        if let Some(id)=self.codec_binding.get() {return codec.find_state(&self.codec_key)==Some(id);}
+        let Some(id)=codec.intern_state(&self.codec_key) else {return false;};self.codec_binding.set(Some(id));true
     }
     pub fn bundle(&self,label:LabelId,from:&PlayerState,program:u16,pair:[u16;2])->Option<Arc<WordBundle>> {
+        let mut reads=self.reads.get();reads.bundles+=1;self.reads.set(reads);
         let first=self.get(label,from,program,pair[0])?;
         let bytes=codec::state_key(StateQuestion::Recurrence,&motor_words(from,first.reads,from.position.y.floor()));
         let inner=self.inner.borrow();let motor=*inner.motors.get(&bytes)?;
-        inner.bundles.get(&(label,motor,program,pair[0],pair[1])).cloned()
+        let result=inner.bundles.get(&(label,motor,program,pair[0],pair[1])).cloned();
+        if result.is_some() {let mut reads=self.reads.get();reads.bundle_hits+=1;self.reads.set(reads);}
+        result
     }
     pub fn file_bundle(&self,label:LabelId,from:&PlayerState,program:u16,pair:[u16;2],bundle:WordBundle)->Arc<WordBundle> {
         let motor=self.intern_motor(&motor_words(from,bundle.first.reads,from.position.y.floor()));let bundle=Arc::new(bundle);
         self.inner.borrow_mut().bundles.insert((label,motor,program,pair[0],pair[1]),bundle.clone());bundle
     }
     pub fn preparation_ticks(&self)->u64 {self.ticks.get()}
+    pub fn reads(&self)->StoreReads {self.reads.get()}
+    pub fn reset_reads(&self) {self.reads.set(StoreReads::default());}
     pub fn motor_count(&self)->usize {self.inner.borrow().motors.len()}
     pub fn intern_motor(&self,words:&[u64])->MotorKeyId {
         let bytes=codec::state_key(StateQuestion::Recurrence,words);let mut inner=self.inner.borrow_mut();
@@ -172,8 +180,9 @@ impl GeneratorStore {
     }
     pub fn prepared(&self,label:LabelId,program:u16,yaw:u16)->bool {self.inner.borrow().prepared.contains(&(label,program,yaw))}
     pub fn get(&self,label:LabelId,from:&PlayerState,program:u16,yaw:u16)->Option<Arc<WordKernel>> {
+        let mut reads=self.reads.get();reads.kernels+=1;self.reads.set(reads);
         let inner=self.inner.borrow();
-        let bucket=inner.entries.get(&(label,program,yaw,0.0f32.to_bits()))?;
+        let bucket=inner.entries.get(&(label,program,yaw,Arguments::default().pitch.to_bits()))?;
         for (id,k) in bucket {
             let key=codec::state_key(StateQuestion::Recurrence,&motor_words(from,k.reads,from.position.y.floor()));
             if inner.motors.get(&key)==Some(id) {return Some(k.clone());}
@@ -189,13 +198,14 @@ impl GeneratorStore {
         let anchor=from.position.y.floor();
         let mut state=from.clone();let mut states=vec![state.clone()];let mut moved=Vec::new();let mut clamps=Vec::new();
         let mut seen=HashMap::new();seen.insert(cycle_words(&state,anchor),0);
-        let recording=RecordingWorld::new(world);let mut footprint=Footprint::default();
+        let metered=crate::source::MeteredWorld::new(world);
+        let recording=RecordingWorld::new(&metered);let mut footprint=Footprint::default();
         let mut bounds=[[0,0];3];
         let (first,period)=loop {
             let origin=[state.position.x.floor() as i32,state.position.y.floor() as i32,state.position.z.floor() as i32];
             let input=p.select(&recording,&state,(states.len()-1) as u32,arguments).ok_or("no matching row")?.1;
-            self.ticks.set(self.ticks.get()+1);
             let (wanted,actual)=law::tick_with_collision(&mut state,&recording,&input).ok_or("word has no collision-law position update")?;
+            self.ticks.set(self.ticks.get()+metered.take_ticks());
             // The law can clamp a tiny horizontal operand even on a flat
             // floor. Store the actual addition operand and the clamp bit on
             // EVERY axis; wanted movement is not a translation certificate.

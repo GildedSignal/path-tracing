@@ -1,10 +1,10 @@
-﻿param([string]$Evidence = 'D:\path-tracing-evidence\u1')
+param([string]$Evidence = 'D:\path-tracing-evidence\u1')
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $env:PATH = 'D:\rust\cargo\bin;' + $env:PATH
 $env:RUSTUP_HOME = 'D:\rust\rustup'
 $env:CARGO_HOME = 'D:\rust\cargo'
-$env:CARGO_TARGET_DIR = 'D:\path-tracing-target\u1-astra'
+if (!$env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = 'D:\path-tracing-target\u1-astra' }
 [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'Normal'
 New-Item -ItemType Directory -Force -Path $Evidence | Out-Null
 $runs = [Collections.Generic.List[object]]::new()
@@ -59,18 +59,10 @@ try {
     New-Item -ItemType Directory -Force -Path $copy | Out-Null
     Get-ChildItem -LiteralPath $directory -File | Copy-Item -Destination $copy -Force
     Write-Output "footprints 13/13 CAUGHT; logs copied to $copy"
-    $path=Join-Path $root 'engine/plan/src/solve.rs'
-    $original=[IO.File]::ReadAllBytes($path)
-    $text=[IO.File]::ReadAllText($path)
-    $site='CorridorResult::Clear(p)=>p,'
-    if (!$text.Contains($site)) {throw 'Missing planted-fault site'}
-    try {
-        # Only the no-exception answer takes this shortcut. Losing its Extend
-        # stages is the planted uniform-ground bypass, caught by the same test.
-        [IO.File]::WriteAllText($path,$text.Replace($site,'CorridorResult::Clear(p)=>{stages.retain(|s| !matches!(s,Stage::Extend));p},'),[Text.UTF8Encoding]::new($false))
-        Run-Cargo 'kill8-planted' @('test','--offline','--release','-p','plan','--test','zones_prereqs','u1_kill_test_8_one_mechanism_and_scar_cut','--','--nocapture') -MustFail
-    } finally { [IO.File]::WriteAllBytes($path,$original) }
-    Run-Cargo 'kill8-restored' @('test','--offline','--release','-p','plan','--test','zones_prereqs','u1_kill_test_8_one_mechanism_and_scar_cut','--','--nocapture')
+    $mutantEvidence=Join-Path $Evidence 'core-mutants'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'jobs/u2/core-mutants.ps1') -Evidence $mutantEvidence
+    if ($LASTEXITCODE -ne 0) {throw 'Real bypass/native-tick/bundle mutation gates failed'}
+    $runs.Add([ordered]@{name='core-mutants';passed=$true;log=(Join-Path $mutantEvidence 'core-mutants.json')})
     foreach ($record in $inputs) {
         if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $record.file)).Hash -ne $record.sha256) {throw ('Input not restored: '+$record.file)}
     }

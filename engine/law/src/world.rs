@@ -306,6 +306,8 @@ impl CollisionContext {
     }
 }
 pub trait World {
+    /// Observation at the shared native tick entry, including refused ticks.
+    fn observe_tick(&self) {}
     fn block(&self, position: BlockPos) -> &Block;
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }

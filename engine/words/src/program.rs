@@ -94,6 +94,9 @@ impl Default for Arguments {
     fn default() -> Self { Self { count: 1, yaw_index: 0, refined_yaw: None, pitch: 0.0, max_ticks: 256 } }
 }
 impl Arguments {
+    /// Representation limits, not a physics horizon or a learning budget.
+    pub const MAX_TICKS:u64=u32::MAX as u64;
+    pub const MAX_COUNT:u32=u32::MAX;
     pub fn yaw(self) -> f32 {
         self.refined_yaw.unwrap_or_else(|| {
             let index = (self.yaw_index % 64) as u32 * 1024;
@@ -135,6 +138,13 @@ impl Program {
 
 /// 3 movement directions x 2 sprint choices x 3 jump predicates x 3 sneak
 /// predicates. No row names a technique or a block type.
+#[derive(Clone,Copy)]
+#[repr(u16)]
+pub enum HeldPredicate {Never,Always,OnGround}
+/// The product order of the toolkit, defined beside its generator.
+pub const fn tiny_program_id(strafe:i8,sprint:bool,jump:HeldPredicate,sneak:HeldPredicate)->u16 {
+    ((strafe+1) as u16*2+sprint as u16)*9+jump as u16*3+sneak as u16
+}
 pub fn tiny_programs() -> Vec<Program> {
     let predicates = [Predicate::Not(Box::new(Predicate::Always)), Predicate::Always, Predicate::OnGround];
     let mut programs = Vec::new();

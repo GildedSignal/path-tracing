@@ -3,7 +3,7 @@
 //! lookup is by class alone (job 3.2b): a proposal keeps the cells its learning replay read for
 //! one purpose, saying when its certificate is broken (`holds`). Nothing is filed by its exact start.
 use std::collections::{HashMap, HashSet};
-use law::{PlayerState, World, codec::{ClassId, Interner, state_bytes}, pattern::{Key, PatternError, PatternTable}, state_reads::StateReads};
+use law::{PlayerState, World, codec::{StateClassId, Interner, state_bytes}, pattern::{Key, PatternError, PatternTable}, state_reads::StateReads};
 use crate::{Arguments, Exit, Program, Segment, SegmentError, class::{self, ClassOf}, run_segment};
 
 /// How a replay ended.
@@ -145,7 +145,7 @@ pub struct ProposalTable {
     programs: Vec<Program>,
     /// The read masks seen: a state has one class under each.
     masks: Vec<StateReads>,
-    ids: HashMap<ClassId, u32>,
+    ids: HashMap<StateClassId, u32>,
     classes: Vec<ClassRecord>,
     proposals: Vec<Proposal>,
     /// Class and cells -> the proposals whose world part that is.
@@ -197,7 +197,7 @@ impl ProposalTable {
         }) as u32;
         let reads = segment.footprint.state_reads;
         let words = (self.class_of)(state, reads);
-        let answer = self.worlds.codec_mut().intern(&state_bytes(&words)).ok_or(PatternError::TableFull)?;
+        let answer = self.worlds.codec_mut().intern_state(&state_bytes(&words)).ok_or(PatternError::TableFull)?;
         let class = self.ids.get(&answer).copied();
         let known = class.and_then(|class| self.classes[class as usize].proposals.iter().copied()
             .find(|&id| (self.proposals[id as usize].program, self.proposals[id as usize].arguments) == (program, arguments)));
@@ -230,7 +230,7 @@ impl ProposalTable {
         let mut found = Vec::new();
         for index in 0..self.masks.len() {
             let words = (self.class_of)(state, self.masks[index]);
-            let Some(answer) = self.worlds.codec().find(&state_bytes(&words)) else { continue };
+            let Some(answer) = self.worlds.codec().find_state(&state_bytes(&words)) else { continue };
             let Some(&class) = self.ids.get(&answer) else { continue };
             let record = &mut self.classes[class as usize];
             record.decisions += 1;

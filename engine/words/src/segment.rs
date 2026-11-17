@@ -90,6 +90,10 @@ pub(crate) fn events(a: &PlayerState, b: &PlayerState) -> Exit {
     if body_block(a) != body_block(b) { exit |= ExitKind::BodyBlock.bit(); }
     Exit(exit)
 }
+/// The joint signature omits only the address-only body-block crossing.
+pub fn joint_events(a:&PlayerState,b:&PlayerState)->Exit {
+    Exit(events(a,b).0 & !ExitKind::BodyBlock.bit())
+}
 fn support(world: &impl World, state: &PlayerState) -> Result<Option<Vec<u8>>, PatternError> {
     state.main_supporting_block.map(|p| pattern::cell_bytes(world.block(p), world.loaded(p), 1 | 16)).transpose()
 }

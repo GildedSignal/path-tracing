@@ -17,6 +17,8 @@ pub use time::{Free, Scheduled, Still, Timeline};
 pub use walk::{Certificate, Halt, Lane, Step, advance, certify, settle};
 pub mod deviation;
 pub mod events;
+pub mod joints;
+pub mod faces;
 pub mod lattice;
 pub mod source;
 pub mod store;

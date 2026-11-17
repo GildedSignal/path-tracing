@@ -158,7 +158,7 @@ pub struct PatternTable<V> {
     shapes: Vec<Shape>,
     shape_ids: HashMap<Shape, u32>,
     starts: Vec<Box<[u64]>>,
-    start_ids: HashMap<crate::codec::ClassId, u32>,
+    start_ids: HashMap<crate::codec::StateClassId, u32>,
     shapes_from: HashMap<u32, Vec<u32>>,
     entries: HashMap<Key, Entry<V>>,
 }
@@ -223,7 +223,7 @@ impl<V> PatternTable<V> {
             None => { self.shapes.push(shape.clone()); self.shape_ids.insert(shape, self.shapes.len() as u32 - 1); self.shapes.len() as u32 - 1 }
         };
         let bits = start.words;
-        let answer = self.codec.intern(&crate::codec::state_key(start.question, &bits)).ok_or(PatternError::TableFull)?;
+        let answer = self.codec.intern_state(&crate::codec::state_key(start.question, &bits)).ok_or(PatternError::TableFull)?;
         let start = match self.start_ids.get(&answer) {
             Some(&id) => id,
             None => { self.starts.push(bits); self.start_ids.insert(answer, self.starts.len() as u32 - 1); self.starts.len() as u32 - 1 }
@@ -260,7 +260,7 @@ impl<V> PatternTable<V> {
     fn matching(&mut self, world: &impl World, start: &Start, first: bool) -> Vec<Key> {
         let origin = start.origin;
         let mut found = Vec::new();
-        let Some(answer) = self.codec.find(&crate::codec::state_key(start.question, &start.words)) else { return found };
+        let Some(answer) = self.codec.find_state(&crate::codec::state_key(start.question, &start.words)) else { return found };
         let Some(&start_id) = self.start_ids.get(&answer) else { return found };
         let mut memo = Memo::default();
         'shapes: for index in 0..self.shapes_from[&start_id].len() {

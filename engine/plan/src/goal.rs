@@ -8,16 +8,21 @@ pub const C: f64 = 19.902886 / 20.0;
 
 /// Touch B: the track detector's rule (bot/src/pathtracing/TrackDetector.java). A sample
 /// stops the clock when the box enclosing the body before and after the tick meets B's cell
-/// grown by 1e-3. Standing on B is inside this region.
+/// as a closed region, without epsilon. Standing exactly on B touches its top.
 #[derive(Clone, Copy, Debug)]
 pub struct Goal { pub cell: BlockPos }
 impl Goal {
     pub fn zone(&self) -> Aabb {
         let [x, y, z] = self.cell.map(|v| v as f64);
-        Aabb::new(x - 1e-3, y - 1e-3, z - 1e-3, x + 1.0 + 1e-3, y + 1.0 + 1e-3, z + 1.0 + 1e-3)
+        Aabb::new(x,y,z,x+1.0,y+1.0,z+1.0)
     }
     pub fn touched(&self, before: &PlayerState, after: &PlayerState) -> bool {
-        hull(before.bounding_box(), after.bounding_box()).intersects(self.zone())
+        self.touched_boxes(before.bounding_box(),after.bounding_box())
+    }
+    /// The same predicate for exact generator readouts, without copying states.
+    pub fn touched_boxes(&self,before:Aabb,after:Aabb)->bool {
+        let a=hull(before,after);let b=self.zone();
+        a.max.x>=b.min.x && a.min.x<=b.max.x && a.max.y>=b.min.y && a.min.y<=b.max.y && a.max.z>=b.min.z && a.min.z<=b.max.z
     }
     /// The horizontal distance from the body's box to the region.
     pub fn gap(&self, state: &PlayerState) -> f64 {

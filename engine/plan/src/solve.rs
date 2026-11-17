@@ -64,10 +64,9 @@ fn append_steps(out:&mut Vec<WordStep>,leg:&Leg,proof:&CorridorProof) {
         let mut map_segments=0;
         let before=if leg.cycle_only {cycle_at(k,&leg.from,offset-ticks)} else {k.at(&leg.from,offset-ticks)};
         let maps=if offset<=head {&k.transient_maps} else {&k.cycle_maps};
-        for (coordinate,map,expected) in [(before.position.x,&maps[0],end.position.x),(before.position.z,&maps[1],end.position.z)] {
-            let fold=map.fold(coordinate,ticks);
-            assert_eq!(fold.value.to_bits(),expected.to_bits(),"event map and endpoint map disagree");map_segments+=fold.segments;
-            for piece in fold.pieces {if let events::Piece::Boundary {tick,..}=piece {events.push(Event {tick:before.t+tick,kind:EventKind::BinadeCrossing});}}
+        for (coordinate,map) in [(before.position.x,&maps[0]),(before.position.z,&maps[1])] {
+            let (segments,boundaries)=map.boundaries(coordinate,ticks);map_segments+=segments;
+            for tick in boundaries {events.push(Event {tick:before.t+tick,kind:EventKind::BinadeCrossing});}
         }
         events.sort_by_key(|e|e.tick);events.dedup();
         out.push(WordStep {program:k.program,args:Arguments {count:count as u32,..k.arguments},ticks:ticks.try_into().expect("word tick width"),expected_end_t:end.t,events,certificate:proof.clone(),end,map_segments});
@@ -84,6 +83,14 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
         return SolveResult {outcome:PlanOutcome::Ready(Plan {ticks:0,words:Vec::new(),end:from.clone(),bracket:Bracket {lb:0,ub:Some(0)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking:Default::default()}),stages,explanation:None};
     }
     if source.difficulty()!=0 {return SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some("U1 requires invariant resource guards; server food crossings are not predicted".into())};}
+    // Read the certified joint relation for EVERY query. A known chain closes
+    // the bracket; an absent chain supplies no negative reach claim.
+    if let Some(route)=store.joints.borrow_mut().route(from,to) {
+        let label=route.words.first().unwrap().certificate.label;
+        stages.extend([Stage::Extend,Stage::Cut,Stage::Compose,Stage::ClosedCheck,Stage::Allocate]);
+        return SolveResult {outcome:PlanOutcome::Ready(Plan {ticks:route.ticks,words:route.words,end:route.end,
+            bracket:Bracket {lb:bracket.lb,ub:Some(route.ticks)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking:Default::default()}),stages,explanation:None};
+    }
     stages.push(Stage::Extend);
     let mut thinking=ThinkingCosts::default();let entry_clock=std::time::Instant::now();
     let mut work=||->Result<(Vec<Leg>,LabelId,lattice::LatticeCost),String> {
@@ -116,14 +123,18 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
         // Euclidean remainder; it never asserts that these counts touch B.
         let lo=Vec3::new(target.x-d.x.max(0.0)-radius.x,0.0,target.z-d.z.max(0.0)-radius.z);
         let hi=Vec3::new(target.x-d.x.min(0.0)+radius.x,0.0,target.z-d.z.min(0.0)+radius.z);
-        let cap=u32::MAX/first.cycle_period.max(second.cycle_period);
+        let cap=Arguments::MAX_COUNT/first.cycle_period.max(second.cycle_period);
         let bearing=lattice::counts(d1,d2,lo,hi,cap);
         thinking.bearing_ns=bearing_clock.elapsed().as_nanos();let inverse_clock=std::time::Instant::now();
         let mut candidates:Vec<(u64,Vec<Leg>)>=Vec::new();
         // The same store words also supply an incumbent from the observed
         // state, including displacements shorter than their entry transient.
-        for k in &bundle.incumbents {
-            if let Some(t)=kernel_touch(k,from,to,u32::MAX as u64) {candidates.push((t,vec![Leg {kernel:k.clone(),from:from.clone(),ticks:t,cycle_only:false}]));}
+        let mut incumbents:Vec<_>=bundle.incumbents.iter().map(|k|(word_lower_bound(k,from,to),k)).collect();
+        incumbents.sort_by_key(|&(lower,_)|lower);
+        for (lower,k) in incumbents {
+            let best=candidates.iter().map(|c|c.0).min().unwrap_or(words::Arguments::MAX_TICKS+1);
+            if lower>=best {continue;}
+            if let Some(t)=kernel_touch(k,from,to,best-1) {candidates.push((t,vec![Leg {kernel:k.clone(),from:from.clone(),ticks:t,cycle_only:false}]));}
         }
         let mut lattice_cost=lattice::LatticeCost::default();
         let mut bearings=Vec::new();
@@ -153,7 +164,7 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
                 for (lower,cut,carried,terminal) in jobs {
                     let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
                     if lower>=best {continue;}
-                    let horizon=best.saturating_sub(t1+t2+cut+1).min(u32::MAX as u64);
+                    let horizon=best.saturating_sub(t1+t2+cut+1).min(words::Arguments::MAX_TICKS);
                         if let Some(t)=kernel_touch(terminal,&carried,to,horizon) {
                             let legs=vec![Leg {kernel:first.clone(),from:from.clone(),ticks:t1,cycle_only:false},
                                 Leg {kernel:second.clone(),from:end1.clone(),ticks:t2,cycle_only:false},
@@ -181,17 +192,18 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
     let high=[max.x.floor() as i32+halo[0][1],max.y.floor() as i32+halo[1][1],max.z.floor() as i32+halo[2][1]];
     let proof=match source.corridor_query(codec,label,low,high) {
         CorridorResult::Clear(p)=>p,
-        CorridorResult::Exception {first_pos,exceptions}=>{stages.push(Stage::Cut);return SolveResult {outcome:PlanOutcome::NeedsJoints {exception:first_pos,exceptions,bracket},stages,explanation:None};},
+        CorridorResult::Exception {first_pos,exceptions}=>{stages.push(Stage::Cut);store.joints.borrow_mut().enqueue(from,bracket.lb,format!("corridor exception {first_pos:?}"));return SolveResult {outcome:PlanOutcome::NeedsJoints {exception:first_pos,exceptions,bracket},stages,explanation:None};},
         CorridorResult::Unknown(r)=>return SolveResult {outcome:PlanOutcome::Unknown(r),stages,explanation:None},
     };
     // A goal boundary and a terrain boundary go through the same cut/extend.
     stages.extend([Stage::Cut,Stage::Extend,Stage::Compose]);
     let mut words=Vec::new();for leg in &legs {append_steps(&mut words,leg,&proof);}
-    let end=legs.last().map(leg_end).unwrap_or_else(||from.clone());let ticks=end.t-from.t;
+    let end=legs.last().map(leg_end).unwrap_or_else(||from.clone());
     if let Some(step)=words.first_mut() {step.events.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
     for i in 1..words.len() {if words[i].args.refined_yaw!=words[i-1].args.refined_yaw {let tick=words[i-1].expected_end_t;words[i].events.push(Event {tick,kind:EventKind::YawSwitch});}}
     if let Some(step)=words.last_mut() {step.events.push(Event {tick:end.t,kind:EventKind::GoalBoundary});}
     for step in &mut words {step.events.sort_by_key(|e|e.tick);}
+    let route=crate::joints::compose_chain(from,to,words,&mut store.joints.borrow_mut().work);let words=route.words;let ticks=route.ticks;let end=route.end;
     stages.extend([Stage::ClosedCheck,Stage::Allocate]);
     thinking.output_ns=output_clock.elapsed().as_nanos();
     SolveResult {outcome:PlanOutcome::Ready(Plan {ticks,words,end,bracket:Bracket {lb:bracket.lb,ub:Some(ticks)},label,deadline:deadline_ticks,lattice_cost,thinking}),stages,explanation:None}

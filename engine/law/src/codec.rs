@@ -9,7 +9,7 @@ pub mod proof;
 #[path = "codec_planes.rs"]
 pub mod planes;
 
-pub const SCHEMA: &[u8] = b"law-role-codec/1";
+pub const SCHEMA: &[u8] = &crate::LAW_HASH;
 
 /// Exact content is the equality witness. Fingerprints are only bucket addresses.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -173,6 +173,11 @@ impl ProjectionTable {
 pub struct ClassId(pub(crate) u16);
 impl ClassId { pub fn index(self) -> u16 { self.0 } }
 
+#[derive(Clone,Copy,Debug,Hash,PartialEq,Eq)]
+pub struct StateClassId(pub u32);
+#[derive(Clone,Copy,Debug,Hash,PartialEq,Eq)]
+pub struct JointPatternId(pub u32);
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct LabelId(pub(crate) u32);
 impl LabelId { pub fn index(self) -> u32 { self.0 } }
@@ -185,6 +190,7 @@ pub struct Interner {
     buckets: HashMap<u128, Vec<ClassId>>,
     labels: Vec<Box<[u8]>>,
     label_buckets: HashMap<u128, Vec<LabelId>>,
+    states: HashMap<Vec<u8>,StateClassId>,
 }
 impl Default for Interner { fn default() -> Self { Self::with_digest(digest) } }
 
@@ -196,8 +202,14 @@ pub fn digest(bytes: &[u8]) -> u128 {
 impl Interner {
     /// Alternate bucket function for qualification, including forced collisions.
     pub fn with_digest(hash: fn(&[u8]) -> u128) -> Self {
-        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::new(), labels: Vec::new(), label_buckets: HashMap::new() }
+        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::new(), labels: Vec::new(), label_buckets: HashMap::new(),states:HashMap::new() }
     }
+    pub fn intern_state(&mut self,bytes:&[u8])->Option<StateClassId> {
+        if let Some(&id)=self.states.get(bytes) {return Some(id);}
+        let id=StateClassId(u32::try_from(self.states.len()).ok()?);self.states.insert(bytes.to_vec(),id);Some(id)
+    }
+    pub fn find_state(&self,bytes:&[u8])->Option<StateClassId> {self.states.get(bytes).copied()}
+    pub fn state_bytes_used(&self)->usize {self.states.keys().map(Vec::len).sum()}
     pub fn find(&self, bytes: &[u8]) -> Option<ClassId> { self.find_in((self.hash)(bytes), bytes) }
     fn find_in(&self, hash: u128, bytes: &[u8]) -> Option<ClassId> {
         self.buckets.get(&hash)?.iter().copied().find(|id| &*self.classes[id.0 as usize] == bytes)

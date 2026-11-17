@@ -118,6 +118,7 @@ mod swimming_witness {
 fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Result<(Option<(Vec3, Vec3)>, Option<ContactDamage>), Refusal> {
+    world.observe_tick();
     if read_state!(world, state.effects) {
         refuse!("LivingEntity: status effects other than none");
     }

@@ -52,13 +52,13 @@ impl Footprint {
         let mut answers = Vec::new();
         if self.state_reads.0 != 0 {
             let words = crate::codec::state_answers(state, self.state_reads);
-            let answer = codec.intern(&crate::codec::state_bytes(&words)).ok_or(crate::pattern::PatternError::TableFull)?;
+            let answer = ReadAnswer::State(codec.intern_state(&crate::codec::state_bytes(&words)).ok_or(crate::pattern::PatternError::TableFull)?);
             answers.push(AnswerRef { tick: state.t, source: ReadSource::State(self.state_reads), answer });
         }
         for (&position, &mask) in &self.reads {
             let bytes = crate::codec::cell(world.block(position), world.loaded(position), mask)?;
             let answer = codec.intern(bytes.bytes()).ok_or(crate::pattern::PatternError::TableFull)?;
-            answers.push(AnswerRef { tick: state.t, source: ReadSource::Cell { position, mask }, answer });
+            answers.push(AnswerRef { tick: state.t, source: ReadSource::Cell { position, mask }, answer:ReadAnswer::Cell(answer) });
         }
         Ok(answers)
     }
@@ -79,7 +79,9 @@ impl Footprint {
 #[derive(Clone, Debug)]
 pub enum ReadSource { Cell { position: BlockPos, mask: u8 }, State(StateReads) }
 #[derive(Clone, Debug)]
-pub struct AnswerRef { pub tick: u64, pub source: ReadSource, pub answer: crate::codec::ClassId }
+pub struct AnswerRef { pub tick: u64, pub source: ReadSource, pub answer: ReadAnswer }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum ReadAnswer {Cell(crate::codec::ClassId),State(crate::codec::StateClassId)}
 
 #[derive(Clone, Debug)]
 pub struct TickRecord {
@@ -270,13 +272,16 @@ fn cells(lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)) {
 }
 
 impl<W: World> World for RecordingWorld<'_, W> {
+    fn observe_tick(&self) {self.world.observe_tick();}
     #[inline]
     fn read_state(&self, field: StateField) {
         self.state_reads.set(self.state_reads.get() | (1 << field as u8) & !self.written.get());
+          self.world.read_state(field);
     }
     #[inline]
     fn write_state(&self, field: StateField) {
         self.written.set(self.written.get() | 1 << field as u8);
+          self.world.write_state(field);
     }
 
     fn block(&self, p: BlockPos) -> &Block {

@@ -21,7 +21,7 @@ fn collision_separates_proposal_classes_and_timed_certificates_use_the_same_owne
     assert_eq!(table.proposals(&start).len(), 1);
     assert_eq!(table.proposals(&changed).len(), 1);
     assert!(table.codec().digests().iter().all(|&hash| hash == 0));
-    let binding = Binding::new(&start, b"forward/bare/native", 1);
+    let binding = Binding::new(&start, b"forward/bare/native", law::LAW_HASH);
     let mut certificates = ReadCertificates::default();
     let source = SnapshotSource { world: &world, ticks: (0, u64::MAX), min: [-4;3], max: [4;3] };
     let id = segment.certify_reads(table.codec_mut(), &mut certificates, binding.clone(), &source).unwrap();
