@@ -382,6 +382,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "astra 6.2 is available for now" | S219 | **Followed:** one probe confirmed `gpt-6.2-astra`; `launch.ps1` and `follow-up.ps1` use it for new Astra jobs (the running u2b resume stays on Astra 6) |
 | (quoting the report of `e6de417`) "wasn't that old news?" | S220 | **Followed:** yes: the stale resume re-ran the integrator's sweep; only her review fixes and three added gates were new. Report what changed since the last report, not the totals again |
 | "you should've stopped it and told it that it was duplicate that was unserious i thought it was something not done already" | S221 | **Followed:** a choice put to him states plainly what is duplicate and what it costs; a duplicate run is stopped, or redirected to what is not done |
+| "you speed in steps and pass when  i said that i wanted real meanings" | S222 | **Followed:** say what a piece of work does and why it matters; never "step 3", "Part A", "pass 4" or a layer number as the explanation |
 
 ## Contradictions (kept side by side)
 
