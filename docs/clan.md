@@ -145,7 +145,7 @@ Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-20
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
 9. Terra halts the whole job at its first open question: settle every design question in the prompt ("decisions already made"), name the independent steps, and resume with a continuation, never a bare retry. A verdict goes to `jobs/<id>/last.md`, never only into chat.
-10. **Lints are part of every merge** (S210: "we do need linting"). Code: `cargo fmt --check` and `cargo clippy` with no new warnings on what the merge touches. Docs: no mojibake, the line budgets, no dead pointers. The scripts that enforce this are being built (`jobs/lint`).
+10. **Our docs are linted against his words, from time to time** (S210, S211: "our own docs should be lintet based on what i said looking for issues"). Argon reads every living doc beside his verbatim turns and the register, and reports drift, contradictions, stale claims, his rules not written down, and made-up names (`jobs/doc-lint`). It runs after each phase and whenever a doc has been rewritten at length. The integrator applies the fixes. The 16 November fork (`reference/postmortem-2026-11-16.md`) is what it exists to catch early.
 
 ## 6. How Google is reached, and the one decision it needs
 
