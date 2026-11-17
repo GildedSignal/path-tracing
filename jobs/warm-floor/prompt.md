@@ -19,10 +19,10 @@ The judge's low findings (a dead Hold observation at `shapes.rs:399`, the litera
 
 ## Layer 1: measure honestly (first; nothing else changes until it is in)
 
-1. **The headline is the interleaved warm solve.** For the three million-block goals (axis X, axis Z, oblique; the cells in `tests/zones_prereqs/u1.rs` and `tests/u2b_cost.rs`), report warm solves both ways: back to back, and each preceded by a cold solve on a fresh store (the U1 harness's way, `u1.rs:60-69`). n ≥ 100 each; min, median, p99, max, all samples. Windows' timer ticks at 100 ns: time a batch where a single sample is under 10 µs.
+1. **The headline is the thinking time per real command** (Julien, S223: "i care about the time it takes to think once the command is sent"; "warm" in his sense means the world is in memory, not that the same question was asked before). One living store and codec for the whole series, the world in memory, and every command a new goal: bearing uniform over the circle, distance log-uniform from 10² to 10⁶ blocks, from standing and from a moving start (a retarget mid-run). n ≥ 60 per series; min, median, p90, max, all samples, and law ticks prepared per command. The integrator's harness `engine/plan/tests/real_time.rs` (in `D:\path-tracing-wt\real-time`; copy it in) does this; its first numbers on your base are in `D:\path-tracing-evidence\real-time-20261117.log`. The "same goal asked again" series and the back-to-back and interleaved repeats of the three million-block goals are kept only as secondary rows, labelled as repeats, never as the thinking time. Windows' timer ticks at 100 ns: time a batch where a single sample is under 10 µs.
 2. **Counters, in the solve, read by the tests:** full-length walks of the distance per solve (a walk = iterating binade crossings from start to end on one axis); hash-map probes per solve; distinct phase records read; bytes allocated (already zero; keep it so).
 3. **A timer on a warm decision on a seen track:** time the warm solve in his shortcut's gate (`u2_kill10_discovered_program_current_record`, 158 ticks against his 169), same statistics. It is not timed anywhere today.
-4. **Gate:** on the unchanged code, the numbers reproduce the report's (57/69/92 µs back to back, 112/124/167 µs interleaved, within run-to-run spread, stated). Record them as the baseline.
+4. **Gate:** on the unchanged code, the real-command series reproduces the integrator's log within run-to-run spread, stated, and the repeat rows reproduce the report's (57/69/92 µs back to back, 112/124/167 µs interleaved). Record them all as the baseline.
 
 ## Layer 2: the yaw-free generator
 
@@ -41,7 +41,7 @@ Report items 4 and 9 and idea 3: phase records of at most 40 bytes holding what 
 ## Layer 4: one walk per axis
 
 Report items 5–8: walk the binade chain once per axis per solve and keep the crossings as the solve's table; every readout (anchor, both bearings' legs, envelopes, the touch) reads the table. Derive events only when something looks at them; the output is words, counts and the corridor box (engine.md). Look up the stop on B for the phase the touch tick fixes, after the lower bounds prune candidates (the u1 judge's fix c), not 36 times. On the axis, replace the count-cap binary search (`lattice.rs:31-49`, `167-175`) with the closed form in wider integers.
-**Gate:** the walk counter reads exactly one per axis per solve; the interleaved warm million line at or under 2 µs median on all three goals (the ~1 µs floor plus slack). If it misses, say exactly what remains with a profile; never loosen the target.
+**Gate:** the walk counter reads exactly one per axis per solve. The real-command series (new goals from standing and while moving) at or under 2× the idiot-index report's floors: about 10 µs for a command in a new direction (item 2: deriving the two yaw kernels plus the solve), about 1 µs once those kernels are in the store. If it misses, say exactly what remains with a profile; never loosen the target.
 
 ## What must stay true (every layer)
 

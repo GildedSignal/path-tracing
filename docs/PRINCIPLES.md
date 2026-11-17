@@ -383,6 +383,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | (quoting the report of `e6de417`) "wasn't that old news?" | S220 | **Followed:** yes: the stale resume re-ran the integrator's sweep; only her review fixes and three added gates were new. Report what changed since the last report, not the totals again |
 | "you should've stopped it and told it that it was duplicate that was unserious i thought it was something not done already" | S221 | **Followed:** a choice put to him states plainly what is duplicate and what it costs; a duplicate run is stopped, or redirected to what is not done |
 | "you speed in steps and pass when  i said that i wanted real meanings" | S222 | **Followed:** say what a piece of work does and why it matters; never "step 3", "Part A", "pass 4" or a layer number as the explanation |
+| "so you lied when you said about the numbers for the straight line tests … it doesn't mean anything if it has to rewarm at each new command … i care about the time it takes to think once the command is sent i thought warm was getting the data of the world in memory" | S223 | **Followed:** the "warm" figures were a repeated question, not a command; the real time per fresh command is measured (`real_time.rs`) and replaces them in the docs and gates |
 
 ## Contradictions (kept side by side)
 
