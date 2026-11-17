@@ -1,0 +1,484 @@
+# The Last Hearth (Small) — Pass 3: Structure and Envelope
+# Built on top of pass-2.txt; every replacement is grouped by zone and documented in report.md.
+# All IDs & states verified against engine/world/data/blocks.tsv (Minecraft Java 26.2).
+
+# === 1. RAVINE BED, ENCLOSED MOUNTAIN POOL & DAMP CLIFFS ===
+# Dark wet chasm floor (replaces pass-2 stone at x=426..431, y=-61)
+/fill 426 -61 -16 431 -61 15 minecraft:cobbled_deepslate
+/fill 427 -61 -12 430 -61 10 minecraft:tuff
+/fill 426 -61 -20 431 -61 -17 minecraft:tuff
+/fill 426 -61 16 431 -61 20 minecraft:tuff
+# North & south stone dams closing the water basin on all sides at y=-60 (x=425 & x=432 are solid rock)
+/fill 426 -60 -15 431 -60 -14 minecraft:tuff
+/fill 427 -60 -14 430 -60 -14 minecraft:cobbled_deepslate
+/setblock 428 -59 -14 minecraft:mossy_cobblestone
+/setblock 426 -59 -14 minecraft:tuff
+/fill 426 -60 12 431 -60 13 minecraft:tuff
+/fill 427 -60 12 429 -60 12 minecraft:cobbled_deepslate
+/setblock 430 -59 12 minecraft:mossy_cobblestone
+/setblock 427 -59 12 minecraft:gravel
+# Enclosed cold pool (water[level=0] at y=-60, closed on all 4 sides and below)
+/fill 426 -60 -13 431 -60 11 minecraft:water[level=0]
+# Vertical geological blending on ravine cliffs (avoiding sharp dark-under-light slab bands)
+/fill 425 -60 -13 425 -56 10 minecraft:tuff
+/fill 425 -60 -9 425 -58 4 minecraft:cobbled_deepslate
+/fill 425 -55 -11 425 -54 -3 minecraft:andesite
+/setblock 425 -55 -9 minecraft:tuff
+/setblock 425 -55 -5 minecraft:tuff
+/setblock 425 -54 -11 minecraft:andesite_slab[type=bottom]
+/setblock 425 -53 -11 minecraft:air
+/setblock 424 -53 -11 minecraft:andesite
+/fill 432 -60 -13 432 -56 12 minecraft:tuff
+/fill 432 -60 -8 432 -58 5 minecraft:cobbled_deepslate
+/fill 432 -55 -10 432 -54 5 minecraft:andesite
+# Shaded moss & ferns on damp ravine ledges
+/fill 425 -57 -10 425 -57 -4 minecraft:moss_block
+/setblock 425 -56 -8 minecraft:fern
+/setblock 425 -56 -5 minecraft:moss_carpet
+/fill 432 -57 -9 432 -57 -3 minecraft:moss_block
+/setblock 432 -56 -7 minecraft:fern
+/setblock 432 -56 -4 minecraft:moss_carpet
+/setblock 432 -55 -2 minecraft:moss_block
+
+# === 2. BROKEN BRIDGE ABUTMENTS & FALLEN ARCH MASONRY ===
+# Backfill solid pier masonry behind undercut faces & keep outer pier ribs (z=-1, z=2) solid into pool
+/fill 424 -60 -1 424 -54 2 minecraft:tuff_bricks
+/fill 424 -60 0 424 -58 1 minecraft:cobbled_deepslate
+/fill 425 -60 -1 425 -54 -1 minecraft:stone_bricks
+/fill 425 -60 2 425 -54 2 minecraft:stone_bricks
+/setblock 425 -60 -1 minecraft:tuff_bricks
+/setblock 425 -60 2 minecraft:tuff_bricks
+/fill 433 -60 -1 433 -54 2 minecraft:stone_bricks
+/fill 433 -60 0 433 -57 1 minecraft:tuff_bricks
+/fill 432 -60 -1 432 -54 -1 minecraft:stone_bricks
+/fill 432 -60 2 432 -54 2 minecraft:stone_bricks
+/setblock 432 -60 -1 minecraft:tuff_bricks
+/setblock 432 -60 2 minecraft:tuff_bricks
+# Undercut center of chasm faces (z=0..1) to show collapsed arch springings
+/fill 425 -60 0 425 -56 1 minecraft:air
+/fill 425 -60 0 425 -60 1 minecraft:water[level=0]
+/setblock 425 -55 0 minecraft:stone_brick_stairs[facing=west,half=top,shape=straight]
+/setblock 425 -55 1 minecraft:stone_brick_stairs[facing=west,half=top,shape=straight]
+/fill 432 -60 0 432 -56 1 minecraft:air
+/fill 432 -60 0 432 -60 1 minecraft:water[level=0]
+/setblock 432 -55 0 minecraft:stone_brick_stairs[facing=east,half=top,shape=straight]
+/setblock 432 -55 1 minecraft:stone_brick_stairs[facing=east,half=top,shape=straight]
+# Surviving arch ribs jutting 1 block into chasm from solid piers
+/setblock 426 -54 -1 minecraft:stone_brick_stairs[facing=west,half=top,shape=straight]
+/setblock 426 -54 2 minecraft:stone_brick_stairs[facing=west,half=top,shape=straight]
+/setblock 426 -53 -1 minecraft:mossy_stone_brick_slab[type=bottom]
+/setblock 431 -54 -1 minecraft:stone_brick_stairs[facing=east,half=top,shape=straight]
+/setblock 431 -54 2 minecraft:stone_brick_stairs[facing=east,half=top,shape=straight]
+/setblock 431 -53 2 minecraft:cracked_stone_bricks
+# Fracture & weathering on abutment decks and edges
+/setblock 425 -53 0 minecraft:cracked_stone_bricks
+/setblock 425 -53 1 minecraft:stone_brick_slab[type=top]
+/setblock 424 -53 2 minecraft:mossy_stone_bricks
+/setblock 422 -53 -1 minecraft:cracked_stone_bricks
+/setblock 432 -53 0 minecraft:stone_brick_slab[type=top]
+/setblock 432 -53 1 minecraft:cracked_stone_bricks
+/setblock 433 -53 -1 minecraft:mossy_stone_bricks
+# Broken stone-brick bridge parapets along abutment sides (y=-52)
+/fill 420 -52 -1 423 -52 -1 minecraft:stone_brick_wall
+/setblock 424 -52 -1 minecraft:stone_brick_slab[type=bottom]
+/fill 420 -52 2 422 -52 2 minecraft:stone_brick_wall
+/setblock 423 -52 2 minecraft:mossy_stone_brick_wall
+/setblock 424 -52 2 minecraft:stone_brick_slab[type=bottom]
+/fill 433 -52 -1 435 -52 -1 minecraft:stone_brick_wall
+/setblock 432 -52 -1 minecraft:stone_brick_slab[type=bottom]
+/fill 433 -52 2 435 -52 2 minecraft:mossy_stone_brick_wall
+# Fallen bridge voussoirs & mossy stone resting on the chasm bed (in the pool)
+/setblock 427 -60 0 minecraft:mossy_stone_bricks
+/setblock 428 -60 1 minecraft:cracked_stone_bricks
+/setblock 428 -59 1 minecraft:mossy_stone_brick_slab[type=bottom]
+/setblock 429 -60 -1 minecraft:stone_bricks
+/setblock 430 -60 1 minecraft:mossy_cobblestone
+/setblock 430 -60 2 minecraft:stone_brick_stairs[facing=west,half=bottom,shape=straight]
+/setblock 427 -60 -2 minecraft:mossy_cobblestone
+/setblock 429 -60 3 minecraft:tuff
+
+# === 3. TERRAIN DIFFERENTIATION: SPUR, SW CRAG, LANDSLIDE TALUS & EAST CLIFFS ===
+# Blend west spur nose & north/south edges gently into the meadow (no floating boulders or sharp slabs)
+/fill 402 -61 -9 405 -61 -4 minecraft:grass_block
+/fill 402 -61 7 406 -61 11 minecraft:grass_block
+/fill 402 -60 -4 403 -60 1 minecraft:air
+/fill 402 -61 -4 403 -61 2 minecraft:grass_block
+/setblock 403 -60 -2 minecraft:andesite_slab[type=bottom]
+/setblock 403 -60 1 minecraft:short_grass
+/fill 404 -60 -4 405 -60 -1 minecraft:grass_block
+/setblock 404 -60 0 minecraft:grass_block
+/setblock 404 -60 1 minecraft:andesite_slab[type=bottom]
+/setblock 404 -59 -3 minecraft:andesite_slab[type=bottom]
+/setblock 405 -59 -2 minecraft:andesite
+/setblock 405 -58 -5 minecraft:grass_block
+/setblock 405 -57 -5 minecraft:fern
+/fill 406 -60 -16 409 -60 -8 minecraft:grass_block
+/fill 408 -61 -18 424 -61 -17 minecraft:grass_block
+/fill 411 -61 18 423 -61 19 minecraft:grass_block
+/fill 415 -60 -16 424 -60 -16 minecraft:grass_block
+/fill 414 -59 -16 424 -59 -16 minecraft:moss_block
+/fill 415 -57 -15 424 -57 -14 minecraft:moss_block
+/fill 411 -58 -15 414 -58 -14 minecraft:grass_block
+/fill 412 -55 -13 424 -55 -12 minecraft:tuff
+/fill 412 -55 -12 424 -55 -12 minecraft:andesite
+/fill 418 -54 -11 424 -54 -11 minecraft:andesite
+# West spur rocky shoulder framing s4-porch (solidly grounded down to y=-60)
+/fill 406 -60 -4 406 -57 -2 minecraft:andesite
+/fill 407 -60 -4 408 -54 -2 minecraft:andesite
+/setblock 406 -58 -6 minecraft:grass_block
+/setblock 407 -58 -5 minecraft:andesite
+/setblock 408 -57 -4 minecraft:andesite
+/setblock 408 -55 -6 minecraft:andesite_slab[type=bottom]
+/setblock 408 -54 -7 minecraft:andesite
+/setblock 409 -52 -8 minecraft:andesite
+/setblock 409 -52 -7 minecraft:andesite_slab[type=bottom]
+/setblock 409 -52 -6 minecraft:andesite_slab[type=bottom]
+/setblock 408 -53 -3 minecraft:andesite
+/setblock 408 -52 -3 minecraft:moss_carpet
+/setblock 407 -53 -3 minecraft:andesite_slab[type=bottom]
+# SW Crag natural andesite/tuff rock shaping
+/fill 414 -47 11 416 -46 14 minecraft:andesite
+/setblock 415 -45 12 minecraft:andesite_slab[type=bottom]
+/setblock 414 -46 14 minecraft:andesite_stairs[facing=north,half=bottom,shape=straight]
+/setblock 416 -46 11 minecraft:andesite_stairs[facing=south,half=bottom,shape=straight]
+/fill 413 -49 10 417 -48 10 minecraft:andesite
+/setblock 413 -47 11 minecraft:andesite_slab[type=bottom]
+/fill 410 -51 8 412 -50 9 minecraft:andesite
+/setblock 411 -49 9 minecraft:andesite_slab[type=bottom]
+/fill 407 -55 12 408 -55 16 minecraft:tuff
+/fill 405 -58 10 406 -58 13 minecraft:grass_block
+/setblock 406 -57 11 minecraft:short_grass
+/fill 419 -56 11 424 -56 12 minecraft:grass_block
+/fill 418 -58 13 424 -58 16 minecraft:grass_block
+# Landslide talus apron (coarse_dirt, gravel, andesite scree beside the road)
+/fill 410 -55 2 411 -55 4 minecraft:gravel
+/fill 411 -54 3 414 -54 5 minecraft:coarse_dirt
+/setblock 411 -54 2 minecraft:andesite
+/setblock 412 -53 3 minecraft:gravel
+/setblock 413 -53 4 minecraft:andesite
+/setblock 413 -52 4 minecraft:andesite_slab[type=bottom]
+/setblock 414 -52 3 minecraft:gravel
+/setblock 414 -53 3 minecraft:andesite
+/setblock 415 -53 4 minecraft:coarse_dirt
+/setblock 412 -52 5 minecraft:andesite_slab[type=bottom]
+# East cliffside: sculpt natural mossy cleft & ledges opposite East Alcove (z=-10..-3) + clean ridges
+/fill 432 -53 -15 440 -52 -13 minecraft:grass_block
+/fill 433 -51 -14 440 -50 -10 minecraft:tuff
+/fill 437 -47 -13 440 -46 -8 minecraft:andesite
+/setblock 437 -45 -9 minecraft:andesite_slab[type=bottom]
+# Opposite East Alcove (z=-9..-4): stepped mossy ravine shelf instead of flat grey box
+/fill 433 -51 -8 434 -50 -5 minecraft:air
+/fill 435 -49 -8 436 -48 -5 minecraft:air
+/fill 433 -52 -8 434 -52 -5 minecraft:moss_block
+/setblock 433 -51 -7 minecraft:fern
+/setblock 434 -51 -6 minecraft:moss_carpet
+/fill 435 -50 -8 436 -50 -5 minecraft:tuff
+/setblock 435 -50 -6 minecraft:moss_block
+/setblock 435 -49 -6 minecraft:short_grass
+/fill 437 -49 -9 439 -48 -5 minecraft:andesite
+/setblock 437 -48 -7 minecraft:andesite_stairs[facing=east,half=bottom,shape=straight]
+/setblock 437 -48 -6 minecraft:andesite_slab[type=bottom]
+/setblock 436 -49 -8 minecraft:podzol
+# High SE ridge weathering
+/fill 433 -47 12 440 -45 15 minecraft:tuff
+/fill 437 -42 10 440 -41 13 minecraft:andesite
+/setblock 437 -41 12 minecraft:podzol
+/setblock 438 -40 11 minecraft:andesite_slab[type=bottom]
+/setblock 436 -43 9 minecraft:andesite_stairs[facing=east,half=bottom,shape=straight]
+/fill 432 -54 15 440 -54 18 minecraft:grass_block
+# Abandoned east pass road weathered stones & tufts
+/setblock 436 -52 -1 minecraft:mossy_stone_bricks
+/setblock 437 -52 1 minecraft:cracked_stone_bricks
+/setblock 438 -50 -1 minecraft:stone_brick_slab[type=bottom]
+/setblock 439 -50 0 minecraft:mossy_stone_bricks
+/setblock 437 -52 2 minecraft:short_grass
+/setblock 435 -52 -2 minecraft:fern
+
+# === 4. ZERO-JUMP CLIMBING ROAD (0.5-BLOCK SLAB STEPS) & RETAINING WALLS ===
+/setblock 400 -61 4 minecraft:andesite
+/setblock 401 -61 3 minecraft:cracked_stone_bricks
+/fill 401 -60 3 401 -60 5 minecraft:stone_brick_slab[type=bottom]
+/setblock 401 -60 4 minecraft:andesite_slab[type=bottom]
+/setblock 402 -60 4 minecraft:andesite
+/fill 403 -59 3 403 -59 5 minecraft:stone_brick_slab[type=bottom]
+/setblock 403 -59 3 minecraft:andesite_slab[type=bottom]
+/setblock 404 -59 3 minecraft:cracked_stone_bricks
+/fill 405 -58 2 405 -58 4 minecraft:stone_brick_slab[type=bottom]
+/setblock 405 -58 4 minecraft:andesite_slab[type=bottom]
+/setblock 406 -58 2 minecraft:mossy_stone_bricks
+/fill 407 -57 2 407 -57 4 minecraft:stone_brick_slab[type=bottom]
+/setblock 407 -57 3 minecraft:andesite_slab[type=bottom]
+/setblock 408 -57 2 minecraft:andesite
+/fill 409 -56 1 409 -56 3 minecraft:stone_brick_slab[type=bottom]
+/fill 410 -61 0 411 -57 0 minecraft:stone
+/setblock 410 -56 0 minecraft:stone_bricks
+/setblock 410 -56 1 minecraft:cracked_stone_bricks
+/setblock 411 -56 0 minecraft:stone_bricks
+/fill 411 -55 0 411 -55 1 minecraft:stone_brick_slab[type=bottom]
+/fill 410 -55 0 410 -52 0 minecraft:air
+/fill 411 -54 0 411 -51 0 minecraft:air
+/setblock 412 -55 1 minecraft:cracked_stone_bricks
+/fill 413 -54 0 413 -54 2 minecraft:stone_brick_slab[type=bottom]
+/setblock 413 -54 1 minecraft:andesite_slab[type=bottom]
+/setblock 414 -54 0 minecraft:andesite
+/fill 415 -53 -1 415 -53 1 minecraft:stone_brick_slab[type=bottom]
+/setblock 416 -53 0 minecraft:cracked_stone_bricks
+/setblock 417 -53 1 minecraft:mossy_stone_bricks
+# Road south retaining wall coping & moss (x=402..409)
+/setblock 402 -60 6 minecraft:mossy_stone_bricks
+/setblock 403 -59 6 minecraft:stone_brick_slab[type=bottom]
+/setblock 404 -59 5 minecraft:mossy_stone_bricks
+/setblock 405 -58 5 minecraft:stone_brick_wall
+/setblock 406 -58 5 minecraft:mossy_stone_brick_wall
+/setblock 407 -57 5 minecraft:stone_brick_wall
+/setblock 408 -57 4 minecraft:stone_brick_wall
+/setblock 409 -56 4 minecraft:stone_brick_slab[type=bottom]
+# Porch terrace west curb & paving detail (x=409..416, z=-3..-1)
+/setblock 409 -52 -3 minecraft:mossy_stone_brick_wall
+/setblock 409 -52 -2 minecraft:stone_brick_wall
+/setblock 410 -53 -3 minecraft:mossy_stone_bricks
+/setblock 413 -53 -2 minecraft:cracked_stone_bricks
+/setblock 415 -53 -2 minecraft:andesite
+/setblock 411 -53 -1 minecraft:mossy_stone_bricks
+
+# === 5. STONE TOLLHOUSE CORE & GATEHOUSE ARCH ===
+# Carve Gatehouse Arch carriageway (x=417..419, z=-1..1, y=-52..-50 clear + vaulted soffit at -49)
+/fill 417 -52 -1 419 -50 1 minecraft:air
+/fill 417 -49 0 419 -49 0 minecraft:air
+# Arch haunch stairs (solid pier side north/south, curved reveal into z=0)
+/fill 417 -49 -1 419 -49 -1 minecraft:stone_brick_stairs[facing=north,half=top,shape=straight]
+/fill 417 -49 1 419 -49 1 minecraft:stone_brick_stairs[facing=south,half=top,shape=straight]
+/setblock 417 -49 0 minecraft:stone_brick_slab[type=top]
+/setblock 419 -49 0 minecraft:stone_brick_slab[type=top]
+# Gatehouse outer south pier & weathered parapet coping (z=2, y=-52..-47)
+/setblock 417 -52 2 minecraft:tuff_bricks
+/setblock 418 -52 2 minecraft:tuff_bricks
+/setblock 419 -52 2 minecraft:mossy_stone_bricks
+/setblock 418 -50 2 minecraft:cracked_stone_bricks
+/setblock 417 -47 2 minecraft:stone_brick_slab[type=bottom]
+/setblock 418 -47 2 minecraft:stone_brick_wall
+/setblock 419 -47 2 minecraft:stone_brick_slab[type=bottom]
+/setblock 418 -47 0 minecraft:stone_brick_slab[type=bottom]
+/setblock 418 -47 1 minecraft:stone_brick_slab[type=bottom]
+
+# Hollow Stone Core Hearth Room (x=418..423, z=-9..-3, y=-52..-46 + open under-roof rafters)
+/fill 418 -52 -9 423 -46 -3 minecraft:air
+/fill 418 -45 -9 423 -45 -3 minecraft:air
+/fill 419 -44 -9 422 -43 -3 minecraft:air
+/fill 420 -42 -9 421 -41 -3 minecraft:air
+# Stone Core floor (y=-53)
+/fill 418 -53 -9 423 -53 -3 minecraft:polished_tuff
+/fill 419 -53 -8 422 -53 -4 minecraft:tuff_bricks
+# Stone Core wall base & weathering (tuff plinth & moss in shaded north/east bases)
+/fill 417 -52 -10 424 -52 -10 minecraft:tuff_bricks
+/fill 424 -52 -9 424 -52 -2 minecraft:tuff_bricks
+/fill 417 -52 -9 417 -52 -2 minecraft:tuff_bricks
+/setblock 418 -52 -10 minecraft:mossy_stone_bricks
+/setblock 423 -52 -10 minecraft:mossy_stone_bricks
+/setblock 424 -51 -9 minecraft:mossy_stone_bricks
+/setblock 424 -52 -3 minecraft:mossy_stone_bricks
+/setblock 419 -49 -2 minecraft:cracked_stone_bricks
+/setblock 422 -48 -2 minecraft:cracked_stone_bricks
+
+# Stone Threshold between Vestibule and Hearth Room (x=417, z=-6..-5, y=-52..-50)
+/fill 417 -52 -6 417 -50 -5 minecraft:air
+/setblock 417 -50 -6 minecraft:stone_brick_slab[type=top]
+/setblock 417 -50 -5 minecraft:stone_brick_slab[type=top]
+/setblock 417 -53 -6 minecraft:oak_planks
+/setblock 417 -53 -5 minecraft:oak_planks
+
+# South Bridge-Glance Window (x=420..421, z=-2, y=-51..-50)
+/fill 420 -51 -2 421 -50 -2 minecraft:light_gray_stained_glass_pane
+/setblock 420 -49 -2 minecraft:stone_brick_slab[type=top]
+/setblock 421 -49 -2 minecraft:stone_brick_slab[type=top]
+
+# East Alcove Projection & Two-Block Chasm Window (x=424..425, z=-8..-5)
+/fill 425 -52 -8 425 -48 -8 minecraft:stone_bricks
+/setblock 425 -52 -8 minecraft:tuff_bricks
+/setblock 425 -52 -5 minecraft:tuff_bricks
+/setblock 425 -51 -8 minecraft:mossy_stone_bricks
+/fill 424 -52 -7 424 -50 -6 minecraft:air
+/setblock 424 -49 -7 minecraft:stone_brick_slab[type=top]
+/setblock 424 -49 -6 minecraft:stone_brick_slab[type=top]
+/setblock 425 -52 -7 minecraft:stone_bricks
+/setblock 425 -52 -6 minecraft:stone_bricks
+/fill 425 -51 -7 425 -50 -6 minecraft:light_gray_stained_glass_pane
+/fill 425 -48 -8 425 -48 -5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 425 -49 -7 minecraft:stone_brick_slab[type=top]
+/setblock 425 -49 -6 minecraft:stone_brick_slab[type=top]
+
+# === 6. DOMINANT SLATE GABLE ROOF, TIMBER RAFTERS, PATCH REPAIR & CHIMNEY ===
+/fill 416 -46 -11 416 -46 -1 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 417 -45 -11 417 -45 -1 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 418 -44 -11 418 -44 -1 minecraft:deepslate_tiles
+/fill 418 -43 -11 418 -43 -1 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 419 -42 -11 419 -42 -1 minecraft:deepslate_tiles
+/fill 419 -41 -11 419 -41 -1 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 425 -46 -11 425 -46 -1 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 424 -45 -11 424 -45 -1 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 423 -44 -11 423 -44 -1 minecraft:deepslate_tiles
+/fill 423 -43 -11 423 -43 -1 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 422 -42 -11 422 -42 -1 minecraft:deepslate_tiles
+/fill 422 -41 -11 422 -41 -1 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 420 -40 -11 421 -40 -1 minecraft:deepslate_tile_slab[type=bottom]
+# Stone gable ends tucked under the stairs (z=-10 and z=-2)
+/setblock 417 -46 -10 minecraft:stone_bricks
+/setblock 424 -46 -10 minecraft:stone_bricks
+/setblock 417 -46 -2 minecraft:stone_bricks
+/setblock 424 -46 -2 minecraft:stone_bricks
+/fill 419 -45 -10 422 -45 -10 minecraft:stone_bricks
+/fill 419 -45 -2 422 -45 -2 minecraft:stone_bricks
+/fill 419 -44 -10 422 -43 -10 minecraft:stone_bricks
+/fill 419 -44 -2 422 -43 -2 minecraft:stone_bricks
+/fill 420 -42 -10 421 -41 -10 minecraft:stone_bricks
+/fill 420 -42 -2 421 -41 -2 minecraft:stone_bricks
+# Newer timber storm-repair patch on windward SW roof slope (complete 2x3 patch, no missing bite)
+/setblock 417 -45 -4 minecraft:spruce_stairs[facing=east,half=bottom,shape=straight]
+/setblock 417 -45 -3 minecraft:oak_stairs[facing=east,half=bottom,shape=straight]
+/setblock 418 -44 -4 minecraft:spruce_planks
+/setblock 418 -44 -3 minecraft:spruce_planks
+/setblock 418 -43 -4 minecraft:spruce_stairs[facing=east,half=bottom,shape=straight]
+/setblock 418 -43 -3 minecraft:spruce_stairs[facing=east,half=bottom,shape=straight]
+# Exposed dark-oak & spruce interior rafters / collar ties inside Hearth Room
+/fill 418 -45 -7 423 -45 -7 minecraft:dark_oak_slab[type=top]
+/fill 418 -45 -4 423 -45 -4 minecraft:dark_oak_slab[type=top]
+/fill 419 -43 -7 422 -43 -7 minecraft:stripped_spruce_log[axis=x]
+/fill 419 -43 -4 422 -43 -4 minecraft:stripped_spruce_log[axis=x]
+/fill 420 -41 -9 421 -41 -3 minecraft:dark_oak_slab[type=top]
+# Stone Chimney breast & soot-stained crown (x=420..421, z=-10, y=-52..-37)
+/setblock 420 -40 -10 minecraft:stone_bricks
+/setblock 421 -40 -10 minecraft:stone_bricks
+/setblock 420 -39 -10 minecraft:cracked_stone_bricks
+/setblock 421 -39 -10 minecraft:stone_bricks
+/setblock 420 -38 -10 minecraft:cobbled_deepslate
+/setblock 421 -38 -10 minecraft:polished_basalt
+/setblock 420 -37 -10 minecraft:cobbled_deepslate_wall
+/setblock 421 -37 -10 minecraft:stone_brick_wall
+
+# === 7. LATER SPRUCE WING, LOW DOOR, PORCH & E-W CROSS-GABLE ROOF ===
+/fill 412 -52 -8 416 -50 -5 minecraft:air
+/fill 412 -53 -8 416 -53 -5 minecraft:spruce_planks
+/fill 412 -49 -8 416 -49 -5 minecraft:spruce_planks
+/fill 412 -49 -7 416 -49 -6 minecraft:spruce_slab[type=top]
+/fill 412 -49 -8 416 -49 -8 minecraft:stripped_spruce_log[axis=x]
+# Corner timber posts & wall beams
+/fill 411 -52 -9 411 -49 -9 minecraft:spruce_log[axis=y]
+/fill 411 -52 -4 411 -49 -4 minecraft:spruce_log[axis=y]
+/fill 416 -52 -9 416 -49 -9 minecraft:spruce_log[axis=y]
+/fill 416 -52 -4 416 -49 -4 minecraft:spruce_log[axis=y]
+/fill 412 -49 -9 415 -49 -9 minecraft:stripped_spruce_log[axis=x]
+/fill 412 -49 -4 415 -49 -4 minecraft:stripped_spruce_log[axis=x]
+/fill 411 -49 -8 411 -49 -5 minecraft:stripped_spruce_log[axis=z]
+# Low two-block wooden door flush on porch wall face (facing=north sits on south edge of z=-4)
+/setblock 412 -52 -4 minecraft:spruce_door[facing=north,half=lower,hinge=left,open=false]
+/setblock 412 -51 -4 minecraft:spruce_door[facing=north,half=upper,hinge=left,open=false]
+# Warm landmark windows (west wall x=411, z=-6; porch wall x=414, z=-4)
+/setblock 411 -51 -6 minecraft:light_gray_stained_glass_pane
+/setblock 414 -51 -4 minecraft:light_gray_stained_glass_pane
+# Smaller E-W Cross-Gable Roof in spruce_stairs & spruce_slab
+/fill 412 -48 -8 416 -46 -5 minecraft:air
+/fill 410 -48 -10 416 -48 -10 minecraft:spruce_stairs[facing=south,half=bottom,shape=straight]
+/fill 410 -47 -9 416 -47 -9 minecraft:spruce_stairs[facing=south,half=bottom,shape=straight]
+/fill 410 -46 -8 416 -46 -8 minecraft:spruce_stairs[facing=south,half=bottom,shape=straight]
+/fill 410 -45 -7 416 -45 -6 minecraft:spruce_slab[type=bottom]
+/fill 410 -46 -5 416 -46 -5 minecraft:spruce_stairs[facing=north,half=bottom,shape=straight]
+/fill 410 -47 -4 416 -47 -4 minecraft:spruce_stairs[facing=north,half=bottom,shape=straight]
+/fill 410 -48 -3 416 -48 -3 minecraft:spruce_stairs[facing=north,half=bottom,shape=straight]
+/fill 411 -48 -9 411 -48 -4 minecraft:spruce_planks
+/fill 411 -47 -8 411 -47 -5 minecraft:spruce_planks
+/fill 411 -46 -7 411 -46 -6 minecraft:spruce_planks
+/fill 412 -46 -7 416 -46 -6 minecraft:stripped_spruce_log[axis=x]
+# Porch canopy & posts
+/fill 411 -49 -3 416 -49 -3 minecraft:spruce_slab[type=top]
+/fill 411 -49 -2 416 -49 -2 minecraft:spruce_slab[type=bottom]
+/fill 411 -52 -2 411 -50 -2 minecraft:spruce_fence
+/fill 415 -52 -2 415 -50 -2 minecraft:spruce_fence
+
+# === 8. STRUCTURAL EXTERIOR & PROVISIONAL WARM LIGHT (FOR PASS 3 NIGHT CHECKS) ===
+/setblock 413 -50 -3 minecraft:exposed_copper_lantern[hanging=true]
+# Vestibule lantern tucked north of the threshold sightline (lights window & doorway warmly)
+/setblock 414 -50 -7 minecraft:lantern[hanging=true]
+# Provisional hearth glow & anchored high hearth lantern (directly under stripped_spruce_log at 420,-43,-4)
+/setblock 420 -52 -9 minecraft:ochre_froglight
+/setblock 421 -52 -9 minecraft:ochre_froglight
+/setblock 420 -44 -4 minecraft:lantern[hanging=true]
+/setblock 421 -52 -3 minecraft:lantern[hanging=false]
+
+# === 9. WIND-BENT ALPINE SPRUCES (ASYMMETRIC TIERS, persistent=true) ===
+# Tree 1: West Spur Edge (x=405, z=-4, base y=-58) — frames s4-porch without blocking s1
+/setblock 405 -59 -4 minecraft:podzol
+/fill 405 -58 -4 405 -53 -4 minecraft:spruce_log[axis=y]
+/setblock 406 -53 -4 minecraft:spruce_log[axis=y]
+/setblock 406 -52 -4 minecraft:spruce_log[axis=y]
+/setblock 406 -51 -4 minecraft:spruce_log[axis=y]
+/setblock 404 -56 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -56 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 405 -56 -5 minecraft:spruce_leaves[persistent=true]
+/setblock 405 -56 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 404 -56 -3 minecraft:spruce_leaves[persistent=true]
+/fill 404 -55 -5 406 -55 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 403 -55 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 407 -55 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 405 -54 -5 minecraft:spruce_leaves[persistent=true]
+/setblock 405 -54 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -54 -5 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -54 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 407 -54 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 404 -54 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 405 -53 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -53 -5 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -53 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 407 -53 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -52 -5 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -52 -3 minecraft:spruce_leaves[persistent=true]
+/setblock 407 -52 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -50 -4 minecraft:spruce_leaves[persistent=true]
+/setblock 406 -49 -4 minecraft:spruce_leaves[persistent=true]
+# Tree 2: North Hollow behind wing (x=414, z=-15, base y=-56)
+/setblock 414 -57 -15 minecraft:podzol
+/fill 414 -56 -15 414 -50 -15 minecraft:spruce_log[axis=y]
+/setblock 413 -54 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 415 -54 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -54 -16 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -54 -14 minecraft:spruce_leaves[persistent=true]
+/setblock 415 -54 -14 minecraft:spruce_leaves[persistent=true]
+/fill 413 -53 -16 415 -53 -14 minecraft:spruce_leaves[persistent=true]
+/setblock 412 -53 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 416 -53 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -52 -16 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -52 -14 minecraft:spruce_leaves[persistent=true]
+/setblock 413 -52 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 415 -52 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -51 -16 minecraft:spruce_leaves[persistent=true]
+/setblock 415 -51 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -49 -15 minecraft:spruce_leaves[persistent=true]
+/setblock 414 -48 -15 minecraft:spruce_leaves[persistent=true]
+# Tree 3: High SE Cliff Crown (x=437, z=12, base y=-40)
+/fill 437 -40 12 437 -35 12 minecraft:spruce_log[axis=y]
+/setblock 436 -38 12 minecraft:spruce_leaves[persistent=true]
+/setblock 438 -38 12 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -38 11 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -38 13 minecraft:spruce_leaves[persistent=true]
+/setblock 438 -38 11 minecraft:spruce_leaves[persistent=true]
+/fill 436 -37 11 438 -37 13 minecraft:spruce_leaves[persistent=true]
+/setblock 439 -37 12 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -36 11 minecraft:spruce_leaves[persistent=true]
+/setblock 438 -36 12 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -36 13 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -34 12 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -33 12 minecraft:spruce_leaves[persistent=true]
+# Tree 4: East Ravine Ledge opposite East Alcove (x=436, z=-8, base y=-49)
+/fill 436 -49 -8 436 -44 -8 minecraft:spruce_log[axis=y]
+/setblock 435 -47 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -47 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -47 -9 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -47 -7 minecraft:spruce_leaves[persistent=true]
+/setblock 435 -47 -7 minecraft:spruce_leaves[persistent=true]
+/fill 435 -46 -9 437 -46 -7 minecraft:spruce_leaves[persistent=true]
+/setblock 434 -46 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -45 -9 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -45 -7 minecraft:spruce_leaves[persistent=true]
+/setblock 435 -45 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 437 -45 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -43 -8 minecraft:spruce_leaves[persistent=true]
+/setblock 436 -42 -8 minecraft:spruce_leaves[persistent=true]
