@@ -1,6 +1,6 @@
 # Judge: the simplest case right (step 2b)
 
-You judge GPT Astra's build, commit `95552dc` on branch `wt/u2b-astra`, worktree `D:\path-tracing-wt\u2b-astra`, against its base `fef8c6e` (step 2). Fresh context; you are Sonnet, the other family. You edit nothing in the worktree: run mutations on a scratch copy (`D:\path-tracing-scratch\u2b-judge\`), build with `CARGO_TARGET_DIR=D:\path-tracing-target\u2b-judge`, `--offline --release`.
+You judge GPT Astra's build, commit `e6de417` (final; `95552dc` was the state the integrator swept) on branch `wt/u2b-astra`, worktree `D:\path-tracing-wt\u2b-astra`, against its base `fef8c6e` (step 2). Fresh context; you are Sonnet, the other family. You edit nothing in the worktree: run mutations on a scratch copy (`D:\path-tracing-scratch\u2b-judge\`), build with `CARGO_TARGET_DIR=D:\path-tracing-target\u2b-judge`, `--offline --release`.
 
 Read first: `docs/PRINCIPLES.md` (goal, philosophy), `docs/plan.md` (step 2b's row), `AGENTS.md` (no patches, no new search code, seal only what can't be corrected), then the spec `jobs/u2b/prompt.md` and the adopted re-derivation it now follows, `jobs/pin-rederive/proposal.md` with `jobs/pin-rederive/addendum.md` (S203: the pinned exit is a point or a hold; S202: the aim is never in an entry key). The living statements: `docs/representation.md` line ~179 and `docs/learning.md` kill test 11. Astra's record: `jobs/u2b/last.md`.
 
