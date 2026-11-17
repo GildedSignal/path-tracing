@@ -13,3 +13,6 @@ Placed in his superflat overworld through a datapack of 131 functions of up to 1
 - **The backup from before placing:** `D:\path-tracing-evidence\world-backup-20261117-before-three-builds\` (the overworld folder and level.dat). To undo, stop the server and copy `overworld` back over `server\world\dimensions\minecraft\overworld`.
 - **Integrator fixes to Hydrogen's generators** (in commit c00ccce): two integer types; the observatory's quarry road started 2 to 3 blocks inside its box; a floating lectern set on its floor.
 - **Cost:** Gemini 5-hour 0 → 15%, week 37 → 42%, for all three (about 10 minutes each, run in parallel).
+
+## Removed (17 November, 17:05; S206: "Yes, restore")
+Julien judged them too much for Hydrogen (S205). The builds were the only content of the 8 region files at region x 3..5, z −2..0, which did not exist before placing. Those files (region, entities, poi: 24 files) were moved with the server stopped to `D:\path-tracing-evidence\three-builds-removed-20261117\`. The overworld's file list now equals the backup's. Every other region file is untouched, so nothing played since the backup is lost. To bring the builds back, move the files back with the server stopped.

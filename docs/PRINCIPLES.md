@@ -362,6 +362,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "sure looks good" (Opus's point-and-hold re-derivation) | S203 | **Followed:** [representation.md](representation.md):179, [learning.md](learning.md) kill test 11, [vocabulary.md](vocabulary.md) section 5 (aims), from `jobs/pin-rederive/proposal.md`; Astra resumes `jobs/u2b` on it |
 | "have hydrogen build three builds for me inspired by what gpt said … with all the details" (two GPT documents: his taste and an architecture brief) | S204 | **Followed:** Hydrogen builds The Last Hearth, The City That Borrowed a River and The Hollow Meridian as one civilization east of x 2000 (`jobs/three-builds/shared.md`); the documents kept outside git (`D:path-tracing-evidence	hree-builds`), the repository being public |
 | "that was too much for hydrogen to handle … more sized like the pagoda with mulitple passes … you can have terra too" | S205 | **Followed:** `jobs/hearth-small` (the refuge alone, x 400..440, hand-written, five passes, about 600 to 2,500 commands); Terra builds an offline preview renderer (`jobs/build-preview`) so each pass sees the last one by day and night |
+| "Yes, restore" (remove the three big builds) | S206 | **Followed:** the 24 region files the builds created were moved aside to `D:path-tracing-evidence	hree-builds-removed-20261117` with the server stopped; the overworld equals the backup for those regions, nothing else touched (`jobs/three-builds/placed.md`) |
 
 ## Contradictions (kept side by side)
 
