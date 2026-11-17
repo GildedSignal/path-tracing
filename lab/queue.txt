@@ -10,3 +10,5 @@ port-push-threshold port-ordered-push-query port-push-order-noncommuting port-en
 port-collapse-schedule port-collapse-due-tick port-schedule-order-tie port-amethyst-state
 # 15 November 14:19: these five hit the Zai 5-hour limit (429, resets 16 November 00:11); their folders are kept as *-zai-limit.
 port-collapse-schedule port-entity-contact port-collapse-due-tick port-schedule-order-tie port-amethyst-state
+# 17 November overnight: Hydrogen's port lenses (jobs/port-lenses/report.md), port only (S173).
+port-pressure-plate-hook port-crawl-pose-transition port-creative-flight-toggle port-status-effect-kinematics port-movement-exhaustion-branches port-use-item-on-dispatch port-door-trapdoor-toggle port-button-press-schedule port-block-place-commit port-bucket-place-pickup port-mining-destroy-speed port-block-support-pop-family port-boat-land-and-collision port-boat-mount-dismount port-elytra-firework-and-impact port-pearl-raytrace-and-landing port-portal-entry-and-create port-minor-collision-acos port-boat-trig-index port-regen-dead-guard-and-phase port-lava-entity-inside
