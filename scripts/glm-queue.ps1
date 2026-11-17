@@ -39,11 +39,23 @@ function Get-Lanes { @(Get-CimInstance Win32_Process -Filter "Name='powershell.e
 Note "queue started from $Queue, $Lanes lanes ($($started.Count) lenses already started by the previous runner)"
 while ($true) {
   $running = @($running | Where-Object { -not $_.Process.HasExited })
-  foreach ($done in @($script:previous | Where-Object { $_ -and $_.Process.HasExited })) { Note "end ($($done.Process.ExitCode)): $($done.Lens)" }
+  foreach ($done in @($script:previous | Where-Object { $_ -and $_.Process.HasExited })) {
+    Note "end ($($done.Process.ExitCode)): $($done.Lens)"
+    # 17 November: Zai's 5-hour limit (error 1308) failed 39 lanes in a row, each marked DONE, so the
+    # wave was lost. A lane that hit the limit is set aside (folder renamed), its lens is queued again,
+    # and no lane starts for 30 minutes.
+    $folder = Get-ChildItem (Join-Path $Root 'lab\results') -Directory | Where-Object { $_.Name -match "^local-\d{8}-\d{4}-\d+-\d+-$([regex]::Escape($done.Lens))$" } | Sort-Object Name | Select-Object -Last 1
+    if ($folder -and (Select-String -Path (Join-Path $folder.FullName 'author.log') -Pattern '"1308"' -Quiet -ErrorAction SilentlyContinue)) {
+      Rename-Item $folder.FullName "$($folder.Name)-zai-limit"
+      $started.Remove($done.Lens)
+      $script:limitUntil = (Get-Date).AddMinutes(30)
+      Note "zai limit hit by $($done.Lens): queued again, no start before $($script:limitUntil.ToString('HH:mm'))"
+    }
+  }
   $script:previous = $running
   $lanesNow = Get-Lanes
-  $room = $lanesNow -lt $Lanes
-  if (-not $room -and $lanesNow -lt $MaxLanes) {
+  $room = $lanesNow -lt $Lanes -and -not ($script:limitUntil -and (Get-Date) -lt $script:limitUntil)
+  if (-not $room -and $lanesNow -lt $MaxLanes -and -not ($script:limitUntil -and (Get-Date) -lt $script:limitUntil)) {
     $pace = Get-ZaiPace
     $room = $pace -and ($pace.Used + 10 -lt $pace.Elapsed)
   }
@@ -66,7 +78,7 @@ while ($true) {
       Start-Sleep -Seconds 61   # two runs started in the same minute would share a run id
       continue
     }
-    if ((Get-Lanes) -eq 0) { break }
+    if ((Get-Lanes) -eq 0 -and -not ($script:limitUntil -and (Get-Date) -lt $script:limitUntil)) { break }
   }
   Start-Sleep -Seconds 60
 }
