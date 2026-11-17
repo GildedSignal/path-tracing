@@ -139,12 +139,13 @@ Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-20
 1. Every launch goes through `launch.ps1`, detached, at Idle; anything that must outlive a turn is a detached process, never an in-session background task. Test launcher changes with `-DryRun`.
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`; Antigravity `report.md` every few files). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
-4. Reading goes to Hydrogen first; Argon only for the hardest reads (its own weekly limit, ~10 runs); design Astra, build Terra, red-team native Opus, judge native Sonnet, lab GLM paced by `glm-queue`.
+4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM writes port code paced by `glm-queue`. Hydrogen and Argon read and build on their own Google meters. A smaller model never writes for a bigger one (S210; AGENTS.md).
 5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM, Antigravity) in the same message, before every launch** (S168; on 16 November the native plan reached 92% unseen because `meters.ps1` cannot read it). Launch no native sub-agent above 80% of the native 5-hour window.
-6. Read-only companions get their evidence made for them (failure lines, block dumps, logs): they cannot run commands.
+6. Read-only companions get their evidence made for them (failure lines, block dumps, logs). **Antigravity's "cannot run commands" was our launcher, not the models** (S210): `gemini.ps1` grants no command, and its driveless path forms make the sandbox refuse every command ("non-absolute file path").
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
 9. Terra halts the whole job at its first open question: settle every design question in the prompt ("decisions already made"), name the independent steps, and resume with a continuation, never a bare retry. A verdict goes to `jobs/<id>/last.md`, never only into chat.
+10. **Lints are part of every merge** (S210: "we do need linting"). Code: `cargo fmt --check` and `cargo clippy` with no new warnings on what the merge touches. Docs: no mojibake, the line budgets, no dead pointers. The scripts that enforce this are being built (`jobs/lint`).
 
 ## 6. How Google is reached, and the one decision it needs
 
