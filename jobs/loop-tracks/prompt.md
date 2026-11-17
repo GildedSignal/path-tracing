@@ -1,6 +1,6 @@
 # The loop on his tracks (step 3 of the plan)
 
-Builder: Astra 6.2 (S174, S209, S219). Written by the integrator, red-teamed by Opus before launch. Every fact below that came from a companion's report was checked by the integrator against the code on 17 November; the rest is cited to his words or the docs.
+Builders (S225): **Sol 6.2 builds Part A** (his tracks as inputs and the harness), now; **Astra 6.2 builds Part B** (closing the loop in `solve`) after her current job, every new command on flat ground in microseconds (`jobs/warm-floor`), is judged. Written by the integrator, red-teamed by Opus before launch. Every fact below that came from a companion's report was checked by the integrator against the code on 17 November; the rest is cited to his words or the docs.
 
 ## Why
 
@@ -14,9 +14,9 @@ Builder: Astra 6.2 (S174, S209, S219). Written by the integrator, red-teamed by 
 
 ## Base, and who owns which files
 
-Sol is building layers 1–4 of the idiot-index report on `wt/warm-floor` (from `e6de417`), rewriting the warm path in `solve.rs`, `store.rs`, `events.rs`, `lattice.rs` and `terminal.rs`. Two builders never share files (AGENTS.md). So:
-- **Part A** (inputs and harness) touches none of those files and starts now, on `wt/loop-tracks` from `e6de417`.
-- **Part B** (closing the loop in `solve`) starts only after `wt/warm-floor` is judged; the integrator then merges it into `wt/loop-tracks` and tells you. Until then write Part B's design in `last.md` and its tests, not its code in Sol's files.
+Astra is making every new command on flat ground take microseconds on `wt/warm-floor` (from `e6de417`), rewriting the per-command path in `solve.rs`, `store.rs`, `events.rs`, `lattice.rs` and `terminal.rs`. Two builders never share files (AGENTS.md). So:
+- **Part A** (inputs and harness, Sol) touches none of those files and starts now, on `wt/loop-tracks` from `e6de417`. Time every track per real command, as `engine/plan/tests/real_time.rs` does (in `D:\path-tracing-wt\real-time`): one living store, a new goal each time, never a repeated goal as the thinking time (S223).
+- **Part B** (closing the loop in `solve`, Astra) starts only after `wt/warm-floor` is judged; the integrator then merges it into `wt/loop-tracks`. Part A's builder does not write code in those files.
 
 ## Part A: his tracks as inputs, and a harness that counts like his clock
 

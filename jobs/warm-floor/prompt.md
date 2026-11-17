@@ -1,10 +1,18 @@
-# The warm solve at its floor: layers 1–4 of the idiot-index report (S218)
+# Every new command on flat ground in microseconds, in total (S225), and the idiot index's layers 1–4
 
-Builder: Sol 6.2. Worktree `D:\path-tracing-wt\warm-floor`, branch `wt/warm-floor`, made from the tip of `wt/u2b-astra` (the simplest case right, step 2b; judged in parallel). The integrator commits; you never run `git commit`, `launch.ps1`, `gpt.ps1` or `follow-up.ps1`, and use no network, game, server or client.
+Builder: Astra 6.2 (S225: "astra will deal with this issue add it to her list"). Worktree `D:\path-tracing-wt\warm-floor`, branch `wt/warm-floor`, made from the tip of `wt/u2b-astra` (`e6de417`, the simplest case right, judged pass with findings). The integrator commits; you never run `git commit`, `launch.ps1`, `gpt.ps1` or `follow-up.ps1`, and use no network, game, server or client.
 
-## Why
+## The requirement, in his words (S225, verbatim)
 
-Julien asked what a million-block straight line would take in 100 ns (S212–S214); Opus's idiot-index pass answered (`C:\Users\PASCAL\Desktop\path tracing\jobs\hundred-ns\report.md`, read it all first, especially sections 1.1–1.4, item table 1.3 and section 4). Julien chose its layers 1–4 for you (S218). They take the warm solve from 112–167 µs (interleaved) toward its ~1 µs floor **without changing the representation**: families, points and holds (representation.md section 10) and the set record stay exactly as they are. Layers 5–7 (the error bound, the label's own cone, the stop on B as families over the aim) are not yours: they touch the set record, a one-way door, and get their own red-team.
+"why does it need so much physics it's the gait in a straight line the gate is already known i don't understand the issue. the conditions are already known don't reinvent things. there's a lot of idiot index, astra will deal with this issue add it to her list. each knew command on the flat ground should take µs IN TOTAL."
+
+**What is true today** (the integrator's measurement, `engine/plan/tests/real_time.rs` in `D:\path-tracing-wt\real-time`, log `D:\path-tracing-evidence\real-time-20261117.log`): one living store, the world in memory, each command a new goal (any bearing, 10² to 10⁶ blocks). **Median 233 ms per command from standing** (160–450 ms), about 4,700 law ticks re-prepared every time, nothing reused after 60 commands; **253 ms per command from a moving start, and 33 of 60 refused** on flat ground. The 57 µs reported before was the same goal asked twice. The gait on flat ground is known after its first preparation: its run-up, its cycle, its stop. Nothing about a new bearing, a new distance or a moving start on the same ground is new physics.
+
+**The headline gate of this whole job:** on flat ground, every new command, in any direction, at any distance, from standing or from a moving start, takes microseconds in total, measured per command on one living store by `real_time.rs` (copy it in). Only the first command on a never-seen kind of ground may prepare its gaits. No moving start is refused on flat ground. Report the distribution of every series; never a repeated goal as the thinking time.
+
+## Why the layers
+
+Opus's idiot-index pass (`C:\Users\PASCAL\Desktop\path tracing\jobs\hundred-ns\report.md`, read it all first, especially sections 1.1–1.4, item table 1.3 and section 4) found where the time goes. Its layers 1–4 below are how you get there **without changing the representation**: families, points and holds (representation.md section 10) and the set record stay exactly as they are. Layers 5–7 (the error bound, the label's own cone, the stop on B as families over the aim) are not yours: they touch the set record, a one-way door, and get their own red-team.
 
 Read also: `AGENTS.md` (no patches, no new search code, one mechanism, seal only what can't be corrected), `docs/plan.md`, `docs/learning.md` sections 0 and 6 (the kill tests), `docs/representation.md` section 10, `docs/engine.md` ("How it computes": store the generator), `docs/vocabulary.md`, and `jobs/u2b/last.md` with `jobs/u2b/verify.ps1` (every gate you must keep green).
 
