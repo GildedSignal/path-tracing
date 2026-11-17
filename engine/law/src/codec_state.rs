@@ -85,3 +85,8 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
     words.into()
 }
 
+
+pub fn resource_guards(food:i32,health:f32)->[u64;4] {
+    let mask=(1u128<<F::food_level as u8)|(1u128<<F::health as u8);
+    [mask as u64,(mask>>64) as u64,(health>0.0) as u64,(food>6) as u64]
+}

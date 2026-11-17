@@ -52,9 +52,9 @@ fn u1_kill_test_17_million_line_peaceful() {
         let cold_plan=ready(solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX));
         assert!(cold_plan.words.iter().any(|w|w.args.count>100_000));
         assert!(cold_plan.bracket.lb<=cold_plan.ticks);
-        let before_last=cold_plan.words.get(cold_plan.words.len().saturating_sub(2)).map(|s|s.end.clone()).unwrap_or(start.clone());
+        let before_last=cold_plan.words.get(cold_plan.words.len().saturating_sub(2)).map(|s|s.end.materialize()).unwrap_or(start.clone());
         let last=cold_plan.words.last().unwrap();
-        let mut tail=cold_plan.clone();tail.words=vec![last.clone()];tail.ticks=last.ticks as u64;
+        let mut tail=cold_plan.clone();tail.words=vec![last.clone()].into();tail.ticks=last.ticks as u64;
         replay(&source,&before_last,&tail,goal);
         for _ in 0..n {
             let fresh=GeneratorStore::default();let mut fresh_codec=Interner::default();source.reset_costs();

@@ -1,5 +1,5 @@
 //! The goal is a region, and the lower bound nothing can beat.
-use law::{Aabb, BlockPos, PlayerState, Vec3};
+use law::{Aabb, BlockPos, Vec3};
 
 /// The terrain speed limit c, in blocks per tick: 19.902886 blocks per second, a 3-tick
 /// orbit on blue ice under a 2.0 ceiling (HANDOFF anomaly 3; GLM local-20261110-1056-1-4,
@@ -16,17 +16,22 @@ impl Goal {
         let [x, y, z] = self.cell.map(|v| v as f64);
         Aabb::new(x,y,z,x+1.0,y+1.0,z+1.0)
     }
-    pub fn touched(&self, before: &PlayerState, after: &PlayerState) -> bool {
-        self.touched_boxes(before.bounding_box(),after.bounding_box())
+    pub fn touched(&self, before: &impl crate::state_view::StateSource, after: &impl crate::state_view::StateSource) -> bool {
+        self.touched_boxes(before.view().bounding_box(),after.view().bounding_box())
     }
     /// The same predicate for exact generator readouts, without copying states.
     pub fn touched_boxes(&self,before:Aabb,after:Aabb)->bool {
-        let a=hull(before,after);let b=self.zone();
-        a.max.x>=b.min.x && a.min.x<=b.max.x && a.max.y>=b.min.y && a.min.y<=b.max.y && a.max.z>=b.min.z && a.min.z<=b.max.z
+        (0..3).all(|axis|{let (low,high)=self.axis_sides(before,after,axis);low && high})
+    }
+    /// The two closed half-space predicates of the unchanged touch rule on
+    /// one axis. Exact preimages bisect these same predicates, not a copy.
+    pub fn axis_sides(&self,before:Aabb,after:Aabb,axis:usize)->(bool,bool) {
+        let a=hull(before,after);let b=self.zone();let axis=[law::Axis::X,law::Axis::Y,law::Axis::Z][axis];
+        (a.max.get(axis)>=b.min.get(axis),a.min.get(axis)<=b.max.get(axis))
     }
     /// The horizontal distance from the body's box to the region.
-    pub fn gap(&self, state: &PlayerState) -> f64 {
-        let (body, zone) = (state.bounding_box(), self.zone());
+    pub fn gap(&self, state: &impl crate::state_view::StateSource) -> f64 {
+        let (body, zone) = (state.view().bounding_box(), self.zone());
         let dx = (zone.min.x - body.max.x).max(body.min.x - zone.max.x).max(0.0);
         let dz = (zone.min.z - body.max.z).max(body.min.z - zone.max.z).max(0.0);
         (dx * dx + dz * dz).sqrt()
@@ -35,7 +40,7 @@ impl Goal {
     /// horizontally (terrain only: no entity push, no knockback, no item); the goal is this
     /// region. The quotient is rounded down one ulp before the ceiling, so rounding cannot
     /// raise the bound. It must be re-derived when the law changes (learning.md 2.7).
-    pub fn lower_bound(&self, state: &PlayerState) -> u32 {
+    pub fn lower_bound(&self, state: &impl crate::state_view::StateSource) -> u32 {
         let quotient = self.gap(state) / C;
         if quotient <= 0.0 { 0 } else { f64::from_bits(quotient.to_bits() - 1).ceil() as u32 }
     }

@@ -24,3 +24,8 @@ pub mod source;
 pub mod store;
 pub mod solve;
 pub use solve::{solve,Bracket,Kit,Plan,PlanOutcome,Stage,WordStep};
+pub mod families;
+
+pub mod inline;
+pub mod state_view;
+pub mod terminal;

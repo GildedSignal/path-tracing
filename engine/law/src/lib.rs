@@ -1,3 +1,4 @@
+pub mod contact;
 pub mod mining;
 include!(concat!(env!("OUT_DIR"),"/law_hash.rs"));
 pub mod codec;
@@ -26,6 +27,7 @@ pub use movement::{
     tick_server_resources
 };
 pub use shapes::{
+    face_comparisons,
     Aabb,
     Axis,
     Vec3,
@@ -57,3 +59,6 @@ pub mod entity_contact;
 pub mod state_reads;
 
 pub mod boat;
+
+#[cfg(feature = "count-state-copies")]
+pub use state::player_state_copies;

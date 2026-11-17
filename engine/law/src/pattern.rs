@@ -315,6 +315,7 @@ fn corner(p: BlockPos) -> Vec3 { Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64
 fn start_bits(start: &PlayerState, origin: BlockPos) -> Box<[u64]> {
     let mut state = start.clone();
     state.t = 0;
+    state.yaw=0.0;state.pitch=0.0;state.input=crate::Input::default();
     state.position = state.position.minus(corner(origin));
     state.main_supporting_block = state.main_supporting_block.map(|p| [0, 1, 2].map(|a| p[a] - origin[a]));
     state.bits().into()

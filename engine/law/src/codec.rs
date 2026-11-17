@@ -28,13 +28,12 @@ pub fn state_bytes(words: &[u64]) -> Vec<u8> {
 pub enum StateQuestion { Exact, Comparisons, Recurrence }
 
 pub fn state_key(question: StateQuestion, words: &[u64]) -> Vec<u8> {
-    let mut bytes = vec![b's', question as u8];
-    bytes.extend(SCHEMA);
-    bytes.extend((words.len() as u64).to_le_bytes());
-    for word in words { bytes.extend(word.to_le_bytes()); }
-    bytes
+    let mut bytes=Vec::new();state_key_into(question,words,&mut bytes);bytes
 }
-
+pub fn state_key_into(question:StateQuestion,words:&[u64],bytes:&mut Vec<u8>) {
+    bytes.clear();bytes.extend([b's',question as u8]);bytes.extend(SCHEMA);
+    bytes.extend((words.len() as u64).to_le_bytes());for word in words {bytes.extend(word.to_le_bytes());}
+}
 /// The same environment schema for footprints and read certificates. Scan hints
 /// are represented locally by the footprint's candidate-cell answers instead.
 pub fn environment(world: &impl crate::World, query: &crate::footprint::EnvironmentRead) -> Result<Canonical, PatternError> {
@@ -191,6 +190,7 @@ pub struct Interner {
     labels: Vec<Box<[u8]>>,
     label_buckets: HashMap<u128, Vec<LabelId>>,
     states: HashMap<Vec<u8>,StateClassId>,
+    legs_cache:Vec<(Block,bool,LegsRole,ClassId)>,label_scratch:Vec<u8>,
 }
 impl Default for Interner { fn default() -> Self { Self::with_digest(digest) } }
 
@@ -202,7 +202,7 @@ pub fn digest(bytes: &[u8]) -> u128 {
 impl Interner {
     /// Alternate bucket function for qualification, including forced collisions.
     pub fn with_digest(hash: fn(&[u8]) -> u128) -> Self {
-        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::new(), labels: Vec::new(), label_buckets: HashMap::new(),states:HashMap::new() }
+        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::new(), labels: Vec::new(), label_buckets: HashMap::new(),states:HashMap::new(),legs_cache:Vec::new(),label_scratch:Vec::new() }
     }
     pub fn intern_state(&mut self,bytes:&[u8])->Option<StateClassId> {
         if let Some(&id)=self.states.get(bytes) {return Some(id);}
@@ -225,7 +225,8 @@ impl Interner {
     }
     pub fn digests(&self) -> &[u128] { &self.digests }
     pub fn legs(&mut self, block: &Block, loaded: bool, role: LegsRole) -> Result<ClassId, PatternError> {
-        self.intern(&legs_bytes(block, loaded, role)?).ok_or(PatternError::TableFull)
+        if let Some((_,_,_,id))=self.legs_cache.iter().find(|(b,l,r,_)|*l==loaded && *r==role && model_same(b,block)) {return Ok(*id);}
+        let id=self.intern(&legs_bytes(block,loaded,role)?).ok_or(PatternError::TableFull)?;self.legs_cache.push((block.clone(),loaded,role,id));Ok(id)
     }
     pub fn unknown_verb(&mut self, verb: UnportedVerb, registry_hash: &[u8], fine_state: &[u8], kit: &[u8]) -> Option<Projection> {
         self.intern(&unknown_verb_bytes(verb, registry_hash, fine_state, kit)).map(Projection::Unknown)
@@ -243,7 +244,7 @@ impl Interner {
         self.intern(&bytes).map(Projection::Known)
     }
     pub fn label(&mut self, label: Label<'_>) -> Option<LabelId> {
-        let mut bytes = Vec::new();
+        let mut bytes = std::mem::take(&mut self.label_scratch);bytes.clear();
         for part in [label.law_schema, label.body_kit] {
             bytes.extend((part.len() as u64).to_le_bytes());
             bytes.extend(part);
@@ -252,7 +253,7 @@ impl Interner {
             bytes.extend((classes.len() as u64).to_le_bytes());
             for id in classes { bytes.extend(id.0.to_le_bytes()); }
         }
-        self.intern_label(&bytes)
+        let answer=self.intern_label(&bytes);self.label_scratch=bytes;answer
     }
     fn intern_label(&mut self, bytes: &[u8]) -> Option<LabelId> {
         let hash = (self.hash)(bytes);
@@ -297,3 +298,51 @@ mod tests {
         assert_ne!(first, table.unknown_verb(UnportedVerb::Break, b"registry", b"stone", b"bare"));
     }
 }
+
+trait Same {fn same(&self,other:&Self)->bool;}
+macro_rules! same_eq {($($t:ty),*)=>{$(impl Same for $t {fn same(&self,b:&Self)->bool {self==b}})*};}
+same_eq!(bool,u8,String,crate::Inside,crate::FluidKind,crate::GroundedContact,crate::FluidFlowBlock);
+impl Same for f32 {fn same(&self,b:&Self)->bool {self.to_bits()==b.to_bits()}}
+impl Same for f64 {fn same(&self,b:&Self)->bool {self.to_bits()==b.to_bits()}}
+impl Same for crate::Vec3 {fn same(&self,b:&Self)->bool {self.x.same(&b.x)&&self.y.same(&b.y)&&self.z.same(&b.z)}}
+impl<T:Same> Same for Option<T> {fn same(&self,b:&Self)->bool {match (self,b) {(None,None)=>true,(Some(a),Some(b))=>a.same(b),_=>false}}}
+impl Same for crate::VoxelShape {fn same(&self,b:&Self)->bool {self.same_owner(b)}}
+impl Same for crate::Fluid {fn same(&self,b:&Self)->bool {self.kind.same(&b.kind)&&self.height.same(&b.height)&&self.flow.same(&b.flow)&&self.raw_amount.same(&b.raw_amount)&&self.raw_falling.same(&b.raw_falling)}}
+
+fn model_same(a:&Block,b:&Block)->bool {
+    let Block {shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,air}=a;let _=(shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,air);
+        Same::same(&a.shape,&b.shape) &&
+        Same::same(&a.inside_shape,&b.inside_shape) &&
+        Same::same(&a.water_block,&b.water_block) &&
+        Same::same(&a.above_shape,&b.above_shape) &&
+        Same::same(&a.below_shape,&b.below_shape) &&
+        Same::same(&a.sneak_shape,&b.sneak_shape) &&
+        Same::same(&a.inside_cell_shape,&b.inside_cell_shape) &&
+        Same::same(&a.friction,&b.friction) &&
+        Same::same(&a.speed_factor,&b.speed_factor) &&
+        Same::same(&a.jump_factor,&b.jump_factor) &&
+        Same::same(&a.climbable,&b.climbable) &&
+        Same::same(&a.scaffolding,&b.scaffolding) &&
+        Same::same(&a.ladder_facing,&b.ladder_facing) &&
+        Same::same(&a.open_trapdoor_facing,&b.open_trapdoor_facing) &&
+        Same::same(&a.fluid,&b.fluid) &&
+        Same::same(&a.fluid_flow,&b.fluid_flow) &&
+        Same::same(&a.inside,&b.inside) &&
+        Same::same(&a.grounded_contact,&b.grounded_contact) &&
+        Same::same(&a.stuck_multiplier,&b.stuck_multiplier) &&
+        Same::same(&a.unsupported_fall_on,&b.unsupported_fall_on) &&
+        Same::same(&a.fall_on_multiplier,&b.fall_on_multiplier) &&
+        Same::same(&a.bed,&b.bed) &&
+        Same::same(&a.suffocating,&b.suffocating) &&
+        Same::same(&a.bounce,&b.bounce) &&
+        Same::same(&a.suppresses_bounce,&b.suppresses_bounce) &&
+        Same::same(&a.slime,&b.slime) &&
+        Same::same(&a.fence,&b.fence) &&
+        Same::same(&a.wall_or_gate,&b.wall_or_gate) &&
+        Same::same(&a.resets_fall_distance,&b.resets_fall_distance) &&
+        Same::same(&a.end_portal_or_gateway,&b.end_portal_or_gateway) &&
+        Same::same(&a.world_hook,&b.world_hook) &&
+        Same::same(&a.air,&b.air)
+}
+
+pub use state::resource_guards;

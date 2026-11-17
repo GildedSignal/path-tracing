@@ -128,7 +128,7 @@ impl Fluid {
 }
 
 /// Block predicates used by FlowingFluid.getFlow.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FluidFlowBlock {
     /// Vanilla BlockState.blocksMotion.
     pub blocks_motion: bool,
@@ -171,7 +171,7 @@ impl ContactDamage {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GroundedContact {
     #[default]
     None,
@@ -308,6 +308,7 @@ impl CollisionContext {
 pub trait World {
     /// Observation at the shared native tick entry, including refused ticks.
     fn observe_tick(&self) {}
+    fn observe_axis_contact(&self,_contact:crate::contact::AxisContact) {}
     fn block(&self, position: BlockPos) -> &Block;
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }

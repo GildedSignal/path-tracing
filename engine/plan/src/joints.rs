@@ -4,43 +4,59 @@ use std::{cmp::Reverse,collections::{BinaryHeap,HashMap,VecDeque}};
 use law::{BlockPos,PlayerState,Vec3,World,codec::{self,Interner,StateClassId,JointPatternId,
     proof::{Answer,Binding,ReadCertificates,Refusal,Source}},footprint::{Footprint,RecordingWorld}};
 use words::{Arguments,Program};
-use crate::{Goal,solve::WordStep};
+use crate::{Goal,solve::WordStep,inline::List,state_view::StateAt};
+#[path="family_wave.rs"] mod family_wave;
+pub use family_wave::{FamilyInterval,ExitImage,Consumption};
 
 #[derive(Clone,Debug)]
-pub struct EntryTemplate {pub key:Vec<u64>,base:PlayerState,origin:Vec3,axis:Option<usize>,slope:f64,perpendicular:f64,pub s:f64,pub phase:u32}
+pub struct EntryTemplate {
+    pub key:Vec<u64>,base:PlayerState,origin:Vec3,pub axis:Option<usize>,
+    /// Absolute ordered binary64 lattice coordinate; no slope/interpolation.
+    pub lattice:u64,pub s:f64,pub phase:u32,pub resources:Resources,
+}
 fn xyz(v:Vec3)->[f64;3] {[v.x,v.y,v.z]}
+pub fn ordered(x:f64)->u64 {let b=x.to_bits();if b>>63!=0 {!b} else {b^(1<<63)}}
+pub fn unordered(b:u64)->f64 {f64::from_bits(if b>>63!=0 {b^(1<<63)} else {!b})}
+#[derive(Clone,Copy,Debug)]
+pub struct Resources {pub food:i32,pub saturation:f32,pub exhaustion:f32,pub fall_distance:f64}
+impl Resources {
+    fn of(s:&PlayerState)->Self {Self {food:s.food_level,saturation:s.saturation,exhaustion:s.exhaustion,fall_distance:s.fall_distance}}
+    fn same_bits(self,other:Self)->bool {self.food==other.food && self.saturation.to_bits()==other.saturation.to_bits() && self.exhaustion.to_bits()==other.exhaustion.to_bits() && self.fall_distance.to_bits()==other.fall_distance.to_bits()}
+}
 impl EntryTemplate {
     pub fn new(state:&PlayerState,origin:Vec3,phase:u32)->Self {
-        let p=xyz(state.position);let o=xyz(origin);let v=xyz(state.velocity);
+        let v=xyz(state.velocity);
         let axis=if v[0]==0.0 && v[2]==0.0 {None} else {Some(if v[0].abs()>=v[2].abs() {0} else {2})};
-        let (axis,s,slope,perpendicular)=if let Some(a)=axis {
-            let b=2-a;let s=p[a]-o[a];let slope=v[b]/v[a];let w=(p[b]-o[b])-slope*s;
-            // A coordinate chart must round-trip all bits. A lost fractional bit
-            // makes this an exact point, never a broadened comparison class.
-            if (o[a]+s).to_bits()==p[a].to_bits() && (o[b]+(w+slope*s)).to_bits()==p[b].to_bits() {
-                (Some(a),s,slope,w)
-            } else {(None,0.0,0.0,0.0)}
-        } else {(None,0.0,0.0,0.0)};
-        let mut normalized=state.clone();
-        if let Some(a)=axis {if a==0 {normalized.position.x=0.0;normalized.position.z=perpendicular;} else {normalized.position.z=0.0;normalized.position.x=perpendicular;}}
-        let mut key=normalized.bits();key.push(phase as u64);key.push(axis.map_or(3,|v|v) as u64);
-        key.extend(xyz(origin).map(f64::to_bits));key.push(slope.to_bits());
-        // Sign and exponent distinguish each binade, including signed zero.
-        key.extend(p.map(|p|p.to_bits()>>52));
-        Self {key,base:state.clone(),origin,axis,slope,perpendicular,s,phase}
+        Self::with_axis(state,origin,phase,axis)
+    }
+    pub fn with_axis(state:&PlayerState,origin:Vec3,phase:u32,axis:Option<usize>)->Self {
+        use law::state_reads::StateField as F;let p=xyz(state.position);
+        let s=axis.map_or(0.0,|a|p[a]);let mut key=Vec::new();
+        for &field in F::ALL {
+            match field {
+                F::exhaustion|F::saturation|F::food_level|F::fall_distance|F::yaw|F::pitch|F::input=>(),
+                F::position=>for a in 0..3 {key.push(if Some(a)==axis {p[a].to_bits()>>52} else {p[a].to_bits()});},
+                F::main_supporting_block=>{
+                    key.push(state.main_supporting_block.is_some() as u64);
+                    if let Some(support)=state.main_supporting_block {key.extend((0..3).map(|a|(support[a] as i64-p[a].floor() as i64) as u64));}
+                },
+                _=>state.push_field_bits(field,&mut key),
+            }
+        }
+        key.extend([phase as u64,axis.map_or(3,|a|a) as u64]);
+        Self {key,base:state.clone(),origin,axis,lattice:ordered(s),s,phase,resources:Resources::of(state)}
     }
     pub fn state(&self,s:f64)->Option<PlayerState> {
         if !s.is_finite() {return None;}
-        let mut out=self.base.clone();
+        let mut out=self.base.clone();let old=xyz(out.position);
         if let Some(a)=self.axis {
-            let mut p=xyz(out.position);let o=xyz(self.origin);let b=2-a;
-            p[a]=o[a]+s;p[b]=o[b]+(self.perpendicular+self.slope*s);out.position=Vec3::new(p[0],p[1],p[2]);
+            let mut p=old;p[a]=s;out.position=Vec3::new(p[0],p[1],p[2]);
+            if let Some(mut support)=out.main_supporting_block {support[a]+=p[a].floor() as i32-old[a].floor() as i32;out.main_supporting_block=Some(support);}
         } else if s.to_bits()!=self.s.to_bits() {return None;}
-        let check=Self::new(&out,self.origin,self.phase);
+        let check=Self::with_axis(&out,self.origin,self.phase,self.axis);
         (check.key==self.key && check.s.to_bits()==s.to_bits()).then_some(out)
     }
 }
-
 /// No producer exists until a kit-wide envelope is derived. A missed learning
 /// proposal cannot construct this value or turn a searched gap into Forbidden.
 #[derive(Clone,Debug)]
@@ -52,25 +68,28 @@ pub struct EdgeId(pub usize);
 #[derive(Clone,Debug)]
 pub struct Witness {pub s_bits:u64,pub end_digest:u128}
 #[derive(Clone,Debug)]
-pub struct Plateau {
-    pub lo:f64,pub hi:f64,pub status:Status,pub ticks:u32,pub exit_lo:[u64;3],pub exit_hi:[u64;3],
+pub struct Piece {
+    pub lo:u64,pub hi:u64,pub status:Status,pub ticks:u32,pub tick_range:(u32,u32),pub exit_lo:[u64;3],pub exit_hi:[u64;3],
     pub witness:Witness,pub signature:Vec<u128>,pub grounded:bool,
+    /// The legacy point facts have only their witnessed resource guard. A
+    /// broader interval must be proved before it can consume other numerics.
+    pub uses:crate::families::UseInterval,resource_guard:Resources,pub exit:ExitImage,
     binding:Binding,certificate:usize,from:usize,to:usize,step:WordStep,last_before:PlayerState,
 }
-pub struct JointPattern {pub id:JointPatternId,pub entry:StateClassId,pub law_hash:[u8;32],pub origin:Vec3,pub plateaus:Vec<Plateau>}
+pub struct JointPattern {pub id:JointPatternId,pub entry:StateClassId,pub law_hash:[u8;32],pub origin:Vec3,pub pieces:Vec<Piece>}
 #[derive(Clone,Debug)]
 pub struct Demand {pub entry:Vec<u64>,pub face:Option<BlockPos>,pub lower:u64,pub reason:String}
 #[derive(Clone,Debug)]
 pub struct Attempt {pub entry:EntryTemplate,pub program:u16,pub args:Arguments,pub status:Status,pub witness:Witness,pub reads:Vec<(u64,Footprint)>}
 #[derive(Default,Clone,Copy,Debug)]
-pub struct Work {pub waves:u64,pub edge_reads:u64,pub settled:u64,pub law_ticks:u64}
+pub struct Work {pub waves:u64,pub edge_reads:u64,pub settled:u64,pub law_ticks:u64,pub terminal_builds:u64,pub terminal_lookups:u64}
 #[derive(Clone,Debug)]
-pub struct Route {pub words:Vec<WordStep>,pub ticks:u64,pub end:PlayerState}
+pub struct Route {pub words:List<WordStep,12>,pub ticks:u64,pub end:StateAt}
 /// The field's partition is separate from the goal-free pattern partition.
 #[derive(Clone,Debug)]
 pub struct InstanceInterval {pub lo:f64,pub hi:f64,pub t:Option<u64>,pub via:Option<EdgeId>}
 #[derive(Clone,Debug)]
-pub struct Field {pub goal:Goal,pub t:Vec<Option<u64>>,pub via:Vec<Option<EdgeId>>,pub alternate:Vec<Option<EdgeId>>,pub partitions:Vec<Vec<InstanceInterval>>,pub prices:HashMap<Vec<u8>,i128>}
+pub struct Field {pub goal:Goal,pub t:Vec<Option<u64>>,pub via:Vec<Option<EdgeId>>,pub alternate:Vec<Option<EdgeId>>,pub partitions:Vec<Vec<InstanceInterval>>,pub families:Vec<FamilyInterval>,pub prices:HashMap<Vec<u8>,i128>}
 impl Field {
     pub fn set_price(&mut self,resource:Vec<u8>,without:Option<u64>,with:Option<u64>,lower_without:u64,lower_with:u64) {
         self.prices.insert(resource,price(without,with,lower_without,lower_with));
@@ -102,33 +121,44 @@ fn backward(n:usize,edges:&[(usize,usize,u64,EdgeId)],terminals:impl Iterator<It
         }
     }
     work.settled+=count;
-    Field {goal,t,via,alternate,partitions:Vec::new(),prices:HashMap::new()}
+    Field {goal,t,via,alternate,partitions:Vec::new(),families:Vec::new(),prices:HashMap::new()}
 }
 
 /// Uniform generator chains and learned joint edges use this same min-plus
 /// operation. The caller has already certified every WordStep.
-pub(crate) fn compose_chain(from:&PlayerState,goal:Goal,words:Vec<WordStep>,work:&mut Work)->Route {
-    let edges:Vec<_>=words.iter().enumerate().map(|(i,w)|(i,i+1,w.ticks as u64,EdgeId(i))).collect();
-    let field=backward(words.len()+1,&edges,std::iter::once(words.len()),goal,work);
-    let end=words.last().map(|w|w.end.clone()).unwrap_or_else(||from.clone());
-    Route {ticks:field.t[0].unwrap(),words,end}
+pub(crate) fn compose_chain(from:&PlayerState,_goal:Goal,words:List<WordStep,12>,work:&mut Work)->Route {
+    // Exact min-plus recurrence on a certified linear chain. Branching joint
+    // graphs use the same recurrence with min over their incoming edges.
+    work.waves+=1;work.edge_reads+=words.len() as u64;work.settled+=words.len() as u64+1;
+    let ticks=words.iter().rev().fold(0u64,|tail,w|tail.checked_add(w.ticks as u64).expect("tick cost overflow"));
+    let end=words.last().map(|w|w.end.clone()).unwrap_or_else(||StateAt::point(from.clone()));Route {ticks,words,end}
 }
-
 #[derive(Default)]
 pub struct JointStore {
     pub patterns:Vec<JointPattern>,pub attempts:Vec<Attempt>,pub queue:VecDeque<Demand>,pub work:Work,pub inventory:Option<crate::faces::FaceInventory>,
     templates:HashMap<Vec<u64>,StateClassId>,template_bytes:usize,
-    states:Vec<PlayerState>,state_ids:HashMap<Vec<u64>,usize>,edges:Vec<(usize,usize)>,
-    certificates:ReadCertificates,field:Option<Field>,
+    states:Vec<std::sync::Arc<PlayerState>>,state_ids:HashMap<Vec<u64>,usize>,edges:Vec<(usize,usize)>,
+    certificates:ReadCertificates,field:Option<Field>,terminal_sets:HashMap<crate::terminal::Key,crate::terminal::Set>,family_entries:HashMap<usize,EntryTemplate>,
 }
 impl JointStore {
+    pub fn terminal_count(&self)->usize {self.terminal_sets.len()}
+    pub fn terminal(&mut self,label:law::codec::LabelId,gait:&crate::store::WordKernel,phase:u32,words:&[std::sync::Arc<crate::store::WordKernel>],from:&impl crate::state_view::StateSource,goal:Goal)->Result<Option<(std::sync::Arc<crate::store::WordKernel>,u64)>,String> {
+        self.work.terminal_lookups+=1;
+        let request=crate::terminal::Request::new(label,gait,phase,words,from,goal);
+        if !self.terminal_sets.contains_key(&request.key) {
+            let set=crate::terminal::Set::build(&request,words,from)?;self.terminal_sets.insert(request.key,set);self.work.terminal_builds+=1;
+        }
+        Ok(self.terminal_sets[&request.key].lookup(from,goal))
+    }
     pub fn template_bytes(&self)->usize {self.template_bytes}
     pub fn cold_state_bytes(&self)->usize {self.states.iter().map(|s|s.bits().len()*std::mem::size_of::<u64>()).sum()}
     pub fn edge_count(&self)->usize {self.edges.len()}
+    /// Resolve an interned point image without copying its player state.
+    pub fn point(&self,id:usize)->&PlayerState {&self.states[id]}
     pub fn end(&self,id:EdgeId)->&PlayerState {&self.states[self.edge(id).to]}
     fn node(&mut self,s:&PlayerState)->usize {
         let bits=s.bits();if let Some(&id)=self.state_ids.get(&bits) {return id;}
-        let id=self.states.len();self.states.push(s.clone());self.state_ids.insert(bits,id);id
+        let id=self.states.len();self.states.push(std::sync::Arc::new(s.clone()));self.state_ids.insert(bits,id);id
     }
     pub fn enqueue(&mut self,s:&PlayerState,lower:u64,reason:impl Into<String>) {
         let entry=s.bits();if self.queue.iter().any(|d|d.entry==entry) {return;}
@@ -209,13 +239,14 @@ impl JointStore {
         let cells=self.certificates.cells(certificate).unwrap();
         let mut min=[i32::MAX;3];let mut max=[i32::MIN;3];
         for c in cells {for a in 0..3 {min[a]=min[a].min(c.position[a]);max[a]=max[a].max(c.position[a]);}}
-        let step=WordStep {program,args,ticks,expected_end_t:end.t,events:Vec::new(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:end.clone(),map_segments:0};
+        let step=WordStep {program,args,ticks,expected_end_t:end.t,events:List::new(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:StateAt::shared(self.states[to].clone()),map_segments:0};
         let witness=Witness {s_bits:entry.s.to_bits(),end_digest:codec::digest(&codec::state_key(codec::StateQuestion::Exact,&end.bits()))};
-        let plateau=Plateau {lo:entry.s,hi:entry.s,status:Status::Found,ticks,exit_lo:positions,exit_hi:positions,witness,signature,grounded:start.on_ground,binding,certificate,from,to,step,last_before};
+        let uses=crate::families::UseInterval::witness(start,&end);
+        let plateau=Piece {lo:entry.lattice,hi:entry.lattice,status:Status::Found,ticks,tick_range:(ticks,ticks),exit_lo:positions,exit_hi:positions,witness,signature,grounded:start.on_ground,uses,resource_guard:entry.resources,exit:ExitImage::Points(vec![to]),binding,certificate,from,to,step,last_before};
         let id=EdgeId(self.edges.len());self.edges.push((self.patterns.len(),0));
-        self.patterns.push(JointPattern {id:pattern,entry:entry_id,law_hash:law::LAW_HASH,origin:entry.origin,plateaus:vec![plateau]});self.field=None;Ok(id)
+        self.patterns.push(JointPattern {id:pattern,entry:entry_id,law_hash:law::LAW_HASH,origin:entry.origin,pieces:vec![plateau]});self.field=None;Ok(id)
     }
-    fn edge(&self,id:EdgeId)->&Plateau {let (p,i)=self.edges[id.0];&self.patterns[p].plateaus[i]}
+    fn edge(&self,id:EdgeId)->&Piece {let (p,i)=self.edges[id.0];&self.patterns[p].pieces[i]}
     fn valid(&self,id:EdgeId)->bool {
         let (p,_)=self.edges[id.0];let e=self.edge(id);
         self.patterns[p].law_hash==law::LAW_HASH && matches!(e.status,Status::Found) &&
@@ -226,12 +257,12 @@ impl JointStore {
         p.law_hash==law::LAW_HASH && !p.premises.is_empty() && !p.separating_cells.is_empty() &&
             matches!(self.certificates.answer(p.certificate,&p.binding),Answer::Yes(_))
     }
-    pub fn consume(&self,id:EdgeId,state:&PlayerState,phase:u32)->Result<&WordStep,Refusal> {
+    pub fn consume(&self,id:EdgeId,state:&PlayerState,phase:u32)->Result<Consumption<'_>,Refusal> {
         let (p,_)=self.edges[id.0];let pattern=&self.patterns[p];let e=self.edge(id);
-        let entry=EntryTemplate::new(state,pattern.origin,phase);
-        if self.templates.get(&entry.key)!=Some(&pattern.entry) || entry.s<e.lo || entry.s>e.hi {return Err(Refusal::StateOrContext);}
+        let entry=if let Some(template)=self.family_entries.get(&p) {EntryTemplate::with_axis(state,pattern.origin,phase,template.axis)}else {EntryTemplate::new(state,pattern.origin,phase)};
+        if self.templates.get(&entry.key)!=Some(&pattern.entry) || entry.lattice<e.lo || entry.lattice>e.hi || !entry.resources.same_bits(e.resource_guard) {return Err(Refusal::StateOrContext);}
         if !self.valid(id) {return Err(Refusal::Changed);}
-        Ok(&e.step)
+        Ok(Consumption {program:e.step.program,args:e.step.args,ticks:e.tick_range,exit:&e.exit,coordinate:entry.lattice})
     }
     pub fn edit(&mut self,codec:&Interner,p:BlockPos,ticks:(u64,u64),source:&impl Source)->usize {
         let broken=self.certificates.edit(codec,p,ticks,source);self.invalidate(&broken)
@@ -241,7 +272,7 @@ impl JointStore {
     }
     fn invalidate(&mut self,broken:&[usize])->usize {
         let mut count=0;let mut demands=Vec::new();
-        for pattern in &mut self.patterns {for e in &mut pattern.plateaus {
+        for pattern in &mut self.patterns {for e in &mut pattern.pieces {
             if broken.contains(&e.certificate) {e.status=Status::Searched {work:0};demands.push(e.from);count+=1;}
         }}
         for from in demands {let state=self.states[from].clone();self.enqueue(&state,0,"read certificate invalidated");}
@@ -258,22 +289,23 @@ impl JointStore {
         let swept_terminal=self.states.len();terminals.push(swept_terminal);
         let mut edges=Vec::new();
         for i in 0..self.edges.len() {
-            let id=EdgeId(i);if !self.valid(id) {continue;}
+            let id=EdgeId(i);if !self.valid(id) || self.family_entries.contains_key(&self.edges[i].0) {continue;}
             let e=self.edge(id);let to=if goal.touched(&e.last_before,&self.states[e.to]) {swept_terminal} else {e.to};
             edges.push((e.from,to,e.ticks as u64,id));
         }
         let mut field=backward(self.states.len()+1,&edges,terminals.into_iter(),goal,&mut self.work);
-        field.partitions=self.patterns.iter().map(|p|p.plateaus.iter().map(|e|InstanceInterval {lo:e.lo,hi:e.hi,t:field.t[e.from],via:field.via[e.from]}).collect()).collect();
+        field.partitions=self.patterns.iter().map(|p|p.pieces.iter().map(|e|InstanceInterval {lo:unordered(e.lo),hi:unordered(e.hi),t:field.t[e.from],via:field.via[e.from]}).collect()).collect();
+        family_wave::extend(self,&mut field);
         self.field=Some(field);self.field.as_ref().unwrap()
     }
     pub fn route(&mut self,start:&PlayerState,goal:Goal)->Option<Route> {
-        let mut node=*self.state_ids.get(&start.bits())?;self.wave(goal);
-        let field=self.field.as_ref().unwrap();let ticks=field.t[node]?;let mut words=Vec::new();
+        if self.state_ids.is_empty() {return None;}let mut node=*self.state_ids.get(&start.bits())?;self.wave(goal);
+        let field=self.field.as_ref().unwrap();let ticks=field.t[node]?;let mut words=List::new();
         while let Some(id)=field.via[node] {
-            let e=self.edge(id);if !self.valid(id) {return None;}words.push(e.step.clone());node=e.to;
+            let e=self.edge(id);if !self.valid(id) || self.family_entries.contains_key(&self.edges[id.0].0) {return None;}words.push(e.step.clone());node=e.to;
             if goal.touched(&e.last_before,&self.states[node]) {break;}
         }
-        Some(Route {words,ticks,end:self.states[node].clone()})
+        Some(Route {words,ticks,end:StateAt::shared(self.states[node].clone())})
     }
 }
 

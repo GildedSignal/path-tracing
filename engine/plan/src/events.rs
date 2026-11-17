@@ -1,7 +1,7 @@
 //! Exact binary64 event maps, promoted from the judged P2 kernel.
 use law::{PlayerState,Vec3};
 use crate::Goal;
-use std::{cell::{RefCell,Ref},collections::HashMap};
+use std::{cell::RefCell,collections::HashMap,sync::Arc};
 const HIDDEN: i128 = 1i128 << 52;
 const LIMIT: i128 = 1i128 << 53;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,32 +158,68 @@ fn fold_map(map:&Map,start:f64,ticks:u64)->Fold {
 /// A generator's exact maps are shared across all coordinates, commands and
 /// counts in the same binade/parity regime. No position or goal is a cache key.
 #[derive(Clone,Debug)]
-pub struct Map {ds:Vec<f64>,graphs:RefCell<HashMap<(i32,usize,u8),Option<Graph>>>}
+pub struct Map {ds:Vec<f64>,graphs:RefCell<HashMap<(i32,usize,u8),Option<Arc<Graph>>>>}
 impl Map {
     pub fn new(ds:Vec<f64>)->Self {Self {ds,graphs:RefCell::default()}}
     pub fn len(&self)->usize {self.ds.len()}
-    fn graph(&self,phase:usize,region:Region,k:i128)->Option<Ref<'_,Graph>> {
+    fn graph(&self,phase:usize,region:Region,k:i128)->Option<Arc<Graph>> {
         let key=(region.exp,phase,(k&1) as u8);
         if !self.graphs.borrow().contains_key(&key) {
-            let graph=Graph::new(&self.ds,phase,region,k,false);self.graphs.borrow_mut().insert(key,graph);
+            let graph=Graph::new(&self.ds,phase,region,k,false).map(Arc::new);self.graphs.borrow_mut().insert(key,graph);
         }
-        let borrow=self.graphs.borrow();if borrow.get(&key).unwrap().is_none() {return None;}
-        Some(Ref::map(borrow,|m|m.get(&key).unwrap().as_ref().unwrap()))
+        // A streamed family's consumer can query this same map at another
+        // coordinate. Hold immutable graph ownership, not a cache borrow,
+        // across that callback, so a missing binade may be compiled there.
+        self.graphs.borrow().get(&key).unwrap().clone()
     }
     #[cfg(test)]
     pub(crate) fn fold(&self,start:f64,ticks:u64)->Fold {fold_map(self,start,ticks)}
+    #[cfg(test)]
     pub(crate) fn boundaries(&self,start:f64,ticks:u64)->(usize,Vec<u64>) {
         let mut boundaries=Vec::new();
         let (_,segments)=walk_map(self,start,ticks,|p|if let Piece::Boundary {tick,..}=p {boundaries.push(tick);});
         (segments,boundaries)
     }
+    pub(crate) fn trace_boundaries(&self,start:f64,ticks:u64,mut emit:impl FnMut(u64))->(f64,usize) {walk_map(self,start,ticks,|p|if let Piece::Boundary {tick,..}=p {emit(tick);})}
     pub fn advance(&self,start:f64,ticks:u64)->f64 {advance_map(self,start,ticks)}
+    /// First crossing of a scalar threshold by a sign-definite addition word.
+    /// Skip complete binade runs; invert the final graph's integer cycle
+    /// count, then inspect at most one word. No families or inverse probes
+    /// are constructed along the travelled distance.
+    pub fn first_cross(&self,start:f64,target:f64,horizon:u64)->Option<u64> {
+        let sign=if self.ds.iter().all(|d|*d>=0.0) {1.0} else if self.ds.iter().all(|d|*d<=0.0) {-1.0} else {return None;};
+        let reached=|p:f64|sign*p>=sign*target;
+        if reached(start) {return Some(0);}
+        if self.ds.is_empty() || self.ds.iter().all(|d|*d==0.0) {return None;}
+        let (mut p,mut tick)=(start,0u64);let period=self.ds.len() as u64;
+        while tick<horizon {
+            let (region,k)=Region::at(p);let phase=(tick%period) as usize;
+            if let Some(graph)=self.graph(phase,region,k) {
+                let safe=graph.safe_cycles(region,k,(horizon-tick)/period);
+                if safe>0 {
+                    let end=region.value(k+graph.displacement(safe));
+                    let cycles=if reached(end) {
+                        let (mut lo,mut hi)=(1,safe);
+                        while lo<hi {let m=lo+(hi-lo)/2;if reached(region.value(k+graph.displacement(m))) {hi=m;}else {lo=m+1;}}
+                        lo-1
+                    } else {safe};
+                    if cycles>0 {p=region.value(k+graph.displacement(cycles));tick+=cycles*period;}
+                    if tick==horizon {break;}
+                }
+            }
+            for _ in 0..period.min(horizon-tick) {
+                p+=self.ds[(tick%period) as usize];tick+=1;if reached(p) {return Some(tick);}
+                let (next,_)=Region::at(p);if next.exp!=region.exp || next.lo!=region.lo || next.hi!=region.hi {break;}
+            }
+        }None
+    }
 }
 fn ceil_div(n:i128,d:i128)->i128 {-(-n).div_euclid(d)}
 
 /// A no-return horizon, from P2's downward-rounded step bound at the coarsest
 /// visited binade. The extra lattice unit is a rounding bound, not an epsilon.
-pub fn horizon(from:&PlayerState,goal:Goal,increments:impl Iterator<Item=Vec3>+Clone,velocity:Vec3)->u64 {
+pub fn horizon(from:&impl crate::state_view::StateSource,goal:Goal,increments:impl Iterator<Item=Vec3>+Clone,velocity:Vec3)->u64 {
+    let from=from.view();
     let axis=if velocity.x.abs()>=velocity.z.abs() {0} else {2};
     let get=|v:Vec3|if axis==0 {v.x} else {v.z};
     let sign=get(velocity).signum();if sign==0.0 {return words::Arguments::MAX_TICKS;}
@@ -246,29 +282,27 @@ impl Values {
         Self::Exact(a,b)=>Self::Exact(a,b),
     }}
 }
-fn runs(start:f64,map:&Map,ticks:u64)->Vec<AxisRun> {
+fn runs(start:f64,map:&Map,ticks:u64,mut emit:impl FnMut(AxisRun)) {
     let ds=&map.ds;
     let p=ds.len() as u64;
-    if ds.iter().all(|&d|d==0.0) {return (0..p.min(ticks)).map(|phase|AxisRun {time:phase+1,stride:p,count:1+(ticks-phase-1)/p,values:Values::Exact(start,start)}).collect();}
-    let mut out=Vec::new();
-    walk_map(map,start,ticks,|piece|out.push(match piece {
+    if ds.iter().all(|&d|d==0.0) {for phase in 0..p.min(ticks) {emit(AxisRun {time:phase+1,stride:p,count:1+(ticks-phase-1)/p,values:Values::Exact(start,start)});}return;}
+    walk_map(map,start,ticks,|piece|emit(match piece {
         Piece::Family(f)=>{debug_assert_eq!(f.phase as u64,(f.tick-1)%p);AxisRun {time:f.tick,stride:if f.stride==0 {p} else {f.stride},count:f.count,
             values:Values::Integer {region:f.region,base:f.base,delta:f.delta,before:f.before,after:f.after}}},
         Piece::Boundary {tick,before,after,phase}=>{debug_assert_eq!(phase as u64,(tick-1)%p);AxisRun {time:tick,stride:p,count:1,values:Values::Exact(before,after)}},
-    }));out
+    }));
 }
-fn phase_pair(phases:&[PlayerState],phase:usize,x:(f64,f64),z:(f64,f64),goal:Goal,relax_y:bool)->(law::Aabb,law::Aabb) {
-    let a=&phases[phase];let b=&phases[(phase+1)%phases.len()];
-    let mut ap=Vec3::new(x.0,a.position.y,z.0);let mut bp=Vec3::new(x.1,b.position.y,z.1);
-    if relax_y {
-        let zone=goal.zone();let y=(zone.min.y+zone.max.y-a.pose.height() as f64)/2.0;
-        ap.y=y;bp.y=y;
-    }
-    (law::Aabb::player(ap,a.pose.height()),law::Aabb::player(bp,b.pose.height()))
+pub trait PhaseGeometry {fn len(&self)->usize;fn body(&self,index:usize)->(f64,law::Pose);}
+impl PhaseGeometry for [PlayerState] {fn len(&self)->usize {self.len()}fn body(&self,i:usize)->(f64,law::Pose) {(self[i].position.y,self[i].pose)}}
+fn phase_pair(phases:&(impl PhaseGeometry+?Sized),phase:usize,x:(f64,f64),z:(f64,f64),goal:Goal,relax_y:bool)->(law::Aabb,law::Aabb) {
+    let (ay,apose)=phases.body(phase);let (by,bpose)=phases.body((phase+1)%phases.len());
+    let mut ap=Vec3::new(x.0,ay,z.0);let mut bp=Vec3::new(x.1,by,z.1);
+    if relax_y {let zone=goal.zone();let y=(zone.min.y+zone.max.y-apose.height() as f64)/2.0;ap.y=y;bp.y=y;}
+    (law::Aabb::player(ap,apose.height()),law::Aabb::player(bp,bpose.height()))
 }
 // Derive one coordinate's integer interval using the goal as the oracle. This
 // is the sole inverse acceptance definition: no AABB detector is copied here.
-fn window(values:&Values,count:u64,axis:usize,phases:&[PlayerState],phase:usize,goal:Goal,relax_y:bool)->Option<(u64,u64)> {
+fn window(values:&Values,count:u64,axis:usize,phases:&(impl PhaseGeometry+?Sized),phase:usize,goal:Goal,relax_y:bool)->Option<(u64,u64)> {
     let center=goal.center();
     let predicate=|r:u64| {
         let v=values.pair(r);
@@ -324,32 +358,50 @@ pub fn first_touch(from:&PlayerState,ds:&[Vec3],phases:&[PlayerState],goal:Goal,
     first_touch_maps(from,&Map::new(dx),&Map::new(dz),phases,goal,horizon,relax_y)
 }
 pub fn first_touch_maps(from:&PlayerState,xmap:&Map,zmap:&Map,phases:&[PlayerState],goal:Goal,horizon:u64,relax_y:bool)->Option<u64> {
+    first_touch_readout(from.position,xmap,zmap,phases,goal,horizon,relax_y)
+}
+pub fn first_touch_readout(position:Vec3,xmap:&Map,zmap:&Map,phases:&(impl PhaseGeometry+?Sized),goal:Goal,horizon:u64,relax_y:bool)->Option<u64> {
     if horizon==0 || xmap.ds.is_empty() {return None;}
-    let xs=runs(from.position.x,xmap,horizon);let zs=runs(from.position.z,zmap,horizon);
     let p=xmap.ds.len() as u64;let mut best=None;
-    let mut z_phase=vec![Vec::new();p as usize];
-    for z in &zs {z_phase[(z.time%p) as usize].push(z);}
-    for x in &xs {for &z in &z_phase[(x.time%p) as usize] {
+    // Intersect the goal with X before visiting Z. Graphs are resident data;
+    // the transient families are streamed, not allocated per inverse query.
+    runs(position.x,xmap,horizon,|x| {
+        let phase=((x.time-1)%p) as usize;
+        let Some((first,last))=window(&x.values,x.count,0,phases,phase,goal,relax_y) else {return;};
+        let x=AxisRun {time:x.time+first*x.stride,stride:x.stride,count:last-first+1,values:x.values.shifted(first,1)};
+        runs(position.z,zmap,horizon,|z| {
+        if x.time%p!=z.time%p {return;}
         let end=(x.time+(x.count-1)*x.stride).min(z.time+(z.count-1)*z.stride);
-        let start=x.time.max(z.time);if start>end {continue;}
+        let start=x.time.max(z.time);if start>end {return;}
         let mut time=x.time+(start-x.time).div_ceil(x.stride)*x.stride;
         if (time-z.time)%z.stride!=0 {time+=x.stride;}
-        if time>end || (time-z.time)%z.stride!=0 {continue;}
+        if time>end || (time-z.time)%z.stride!=0 {return;}
         let stride=x.stride.max(z.stride);let count=1+(end-time)/stride;
         let xv=x.values.shifted((time-x.time)/x.stride,stride/x.stride);
         let zv=z.values.shifted((time-z.time)/z.stride,stride/z.stride);
         let phase=((time-1)%p) as usize;
-        let Some((xl,xh))=window(&xv,count,0,phases,phase,goal,relax_y) else {continue;};
-        let Some((zl,zh))=window(&zv,count,1,phases,phase,goal,relax_y) else {continue;};
-        let r=xl.max(zl);if r>xh.min(zh) {continue;}
+        // Every retained X sample already belongs to its accepted interval.
+        let Some((r,_))=window(&zv,count,1,phases,phase,goal,relax_y) else {return;};
         let (a,b)=phase_pair(phases,phase,xv.pair(r),zv.pair(r),goal,relax_y);
         if goal.touched_boxes(a,b) {let t=time+r*stride;best=Some(best.map_or(t,|old:u64|old.min(t)));}
-    }}best
+        });
+    });best
 }
 
 #[cfg(test)]
 mod fold_checks {
     use super::*;
+    #[test]
+    fn streamed_inverse_can_share_one_map_on_both_axes() {
+        let phases=vec![PlayerState {position:Vec3::new(0.5,64.0,1023.5),..Default::default()}];
+        let goal=Goal {cell:[3,64,1026]};let from=&phases[0];
+        let map=Map::new(vec![0.25]);
+        let predicted=first_touch_maps(from,&map,&map,&phases,goal,32,false);
+        let mut p=from.position;let mut native=None;
+        for tick in 1..=32 {let before=law::Aabb::player(p,from.pose.height());p.x+=0.25;p.z+=0.25;
+            if goal.touched_boxes(before,law::Aabb::player(p,from.pose.height())) {native=Some(tick);break;}}
+        assert_eq!(predicted,native);assert!(predicted.is_some());
+    }
     #[test]
     fn folded_maps_equal_native_addition_and_endpoint() {
         let mut checks=0;

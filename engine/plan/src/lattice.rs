@@ -121,7 +121,7 @@ fn row(d1:f64,d2:f64,lo:f64,hi:f64)->[i128;4] {
 pub struct LatticeCost {pub envelope_intervals:u64,pub quotient_queries:u64}
 fn feasible(rows:&[[i128;4];2],cap:u32,cost:&mut LatticeCost,witness:bool)->Option<(u32,u32)> {
     cost.quotient_queries+=1;
-    let mut lower=vec![Line {a:0,b:0,d:1}];let mut upper=vec![Line {a:-1,b:cap as i128,d:1}];
+    let mut lower:crate::inline::List<Line,3>=crate::list![Line {a:0,b:0,d:1}];let mut upper:crate::inline::List<Line,3>=crate::list![Line {a:-1,b:cap as i128,d:1}];
     let (mut start,mut end)=(0i128,cap as i128);
     for &[a,b,lo,hi] in rows {
         if a==0 {
@@ -132,7 +132,7 @@ fn feasible(rows:&[[i128;4];2],cap:u32,cost:&mut LatticeCost,witness:bool)->Opti
         else {lower.push(Line {a:b,b:-hi,d:-a});upper.push(Line {a:b,b:-lo,d:-a});}
     }
     if start>end {return None;}
-    let all:Vec<_>=lower.iter().chain(&upper).copied().collect();let mut cuts=vec![start,end+1];
+    let all:crate::inline::List<_,6>=lower.iter().chain(upper.iter()).copied().collect();let mut cuts:crate::inline::List<_,32>=crate::list![start,end+1];
     for (i,&a) in all.iter().enumerate() {for &b in &all[i+1..] {
         let numerator=b.b.checked_mul(a.d).and_then(|v|a.b.checked_mul(b.d).and_then(|w|v.checked_sub(w)));
         let denominator=a.a.checked_mul(b.d).and_then(|v|b.a.checked_mul(a.d).and_then(|w|v.checked_sub(w)));
@@ -170,10 +170,50 @@ fn feasible(rows:&[[i128;4];2],cap:u32,cost:&mut LatticeCost,witness:bool)->Opti
 /// The runtime depends on operand bits and envelope intersections, not distance.
 pub fn counts(d1:Vec3,d2:Vec3,lo:Vec3,hi:Vec3,cap:u32)->Option<([u32;2],LatticeCost)> {
     let rows=[row(d1.x,d2.x,lo.x,hi.x),row(d1.z,d2.z,lo.z,hi.z)];
+    if let Some(proven)=closed_counts(&rows,cap) {return proven;}
     let mut cost=LatticeCost::default();feasible(&rows,cap,&mut cost,false)?;
     let (mut l,mut h)=(0,cap);
     while l<h {let mid=l+(h-l)/2;if feasible(&rows,mid,&mut cost,false).is_some() {h=mid;} else {l=mid+1;}}
     let (a,b)=feasible(&rows,l,&mut cost,true)?;Some(([a,b],cost))
+}
+
+/// Intersect the six exact half-planes by 2x2 determinants. If the first
+/// integer total-cycle slice contains a point, it attains the continuous
+/// lower bound and is therefore the exact optimum. A slice is one interval,
+/// so its greatest q2 also supplies the canonical smallest q1. Thin rational
+/// strips need not contain an integer neighbour: those retain the existing
+/// Euclidean/floor-sum proof, rather than discarding a feasible lattice point.
+fn closed_counts(rows:&[[i128;4];2],cap:u32)->Option<Option<([u32;2],LatticeCost)>> {
+    let [x,z]=*rows;
+    let constraints=[[-x[0],-x[1],-x[2]],[x[0],x[1],x[3]],[-z[0],-z[1],-z[2]],[z[0],z[1],z[3]],[-1,0,0],[0,-1,0]];
+    let cross=|a:i128,b:i128,c:i128,d:i128|a.checked_mul(b)?.checked_sub(c.checked_mul(d)?);
+    let mut lower=None;let mut vertices=0;
+    for (i,&[a,b,c]) in constraints.iter().enumerate() {for &[d,e,f] in &constraints[i+1..] {
+        let mut denominator=cross(a,e,d,b)?;if denominator==0 {continue;}
+        let mut nx=cross(c,e,f,b)?;let mut ny=cross(a,f,d,c)?;
+        if denominator<0 {denominator=denominator.checked_neg()?;nx=nx.checked_neg()?;ny=ny.checked_neg()?;}
+        if nx<0 || ny<0 {continue;}
+        // Cancel the common scale before products with other half-planes.
+        // Dyadic rows can carry very different ulp units on X and Z.
+        let gcd=|mut a:i128,mut b:i128| {while b!=0 {let r=a%b;a=b;b=r;}a};
+        let divisor=gcd(gcd(nx,ny),denominator);
+        nx/=divisor;ny/=divisor;denominator/=divisor;
+        let mut valid=true;
+        for &[aa,bb,cc] in &constraints {if aa.checked_mul(nx)?.checked_add(bb.checked_mul(ny)?)?>cc.checked_mul(denominator)? {valid=false;break;}}
+        if !valid {continue;}vertices+=1;
+        let sum=nx.checked_add(ny)?;let ceil=sum/denominator+i128::from(sum%denominator!=0);
+        lower=Some(lower.map_or(ceil,|old:i128|old.min(ceil)));
+    }}
+    let Some(total)=lower else {return Some(None);};if total>cap as i128 {return Some(None);}
+    let (mut low,mut high)=(0,total);
+    for &[a,b,l,h] in rows {
+        let delta=b.checked_sub(a)?;let l=l.checked_sub(a.checked_mul(total)?)?;let h=h.checked_sub(a.checked_mul(total)?)?;
+        if delta==0 {if l>0 || h<0 {return None;}continue;}
+        let (l,h,d)=if delta>0 {(l,h,delta)} else {(h.checked_neg()?,l.checked_neg()?,delta.checked_neg()?)};
+        low=low.max(-(-l).div_euclid(d));high=high.min(h.div_euclid(d));
+    }
+    if low>high {return None;}
+    Some(Some(([u32::try_from(total-high).ok()?,u32::try_from(high).ok()?],LatticeCost {envelope_intervals:vertices,quotient_queries:1})))
 }
 
 #[cfg(test)]

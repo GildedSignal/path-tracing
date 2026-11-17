@@ -136,7 +136,7 @@ fn u2_certified_wave_no_replay_and_invalidation() {
     let outside=[-60,-21,-60];w.0.set(outside,law::Block::full());assert_eq!(store.joints.borrow_mut().edit(&codec,outside,(0,u64::MAX),&w),0);
     let support=expected.0.main_supporting_block.unwrap();w.0.set(support,law::Block::default());
     assert_eq!(store.joints.borrow_mut().edit(&codec,support,(0,u64::MAX),&w),1);
-    assert!(matches!(store.joints.borrow().patterns[0].plateaus[0].status,Status::Searched {..}));
+    assert!(matches!(store.joints.borrow().patterns[0].pieces[0].status,Status::Searched {..}));
     assert!(store.joints.borrow_mut().route(&start,goal).is_none());
     println!("U2_CERTIFICATE exact_replay=true acting_ticks=0 outside_broken=0 inside_broken=1");
 }
@@ -372,3 +372,58 @@ fn u2_kill11_refined_bisection_diagnostic() {
     // falsifier is the blocking gate for interval certificates, run separately.
     assert!(grew.is_empty(),"plateau count grows under refinement: {grew:?}");
 }
+
+#[path="u2b/premises.rs"]
+mod u2b_premises;
+
+fn learn_for_gate(w:&impl World,start:&PlayerState,domain:(f64,f64),input:Input,stop:&impl Fn(&PlayerState,u32)->bool)->plan::families::Family {
+    plan::families::Family::learn(w,start,0,domain,input,80,stop).unwrap()
+}
+#[path="u2b/pieces.rs"]
+mod u2b_pieces;
+
+#[test]
+fn u2_resource_guard_and_lattice_chart() {
+    let w=scene();let mut start=plan::settle(&plan::Still(&w),[-86.5,-28.0,-101.5],0).unwrap();
+    start.velocity.x=0.24;start.velocity.z=0.06;
+    let template=EntryTemplate::new(&start,start.position,0);
+    let mut changed=start.clone();changed.food_level-=1;changed.saturation=2.0;changed.exhaustion=1.0;changed.fall_distance=2.0;
+    assert_eq!(template.key,EntryTemplate::new(&changed,start.position,0).key);
+    assert_eq!(template.lattice,plan::joints::ordered(start.position.x));
+    let mut codec=Interner::default();let mut store=plan::joints::JointStore::default();
+    let id=store.learn(&w,&mut codec,&start,start.position,0,program_id(true,false),&program(true,false),Arguments {max_ticks:1,refined_yaw:Some(0.0),..Default::default()},|_,_,_|true).unwrap();
+    assert!(store.consume(id,&start,0).is_ok());
+    assert!(store.consume(id,&changed,0).is_err(),"singleton has no proof of a wider resource guard");
+    println!("U2B_ENTRY resources_out_of_key=true lattice_round_trip=true unproved_resource_reuse_refused=true");
+}
+
+#[test]
+fn u2_all_family_patterns_diagnostic() {
+    let mut failures=Vec::new();
+    for step in [false,true] {for yaw in [270.0,275.625] {
+        let (w,start,input)=u2b_premises::fixture(step,yaw);
+        match plan::families::Family::learn(&w,&start,0,(95.5,99.5),input,80,|s,_|s.on_ground && s.position.x>100.0) {
+            Ok(f)=>println!("U2B_ALL pattern={} yaw={yaw} pieces={} map_probes={} law_ticks={}",if step {"step"} else {"gap"},f.pieces.len(),f.map_probes,f.law_ticks),
+            Err(e)=>{println!("U2B_ALL_REFUSED pattern={} yaw={yaw} reason={e}",if step {"step"} else {"gap"});failures.push(e);},
+        }
+    }}
+    let (mut ice,start,input)=u2b_premises::fixture(false,270.0);ice.fill([100,63,-5],[120,63,5],block("ice"));
+    match plan::families::Family::learn(&ice,&start,0,(95.5,99.5),input,80,|s,_|s.main_supporting_block.is_some_and(|p|p[0]>=100 && p[1]==63)) {
+        Ok(f)=>println!("U2B_ALL pattern=glm-ice pieces={} map_probes={} law_ticks={}",f.pieces.len(),f.map_probes,f.law_ticks),
+        Err(e)=>{println!("U2B_ALL_REFUSED pattern=glm-ice reason={e}");failures.push(e);},
+    }
+    let w=scene();let mut start=plan::settle(&plan::Still(&w),[-86.5,-28.0,-101.5],0).unwrap();start.velocity.x=0.24;start.velocity.z=0.06;
+    match plan::families::Family::learn(&w,&start,0,(-86.75,-86.25),Input {forward:true,sprint:true,yaw:0.0,..Default::default()},80,|s,t|s.on_ground && t>1) {
+        Ok(f)=>println!("U2B_ALL pattern=hardtrack-lane-wall pieces={} map_probes={} law_ticks={}",f.pieces.len(),f.map_probes,f.law_ticks),
+        Err(e)=>{println!("U2B_ALL_REFUSED pattern=hardtrack-lane-wall reason={e}");failures.push(e);},
+    }
+    assert!(failures.is_empty(),"family certification refused: {failures:?}");
+}
+
+#[path="u2b/pin_gate.rs"]
+mod s203;
+
+#[path="u2b/pins_point_hold.rs"]
+mod s203_gate;
+
+#[path="u2b/consumers.rs"] mod s203_consumers;

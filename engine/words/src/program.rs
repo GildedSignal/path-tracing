@@ -18,6 +18,11 @@ pub enum Predicate {
     Not(Box<Predicate>),
 }
 impl Predicate {
+    fn constant(&self)->Option<bool> {match self {
+        Self::Always=>Some(true),Self::Not(p)=>p.constant().map(|v|!v),
+        Self::All(ps)=>{let mut known=true;for p in ps {match p.constant() {Some(false)=>return Some(false),None=>known=false,_=>()}}known.then_some(true)},
+        _=>None,
+    }}
     fn matches(&self, world: &impl World, state: &PlayerState, elapsed: u32) -> bool {
         let read = |field| world.read_state(field);
         match self {
@@ -125,6 +130,9 @@ impl Predicate {
     }
 }
 impl Program {
+    pub fn held_input(&self,args:Arguments)->Option<Input> {
+        for row in &self.rows {match row.when.constant()? {false=>continue,true=>return Some(Input {yaw:args.yaw(),pitch:args.pitch,..row.input})}}None
+    }
     /// Its active row is constant inside a segment, so its segment from a state is decided
     /// by the input it selects there.
     pub fn event_bound(&self) -> bool { self.rows.iter().all(|row| row.when.event_bound()) }

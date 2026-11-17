@@ -21,6 +21,7 @@ impl<'a,W> MeteredWorld<'a,W> {
     pub fn take_ticks(&self)->u64 {self.ticks.replace(0)}
 }
 impl<W:World> World for MeteredWorld<'_,W> {
+    fn observe_axis_contact(&self,c:law::contact::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.ticks.set(self.ticks.get()+1);self.world.observe_tick();}
     fn block(&self,p:BlockPos)->&Block {self.world.block(p)}
     fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}
@@ -57,12 +58,13 @@ impl<W:CorridorSource> CorridorSource for MeteredWorld<'_,W> {
 pub fn label(codec:&mut Interner, world:&impl World, state:&PlayerState)->Result<LabelId,Refusal> {
     let feet=[state.position.x.floor() as i32,state.position.y.floor() as i32,state.position.z.floor() as i32];
     let support=state.main_supporting_block.unwrap_or([feet[0],feet[1]-1,feet[2]]);
-    let mut classes=Vec::new();
-    for (p,role) in [(support,LegsRole::Support02),(support,LegsRole::Support05),(feet,LegsRole::BodyFeet),(feet,LegsRole::Inside)] {
+    let mut classes=[None;4];
+    for (i,(p,role)) in [(support,LegsRole::Support02),(support,LegsRole::Support05),(feet,LegsRole::BodyFeet),(feet,LegsRole::Inside)].into_iter().enumerate() {
         let loaded=world.loaded(p);
         if !loaded {return Err(Refusal::Loaded);}
-        classes.push(codec.legs(world.block(p),loaded,role).map_err(Refusal::Law)?);
+        classes[i]=Some(codec.legs(world.block(p),loaded,role).map_err(Refusal::Law)?);
     }
+    let classes=classes.map(Option::unwrap);
     codec.label(Label {law_schema:codec::SCHEMA,body_kit:b"bare",support:&classes[..2],medium:&classes[2..]}).ok_or(Refusal::Schema)
 }
 
