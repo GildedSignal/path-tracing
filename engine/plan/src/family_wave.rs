@@ -77,6 +77,14 @@ fn goal_preimage(v:&Variant,goal:Goal)->Option<(u64,u64)> {
 pub(super) fn extend(store:&mut JointStore,field:&mut Field) {
     let mut old=Vec::<FamilyInterval>::new();
     for _ in 0..=store.edges.len()+store.states.len() {
+        let mut points_changed=false;
+        // Point identity retains the complete witness. Entry equivalence has
+        // no aim memory, so all aliases with the same numeric guard share T.
+        for nodes in store.point_entries.values() {for &node in nodes {if let Some(t)=field.t[node] {for &other in nodes {
+            if Resources::of(&store.states[node]).same_bits(Resources::of(&store.states[other])) && field.t[other].is_none_or(|old|t<old) {
+                field.t[other]=Some(t);field.via[other]=field.via[node];points_changed=true;
+            }
+        }}}}
         let mut next=Vec::new();
         for (&pattern,entry) in &store.family_entries {
             for (piece_index,piece) in store.patterns[pattern].pieces.iter().enumerate() {
@@ -89,7 +97,7 @@ pub(super) fn extend(store:&mut JointStore,field:&mut Field) {
                 for (v_index,v) in variants.iter().enumerate() {
                     cuts.extend([v.lo,v.hi+1]);
                     if let Some((lo,hi))=goal_preimage(v,field.goal) {candidates.push(Candidate {variant:v_index,lo,hi,lower:v.ticks,upper:v.ticks,next:None});cuts.extend([lo,hi+1]);}
-                    if v.map.is_none() && piece.uses.lo==piece.uses.hi {if let Some(&node)=store.state_ids.get(&v.end.bits()) {if let Some(t)=field.t[node] {candidates.push(Candidate {variant:v_index,lo:v.lo,hi:v.hi,lower:v.ticks+t,upper:v.ticks+t,next:field.via[node]});}}}
+                    if v.map.is_none() && piece.uses.lo==piece.uses.hi {for node in store.equivalent_points(&v.end) {if let Some(t)=field.t[node] {candidates.push(Candidate {variant:v_index,lo:v.lo,hi:v.hi,lower:v.ticks+t,upper:v.ticks+t,next:field.via[node]});}}}
                     for target in &old {
                         // Exact numeric guards cannot consume a varying use
                         // interval without an additional downstream proof.
@@ -129,7 +137,6 @@ pub(super) fn extend(store:&mut JointStore,field:&mut Field) {
         }
         next.sort_by_key(|v|(v.pattern,v.piece,v.lo));
         store.work.edge_reads+=next.len() as u64;
-        let mut points_changed=false;
         // A point may enter a family, and that family's image may in turn
         // contain points. Close both parts of the same min-plus relation.
         for (node,state) in store.states.iter().enumerate() {for row in &next {

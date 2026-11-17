@@ -1,4 +1,4 @@
-﻿# Regenerate the builder's final record from recorded distributions and gates.
+# Regenerate the builder's final record from recorded distributions and gates.
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $evidence='D:\path-tracing-evidence\u2b'
@@ -25,13 +25,21 @@ Line '   order, early zeroing and step selection are unchanged. Recording wrappe
 Line '2. A clamp is a point per flag; a hold retains the earlier exact addition map.'
 Line '   Silent clamps remain min-maps inside free pieces. Cuts come from law-owned'
 Line '   face comparisons and exact-map bisection; no sample grid enters learn().'
-Line '   Native samples are an independent judge. Resource intervals enclose both flag tails;'
+Line '   Native samples are an independent judge. The face inventory uses the law''s actual'
+Line '   per-tick read-footprint hull, replacing the earlier fixed two-cell positional margin.'
+Line '   Resource intervals enclose both flag tails;'
 Line '   identical point images merge. The native second-wall check closes the hold witness.'
+Line '   Identity follows the law''s position-update flag, never an unchanged rounded'
+Line '   endpoint. A 65-ULP native witness first failed at its odd neighbour, then passed'
+Line '   with the actual addition operand retained. Explicit free-axis metadata is preserved.'
 Line '3. EntryTemplate stores the ordered binary64 lattice on the free axis, with'
 Line '   support relative to floor(body position). Resources travel as use intervals'
 Line '   with exact numeric entry guards; broader unproved numeric reuse refuses.'
 Line '   Yaw, pitch and old input values were removed from EntryTemplate, motor_words'
-Line '   and the legacy pattern start index. Word aim arguments remain word data.'
+Line '   and the legacy pattern start index. Point route/wave entries and queued demands'
+Line '   use the same canonical key, with numeric guards separate; raw point identity'
+Line '   retains every witness bit. The native entry regression first failed, then passed;'
+Line '   two-word alias composition also passes. Word aim arguments remain word data.'
 Line '   Tests reuse a changed aim and still distinguish a one-ULP velocity change.'
 Line '4. learn_family publishes the computed pieces with timed endpoint-hull read'
 Line '   certificates for every declared flag. Legacy learn retains its exact-point'
@@ -59,6 +67,8 @@ Line '8. Player-state ownership is replaced by Arc phase handles plus exact read
 Line '   Explicit materialize() is at execution/test boundaries. Inline lists spill'
 Line '   on overflow without a semantic cap. The allocator counts alloc, alloc_zeroed'
 Line '   and realloc; the state type counts Clone. Negative controls catch both.'
+Line '   Inline iteration disarms ownership before a destructor can unwind; release'
+Line '   and debug tests ensure no value is dropped twice after partial consumption.'
 Line '9. The judge speed path: shared cached parity/binade graphs and streamed affine'
 Line '   runs; borrowed hulls through the same Goal predicate; bound-ordered incumbents;'
 Line '   no production re-fold assert; streamed boundary events reuse final readouts;'
@@ -97,9 +107,16 @@ Line '|---|---:|---|---|---|'
 foreach($g in $gates.gates) {Line "| $($g.name) | $($g.exit) | $([bool]$g.expected_red) | $($g.recorded) | $($g.reason) |"}
 Line
 Line 'All logs, input hashes, invariant output and refusals are in D:\path-tracing-evidence\u2b.'
+Line 'The pre-freeze oracle is now an explicit ignored diagnostic, superseded in the'
+Line 'normal loop by the frozen pin regression; its original run remains archived.'
+Line 'The footprint driver reuses a successful complete workspace baseline only if its'
+Line 'entire engine input hash set still matches. All mutation bodies and assertions run.'
 Line 'The full workspace includes the old frozen red. The independent workspace excludes'
 Line 'only that obsolete gate and the already-run pre-freeze oracle diagnostic; new checks stay enabled.'
-Line 'All 13 footprint mutants and all 3 core mutants are caught by running assertions.'
+$core=Get-Content -Raw (Join-Path $evidence 'core-mutants.json') | ConvertFrom-Json
+$coreCaught=@($core.runs | Where-Object {$_.expected_failure -and $_.caught}).Count
+$footprintCaught=($gates.gates | Where-Object {$_.name -eq 's203-footprint-mutants'}).caught
+Line ("All $footprintCaught footprint mutants and all $coreCaught core mutants are caught by running assertions.")
 Line 'The actual cached-answer bypass fails through effect counters; native-tick and bundle-hit'
 Line 'mutants also fail. Source bytes are restored and hash-checked. No trace-label-only substitution.'
 Line
@@ -135,11 +152,24 @@ Line 'no claim that the extra work is required by nature, or that the floor was 
 Line
 Line '## Files and exact replay'
 Line
-$changed=@(& git -C $root -c core.quotepath=false diff --name-only 2>$null)+@(& git -C $root -c core.quotepath=false ls-files --others --exclude-standard 2>$null)
+$previousPreference=$ErrorActionPreference
+try {
+    $ErrorActionPreference='Continue'
+    $tracked=@(& git -C $root -c core.quotepath=false diff fef8c6ed0f287aef829a6b0ce63d8f307cec5032 --name-only 2>$null);$trackedExit=$LASTEXITCODE
+    $untracked=@(& git -C $root -c core.quotepath=false ls-files --others --exclude-standard 2>$null);$untrackedExit=$LASTEXITCODE
+} finally {$ErrorActionPreference=$previousPreference}
+if($trackedExit -ne 0 -or $untrackedExit -ne 0){throw 'Cannot enumerate changed files'}
+$changed=$tracked+$untracked
 foreach($file in ($changed | Where-Object {$_ -notmatch '^engine/world/tests/fixtures/'} | Sort-Object -Unique)) {Line ('- `'+$file+'`')}
 Line
+Line 'The integrator saved the earlier implementation as 95552dc during the usage pause.'
+Line 'The final native-footprint inventory, aim-entry and unwind ownership repairs'
+Line 'are additional working-tree changes, with their regressions and final gate rerun.'
+Line 'File changes above are measured from fef8c6e, the original U2 base.'
+Line
 Line 'Pre-existing MCA edits and backup files are untouched and hash-checked. No launcher,'
-Line 'game, server, client, network, sub-agent, commit, merge or push was used. All runs'
+Line 'game, server, client, network or sub-agent was used by this builder. The builder'
+Line 'made no commit, merge or push. All runs'
 Line 'are offline at Normal priority with target D:\path-tracing-target\u2b.'
 Line
 Line '```powershell'

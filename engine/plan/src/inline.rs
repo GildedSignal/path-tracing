@@ -27,7 +27,26 @@ impl<'a,T,const N:usize> IntoIterator for &'a mut List<T,N> {type Item=&'a mut T
 pub struct IntoIter<T,const N:usize> {list:List<T,N>,index:usize,spill:Option<std::vec::IntoIter<T>>}
 impl<T,const N:usize> IntoIterator for List<T,N> {type Item=T;type IntoIter=IntoIter<T,N>;fn into_iter(mut self)->Self::IntoIter {let spill=self.spill.take().map(Vec::into_iter);IntoIter {list:self,index:0,spill}}}
 impl<T,const N:usize> Iterator for IntoIter<T,N> {type Item=T;fn next(&mut self)->Option<T> {if let Some(v)=&mut self.spill {return v.next();}if self.index==self.list.len {return None;}let i=self.index;self.index+=1;Some(unsafe {self.list.inline[i].assume_init_read()})}}
-impl<T,const N:usize> Drop for IntoIter<T,N> {fn drop(&mut self) {if self.spill.is_none() {for i in self.index..self.list.len {unsafe {self.list.inline[i].assume_init_drop()};}}self.list.len=0;}}
+impl<T,const N:usize> Drop for IntoIter<T,N> {fn drop(&mut self) {
+    // A T destructor may unwind. Disarm List before invoking it, so field
+    // cleanup cannot revisit values already moved out or dropped.
+    let end=std::mem::replace(&mut self.list.len,0);
+    if self.spill.is_none() {for i in self.index..end {unsafe {self.list.inline[i].assume_init_drop()};}}
+}}
 #[macro_export] macro_rules! list {($($v:expr),* $(,)?)=>{{let mut out=$crate::inline::List::new();$(out.push($v);)*out}};}
 #[cfg(test)]mod tests {use super::*;#[test]fn ownership_on_inline_spill_and_partial_iteration(){let n=std::rc::Rc::new(std::cell::Cell::new(0));struct Item(std::rc::Rc<std::cell::Cell<usize>>);impl Drop for Item {fn drop(&mut self){self.0.set(self.0.get()+1)}}for size in [0,1,4,9] {let before=n.get();let a:List<_,4>=(0..size).map(|_|Item(n.clone())).collect();let mut iter=a.into_iter();drop(iter.next());drop(iter);assert_eq!(n.get()-before,size);}}}
 impl<T:PartialEq,const N:usize> List<T,N> {pub fn dedup(&mut self) {let old=std::mem::take(self);for value in old {if self.last()!=Some(&value) {self.push(value);}}}}
+
+#[cfg(test)]mod unwind_tests {
+    use super::*;
+    #[test]fn partially_consumed_iterator_never_drops_a_value_twice_on_unwind() {
+        let counts=std::rc::Rc::new(std::cell::Cell::new([0;3]));
+        struct Item {id:usize,counts:std::rc::Rc<std::cell::Cell<[u8;3]>>}
+        impl Drop for Item {fn drop(&mut self) {let mut n=self.counts.get();n[self.id]+=1;self.counts.set(n);if self.id==2 && n[2]==1 {panic!("last destructor unwinds");}}}
+        let list:List<_,4>=(0..3).map(|id|Item {id,counts:counts.clone()}).collect();
+        let mut iter=list.into_iter();drop(iter.next());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(||drop(iter))).is_err());
+        assert_eq!(counts.get(),[1;3]);
+        assert_eq!(std::rc::Rc::strong_count(&counts),1,"no retained or duplicated owner");
+    }
+}

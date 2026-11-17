@@ -49,9 +49,26 @@ function Mutant([string]$Name, [string]$File, [string]$Before, [string]$After, [
     } finally { [IO.File]::WriteAllBytes($path, $original) }
 }
 
+# Reuse a fresh, complete workspace baseline only when every engine input is
+# byte-identical. A miss runs the original sanity gate. Mutants still all run.
+function Use-WorkspaceBaseline {
+    $path='D:\path-tracing-evidence\u2b\s203-workspace-independent.json'
+    if(!(Test-Path -LiteralPath $path)){return $false}
+    $record=Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+    if($record.exit -ne 0 -or $record.command -notlike 'cargo test --offline --workspace*'){return $false}
+    $recorded=@($record.inputs | Where-Object {$_.path -match '^engine[\\/]'})
+    $live=@(Get-ChildItem $engine -Recurse -File | Where-Object {$_.Extension -in '.rs','.toml','.lock','.tsv','.bin','.mca','.dat','.txt','.hex'})
+    if($recorded.Count -ne $live.Count){return $false}
+    foreach($inputFile in $recorded) {
+        $full=Join-Path $root $inputFile.path
+        if(!(Test-Path -LiteralPath $full) -or (Get-FileHash -LiteralPath $full).Hash -ne $inputFile.sha256){return $false}
+    }
+    Copy-Item -LiteralPath $path -Destination (Join-Path $output 'workspace-baseline-reused.json')
+    return $true
+}
 Push-Location $engine
 try {
-    Cargo-Check 'workspace-independent' @('test', '--offline', '--workspace', '--', '--nocapture', '--skip', 'u2_pieces_computed_and_closed', '--skip', 'u2_contact_oracle_before_freeze')
+    if(Use-WorkspaceBaseline) {Write-Output 'workspace-independent PASS: reused byte-identical complete workspace baseline'} else {Cargo-Check 'workspace-independent' @('test', '--offline', '--workspace', '--', '--nocapture', '--skip', 'u2_pieces_computed_and_closed', '--skip', 'u2_contact_oracle_before_freeze')}
     $query = @('test', '--offline', '-p', 'law', '--test', 'speed_differential', 'random_box_queries_equal_full_scan')
     Mutant 'collision-halo' 'law/src/world.rs' 'include(min,max,!self.blocks.unbounded)' 'include(min,max,true)' $query
     Mutant 'no-collision' 'law/src/world.rs' 'self.visit_collisions(bounds, context, |_| false)' 'true' $query

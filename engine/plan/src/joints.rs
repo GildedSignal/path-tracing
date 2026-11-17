@@ -30,8 +30,13 @@ impl EntryTemplate {
         Self::with_axis(state,origin,phase,axis)
     }
     pub fn with_axis(state:&PlayerState,origin:Vec3,phase:u32,axis:Option<usize>)->Self {
+        let s=axis.map_or(0.0,|a|xyz(state.position)[a]);let mut key=Vec::new();
+        Self::write_key(state,phase,axis,&mut key);
+        Self {key,base:state.clone(),origin,axis,lattice:ordered(s),s,phase,resources:Resources::of(state)}
+    }
+    fn write_key(state:&PlayerState,phase:u32,axis:Option<usize>,key:&mut Vec<u64>) {
         use law::state_reads::StateField as F;let p=xyz(state.position);
-        let s=axis.map_or(0.0,|a|p[a]);let mut key=Vec::new();
+        key.clear();
         for &field in F::ALL {
             match field {
                 F::exhaustion|F::saturation|F::food_level|F::fall_distance|F::yaw|F::pitch|F::input=>(),
@@ -40,11 +45,10 @@ impl EntryTemplate {
                     key.push(state.main_supporting_block.is_some() as u64);
                     if let Some(support)=state.main_supporting_block {key.extend((0..3).map(|a|(support[a] as i64-p[a].floor() as i64) as u64));}
                 },
-                _=>state.push_field_bits(field,&mut key),
+                _=>state.push_field_bits(field,key),
             }
         }
         key.extend([phase as u64,axis.map_or(3,|a|a) as u64]);
-        Self {key,base:state.clone(),origin,axis,lattice:ordered(s),s,phase,resources:Resources::of(state)}
     }
     pub fn state(&self,s:f64)->Option<PlayerState> {
         if !s.is_finite() {return None;}
@@ -78,7 +82,7 @@ pub struct Piece {
 }
 pub struct JointPattern {pub id:JointPatternId,pub entry:StateClassId,pub law_hash:[u8;32],pub origin:Vec3,pub pieces:Vec<Piece>}
 #[derive(Clone,Debug)]
-pub struct Demand {pub entry:Vec<u64>,pub face:Option<BlockPos>,pub lower:u64,pub reason:String}
+pub struct Demand {pub entry:Vec<u64>,pub resource_guard:Option<Resources>,pub face:Option<BlockPos>,pub lower:u64,pub reason:String}
 #[derive(Clone,Debug)]
 pub struct Attempt {pub entry:EntryTemplate,pub program:u16,pub args:Arguments,pub status:Status,pub witness:Witness,pub reads:Vec<(u64,Footprint)>}
 #[derive(Default,Clone,Copy,Debug)]
@@ -138,6 +142,7 @@ pub struct JointStore {
     pub patterns:Vec<JointPattern>,pub attempts:Vec<Attempt>,pub queue:VecDeque<Demand>,pub work:Work,pub inventory:Option<crate::faces::FaceInventory>,
     templates:HashMap<Vec<u64>,StateClassId>,template_bytes:usize,
     states:Vec<std::sync::Arc<PlayerState>>,state_ids:HashMap<Vec<u64>,usize>,edges:Vec<(usize,usize)>,
+    point_entries:HashMap<Vec<u64>,Vec<usize>>,point_scratch:Vec<u64>,
     certificates:ReadCertificates,field:Option<Field>,terminal_sets:HashMap<crate::terminal::Key,crate::terminal::Set>,family_entries:HashMap<usize,EntryTemplate>,
 }
 impl JointStore {
@@ -158,11 +163,17 @@ impl JointStore {
     pub fn end(&self,id:EdgeId)->&PlayerState {&self.states[self.edge(id).to]}
     fn node(&mut self,s:&PlayerState)->usize {
         let bits=s.bits();if let Some(&id)=self.state_ids.get(&bits) {return id;}
-        let id=self.states.len();self.states.push(std::sync::Arc::new(s.clone()));self.state_ids.insert(bits,id);id
+        let id=self.states.len();self.states.push(std::sync::Arc::new(s.clone()));self.state_ids.insert(bits,id);
+        let mut key=Vec::new();EntryTemplate::write_key(s,0,None,&mut key);self.point_entries.entry(key).or_default().push(id);self.field=None;id
+    }
+    fn equivalent_points(&self,state:&PlayerState)->impl Iterator<Item=usize>+'_ {
+        let mut key=Vec::new();EntryTemplate::write_key(state,0,None,&mut key);let resources=Resources::of(state);
+        self.point_entries.get(&key).into_iter().flatten().copied().filter(move |&node|Resources::of(&self.states[node]).same_bits(resources))
     }
     pub fn enqueue(&mut self,s:&PlayerState,lower:u64,reason:impl Into<String>) {
-        let entry=s.bits();if self.queue.iter().any(|d|d.entry==entry) {return;}
-        self.queue.push_back(Demand {entry,face:None,lower,reason:reason.into()});
+        let mut entry=Vec::new();EntryTemplate::write_key(s,0,None,&mut entry);let resources=Resources::of(s);
+        if self.queue.iter().any(|d|d.entry==entry && d.resource_guard.is_some_and(|r|r.same_bits(resources))) {return;}
+        self.queue.push_back(Demand {entry,resource_guard:Some(resources),face:None,lower,reason:reason.into()});
     }
     pub fn inventory(&mut self,w:&(impl World+Source),codec:&mut Interner,lo:BlockPos,hi:BlockPos)->Result<(),Refusal> {
         self.inventory=Some(crate::faces::FaceInventory::build(w,codec,lo,hi)?);Ok(())
@@ -172,7 +183,7 @@ impl JointStore {
         if let Some(inventory)=&mut self.inventory {
             inventory.created.clear();inventory.edit(w,codec,p)?;
             for face in &inventory.created {
-                if !self.queue.iter().any(|d|d.face==Some(face.cell)) {self.queue.push_back(Demand {entry:Vec::new(),face:Some(face.cell),lower:0,reason:"inventory edit created a joint candidate".into()});}
+                if !self.queue.iter().any(|d|d.face==Some(face.cell)) {self.queue.push_back(Demand {entry:Vec::new(),resource_guard:None,face:Some(face.cell),lower:0,reason:"inventory edit created a joint candidate".into()});}
             }
         }
         Ok(broken)
@@ -299,8 +310,11 @@ impl JointStore {
         self.field=Some(field);self.field.as_ref().unwrap()
     }
     pub fn route(&mut self,start:&PlayerState,goal:Goal)->Option<Route> {
-        if self.state_ids.is_empty() {return None;}let mut node=*self.state_ids.get(&start.bits())?;self.wave(goal);
-        let field=self.field.as_ref().unwrap();let ticks=field.t[node]?;let mut words=List::new();
+        if self.state_ids.is_empty() {return None;}self.wave(goal);
+        EntryTemplate::write_key(start,0,None,&mut self.point_scratch);
+        let field=self.field.as_ref().unwrap();let resources=Resources::of(start);
+        let mut node=self.point_entries.get(&self.point_scratch)?.iter().copied().filter(|&n|Resources::of(&self.states[n]).same_bits(resources)).filter_map(|n|field.t[n].map(|t|(t,n))).min()?.1;
+        let ticks=field.t[node]?;let mut words=List::new();
         while let Some(id)=field.via[node] {
             let e=self.edge(id);if !self.valid(id) || self.family_entries.contains_key(&self.edges[id.0].0) {return None;}words.push(e.step.clone());node=e.to;
             if goal.touched(&e.last_before,&self.states[node]) {break;}

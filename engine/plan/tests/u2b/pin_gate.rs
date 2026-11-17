@@ -52,6 +52,7 @@ pub fn fixtures()->Vec<(&'static str,Scene,PlayerState,Input,f64,f64,usize,u8)> 
     cases.push(("hardtrack-lane-wall",w,start,Input {forward:true,sprint:true,yaw:0.0,..Default::default()},-86.75,-86.25,2,3));cases
 }
 #[test]
+#[ignore = "Pre-freeze native diagnostic; S203's frozen pins gate is the regression"]
 fn u2_contact_oracle_before_freeze() {
     for (name,w,start,input,lo,hi,_,kind) in fixtures() {
         for raw in [false,true] {for power in [6,10,18] {
