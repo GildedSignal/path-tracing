@@ -12,6 +12,8 @@ Prose, surveys, plans and "ideas" are not results. "I looked here and found noth
 
 ## What GLM does here
 
+**The port only** (S173: "glm is not very strong"; AGENTS.md): jar-backed port deltas and `javap` extractions, each with a machine-checked witness, written against the differential harness once it exists (S208). Questions, probes and premise tests go to Hydrogen or Terra. The lenses below are kept for port work only.
+
 Each run has a lens: a question family where a found answer is checkable.
 
 | Lens | It looks for | A result is |
@@ -22,7 +24,7 @@ Each run has a lens: a question family where a found answer is checkable.
 | **Pre-freeze red-team** | how a gate could pass while the thing is wrong | a concrete passing-but-wrong case, before the gate freezes |
 | **Probe** | a measurement the plan needs (border states per chunk, table sizes) | numbers plus the script that regenerates them |
 
-GLM never builds production code (GPT does), never designs (Opus does), and never writes docs.
+GLM writes port code only against the harness (S208), never designs (Opus does), and never writes docs.
 
 ## Autonomy of inquiry, no authority
 

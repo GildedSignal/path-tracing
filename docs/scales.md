@@ -1,6 +1,6 @@
 # Every scale, one rule
 
-Approved by Julien on 10 November (S64, S65). It extends [representation.md](representation.md): one rule through every scale in space and time, how creativity arises, stays and compounds, what far away means, and the swarm's local rules. Every number is a Fermi floor with its inputs stated, never a measurement. The order of work lives in [HANDOFF](HANDOFF.md); the server boundary in [server.md](server.md).
+Approved by Julien on 10 November (S64, S65). It extends [representation.md](representation.md): one rule through every scale in space and time, how creativity arises, stays and compounds, what far away means, and the swarm's local rules. Every number is a Fermi floor with its inputs stated, never a measurement. The order of work lives in [plan.md](plan.md); the server boundary in [server.md](server.md).
 
 ## 2. One rule at every scale
 
@@ -12,7 +12,7 @@ Approved by Julien on 10 November (S64, S65). It extends [representation.md](rep
 | Scale | Hands up | Hands down |
 |---|---|---|
 | Tick (the client, the only per-tick runner) | deviations at events; packets | nothing |
-| Joint | exact T per plateau, width, the slide signal | which plateau is wanted |
+| Joint | exact T per piece or point, width, the slide signal | which piece is wanted |
 | Site | a portal table by entry class; its content hash | which portals the corridor uses; the deadline |
 | Zone | a closed bracket and its event list | where the big word must end |
 | Trip | the bracket gap and its cause | the corridor, the deadlines |
@@ -37,9 +37,9 @@ c ties space to time, so the scales form one ladder. Three families sit off it: 
 | 0 | < 1 | < 1 (machine time) | collision thresholds, the hot loop | Mojang's floats; packed integers | no allocation, no lock, integer ticks | law built; layout 4.7 |
 | 1 | 1, the body | 1 | motion, packets, re-anchoring | the tick recurrence | replay; the server's veto as an event | built, L0 in flight |
 | 2 | 1 to 10 | 10 (a gait cycle is 12) | a jump, a tool use | segment: class, program, footprint, width | compile once, certify by replay | 3.2a |
-| 3 | 10 to 10² (reach 4.5, a site) | 10² (a chunk takes 45 at sprint-jump) | words, crowds, fluids settling, chunk tickets | joints and their sets, worldtubes | sets backward, the point forward; tickets follow tubes | U2, U3; 4.2 |
-| 4 | 10² to 10³ (view 192, a region 512) | 10³ | a trip, a live bubble, infrastructure paying or not | zones (a word and a count); one field per goal | follow the field; ski rental | U1; 4.3, 4.4 |
-| 5 | 10³ to 10⁴ (Nether ×8) | 10⁴ (a day is 24,000) | long trips, supply lines, hubs, food range | portal tables, labels, wormhole edges, price fields | refine by decision; auction | U6; 4.3, 4.6 |
+| 3 | 10 to 10² (reach 4.5, a site) | 10² (a chunk takes 45 at sprint-jump) | words, crowds, fluids settling, chunk tickets | joints and their sets, worldtubes | sets backward, the point forward; tickets follow tubes | plan.md steps 2–3; 4.2 |
+| 4 | 10² to 10³ (view 192, a region 512) | 10³ | a trip, a live bubble, infrastructure paying or not | zones (a word and a count); one field per goal | follow the field; ski rental | plan.md step 1; 4.3, 4.4 |
+| 5 | 10³ to 10⁴ (Nether ×8) | 10⁴ (a day is 24,000) | long trips, supply lines, hubs, food range | portal tables, labels, wormhole edges, price fields | refine by decision; auction | plan.md step 6; 4.3, 4.6 |
 | 6 | a build | 10⁵ to 10⁶ | a commission, amortization | the blueprint as W(t), the build front | reverse demolition; least slack first | 4.5 |
 | 7 | none | 10⁷ and more | the vocabulary, the law, game updates, our own loop | generators keyed by pattern, versioned by law | R&D; deviations; a jar diff per update | 4.1 |
 
@@ -56,7 +56,7 @@ c ties space to time, so the scales form one ladder. Three families sit off it: 
   - **Creativity lives where one word writes what another reads.** Where nothing overlaps, things commute and there is nothing to find. Working backward from a gap then branches about 5 ways, as the plan assumed, with no catalogue. This is the chemists' retrosynthesis (Corey): back from the target through known reactions to what is on the shelf. Their protecting groups are our conjugates.
 - **Stays: an archive indexed by effect.** Each word is stored as a generator under (start class, effect) on a Pareto front of cost, width, resources and obligations. A dominated word is dropped by proof. That answers the known failure of learned macros: more words slowing the search (Minton's utility problem). Search retrieves by wanted effect, so the branching factor stays flat while the vocabulary grows.
 - **Compounds: stable subassemblies** (Simon's two watchmakers). A depth-12 idea found from primitives costs 5¹² ≈ 2×10⁸ trials. With depth-3 words already kept it costs about 10³. So intermediate words must be kept even when nothing wants them yet. R&D's objective changes: new cells in effect space, and the gap between the law's own bound and the best witnessed word per regime, beside forecast demand (Stanley's stepping stones; quality-diversity archives). The scoreboard already counts distinctions per second. R&D's budget is not a chosen slice: it is the free compute inside certified words, deadline work first ([learning.md](learning.md) section 2, S169).
-- **Proposers, now, in the lab.** GLM isn't the scarce resource. A lens proposes programs in the frozen program language, the law scores them, the archive keeps the best and feeds them back into the next prompt (FunSearch's loop). It starts when 3.2a gives an evaluator, on legs. It pulls "LLM-proposed words" from Phase 7 to the lab, with no authority.
+- **Proposers, now, in the lab.** A proposer on a spare meter (Hydrogen or Terra; GLM keeps the port, S173) proposes programs in the frozen program language, the law scores them, the archive keeps the best and feeds them back into the next prompt (FunSearch's loop). It starts when 3.2a gives an evaluator, on legs. It pulls "LLM-proposed words" from Phase 7 to the lab, with no authority.
 - **Seeing a move 37.** Any certified chain that beats the best known T for its class with a compound nobody named goes to a discoveries log with its replay, for him to watch. **A discovery is a suspected law bug until the server audits it:** quants treat a backtest that looks too good the same way.
 - **The falsifier, R-lego.** One carried input (blocks), one gap past the sprint-jump limit. Pass: a crossing appears with no code naming it, in ≤ 10³ verifications, and the block comes back. It is reused on a second gap of another shape (stays). It composes with momentum: run, jump, place under the feet (S6) (compounds).
   The server's rule is pinned (GLM `place-reach-legality`, reproduced 10 November): the eye must be within 5.5 blocks of the nearest point of the clicked cell; the placer's own body blocks its feet cell, and the cell below is legal once airborne.
@@ -124,7 +124,7 @@ Demolition from the outside in is always accessible. Reversed, it is a build ord
 - **The slack queue is a timing wheel;** a block edit finds its certificates through an inverted index per section. A wildcard's cone is one entry on it: checked at the earliest tick it can reach a worldtube, never every tick.
 - **Latency before throughput** (S124). Thinking that fits before the next dispatch opportunity costs zero ticks, so the acting path is sized in microseconds and guarded at p99: no allocation, no lock, one pinned thread, results published by a pointer swap.
 - **The L3 is the resource:** 96 MB on this machine, a hit about 10 ns against about 80 for memory (Fermi inputs). The hot set (the generator store, the active corridor's sets and labels, the presence planes) must fit it.
-- **Shaped like its access.** A set is a sorted array of breakpoints, found by a 16-lane compare and a popcount with no branch. A label is two parallel arrays swept once. A presence plane is a bitboard: a section is eight 512-bit words.
+- **Shaped like its access.** A set is a sorted array of piece edges (families, points and holds, S203), found by a 16-lane compare and a popcount with no branch. A label is two parallel arrays swept once. A presence plane is a bitboard: a section is eight 512-bit words.
 - **Threads, then the GPU.** The loop's parts go to the other cores; learning runs on idle cores by slack. A GPU round trip is about 100 µs (a Fermi input; a small job measures it first), so it never sits on the acting path. It takes learning's batches (joint patterns by the hundred thousand, waves over large sites) after a measured crossover. (S166.)
 - **Backtest, paper, live** are our offline loop, sandbox and server. Slippage is the deviation rate.
 

@@ -38,19 +38,19 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Fable | Anthropic | Orchestration | holds the whole project; writes the specs; decides the merges |
 | Sonnet | Anthropic | Judged | adversarial reading of a diff against a spec, fresh context |
 | Haiku | Anthropic | Checked | runs, log digests, completeness |
-| Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended |
-| Astra | OpenAI | Frozen (convergent) | the math Terra stalls on: a bound, a monotonicity, a closed gap |
-| GLM | Z.ai | Checked (wide) | many cheap narrow questions, each reproduced by a second session ([lab/glm.md](../lab/glm.md)) |
-| **Argon** | **Google** | **claimed: corpus traversal; untrusted reading; primary sources** | **three rows, none of them building. It walks the corpus and says what contradicts what; it reads the channel where our exposure is measured and worst; and it is the mind for his primary sources** |
-| **Hydrogen** | **Google** | **claimed: Checked (wide)** | **a second cheap-wide lane beside GLM, on the same lens queue, graded against GLM's own reproduced answers. Run at `high`: its terminal score is identical at `xhigh`, so `xhigh` is pure waste** |
+| Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209) |
+| Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended; backfills the leftover ~20% of the Codex window (S209) |
+| GLM | Z.ai | Checked (wide) | the port only (S173): jar-backed port deltas, each reproduced by a second session ([lab/glm.md](../lab/glm.md)) |
+| **Argon** | **Google** | **claimed: corpus traversal; untrusted reading; primary sources** | **builds tooling and lints our docs against his words (S211); it also walks the corpus and says what contradicts what; it reads the channel where our exposure is measured and worst; and it is the mind for his primary sources** |
+| **Hydrogen** | **Google** | **claimed: Checked (wide)** | **premise checks, digests and builds (S173, S197, S210), reporting to the integrator, never writing for a bigger model. Run at `high`: its terminal score is identical at `xhigh`, so `xhigh` is pure waste** |
 
-**Why Argon gets three rows and none of them is building.** Its benchmarks say plainly that it should not build and should not judge (section 4b). What they also say is that it is the best thing we have for three jobs we had nobody for:
+**Why Argon reads as well as builds.** Its benchmarks (section 4b) put it behind Astra and Opus at terminal work, so it never judges and never builds the core; Julien still has it build tooling (S211: "argon can build yes"). They also say it is the best thing we have for three reading jobs we had nobody for:
 
 1. **Corpus traversal.** GraphWalks 84.2 against Astra's 71.8 and Opus's 66.8 — a 17-point lead, and the only place it leads anything shaped like our work. That benchmark *is* multi-hop traversal over a graph, and this corpus is a graph: HANDOFF points at jobs, jobs at run folders, run folders at wiki pages, the register at his turns. "Where does `learning.md` disagree with HANDOFF" is that query, and we know such disagreements exist, because one was corrected this week.
 2. **The untrusted channel, which is the real purchase.** Argon's indirect-prompt-injection success rate is **0.7%**, the lowest on the roster, against Opus's 1.0% and **GLM's 31.5%**. GLM's lanes read decompiled Mojang bytecode and scraped wiki pages all day. That 31.5% is a measured exposure with no fix beside it; Argon is the fix for the reading half of it.
 3. **His primary sources.** The tracked request from S86–S89 — read directly whatever a design leans on, and mine his book list and Readwise in depth — is long-document synthesis, not terminal work. That is where Argon's wins actually are, and that request is owed.
 
-So Argon is not weak; it was pointed at the wrong band by the first draft of this file. Hydrogen's row is unchanged: a second wide lane, graded against GLM's own reproduced answers.
+So Argon is not weak; it was pointed at the wrong band by the first draft of this file. Hydrogen builds (the pagoda, S197) and checks premises; GLM keeps the port (S173).
 
 ## 4. The bake-off: no row stands on reputation
 
@@ -82,7 +82,7 @@ A companion's row is a hypothesis, settled the way everything here is settled �
 | a big design | **native Opus sub-agent** (S115: Antigravity is Sonnet only) | most of a weekly allowance, on whichever meter it lands | on Antigravity, 233k in, 119k out and 2M cached took most of the Claude-and-GPT weekly |
 | judging GPT's work | native Sonnet sub-agent | ~100k tokens for three diffs | batch several diffs per judge |
 | orchestration | native integrator | ~40% of its 5 h per hour at high context | 70% after 1 h 40 |
-| wide cheap lanes | Hydrogen | unknown | no run has survived its permission denials yet |
+| wide cheap lanes | Hydrogen | measured per job in `agy.log` | the pagoda and the digests ran (S197); commands blocked by our launcher until `jobs/agy-commands` (S210) |
 | measurement | a plain command | no meter | flights, scaling and timings were all commands |
 
 Windows: Zai 5 h; Codex 5 h and weekly; Antigravity's Gemini models 5 h and weekly (2% and 1% used on 14 November), its Claude and GPT models one shared weekly, Argon its own weekly; the native plan 5 h, weekly, and weekly per model.
@@ -94,7 +94,7 @@ Windows: Zai 5 h; Codex 5 h and weekly; Antigravity's Gemini models 5 h and week
 3. **A long job writes its output to a file as it goes.** The Opus design died with the meter and its 119k output tokens were lost; a report written progressively survives a quota death.
 4. **Measure with a command, not a job.** The 18-track flight, the straight tracks and the thinking split were plain commands the integrator ran at no meter cost; jobs are for building.
 5. **Never resume into a spent meter** (`gpt.ps1` stops on "usage limit"), and never launch a lane whose meter `meters.ps1` shows above 90%.
-6. **Lanes run at Idle CPU priority** (`launch.ps1` does it), so a live gate shares the machine (S107).
+6. **Lanes run at Normal priority** (S158, "no need for low priority"); lower them to Idle only while a live gate or his game runs (S107).
 7. **Queue the next window before this one ends:** a detached launch scheduled for the reset (see HANDOFF) loses no window to the integrator being away.
 8. **Admin goes through three scripts:** `launch.ps1` (start, with slot refusals), `status.ps1` (every lane, every report not committed), `meters.ps1 -WatchAt 80` in the background (wakes the integrator on a crossing). Background waiters that exit on a report replace polling.
 
@@ -102,7 +102,7 @@ Windows: Zai 5 h; Codex 5 h and weekly; Antigravity's Gemini models 5 h and week
 
 Measured 13 November, independent harnesses preferred over vendor tables (the same model and benchmark differed by 6.8 points between Anthropic's number and Artificial Analysis's, so assume a similar premium on Google's and OpenAI's tables, which have no independent counterpart at all).
 
-- **Argon loses every benchmark shaped like our work.** Terminal-Bench 4.0: 57.4 against Opus 5.5's 59.6 independent / 66.4 vendor. FrontierSWE v2: 55.0 against Astra's 65.5. Terminal-Bench-Science: 57.6 against Astra's 68.1. It leads on legal, finance, video — and on **graph traversal: GraphWalks 84.2, against Astra 71.8 and Opus 5.5 66.8**. That one number is the only public support for its row here, and it happens to be exactly the shape of a corpus pass. Its row is therefore narrowed to that and nothing else, and it is the most expensive route per task on the roster, with its price doubling on 1 December.
+- **Argon loses every benchmark shaped like our work.** Terminal-Bench 4.0: 57.4 against Opus 5.5's 59.6 independent / 66.4 vendor. FrontierSWE v2: 55.0 against Astra's 65.5. Terminal-Bench-Science: 57.6 against Astra's 68.1. It leads on legal, finance, video — and on **graph traversal: GraphWalks 84.2, against Astra 71.8 and Opus 5.5 66.8**. That one number is the only public support for its row here, and it happens to be exactly the shape of a corpus pass. Its reading rows rest on that number; its building rows rest on Julien (S211). It is the most expensive route per task on the roster, with its price doubling on 1 December.
 - **Nobody has publicly shown any model on this roster is good at 1M tokens.** Artificial Analysis dropped its long-context reasoning benchmark; no MRCR or fiction.live entry exists for any of them. Every "1M context" figure is a capacity, not a quality. GraphWalks is the single exception above.
 - **The one number worth most** is Sonnet 5.5 at 63.9% on Terminal-Bench 4.1 **in Google's own comparison table** — a competitor reporting a rival ahead of its own model is the least corruptible evidence available, and it holds up the judge row.
 - **Terra's vendor claims scope adherence and blocker reporting**, and our own record confirms it: all four jobs of this wave reported precisely what they had not done rather than claiming completion. But its factuality error rate is 4.3% at max effort and **16.7% at low**, so low effort is unusable for anything load-bearing. `scripts/gpt.ps1` now pins high.
@@ -115,9 +115,9 @@ A job is a folder: `jobs/<id>/prompt.md` is the spec, `jobs/<id>/last.md` the re
 
 | Companion | Launch | Notes |
 |---|---|---|
-| Terra (build), Astra (hard design within a spec) | `.\scripts\launch.ps1 <id> terra -Worktree D:\path-tracing-wt\<name> [-Base <ref>]` (or `astra`) | ≤ 4 GPT, ≤ 2 with Astra; effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's, with `Built-by:`. The fixture world is git-ignored: copy `engine/world/tests/fixtures/world` into a new worktree |
-| Sonnet on Antigravity (judge) | `.\scripts\launch.ps1 <id> sonnet [-ReadDir <worktree>]` | ≤ 2 Sonnet or 1 Opus; weekly meter; inline the diff |
-| Argon (read, traverse), Hydrogen | `.\scripts\launch.ps1 <id> argon` (or `hydrogen`) | ≤ 1 Argon or 2 Hydrogen; read-only |
+| Astra (the core), Terra (backfill) | `.\scripts\launch.ps1 <id> terra -Worktree D:\path-tracing-wt\<name> [-Base <ref>]` (or `astra`) | ≤ 4 GPT; with Astra, one GPT job beside her (S15); effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's, with `Built-by:`. The fixture world is git-ignored: copy `engine/world/tests/fixtures/world` into a new worktree |
+| Sonnet on Antigravity (judge) | `.\scripts\launch.ps1 <id> sonnet [-ReadDir <worktree>]` | ≤ 2 Sonnet (S115: Opus never runs here; it is a native sub-agent); weekly meter; inline the diff |
+| Argon (tooling, reading, doc lint), Hydrogen (premises, digests, builds) | `.\scripts\launch.ps1 <id> argon` (or `hydrogen`) | ≤ 1 Argon or 2 Hydrogen; commands only after the launcher fix (`jobs/agy-commands`) |
 | Native Claude sub-agent | the integrator's Agent tool, fresh context | one at a time; batch judges into one |
 | GLM | `.\scripts\glm-queue.ps1 -Queue lab\queue.txt` (re-reads the file each batch) or `.\scripts\glm-local.ps1 -Lenses "<a b>"` | **commit the lens first**: lanes run from a checkout of HEAD. Read `checker.log` for 429 before trusting a "lead" |
 
@@ -136,7 +136,7 @@ A job is a folder: `jobs/<id>/prompt.md` is the spec, `jobs/<id>/last.md` the re
 ## 5c. Rules from the 14 November post-mortem (S128)
 
 Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md).
-1. Every launch goes through `launch.ps1`, detached, at Idle; anything that must outlive a turn is a detached process, never an in-session background task. Test launcher changes with `-DryRun`.
+1. Every launch goes through `launch.ps1`, detached, at Normal priority (S158); anything that must outlive a turn is a detached process, never an in-session background task. Test launcher changes with `-DryRun`.
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`; Antigravity `report.md` every few files). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
 4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM writes port code paced by `glm-queue`. Hydrogen and Argon read and build on their own Google meters. A smaller model never writes for a bigger one (S210; AGENTS.md).
@@ -171,7 +171,7 @@ Settings are written with `-Encoding utf8NoBOM`: a BOM made `settings.json` be r
 
 ## 7. Open
 
-- **Hydrogen** has never run a real job here: its row is still a claim with no evidence. Argon's corpus row is earned (section 6); its other two rows, the untrusted channel and the primary sources, are not yet tested.
+- **Hydrogen** has run real jobs (the pagoda, S197; premise checks and digests); its building waits on commands (`jobs/agy-commands`). Argon's corpus row is earned (section 6); its other two rows, the untrusted channel and the primary sources, are not yet tested.
 - Route A was **Julien's call** (S102): it trades a grey-zone ToS reading against the only access to Argon. He chose it; `agy` is installed and signed in.
 - **Hydrogen's first job** is `anomaly-1-stepup` (14 November), a read job whose answer the integrator can check against the code.
 - Which family's errors are least like which is unmeasured. Until it is, the judge rule stays "the other family", as AGENTS.md has it.

@@ -1,4 +1,4 @@
-# One mind in the server (Phase 2 spec, draft)
+# One mind in the server (the bots' server side, spec, draft)
 
 Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door. The Designer red-teamed it on 9 November ("freeze with changes"); those changes are folded in below, with Julien's rulings (S52). It freezes after the packet-path Swarm 0 re-measure.
 

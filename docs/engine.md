@@ -57,7 +57,7 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 
 | ES | Here |
 |---|---|
-| certificate | a word between two joints, or an entry in a site's portal table: "this crossing takes k ticks from these entry plateaus, within width w", valid until a dependency changes. Its worldtube is checked once, when it is made ([vocabulary.md](vocabulary.md) section 2) |
+| certificate | a word between two joints, or an entry in a site's portal table: "this crossing takes k ticks from these entry pieces, within width w", valid until a dependency changes. Its worldtube is checked once, when it is made ([vocabulary.md](vocabulary.md) section 2) |
 | dependencies | the block footprint the claim read, plus the toolkit it assumed |
 | event | a contact (landing, wall, ceiling), an edit (a block placed or broken, by anyone), a command (a new goal), a toolkit change |
 | slack | the ticks until the bot's light cone reaches the certificate, minus the work to repair it. Least slack is renewed first |
@@ -67,7 +67,7 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 | correctness independent of allocation | the same plan and the same T whatever the thread count, GPU on or off, budget or schedule. Budgets are counted in work units, never wall-clock time, so every run replays |
 | value of computation | shape only where it can change a decision; idle time computes ahead and recompresses |
 | the simulation decides, heuristics schedule | a heuristic may reorder work, never remove a candidate. Pruning is deciding, so a candidate is removed only by proof: a bound from the light cone or the bracket, or dominance under the law. Learned estimates are advisory (above) |
-| ruin is excluded, not priced | an irreversible loss (death, an item lost for good, a world change) is a barrier from the first rung, never a cost in ticks. Tokens (Phase 7) price only what can be spent and replaced |
+| ruin is excluded, not priced | an irreversible loss (an item lost for good, a world change, or death where a constraint forbids it, as in a fight; otherwise death is a respawn teleport with a toll, S189, plan.md) is a barrier from the first rung, never a cost in ticks. Tokens (Phase 7) price only what can be spent and replaced |
 | the player is the only wildcard | here: Julien (his commands and edits) and the bot's own execution noise. Their light cones bound where certificates can break. Mobs are precomputed as law (S20), in the behaviour-exact class; how their random choices enter is Phase 8's design |
 
 ## Local repair
