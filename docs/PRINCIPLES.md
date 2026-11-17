@@ -355,6 +355,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "a ranking of the hardest maneuvers in the game in terms of error margin"; a network of stasis chambers "to summon bots on demand like a whole army"; redstone, "the perfect litmus test for proper intelligence of our architecture rather than just mere efficiency" | S190 | **Adopted:** [plan.md](plan.md) "Later"; beside the S32 litmus |
 | "layers after layers starting from the most fundamental things is the proper way to go, bottom-up leads to better emergence rather than top-down which tends to be a set of wishes grounded in thoughts and prayers" | S191 | **Followed:** [plan.md](plan.md)'s order: the core, joints and sets, the simplest case right, then the loop on real tracks; learning and redstone after |
 | "hydrogen's build a very good. this will be used as a benchmark for the building of the swarm" (the pagoda, S195) | S197 | **Adopted:** [plan.md](plan.md) "Later"; blueprint `jobs/pagoda/build.txt` |
+| "yes lunch the opus and terra" (after u2b stopped on the pin premise) | S198–S199 | **Followed:** Opus re-derives the pinned exit (`jobs/pin-rederive`); Terra finishes the track fixes (`jobs/track-ux/continue-2.md`) |
 
 ## Contradictions (kept side by side)
 
