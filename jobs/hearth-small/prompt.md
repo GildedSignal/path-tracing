@@ -33,7 +33,7 @@ Superflat overworld, Minecraft Java 26.2.
 6. **No generator.** Write the commands by hand, so that you decide every block. Aim for the pagoda's order of size: about 600 to 2,500 commands in all.
 
 ## The five passes
-Each pass is a separate run. **Between passes, the integrator renders your commands** with a preview renderer: isometric views by day and by night, plans, elevations, sections, and first-person views from eye positions you choose. It puts the images in `jobs\hearth-small\views\pass-<n>\`, with a `views.md` index. The next pass begins by looking at them.
+Each pass is a separate run. **You render your own commands** with the preview renderer (below): isometric views by day and by night, plans, elevations, sections, and first-person views from eye positions you choose. Render, look at the images, fix, and render again as often as you need within a pass. The images go in `jobs\hearth-small\views\pass-<n>\`, with a `views.md` index.
 
 | Pass | What it does | Writes |
 |---|---|---|
@@ -56,5 +56,24 @@ Each pass is a separate run. **Between passes, the integrator renders your comma
 - `section x 420`;
 - `eye <x> <y> <z> <yaw> <pitch> <fov> <day|night> <name>`. Yaw is Minecraft's: 0 faces +z (south), 90 faces −x (west), 180 faces −z, 270 faces +x. y is the feet; the renderer adds the eye height.
 
-## This run is pass 1
-Read the brief and his taste in full. Read the pagoda's `design.md` and `build.txt` to see what worked, at this scale, in your own hand. Then write `design.md` and `views.txt` in `C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\`, and start `report.md` with what you read and decided. You read, reason and write only into that folder. Launch nothing.
+## How you render (you can run commands, in a sandbox)
+
+Run exactly this, from any directory (PowerShell; every argument quoted):
+
+```
+& 'D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\java.exe' '-Djava.awt.headless=true' 'D:\path-tracing-wt\hearth-small\tools\preview\Preview.java' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\pass-2.txt' 400 -61 -20 440 -16 20 'D:\path-tracing-deps\minecraft-26.2-client.jar' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views.txt' 'C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\views\pass-2'
+```
+
+It takes about 10 seconds and writes one PNG per line of `views.txt`, plus `views.md`, into `views\pass-2\`. Open the PNGs with your file tool and look at them. Do not use `scripts\preview.ps1`: its JDK path is refused in the sandbox. The renderer draws unknown blocks as plain cubes and names them in `views.md`: an unknown id there is a typo to fix. You may write only in `C:\Users\PASCAL\Desktop\path tracing\jobs\hearth-small\` and `D:\path-tracing-wt\hearth-small\`. Place nothing in the game.
+
+## This run is pass 2: landform and massing
+
+Pass 1 is done: your `design.md`, `views.txt` and `report-pass-1.md` in this folder. Re-read them, the brief and his taste first.
+
+1. Write `pass-2.txt`: the spur, the ravine, the road and the bridge's surviving abutment, and the building as plain volumes in at most four materials, without openings or details. `/fill` and `/setblock` only, absolute coordinates inside the box, ids checked in `blocks.tsv`.
+2. Render. Look at every view. Write in `report.md` what reads well, what reads badly and what surprised you: the proportions, the silhouette against the sky, the ravine's depth, the walk from the road (stations 1 to 7), whether the dominant roof dominates.
+3. Fix the massing and render again, at least twice, until the proportions are right. Keep each render's notes in `report.md` (render 1, render 2, …).
+4. Change `views.txt` if a view would help.
+5. End `report.md` with the command count, the materials, what pass 3 must do, and what you would change in the plan.
+
+Write `report.md` as you go. Launch nothing else.

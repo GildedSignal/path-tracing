@@ -13,12 +13,13 @@ param(
   [switch]$SettingsInWork,
   [switch]$NoJobDir,
   [switch]$WorkWriteOnly,
-  [string[]]$Extra = @()
+  [string[]]$Extra = @(),
+  [string]$Work
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 $utf8 = [Text.UTF8Encoding]::new($false)
-$work = 'D:\path-tracing-wt\_probe-cmd'
+$work = if ($Work) { $Work } else { 'D:\path-tracing-wt\_probe-cmd' }
 $dir = Join-Path $Root "jobs\_probe-cmd\$Name"; New-Item -ItemType Directory -Force $dir | Out-Null
 $report = Join-Path $dir 'report.md'
 function Forms([string]$p) {
