@@ -381,6 +381,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "Yes, Sol builds 1–4" (Opus's layers: honest measurement, the yaw-free generator, data shaped like the read, one walk per axis) | S218 | **Followed:** `jobs/warm-floor` (Sol 6.2), on Astra's final u2b state once her resume ends |
 | "astra 6.2 is available for now" | S219 | **Followed:** one probe confirmed `gpt-6.2-astra`; `launch.ps1` and `follow-up.ps1` use it for new Astra jobs (the running u2b resume stays on Astra 6) |
 | (quoting the report of `e6de417`) "wasn't that old news?" | S220 | **Followed:** yes: the stale resume re-ran the integrator's sweep; only her review fixes and three added gates were new. Report what changed since the last report, not the totals again |
+| "you should've stopped it and told it that it was duplicate that was unserious i thought it was something not done already" | S221 | **Followed:** a choice put to him states plainly what is duplicate and what it costs; a duplicate run is stopped, or redirected to what is not done |
 
 ## Contradictions (kept side by side)
 
