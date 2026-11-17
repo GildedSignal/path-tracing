@@ -24,3 +24,7 @@ conversation-*.md
 
 # His words that stay private (S101)
 docs/reference/private.md
+
+# Generated build commands (regenerate with gen.rs and jobs/three-builds/buildc.rs)
+jobs/build-*/build.txt
+jobs/build-*/place.txt
