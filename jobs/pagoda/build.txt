@@ -1,0 +1,963 @@
+# Classical 5-Storey Pagoda — Build Commands
+# World: Minecraft Java 26.2 | Box: x in [20,52], y in [-60,-10], z in [-16,16]
+# Center axis: (38, -60..-10, 0) | Entrance: West face (toward x = 20 / spawn)
+
+# ============================================================
+# PART 1: STRUCTURE — STEPPED STONE PLINTH (y = -60..-58)
+# ============================================================
+
+# Plinth Tier 1 (19x19, r=9, y=-60)
+/fill 29 -60 -9 47 -60 9 minecraft:stone_bricks
+/fill 29 -60 -8 29 -60 8 minecraft:stone_brick_stairs[facing=east,half=bottom,shape=straight]
+/fill 47 -60 -8 47 -60 8 minecraft:stone_brick_stairs[facing=west,half=bottom,shape=straight]
+/fill 30 -60 -9 46 -60 -9 minecraft:stone_brick_stairs[facing=south,half=bottom,shape=straight]
+/fill 30 -60 9 46 -60 9 minecraft:stone_brick_stairs[facing=north,half=bottom,shape=straight]
+/setblock 29 -60 -9 minecraft:chiseled_polished_blackstone
+/setblock 47 -60 -9 minecraft:chiseled_polished_blackstone
+/setblock 29 -60 9 minecraft:chiseled_polished_blackstone
+/setblock 47 -60 9 minecraft:chiseled_polished_blackstone
+/setblock 29 -60 -2 minecraft:polished_blackstone_bricks
+/setblock 29 -60 2 minecraft:polished_blackstone_bricks
+/setblock 47 -60 -2 minecraft:polished_blackstone_bricks
+/setblock 47 -60 2 minecraft:polished_blackstone_bricks
+/setblock 36 -60 -9 minecraft:polished_blackstone_bricks
+/setblock 40 -60 -9 minecraft:polished_blackstone_bricks
+/setblock 36 -60 9 minecraft:polished_blackstone_bricks
+/setblock 40 -60 9 minecraft:polished_blackstone_bricks
+
+# Plinth Tier 2 (17x17, r=8, y=-59)
+/fill 30 -59 -8 46 -59 8 minecraft:stone_bricks
+/fill 30 -59 -7 30 -59 7 minecraft:stone_brick_stairs[facing=east,half=bottom,shape=straight]
+/fill 46 -59 -7 46 -59 7 minecraft:stone_brick_stairs[facing=west,half=bottom,shape=straight]
+/fill 31 -59 -8 45 -59 -8 minecraft:stone_brick_stairs[facing=south,half=bottom,shape=straight]
+/fill 31 -59 8 45 -59 8 minecraft:stone_brick_stairs[facing=north,half=bottom,shape=straight]
+/setblock 30 -59 -8 minecraft:chiseled_polished_blackstone
+/setblock 46 -59 -8 minecraft:chiseled_polished_blackstone
+/setblock 30 -59 8 minecraft:chiseled_polished_blackstone
+/setblock 46 -59 8 minecraft:chiseled_polished_blackstone
+/setblock 30 -59 -2 minecraft:polished_blackstone_bricks
+/setblock 30 -59 2 minecraft:polished_blackstone_bricks
+/setblock 46 -59 -2 minecraft:polished_blackstone_bricks
+/setblock 46 -59 2 minecraft:polished_blackstone_bricks
+/setblock 36 -59 -8 minecraft:polished_blackstone_bricks
+/setblock 40 -59 -8 minecraft:polished_blackstone_bricks
+/setblock 36 -59 8 minecraft:polished_blackstone_bricks
+/setblock 40 -59 8 minecraft:polished_blackstone_bricks
+
+# Plinth Tier 3 / Storey 1 Floor & Veranda Deck (15x15, r=7, y=-58)
+/fill 31 -58 -7 45 -58 7 minecraft:polished_blackstone_bricks
+/fill 33 -58 -5 43 -58 5 minecraft:dark_oak_planks
+/fill 34 -58 -4 42 -58 4 minecraft:spruce_planks
+/fill 31 -58 -1 31 -58 1 minecraft:polished_blackstone_brick_stairs[facing=east,half=bottom,shape=straight]
+/fill 45 -58 -1 45 -58 1 minecraft:polished_blackstone_brick_stairs[facing=west,half=bottom,shape=straight]
+/fill 37 -58 -7 39 -58 -7 minecraft:polished_blackstone_brick_stairs[facing=south,half=bottom,shape=straight]
+/fill 37 -58 7 39 -58 7 minecraft:polished_blackstone_brick_stairs[facing=north,half=bottom,shape=straight]
+/setblock 31 -58 -7 minecraft:chiseled_polished_blackstone
+/setblock 45 -58 -7 minecraft:chiseled_polished_blackstone
+/setblock 31 -58 7 minecraft:chiseled_polished_blackstone
+/setblock 45 -58 7 minecraft:chiseled_polished_blackstone
+/setblock 32 -58 0 minecraft:gilded_blackstone
+/setblock 44 -58 0 minecraft:gilded_blackstone
+/setblock 38 -58 -6 minecraft:gilded_blackstone
+/setblock 38 -58 6 minecraft:gilded_blackstone
+
+# ============================================================
+# PART 2: STRUCTURE — STOREY 1 SHELL & ROOF (y = -57..-50)
+# ============================================================
+
+# Storey 1 Walls (13x13, r=6, y=-57..-53)
+/fill 32 -57 -6 44 -57 6 minecraft:polished_blackstone_bricks
+/fill 32 -56 -6 44 -55 6 minecraft:calcite
+/fill 32 -54 -6 44 -54 6 minecraft:dark_oak_wood
+/fill 32 -53 -6 44 -53 6 minecraft:stripped_crimson_hyphae
+/fill 33 -57 -5 43 -53 5 minecraft:air
+
+# Storey 1 Columns (corners & portal piers)
+/fill 32 -57 -6 32 -53 -6 minecraft:stripped_crimson_hyphae
+/fill 44 -57 -6 44 -53 -6 minecraft:stripped_crimson_hyphae
+/fill 32 -57 6 32 -53 6 minecraft:stripped_crimson_hyphae
+/fill 44 -57 6 44 -53 6 minecraft:stripped_crimson_hyphae
+/fill 32 -57 -2 32 -53 -2 minecraft:stripped_crimson_hyphae
+/fill 32 -57 2 32 -53 2 minecraft:stripped_crimson_hyphae
+/fill 44 -57 -2 44 -53 -2 minecraft:stripped_crimson_hyphae
+/fill 44 -57 2 44 -53 2 minecraft:stripped_crimson_hyphae
+/fill 36 -57 -6 36 -53 -6 minecraft:stripped_crimson_hyphae
+/fill 40 -57 -6 40 -53 -6 minecraft:stripped_crimson_hyphae
+/fill 36 -57 6 36 -53 6 minecraft:stripped_crimson_hyphae
+/fill 40 -57 6 40 -53 6 minecraft:stripped_crimson_hyphae
+
+# Storey 1 Cardinal Portal Openings & Side Lattice Windows
+/fill 32 -57 -1 32 -55 1 minecraft:air
+/fill 44 -57 -1 44 -55 1 minecraft:air
+/fill 37 -57 -6 39 -55 -6 minecraft:air
+/fill 37 -57 6 39 -55 6 minecraft:air
+/fill 32 -56 -4 32 -55 -4 minecraft:crimson_fence
+/fill 32 -56 4 32 -55 4 minecraft:crimson_fence
+/fill 44 -56 -4 44 -55 -4 minecraft:crimson_fence
+/fill 44 -56 4 44 -55 4 minecraft:crimson_fence
+/fill 34 -56 -6 34 -55 -6 minecraft:crimson_fence
+/fill 42 -56 -6 42 -55 -6 minecraft:crimson_fence
+/fill 34 -56 6 34 -55 6 minecraft:crimson_fence
+/fill 42 -56 6 42 -55 6 minecraft:crimson_fence
+
+# Storey 1 Roof — Ring 1 (r=7, y=-51)
+/fill 31 -51 -6 31 -51 6 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 45 -51 -6 45 -51 6 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 32 -51 -7 44 -51 -7 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 32 -51 7 44 -51 7 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 31 -51 -7 minecraft:deepslate_tiles
+/setblock 45 -51 -7 minecraft:deepslate_tiles
+/setblock 31 -51 7 minecraft:deepslate_tiles
+/setblock 45 -51 7 minecraft:deepslate_tiles
+
+# Storey 1 Roof — Ring 2 (r=8, y=-52)
+/fill 30 -52 -7 30 -52 7 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 46 -52 -7 46 -52 7 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 31 -52 -8 45 -52 -8 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 31 -52 8 45 -52 8 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 30 -52 -8 minecraft:deepslate_tiles
+/setblock 46 -52 -8 minecraft:deepslate_tiles
+/setblock 30 -52 8 minecraft:deepslate_tiles
+/setblock 46 -52 8 minecraft:deepslate_tiles
+
+# Storey 1 Roof — Ring 3 (r=9, y=-53)
+/fill 29 -53 -7 29 -53 7 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 47 -53 -7 47 -53 7 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 31 -53 -9 45 -53 -9 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 31 -53 9 45 -53 9 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 29 -53 -8 minecraft:deepslate_tile_slab[type=top]
+/setblock 29 -53 8 minecraft:deepslate_tile_slab[type=top]
+/setblock 47 -53 -8 minecraft:deepslate_tile_slab[type=top]
+/setblock 47 -53 8 minecraft:deepslate_tile_slab[type=top]
+/setblock 30 -53 -9 minecraft:deepslate_tile_slab[type=top]
+/setblock 46 -53 -9 minecraft:deepslate_tile_slab[type=top]
+/setblock 30 -53 9 minecraft:deepslate_tile_slab[type=top]
+/setblock 46 -53 9 minecraft:deepslate_tile_slab[type=top]
+/setblock 29 -53 -9 minecraft:deepslate_tiles
+/setblock 47 -53 -9 minecraft:deepslate_tiles
+/setblock 29 -53 9 minecraft:deepslate_tiles
+/setblock 47 -53 9 minecraft:deepslate_tiles
+
+# ============================================================
+# PART 3: STRUCTURE — STOREY 2 SHELL & ROOF (y = -51..-45)
+# ============================================================
+
+# Storey 2 Floor & Balcony Deck (13x13, r=6, y=-51)
+/fill 32 -51 -6 44 -51 6 minecraft:dark_oak_planks
+/fill 33 -51 -5 43 -51 5 minecraft:spruce_planks
+
+# Storey 2 Walls (11x11, r=5, y=-50..-47)
+/fill 33 -50 -5 43 -49 5 minecraft:calcite
+/fill 33 -48 -5 43 -48 5 minecraft:dark_oak_wood
+/fill 33 -47 -5 43 -47 5 minecraft:stripped_crimson_hyphae
+/fill 34 -50 -4 42 -47 4 minecraft:air
+
+# Storey 2 Columns
+/fill 33 -50 -5 33 -47 -5 minecraft:stripped_crimson_hyphae
+/fill 43 -50 -5 43 -47 -5 minecraft:stripped_crimson_hyphae
+/fill 33 -50 5 33 -47 5 minecraft:stripped_crimson_hyphae
+/fill 43 -50 5 43 -47 5 minecraft:stripped_crimson_hyphae
+/fill 33 -50 -2 33 -47 -2 minecraft:stripped_crimson_hyphae
+/fill 33 -50 2 33 -47 2 minecraft:stripped_crimson_hyphae
+/fill 43 -50 -2 43 -47 -2 minecraft:stripped_crimson_hyphae
+/fill 43 -50 2 43 -47 2 minecraft:stripped_crimson_hyphae
+/fill 36 -50 -5 36 -47 -5 minecraft:stripped_crimson_hyphae
+/fill 40 -50 -5 40 -47 -5 minecraft:stripped_crimson_hyphae
+/fill 36 -50 5 36 -47 5 minecraft:stripped_crimson_hyphae
+/fill 40 -50 5 40 -47 5 minecraft:stripped_crimson_hyphae
+
+# Storey 2 Balcony Doors & Lattice Windows
+/fill 33 -50 0 33 -49 0 minecraft:air
+/fill 43 -50 0 43 -49 0 minecraft:air
+/fill 38 -50 -5 38 -49 -5 minecraft:air
+/fill 38 -50 5 38 -49 5 minecraft:air
+/setblock 33 -49 -3 minecraft:crimson_fence
+/setblock 33 -49 3 minecraft:crimson_fence
+/setblock 43 -49 -3 minecraft:crimson_fence
+/setblock 43 -49 3 minecraft:crimson_fence
+/setblock 35 -49 -5 minecraft:crimson_fence
+/setblock 41 -49 -5 minecraft:crimson_fence
+/setblock 35 -49 5 minecraft:crimson_fence
+/setblock 41 -49 5 minecraft:crimson_fence
+
+# Storey 2 Roof — Ring 1 (r=6, y=-45) & Ring 2 (r=7, y=-46)
+/fill 32 -45 -5 32 -45 5 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 44 -45 -5 44 -45 5 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 33 -45 -6 43 -45 -6 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 33 -45 6 43 -45 6 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 32 -45 -6 minecraft:deepslate_tiles
+/setblock 44 -45 -6 minecraft:deepslate_tiles
+/setblock 32 -45 6 minecraft:deepslate_tiles
+/setblock 44 -45 6 minecraft:deepslate_tiles
+
+/fill 31 -46 -6 31 -46 6 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 45 -46 -6 45 -46 6 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 32 -46 -7 44 -46 -7 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 32 -46 7 44 -46 7 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 31 -46 -7 minecraft:deepslate_tiles
+/setblock 45 -46 -7 minecraft:deepslate_tiles
+/setblock 31 -46 7 minecraft:deepslate_tiles
+/setblock 45 -46 7 minecraft:deepslate_tiles
+
+# ============================================================
+# PART 4: STRUCTURE — STOREY 3 SHELL & ROOF (y = -45..-39)
+# ============================================================
+
+# Storey 3 Floor & Balcony Deck (11x11, r=5, y=-45)
+/fill 33 -45 -5 43 -45 5 minecraft:dark_oak_planks
+/fill 34 -45 -4 42 -45 4 minecraft:spruce_planks
+
+# Storey 3 Walls (9x9, r=4, y=-44..-41)
+/fill 34 -44 -4 42 -43 4 minecraft:calcite
+/fill 34 -42 -4 42 -42 4 minecraft:dark_oak_wood
+/fill 34 -41 -4 42 -41 4 minecraft:stripped_crimson_hyphae
+/fill 35 -44 -3 41 -41 3 minecraft:air
+
+# Storey 3 Columns
+/fill 34 -44 -4 34 -41 -4 minecraft:stripped_crimson_hyphae
+/fill 42 -44 -4 42 -41 -4 minecraft:stripped_crimson_hyphae
+/fill 34 -44 4 34 -41 4 minecraft:stripped_crimson_hyphae
+/fill 42 -44 4 42 -41 4 minecraft:stripped_crimson_hyphae
+/fill 34 -44 -2 34 -41 -2 minecraft:stripped_crimson_hyphae
+/fill 34 -44 2 34 -41 2 minecraft:stripped_crimson_hyphae
+/fill 42 -44 -2 42 -41 -2 minecraft:stripped_crimson_hyphae
+/fill 42 -44 2 42 -41 2 minecraft:stripped_crimson_hyphae
+/fill 36 -44 -4 36 -41 -4 minecraft:stripped_crimson_hyphae
+/fill 40 -44 -4 40 -41 -4 minecraft:stripped_crimson_hyphae
+/fill 36 -44 4 36 -41 4 minecraft:stripped_crimson_hyphae
+/fill 40 -44 4 40 -41 4 minecraft:stripped_crimson_hyphae
+
+# Storey 3 Balcony Doors & Lattice Windows
+/fill 34 -44 0 34 -43 0 minecraft:air
+/fill 42 -44 0 42 -43 0 minecraft:air
+/fill 38 -44 -4 38 -43 -4 minecraft:air
+/fill 38 -44 4 38 -43 4 minecraft:air
+/setblock 34 -43 -3 minecraft:crimson_fence
+/setblock 34 -43 3 minecraft:crimson_fence
+/setblock 42 -43 -3 minecraft:crimson_fence
+/setblock 42 -43 3 minecraft:crimson_fence
+/setblock 35 -43 -4 minecraft:crimson_fence
+/setblock 41 -43 -4 minecraft:crimson_fence
+/setblock 35 -43 4 minecraft:crimson_fence
+/setblock 41 -43 4 minecraft:crimson_fence
+
+# Storey 3 Roof — Ring 1 (r=5, y=-39) & Ring 2 (r=6, y=-40)
+/fill 33 -39 -4 33 -39 4 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 43 -39 -4 43 -39 4 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 34 -39 -5 42 -39 -5 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 34 -39 5 42 -39 5 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 33 -39 -5 minecraft:deepslate_tiles
+/setblock 43 -39 -5 minecraft:deepslate_tiles
+/setblock 33 -39 5 minecraft:deepslate_tiles
+/setblock 43 -39 5 minecraft:deepslate_tiles
+
+/fill 32 -40 -5 32 -40 5 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 44 -40 -5 44 -40 5 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 33 -40 -6 43 -40 -6 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 33 -40 6 43 -40 6 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 32 -40 -6 minecraft:deepslate_tiles
+/setblock 44 -40 -6 minecraft:deepslate_tiles
+/setblock 32 -40 6 minecraft:deepslate_tiles
+/setblock 44 -40 6 minecraft:deepslate_tiles
+
+# ============================================================
+# PART 5: STRUCTURE — STOREY 4 SHELL & ROOF (y = -39..-33)
+# ============================================================
+
+# Storey 4 Floor & Balcony Deck (9x9, r=4, y=-39)
+/fill 34 -39 -4 42 -39 4 minecraft:dark_oak_planks
+/fill 35 -39 -3 41 -39 3 minecraft:spruce_planks
+
+# Storey 4 Walls (7x7, r=3, y=-38..-35)
+/fill 35 -38 -3 41 -37 3 minecraft:calcite
+/fill 35 -36 -3 41 -36 3 minecraft:dark_oak_wood
+/fill 35 -35 -3 41 -35 3 minecraft:stripped_crimson_hyphae
+/fill 36 -38 -2 40 -35 2 minecraft:air
+
+# Storey 4 Columns
+/fill 35 -38 -3 35 -35 -3 minecraft:stripped_crimson_hyphae
+/fill 41 -38 -3 41 -35 -3 minecraft:stripped_crimson_hyphae
+/fill 35 -38 3 35 -35 3 minecraft:stripped_crimson_hyphae
+/fill 41 -38 3 41 -35 3 minecraft:stripped_crimson_hyphae
+
+# Storey 4 Balcony Doors (W, N, S) & Lattice Windows
+/fill 35 -38 0 35 -37 0 minecraft:air
+/fill 38 -38 -3 38 -37 -3 minecraft:air
+/fill 38 -38 3 38 -37 3 minecraft:air
+/setblock 41 -37 0 minecraft:crimson_fence
+/setblock 35 -37 -1 minecraft:crimson_fence
+/setblock 35 -37 1 minecraft:crimson_fence
+/setblock 41 -37 -1 minecraft:crimson_fence
+/setblock 41 -37 1 minecraft:crimson_fence
+/setblock 37 -37 -3 minecraft:crimson_fence
+/setblock 39 -37 -3 minecraft:crimson_fence
+/setblock 37 -37 3 minecraft:crimson_fence
+/setblock 39 -37 3 minecraft:crimson_fence
+
+# Storey 4 Roof — Ring 1 (r=4, y=-33) & Ring 2 (r=5, y=-34)
+/fill 34 -33 -3 34 -33 3 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 42 -33 -3 42 -33 3 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 35 -33 -4 41 -33 -4 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 35 -33 4 41 -33 4 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 34 -33 -4 minecraft:deepslate_tiles
+/setblock 42 -33 -4 minecraft:deepslate_tiles
+/setblock 34 -33 4 minecraft:deepslate_tiles
+/setblock 42 -33 4 minecraft:deepslate_tiles
+
+/fill 33 -34 -4 33 -34 4 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 43 -34 -4 43 -34 4 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 34 -34 -5 42 -34 -5 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 34 -34 5 42 -34 5 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 33 -34 -5 minecraft:deepslate_tiles
+/setblock 43 -34 -5 minecraft:deepslate_tiles
+/setblock 33 -34 5 minecraft:deepslate_tiles
+/setblock 43 -34 5 minecraft:deepslate_tiles
+
+# ============================================================
+# PART 6: STRUCTURE — STOREY 5 SHELL & CROWNING ROOF (y = -33..-25)
+# ============================================================
+
+# Storey 5 Floor & Top Balcony Deck (7x7, r=3, y=-33)
+/fill 35 -33 -3 41 -33 3 minecraft:dark_oak_planks
+/fill 37 -33 -1 39 -33 1 minecraft:spruce_planks
+
+# Storey 5 Walls (5x5, r=2, y=-32..-29)
+/fill 36 -32 -2 40 -31 2 minecraft:calcite
+/fill 36 -30 -2 40 -30 2 minecraft:dark_oak_wood
+/fill 36 -29 -2 40 -29 2 minecraft:stripped_crimson_hyphae
+/fill 37 -32 -1 39 -29 1 minecraft:air
+
+# Storey 5 Columns
+/fill 36 -32 -2 36 -29 -2 minecraft:stripped_crimson_hyphae
+/fill 40 -32 -2 40 -29 -2 minecraft:stripped_crimson_hyphae
+/fill 36 -32 2 36 -29 2 minecraft:stripped_crimson_hyphae
+/fill 40 -32 2 40 -29 2 minecraft:stripped_crimson_hyphae
+
+# Storey 5 East Balcony Doorway & Lattice Windows
+/fill 40 -32 0 40 -31 0 minecraft:air
+/setblock 36 -31 0 minecraft:crimson_fence
+/setblock 38 -31 -2 minecraft:crimson_fence
+/setblock 38 -31 2 minecraft:crimson_fence
+/setblock 36 -31 -1 minecraft:crimson_fence
+/setblock 36 -31 1 minecraft:crimson_fence
+/setblock 40 -31 -1 minecraft:crimson_fence
+/setblock 40 -31 1 minecraft:crimson_fence
+/setblock 37 -31 -2 minecraft:crimson_fence
+/setblock 39 -31 -2 minecraft:crimson_fence
+/setblock 37 -31 2 minecraft:crimson_fence
+/setblock 39 -31 2 minecraft:crimson_fence
+
+# Storey 5 Crowning Roof (y=-29..-25)
+# Ceiling core (r=2, y=-28)
+/fill 36 -28 -2 40 -28 2 minecraft:dark_oak_planks
+# Ring r=4 (y=-29)
+/fill 34 -29 -3 34 -29 3 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 42 -29 -3 42 -29 3 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 35 -29 -4 41 -29 -4 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 35 -29 4 41 -29 4 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 34 -29 -4 minecraft:deepslate_tiles
+/setblock 42 -29 -4 minecraft:deepslate_tiles
+/setblock 34 -29 4 minecraft:deepslate_tiles
+/setblock 42 -29 4 minecraft:deepslate_tiles
+# Ring r=3 (y=-28)
+/fill 35 -28 -2 35 -28 2 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 41 -28 -2 41 -28 2 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 36 -28 -3 40 -28 -3 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 36 -28 3 40 -28 3 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 35 -28 -3 minecraft:deepslate_tiles
+/setblock 41 -28 -3 minecraft:deepslate_tiles
+/setblock 35 -28 3 minecraft:deepslate_tiles
+/setblock 41 -28 3 minecraft:deepslate_tiles
+# Ring r=2 (y=-27)
+/fill 37 -27 -1 39 -27 1 minecraft:deepslate_tiles
+/fill 36 -27 -1 36 -27 1 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/fill 40 -27 -1 40 -27 1 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/fill 37 -27 -2 39 -27 -2 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/fill 37 -27 2 39 -27 2 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 36 -27 -2 minecraft:deepslate_tiles
+/setblock 40 -27 -2 minecraft:deepslate_tiles
+/setblock 36 -27 2 minecraft:deepslate_tiles
+/setblock 40 -27 2 minecraft:deepslate_tiles
+# Ring r=1 (y=-26)
+/setblock 38 -26 0 minecraft:deepslate_tiles
+/setblock 37 -26 0 minecraft:deepslate_tile_stairs[facing=east,half=bottom,shape=straight]
+/setblock 39 -26 0 minecraft:deepslate_tile_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -26 -1 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+/setblock 38 -26 1 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 37 -26 -1 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=outer_left]
+/setblock 39 -26 -1 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=outer_right]
+/setblock 37 -26 1 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=outer_right]
+/setblock 39 -26 1 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=outer_left]
+
+# ============================================================
+# PART 7: STRUCTURE — FINIAL SPIRE / SORIN (y = -25..-10)
+# ============================================================
+
+# Roban square pedestal (y=-25) & Fukubachi bowl (y=-24)
+/setblock 38 -25 0 minecraft:polished_blackstone_bricks
+/setblock 37 -25 0 minecraft:polished_blackstone_brick_stairs[facing=east,half=bottom,shape=straight]
+/setblock 39 -25 0 minecraft:polished_blackstone_brick_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -25 -1 minecraft:polished_blackstone_brick_stairs[facing=south,half=bottom,shape=straight]
+/setblock 38 -25 1 minecraft:polished_blackstone_brick_stairs[facing=north,half=bottom,shape=straight]
+/setblock 37 -25 -1 minecraft:polished_blackstone_brick_slab[type=bottom]
+/setblock 39 -25 -1 minecraft:polished_blackstone_brick_slab[type=bottom]
+/setblock 37 -25 1 minecraft:polished_blackstone_brick_slab[type=bottom]
+/setblock 39 -25 1 minecraft:polished_blackstone_brick_slab[type=bottom]
+/setblock 38 -24 0 minecraft:gold_block
+/setblock 37 -24 0 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 39 -24 0 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 38 -24 -1 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 38 -24 1 minecraft:waxed_cut_copper_slab[type=bottom]
+
+# Kurin nine-ring shaft & Hoshu jewel tip (y=-23..-10)
+/setblock 38 -23 0 minecraft:waxed_chiseled_copper
+/setblock 38 -22 0 minecraft:gold_block
+/setblock 38 -21 0 minecraft:waxed_copper_bars
+/setblock 38 -20 0 minecraft:waxed_chiseled_copper
+/setblock 38 -19 0 minecraft:waxed_copper_bars
+/setblock 38 -18 0 minecraft:gold_block
+/setblock 38 -17 0 minecraft:waxed_copper_bars
+/setblock 38 -16 0 minecraft:waxed_chiseled_copper
+/setblock 38 -15 0 minecraft:waxed_copper_bars
+/setblock 38 -14 0 minecraft:waxed_lightning_rod[facing=up]
+/setblock 38 -13 0 minecraft:waxed_copper_bars
+/setblock 38 -12 0 minecraft:waxed_lightning_rod[facing=up]
+/setblock 38 -11 0 minecraft:gold_block
+/setblock 38 -10 0 minecraft:waxed_lightning_rod[facing=up]
+
+# ============================================================
+# PART 8: DETAILS — UPTURNED EAVES, HIP RIDGES & BRACKETS
+# ============================================================
+
+# Storey 1 Upturned Eaves (r=10, y=-54..-52) & Hip Ridge Slabs & Under-Eave Brackets
+/fill 28 -54 -5 28 -54 5 minecraft:deepslate_tile_slab[type=top]
+/fill 48 -54 -5 48 -54 5 minecraft:deepslate_tile_slab[type=top]
+/fill 33 -54 -10 43 -54 -10 minecraft:deepslate_tile_slab[type=top]
+/fill 33 -54 10 43 -54 10 minecraft:deepslate_tile_slab[type=top]
+/fill 28 -53 -7 28 -53 -6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 28 -53 6 28 -53 7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 48 -53 -7 48 -53 -6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 48 -53 6 48 -53 7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 31 -53 -10 32 -53 -10 minecraft:deepslate_tile_slab[type=bottom]
+/fill 44 -53 -10 45 -53 -10 minecraft:deepslate_tile_slab[type=bottom]
+/fill 31 -53 10 32 -53 10 minecraft:deepslate_tile_slab[type=bottom]
+/fill 44 -53 10 45 -53 10 minecraft:deepslate_tile_slab[type=bottom]
+/fill 28 -53 -9 28 -53 -8 minecraft:deepslate_tile_slab[type=top]
+/fill 28 -53 8 28 -53 9 minecraft:deepslate_tile_slab[type=top]
+/fill 48 -53 -9 48 -53 -8 minecraft:deepslate_tile_slab[type=top]
+/fill 48 -53 8 48 -53 9 minecraft:deepslate_tile_slab[type=top]
+/fill 29 -53 -10 30 -53 -10 minecraft:deepslate_tile_slab[type=top]
+/fill 46 -53 -10 47 -53 -10 minecraft:deepslate_tile_slab[type=top]
+/fill 29 -53 10 30 -53 10 minecraft:deepslate_tile_slab[type=top]
+/fill 46 -53 10 47 -53 10 minecraft:deepslate_tile_slab[type=top]
+/setblock 28 -53 -10 minecraft:deepslate_tiles
+/setblock 48 -53 -10 minecraft:deepslate_tiles
+/setblock 28 -53 10 minecraft:deepslate_tiles
+/setblock 48 -53 10 minecraft:deepslate_tiles
+/setblock 28 -52 -10 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 48 -52 -10 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 28 -52 10 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 48 -52 10 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 29 -52 -9 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 47 -52 -9 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 29 -52 9 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 47 -52 9 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 30 -51 -8 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 46 -51 -8 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 30 -51 8 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 46 -51 8 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 31 -50 -7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 45 -50 -7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 31 -50 7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 45 -50 7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 30 -53 -6 30 -53 6 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 46 -53 -6 46 -53 6 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 32 -53 -8 44 -53 -8 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 32 -53 8 44 -53 8 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+/fill 31 -53 -6 31 -53 6 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 45 -53 -6 45 -53 6 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 32 -53 -7 44 -53 -7 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 32 -53 7 44 -53 7 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+
+# Storey 2 Balcony Railings (r=7, y=-50) & Upturned Eaves (r=8, y=-47..-44) & Brackets
+/fill 31 -50 -6 31 -50 6 minecraft:crimson_trapdoor[facing=west,half=bottom,open=true]
+/fill 45 -50 -6 45 -50 6 minecraft:crimson_trapdoor[facing=east,half=bottom,open=true]
+/fill 32 -50 -7 44 -50 -7 minecraft:crimson_trapdoor[facing=north,half=bottom,open=true]
+/fill 32 -50 7 44 -50 7 minecraft:crimson_trapdoor[facing=south,half=bottom,open=true]
+/fill 30 -47 -4 30 -47 4 minecraft:deepslate_tile_slab[type=top]
+/fill 46 -47 -4 46 -47 4 minecraft:deepslate_tile_slab[type=top]
+/fill 34 -47 -8 42 -47 -8 minecraft:deepslate_tile_slab[type=top]
+/fill 34 -47 8 42 -47 8 minecraft:deepslate_tile_slab[type=top]
+/fill 30 -46 -6 30 -46 -5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 30 -46 5 30 -46 6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 46 -46 -6 46 -46 -5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 46 -46 5 46 -46 6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 32 -46 -8 33 -46 -8 minecraft:deepslate_tile_slab[type=bottom]
+/fill 43 -46 -8 44 -46 -8 minecraft:deepslate_tile_slab[type=bottom]
+/fill 32 -46 8 33 -46 8 minecraft:deepslate_tile_slab[type=bottom]
+/fill 43 -46 8 44 -46 8 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 30 -46 -7 minecraft:deepslate_tile_slab[type=top]
+/setblock 30 -46 7 minecraft:deepslate_tile_slab[type=top]
+/setblock 46 -46 -7 minecraft:deepslate_tile_slab[type=top]
+/setblock 46 -46 7 minecraft:deepslate_tile_slab[type=top]
+/setblock 31 -46 -8 minecraft:deepslate_tile_slab[type=top]
+/setblock 45 -46 -8 minecraft:deepslate_tile_slab[type=top]
+/setblock 31 -46 8 minecraft:deepslate_tile_slab[type=top]
+/setblock 45 -46 8 minecraft:deepslate_tile_slab[type=top]
+/setblock 30 -46 -8 minecraft:deepslate_tiles
+/setblock 46 -46 -8 minecraft:deepslate_tiles
+/setblock 30 -46 8 minecraft:deepslate_tiles
+/setblock 46 -46 8 minecraft:deepslate_tiles
+/setblock 30 -45 -8 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 46 -45 -8 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 30 -45 8 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 46 -45 8 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 31 -45 -7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 45 -45 -7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 31 -45 7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 45 -45 7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 32 -44 -6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 44 -44 -6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 32 -44 6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 44 -44 6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 31 -47 -5 31 -47 5 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 45 -47 -5 45 -47 5 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 33 -47 -7 43 -47 -7 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 33 -47 7 43 -47 7 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+
+# Storey 3 Balcony Railings (r=6, y=-44) & Upturned Eaves (r=7, y=-41..-38) & Brackets
+/fill 32 -44 -5 32 -44 5 minecraft:crimson_trapdoor[facing=west,half=bottom,open=true]
+/fill 44 -44 -5 44 -44 5 minecraft:crimson_trapdoor[facing=east,half=bottom,open=true]
+/fill 33 -44 -6 43 -44 -6 minecraft:crimson_trapdoor[facing=north,half=bottom,open=true]
+/fill 33 -44 6 43 -44 6 minecraft:crimson_trapdoor[facing=south,half=bottom,open=true]
+/fill 31 -41 -3 31 -41 3 minecraft:deepslate_tile_slab[type=top]
+/fill 45 -41 -3 45 -41 3 minecraft:deepslate_tile_slab[type=top]
+/fill 35 -41 -7 41 -41 -7 minecraft:deepslate_tile_slab[type=top]
+/fill 35 -41 7 41 -41 7 minecraft:deepslate_tile_slab[type=top]
+/fill 31 -40 -5 31 -40 -4 minecraft:deepslate_tile_slab[type=bottom]
+/fill 31 -40 4 31 -40 5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 45 -40 -5 45 -40 -4 minecraft:deepslate_tile_slab[type=bottom]
+/fill 45 -40 4 45 -40 5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 33 -40 -7 34 -40 -7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 42 -40 -7 43 -40 -7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 33 -40 7 34 -40 7 minecraft:deepslate_tile_slab[type=bottom]
+/fill 42 -40 7 43 -40 7 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 31 -40 -6 minecraft:deepslate_tile_slab[type=top]
+/setblock 31 -40 6 minecraft:deepslate_tile_slab[type=top]
+/setblock 45 -40 -6 minecraft:deepslate_tile_slab[type=top]
+/setblock 45 -40 6 minecraft:deepslate_tile_slab[type=top]
+/setblock 32 -40 -7 minecraft:deepslate_tile_slab[type=top]
+/setblock 44 -40 -7 minecraft:deepslate_tile_slab[type=top]
+/setblock 32 -40 7 minecraft:deepslate_tile_slab[type=top]
+/setblock 44 -40 7 minecraft:deepslate_tile_slab[type=top]
+/setblock 31 -40 -7 minecraft:deepslate_tiles
+/setblock 45 -40 -7 minecraft:deepslate_tiles
+/setblock 31 -40 7 minecraft:deepslate_tiles
+/setblock 45 -40 7 minecraft:deepslate_tiles
+/setblock 31 -39 -7 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 45 -39 -7 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 31 -39 7 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 45 -39 7 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 32 -39 -6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 44 -39 -6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 32 -39 6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 44 -39 6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 33 -38 -5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 43 -38 -5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 33 -38 5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 43 -38 5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 32 -41 -4 32 -41 4 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 44 -41 -4 44 -41 4 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 34 -41 -6 42 -41 -6 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 34 -41 6 42 -41 6 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+
+# Storey 4 Balcony Railings (r=5, y=-38) & Upturned Eaves (r=6, y=-35..-32) & Brackets
+/fill 33 -38 -4 33 -38 4 minecraft:crimson_trapdoor[facing=west,half=bottom,open=true]
+/fill 43 -38 -4 43 -38 4 minecraft:crimson_trapdoor[facing=east,half=bottom,open=true]
+/fill 34 -38 -5 42 -38 -5 minecraft:crimson_trapdoor[facing=north,half=bottom,open=true]
+/fill 34 -38 5 42 -38 5 minecraft:crimson_trapdoor[facing=south,half=bottom,open=true]
+/fill 32 -35 -2 32 -35 2 minecraft:deepslate_tile_slab[type=top]
+/fill 44 -35 -2 44 -35 2 minecraft:deepslate_tile_slab[type=top]
+/fill 36 -35 -6 40 -35 -6 minecraft:deepslate_tile_slab[type=top]
+/fill 36 -35 6 40 -35 6 minecraft:deepslate_tile_slab[type=top]
+/fill 32 -34 -4 32 -34 -3 minecraft:deepslate_tile_slab[type=bottom]
+/fill 32 -34 3 32 -34 4 minecraft:deepslate_tile_slab[type=bottom]
+/fill 44 -34 -4 44 -34 -3 minecraft:deepslate_tile_slab[type=bottom]
+/fill 44 -34 3 44 -34 4 minecraft:deepslate_tile_slab[type=bottom]
+/fill 34 -34 -6 35 -34 -6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 41 -34 -6 42 -34 -6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 34 -34 6 35 -34 6 minecraft:deepslate_tile_slab[type=bottom]
+/fill 41 -34 6 42 -34 6 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 32 -34 -5 minecraft:deepslate_tile_slab[type=top]
+/setblock 32 -34 5 minecraft:deepslate_tile_slab[type=top]
+/setblock 44 -34 -5 minecraft:deepslate_tile_slab[type=top]
+/setblock 44 -34 5 minecraft:deepslate_tile_slab[type=top]
+/setblock 33 -34 -6 minecraft:deepslate_tile_slab[type=top]
+/setblock 43 -34 -6 minecraft:deepslate_tile_slab[type=top]
+/setblock 33 -34 6 minecraft:deepslate_tile_slab[type=top]
+/setblock 43 -34 6 minecraft:deepslate_tile_slab[type=top]
+/setblock 32 -34 -6 minecraft:deepslate_tiles
+/setblock 44 -34 -6 minecraft:deepslate_tiles
+/setblock 32 -34 6 minecraft:deepslate_tiles
+/setblock 44 -34 6 minecraft:deepslate_tiles
+/setblock 32 -33 -6 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 44 -33 -6 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 32 -33 6 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 44 -33 6 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 33 -33 -5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 43 -33 -5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 33 -33 5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 43 -33 5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 34 -32 -4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 42 -32 -4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 34 -32 4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 42 -32 4 minecraft:deepslate_tile_slab[type=bottom]
+/fill 33 -35 -3 33 -35 3 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 43 -35 -3 43 -35 3 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 35 -35 -5 41 -35 -5 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 35 -35 5 41 -35 5 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+
+# Storey 5 Top Balcony Railings (r=4, y=-32) & Crowning Upturned Eaves (r=5, y=-30..-26)
+/fill 34 -32 -3 34 -32 3 minecraft:crimson_trapdoor[facing=west,half=bottom,open=true]
+/fill 42 -32 -3 42 -32 3 minecraft:crimson_trapdoor[facing=east,half=bottom,open=true]
+/fill 35 -32 -4 41 -32 -4 minecraft:crimson_trapdoor[facing=north,half=bottom,open=true]
+/fill 35 -32 4 41 -32 4 minecraft:crimson_trapdoor[facing=south,half=bottom,open=true]
+/fill 33 -30 -1 33 -30 1 minecraft:deepslate_tile_slab[type=top]
+/fill 43 -30 -1 43 -30 1 minecraft:deepslate_tile_slab[type=top]
+/fill 37 -30 -5 39 -30 -5 minecraft:deepslate_tile_slab[type=top]
+/fill 37 -30 5 39 -30 5 minecraft:deepslate_tile_slab[type=top]
+/fill 33 -29 -3 33 -29 -2 minecraft:deepslate_tile_slab[type=bottom]
+/fill 33 -29 2 33 -29 3 minecraft:deepslate_tile_slab[type=bottom]
+/fill 43 -29 -3 43 -29 -2 minecraft:deepslate_tile_slab[type=bottom]
+/fill 43 -29 2 43 -29 3 minecraft:deepslate_tile_slab[type=bottom]
+/fill 35 -29 -5 36 -29 -5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 40 -29 -5 41 -29 -5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 35 -29 5 36 -29 5 minecraft:deepslate_tile_slab[type=bottom]
+/fill 40 -29 5 41 -29 5 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 33 -29 -4 minecraft:deepslate_tile_slab[type=top]
+/setblock 33 -29 4 minecraft:deepslate_tile_slab[type=top]
+/setblock 43 -29 -4 minecraft:deepslate_tile_slab[type=top]
+/setblock 43 -29 4 minecraft:deepslate_tile_slab[type=top]
+/setblock 34 -29 -5 minecraft:deepslate_tile_slab[type=top]
+/setblock 42 -29 -5 minecraft:deepslate_tile_slab[type=top]
+/setblock 34 -29 5 minecraft:deepslate_tile_slab[type=top]
+/setblock 42 -29 5 minecraft:deepslate_tile_slab[type=top]
+/setblock 33 -29 -5 minecraft:deepslate_tiles
+/setblock 43 -29 -5 minecraft:deepslate_tiles
+/setblock 33 -29 5 minecraft:deepslate_tiles
+/setblock 43 -29 5 minecraft:deepslate_tiles
+/setblock 33 -28 -5 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 43 -28 -5 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 33 -28 5 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 43 -28 5 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 34 -28 -4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 42 -28 -4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 34 -28 4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 42 -28 4 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 35 -27 -3 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 41 -27 -3 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 35 -27 3 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 41 -27 3 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 36 -26 -2 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 40 -26 -2 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 36 -26 2 minecraft:waxed_cut_copper_slab[type=bottom]
+/setblock 40 -26 2 minecraft:waxed_cut_copper_slab[type=bottom]
+/fill 34 -30 -2 34 -30 2 minecraft:dark_oak_stairs[facing=east,half=top,shape=straight]
+/fill 42 -30 -2 42 -30 2 minecraft:dark_oak_stairs[facing=west,half=top,shape=straight]
+/fill 36 -30 -4 40 -30 -4 minecraft:dark_oak_stairs[facing=south,half=top,shape=straight]
+/fill 36 -30 4 40 -30 4 minecraft:dark_oak_stairs[facing=north,half=top,shape=straight]
+
+# ============================================================
+# PART 9: DETAILS — COURTYARD, TORII GATE, BRIDGE & ZEN POND
+# ============================================================
+
+# Approach Path (west entrance from x=20 toward spawn)
+/fill 20 -60 -1 21 -60 1 minecraft:smooth_stone_slab[type=bottom]
+/fill 28 -60 -2 28 -60 2 minecraft:smooth_stone_slab[type=bottom]
+
+# Vermilion Torii Entry Arch at x=20
+/setblock 20 -60 -2 minecraft:polished_blackstone_bricks
+/setblock 20 -60 2 minecraft:polished_blackstone_bricks
+/fill 20 -59 -2 20 -56 -2 minecraft:stripped_crimson_hyphae
+/fill 20 -59 2 20 -56 2 minecraft:stripped_crimson_hyphae
+/fill 20 -56 -1 20 -56 1 minecraft:stripped_crimson_hyphae
+/fill 20 -55 -3 20 -55 3 minecraft:dark_oak_wood
+/fill 20 -54 -2 20 -54 2 minecraft:deepslate_tile_slab[type=bottom]
+/setblock 20 -54 -3 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight]
+/setblock 20 -54 3 minecraft:deepslate_tile_stairs[facing=south,half=bottom,shape=straight]
+
+# Zen Pond Basin (x=23..26, z=-8..8, strictly bounded at y=-60)
+/fill 22 -60 -9 22 -60 -2 minecraft:mossy_stone_bricks
+/fill 22 -60 2 22 -60 9 minecraft:mossy_stone_bricks
+/fill 27 -60 -9 27 -60 -2 minecraft:mossy_stone_bricks
+/fill 27 -60 2 27 -60 9 minecraft:mossy_stone_bricks
+/fill 23 -60 -9 26 -60 -9 minecraft:mossy_stone_bricks
+/fill 23 -60 9 26 -60 9 minecraft:mossy_stone_bricks
+/fill 23 -60 -8 26 -60 8 minecraft:water[level=0]
+/setblock 24 -60 -5 minecraft:sea_pickle[pickles=2,waterlogged=true]
+/setblock 25 -60 -6 minecraft:sea_pickle[pickles=2,waterlogged=true]
+/setblock 24 -60 5 minecraft:sea_pickle[pickles=2,waterlogged=true]
+/setblock 25 -60 6 minecraft:sea_pickle[pickles=2,waterlogged=true]
+
+# Arched Timber Bridge over Zen Pond (x=22..27, z=-2..2)
+/fill 22 -60 -1 22 -60 1 minecraft:dark_oak_stairs[facing=east,half=bottom,shape=straight]
+/fill 27 -60 -1 27 -60 1 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/fill 23 -59 -1 26 -59 1 minecraft:dark_oak_slab[type=bottom]
+/fill 23 -60 -2 26 -60 -2 minecraft:dark_oak_wood
+/fill 23 -60 2 26 -60 2 minecraft:dark_oak_wood
+/fill 23 -59 -2 26 -59 -2 minecraft:dark_oak_fence
+/fill 23 -59 2 26 -59 2 minecraft:dark_oak_fence
+
+# Courtyard Garden Beds, Cherry Blossom Trees & Flora
+/fill 20 -60 -16 28 -60 -10 minecraft:moss_block
+/fill 20 -60 10 28 -60 16 minecraft:moss_block
+/fill 29 -60 -16 47 -60 -11 minecraft:grass_block
+/fill 29 -60 11 47 -60 16 minecraft:grass_block
+/fill 48 -60 -16 52 -60 16 minecraft:moss_block
+/fill 48 -60 -2 51 -60 2 minecraft:smooth_stone_slab[type=bottom]
+
+# NW Cherry Blossom Tree at (24, -13)
+/fill 24 -60 -13 24 -56 -13 minecraft:cherry_log
+/setblock 25 -56 -12 minecraft:cherry_log
+/fill 22 -55 -15 26 -54 -11 minecraft:cherry_leaves[persistent=true]
+/fill 23 -53 -14 25 -53 -12 minecraft:cherry_leaves[persistent=true]
+/setblock 22 -55 -15 minecraft:air
+/setblock 26 -55 -15 minecraft:air
+/setblock 22 -55 -11 minecraft:air
+/setblock 26 -55 -11 minecraft:air
+
+# SW Cherry Blossom Tree at (24, 13)
+/fill 24 -60 13 24 -56 13 minecraft:cherry_log
+/setblock 25 -56 12 minecraft:cherry_log
+/fill 22 -55 11 26 -54 15 minecraft:cherry_leaves[persistent=true]
+/fill 23 -53 12 25 -53 14 minecraft:cherry_leaves[persistent=true]
+/setblock 22 -55 11 minecraft:air
+/setblock 26 -55 11 minecraft:air
+/setblock 22 -55 15 minecraft:air
+/setblock 26 -55 15 minecraft:air
+
+# NE & SE Flowering Azalea Bonsai Trees at (49, -13) and (49, 13)
+/fill 49 -60 -13 49 -57 -13 minecraft:cherry_log
+/fill 48 -56 -14 50 -55 -12 minecraft:cherry_leaves[persistent=true]
+/setblock 49 -54 -13 minecraft:cherry_leaves[persistent=true]
+/fill 49 -60 13 49 -57 13 minecraft:cherry_log
+/fill 48 -56 12 50 -55 14 minecraft:cherry_leaves[persistent=true]
+/setblock 49 -54 13 minecraft:cherry_leaves[persistent=true]
+
+# Garden Stepping Stones, Azalea Bushes, Flowers & Moss Carpets
+/setblock 21 -59 -11 minecraft:flowering_azalea
+/setblock 21 -59 11 minecraft:flowering_azalea
+/setblock 26 -59 -14 minecraft:azalea
+/setblock 26 -59 14 minecraft:azalea
+/setblock 31 -59 -13 minecraft:flowering_azalea
+/setblock 31 -59 13 minecraft:flowering_azalea
+/setblock 44 -59 -13 minecraft:flowering_azalea
+/setblock 44 -59 13 minecraft:flowering_azalea
+/setblock 21 -59 -6 minecraft:moss_carpet
+/setblock 21 -59 6 minecraft:moss_carpet
+/setblock 22 -59 -12 minecraft:lily_of_the_valley
+/setblock 22 -59 12 minecraft:lily_of_the_valley
+/setblock 25 -59 -11 minecraft:poppy
+/setblock 25 -59 11 minecraft:poppy
+/setblock 33 -59 -14 minecraft:allium
+/setblock 33 -59 14 minecraft:allium
+/setblock 35 -59 -12 minecraft:fern
+/setblock 35 -59 12 minecraft:fern
+/setblock 41 -59 -12 minecraft:fern
+/setblock 41 -59 12 minecraft:fern
+/setblock 49 -59 -8 minecraft:poppy
+/setblock 49 -59 8 minecraft:poppy
+/setblock 50 -59 -5 minecraft:lily_of_the_valley
+/setblock 50 -59 5 minecraft:lily_of_the_valley
+/setblock 50 -59 -10 minecraft:short_grass
+/setblock 50 -59 10 minecraft:short_grass
+/setblock 38 -60 -11 minecraft:smooth_stone_slab[type=bottom]
+/setblock 38 -60 -12 minecraft:smooth_stone_slab[type=bottom]
+/setblock 38 -60 11 minecraft:smooth_stone_slab[type=bottom]
+/setblock 38 -60 12 minecraft:smooth_stone_slab[type=bottom]
+
+# Garden Toro Stone Lanterns (base=-60, post=-59, light=-58, cap=-57)
+/setblock 28 -60 -6 minecraft:polished_andesite
+/setblock 28 -59 -6 minecraft:andesite_wall
+/setblock 28 -58 -6 minecraft:shroomlight
+/setblock 28 -57 -6 minecraft:stone_brick_slab[type=bottom]
+/setblock 28 -60 6 minecraft:polished_andesite
+/setblock 28 -59 6 minecraft:andesite_wall
+/setblock 28 -58 6 minecraft:shroomlight
+/setblock 28 -57 6 minecraft:stone_brick_slab[type=bottom]
+/setblock 48 -60 -7 minecraft:polished_andesite
+/setblock 48 -59 -7 minecraft:andesite_wall
+/setblock 48 -58 -7 minecraft:shroomlight
+/setblock 48 -57 -7 minecraft:stone_brick_slab[type=bottom]
+/setblock 48 -60 7 minecraft:polished_andesite
+/setblock 48 -59 7 minecraft:andesite_wall
+/setblock 48 -58 7 minecraft:shroomlight
+/setblock 48 -57 7 minecraft:stone_brick_slab[type=bottom]
+/setblock 38 -60 -13 minecraft:polished_andesite
+/setblock 38 -59 -13 minecraft:andesite_wall
+/setblock 38 -58 -13 minecraft:shroomlight
+/setblock 38 -57 -13 minecraft:stone_brick_slab[type=bottom]
+/setblock 38 -60 13 minecraft:polished_andesite
+/setblock 38 -59 13 minecraft:andesite_wall
+/setblock 38 -58 13 minecraft:shroomlight
+/setblock 38 -57 13 minecraft:stone_brick_slab[type=bottom]
+
+# ============================================================
+# PART 10: INTERIOR STAIRCASES, FURNISHINGS & LIGHTING
+# ============================================================
+
+# Central Heart Pillar (Shinbashira) at (38, 0)
+/fill 38 -57 0 38 -29 0 minecraft:stripped_dark_oak_wood
+/setblock 38 -57 0 minecraft:gilded_blackstone
+
+# Storey 1 -> Storey 2 Staircase (y=-57..-51)
+/setblock 37 -51 1 minecraft:air
+/setblock 37 -51 2 minecraft:air
+/setblock 38 -51 2 minecraft:air
+/setblock 39 -51 2 minecraft:air
+/setblock 40 -57 -1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -56 0 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -55 1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -55 2 minecraft:dark_oak_planks
+/setblock 39 -54 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -53 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 37 -53 2 minecraft:dark_oak_planks
+/setblock 37 -52 1 minecraft:dark_oak_stairs[facing=north,half=bottom,shape=straight]
+/setblock 37 -51 0 minecraft:dark_oak_stairs[facing=north,half=bottom,shape=straight]
+
+# Storey 2 -> Storey 3 Staircase (y=-50..-45)
+/setblock 37 -45 2 minecraft:air
+/setblock 38 -45 2 minecraft:air
+/setblock 39 -45 2 minecraft:air
+/setblock 40 -45 2 minecraft:air
+/setblock 40 -45 1 minecraft:air
+/setblock 40 -50 -1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -49 0 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -48 1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -48 2 minecraft:dark_oak_planks
+/setblock 39 -47 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -46 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 37 -46 2 minecraft:dark_oak_planks
+/setblock 37 -45 1 minecraft:dark_oak_stairs[facing=north,half=bottom,shape=straight]
+
+# Storey 3 -> Storey 4 Staircase (y=-44..-39)
+/setblock 37 -39 2 minecraft:air
+/setblock 38 -39 2 minecraft:air
+/setblock 39 -39 2 minecraft:air
+/setblock 40 -39 2 minecraft:air
+/setblock 40 -39 1 minecraft:air
+/setblock 40 -44 -1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -43 0 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -42 1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -42 2 minecraft:dark_oak_planks
+/setblock 39 -41 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -40 2 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 37 -40 2 minecraft:dark_oak_planks
+/setblock 37 -39 1 minecraft:dark_oak_stairs[facing=north,half=bottom,shape=straight]
+
+# Storey 4 -> Storey 5 Staircase (y=-38..-33)
+/setblock 39 -33 1 minecraft:air
+/setblock 38 -33 1 minecraft:air
+/setblock 37 -33 1 minecraft:air
+/setblock 37 -33 0 minecraft:air
+/setblock 37 -33 -1 minecraft:air
+/setblock 40 -38 -1 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -37 0 minecraft:dark_oak_stairs[facing=south,half=bottom,shape=straight]
+/setblock 40 -37 1 minecraft:dark_oak_planks
+/setblock 39 -36 1 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 38 -35 1 minecraft:dark_oak_stairs[facing=west,half=bottom,shape=straight]
+/setblock 37 -35 1 minecraft:dark_oak_planks
+/setblock 37 -34 0 minecraft:dark_oak_stairs[facing=north,half=bottom,shape=straight]
+/setblock 37 -34 -1 minecraft:dark_oak_planks
+/setblock 38 -33 -1 minecraft:dark_oak_stairs[facing=east,half=bottom,shape=straight]
+
+# Stairwell Guard Railings (safe walking on Storeys 2-4)
+/setblock 36 -50 1 minecraft:dark_oak_fence
+/setblock 36 -50 2 minecraft:dark_oak_fence
+/setblock 38 -50 1 minecraft:dark_oak_fence
+/setblock 39 -50 1 minecraft:dark_oak_fence
+/setblock 36 -44 2 minecraft:dark_oak_fence
+/setblock 38 -44 1 minecraft:dark_oak_fence
+/setblock 39 -44 1 minecraft:dark_oak_fence
+/setblock 36 -38 2 minecraft:dark_oak_fence
+/setblock 38 -38 1 minecraft:dark_oak_fence
+/setblock 39 -38 1 minecraft:dark_oak_fence
+
+# Storey 1 Interior Furnishings (Carpet, Altar, Bookshelves)
+/fill 33 -57 0 36 -57 0 minecraft:red_carpet
+/setblock 42 -57 0 minecraft:chiseled_polished_blackstone
+/setblock 42 -56 0 minecraft:bell[attachment=floor,facing=west]
+/setblock 42 -57 -1 minecraft:polished_blackstone_bricks
+/setblock 42 -57 1 minecraft:polished_blackstone_bricks
+/setblock 42 -56 -1 minecraft:potted_bamboo
+/setblock 42 -56 1 minecraft:potted_cherry_sapling
+/fill 33 -57 -5 33 -56 -5 minecraft:bookshelf
+/fill 33 -57 5 33 -56 5 minecraft:bookshelf
+/fill 43 -57 -5 43 -56 -5 minecraft:bookshelf
+/fill 43 -57 5 43 -56 5 minecraft:bookshelf
+
+# Interior Ceiling Beams & Lighting (Storeys 1-5)
+# Storey 1 ceiling beams (y=-52) & hanging lanterns (y=-53)
+/fill 35 -52 -5 35 -52 5 minecraft:dark_oak_wood
+/fill 41 -52 -5 41 -52 5 minecraft:dark_oak_wood
+/setblock 35 -53 -3 minecraft:lantern[hanging=true]
+/setblock 35 -53 3 minecraft:lantern[hanging=true]
+/setblock 41 -53 -3 minecraft:lantern[hanging=true]
+/setblock 41 -53 3 minecraft:lantern[hanging=true]
+# Storey 2 ceiling beams (y=-46) & hanging lanterns (y=-47)
+/fill 35 -46 -4 35 -46 4 minecraft:dark_oak_wood
+/fill 41 -46 -4 41 -46 4 minecraft:dark_oak_wood
+/setblock 35 -47 -3 minecraft:lantern[hanging=true]
+/setblock 35 -47 3 minecraft:lantern[hanging=true]
+/setblock 41 -47 -3 minecraft:lantern[hanging=true]
+/setblock 41 -47 3 minecraft:lantern[hanging=true]
+# Storey 3 ceiling beams (y=-40) & recessed shroomlights & lanterns (y=-41)
+/setblock 36 -40 -2 minecraft:shroomlight
+/setblock 36 -40 2 minecraft:shroomlight
+/setblock 40 -40 -2 minecraft:shroomlight
+/setblock 36 -41 -2 minecraft:lantern[hanging=true]
+/setblock 36 -41 2 minecraft:lantern[hanging=true]
+/setblock 40 -41 -2 minecraft:lantern[hanging=true]
+# Storey 4 recessed shroomlights (y=-34) & lanterns (y=-35)
+/setblock 36 -34 -2 minecraft:shroomlight
+/setblock 36 -34 2 minecraft:shroomlight
+/setblock 36 -35 -2 minecraft:lantern[hanging=true]
+/setblock 36 -35 2 minecraft:lantern[hanging=true]
+# Storey 5 coffered ceiling shroomlights (y=-28) & arrival lantern (y=-29)
+/setblock 37 -28 -1 minecraft:shroomlight
+/setblock 37 -28 1 minecraft:shroomlight
+/setblock 39 -28 -1 minecraft:shroomlight
+/setblock 39 -28 1 minecraft:shroomlight
+/setblock 39 -29 0 minecraft:lantern[hanging=true]
+
+# Exterior Eave Corner Lanterns (Storeys 1-5), Torii Lanterns & Bridge Lanterns
+/setblock 28 -54 -10 minecraft:lantern[hanging=true]
+/setblock 48 -54 -10 minecraft:lantern[hanging=true]
+/setblock 28 -54 10 minecraft:lantern[hanging=true]
+/setblock 48 -54 10 minecraft:lantern[hanging=true]
+/setblock 30 -47 -8 minecraft:lantern[hanging=true]
+/setblock 46 -47 -8 minecraft:lantern[hanging=true]
+/setblock 30 -47 8 minecraft:lantern[hanging=true]
+/setblock 46 -47 8 minecraft:lantern[hanging=true]
+/setblock 31 -41 -7 minecraft:lantern[hanging=true]
+/setblock 45 -41 -7 minecraft:lantern[hanging=true]
+/setblock 31 -41 7 minecraft:lantern[hanging=true]
+/setblock 45 -41 7 minecraft:lantern[hanging=true]
+/setblock 32 -35 -6 minecraft:lantern[hanging=true]
+/setblock 44 -35 -6 minecraft:lantern[hanging=true]
+/setblock 32 -35 6 minecraft:lantern[hanging=true]
+/setblock 44 -35 6 minecraft:lantern[hanging=true]
+/setblock 33 -30 -5 minecraft:lantern[hanging=true]
+/setblock 43 -30 -5 minecraft:lantern[hanging=true]
+/setblock 33 -30 5 minecraft:lantern[hanging=true]
+/setblock 43 -30 5 minecraft:lantern[hanging=true]
+/setblock 20 -56 -3 minecraft:lantern[hanging=true]
+/setblock 20 -56 3 minecraft:lantern[hanging=true]
+/setblock 23 -58 -2 minecraft:lantern[hanging=false]
+/setblock 23 -58 2 minecraft:lantern[hanging=false]
+/setblock 26 -58 -2 minecraft:lantern[hanging=false]
+/setblock 26 -58 2 minecraft:lantern[hanging=false]
+/setblock 30 -58 -8 minecraft:lantern[hanging=false]
+/setblock 46 -58 -8 minecraft:lantern[hanging=false]
+/setblock 30 -58 8 minecraft:lantern[hanging=false]
+/setblock 46 -58 8 minecraft:lantern[hanging=false]
