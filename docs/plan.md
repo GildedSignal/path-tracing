@@ -44,7 +44,7 @@ The bot reaches the point Julien clicks in the least time T, counted from the cl
 | 0 | Fold the plan into the docs | design and learning into the living docs | — | done 16 November |
 | 1 | **The core** | the word store keyed by zone label; a count on every word; binade crossings and food as events; two neighbouring yaws for any bearing (the two-yaw test, `P3`, is folded in); `solve`, the single entry point | the million-block line thought offline, cold and warm; the same work at 10³, 10⁴ and 10⁶ blocks; a planted shortcut path for flat ground must fail | **built** (`wt/u1-astra`): all gates pass; oblique million line ~600 µs warm; judged pass with findings (two gates that cannot fail, fixed first in step 2) |
 | 2 | **Joints and sets** | at each joint, the set of arriving states from which a known route reaches the goal (plateaus, premises, prices); reach between surfaces derived without searching inputs | plateaus stay few as the search refines; the reach map holds his 428 shortcut | built (`wt/u2-astra`): the reach map holds his shortcut (158 ticks after the ladder against his 169); pieces re-derived by Opus as families and points (S188), now built in step 2b |
-| 2b | **The simplest case right** (S186, S187) | after the set re-derivation, in one job: the warm straight line with zero player-state copies and zero allocations (counted, so it cannot be faked); the stop on B stored as a joint and looked up; "it is important to get even the simplest case right, if we can't make them right the rest will compound badly" | the warm million line against the ~5 µs floor, with what remains | **Astra building** (`jobs/u2b`): families and points, with the pinned exit as a point or a hold (S203) |
+| 2b | **The simplest case right** (S186, S187) | after the set re-derivation, in one job: the warm straight line with zero player-state copies and zero allocations (counted, so it cannot be faked); the stop on B stored as a joint and looked up; "it is important to get even the simplest case right, if we can't make them right the rest will compound badly" | the warm million line against the ~5 µs floor, with what remains | **built, being verified** (`wt/u2b-astra`): families and points with the pinned exit as a point or a hold (S203); zero copies and allocations reached; provisional warm medians 59 µs (axis) and 95 µs (oblique) against ~5 µs. The integrator runs the final sweep, then a Sonnet judge |
 | 3 | **The loop on real tracks** | `solve` on his tracks through one binary, against his recorded times | **the Diversity practice tracks are neo jumps over a floor: the bot must match or beat his T there, since the floor lets a slower non-neo route reach B** (S189; his scores are not all perfect); his tracks and the old 21; thinking mirrors terrain | waits for steps 1–2; his test set is being drawn up (`jobs/flight-corpus`) |
 | 4 | **The bot's runner** | the client plays word × count, checks at events, re-anchors on the server's packets, and changes goal mid-run | **the goal changed again and again during a run** (S189), and first move never waits on thinking; a new goal at tick 1000 | waits for step 3 |
 | 5 | **Editing the world** | place, break and interact as words; every edit owes its undo (the ledger) | his five tracks that need it | the port feeds it (GLM) |
@@ -58,18 +58,22 @@ The bot reaches the point Julien clicks in the least time T, counted from the cl
 - **The clicked face as B's target** (S170): the mod part is in his game. The planner part waits for a judge (`wt/track-face`).
 - **The rebuilt hard track** (`wt/hard-track-2`): built, waiting for a judge. Julien rates it easy-medium.
 - **Freeze damage in the law** (`wt/l0-veto`, job `1.3e`): built, waiting for a judge since 15 November.
-- **His maps:** eight imported as dimensions, switched with `/map`. The four with tracks are kept (S193): `infinity_tower`, `diversity_parkour`, `parkour_race`, `frosted_ices`; the four unused were removed (S194). Added on 17 November: `easy_dropper`, `the_drop_2`, `delightful_dropper_2`, `elytra_challenge_2`, `elytra_challenge_3`, `parkour_rectangle_3`, `race_the_rainbow` (spawns being checked, `jobs/track-ux`). 51 tracks raced on 16 November with their inputs recorded. Wanted next: droppers, elytra courses and maps whose progression survives the import (S192; `jobs/map-scout-2`).
+- **His maps:** eight imported as dimensions, switched with `/map`. The four with tracks are kept (S193): `infinity_tower`, `diversity_parkour`, `parkour_race`, `frosted_ices`; the four unused were removed (S194). Added on 17 November: `easy_dropper`, `the_drop_2`, `delightful_dropper_2`, `elytra_challenge_2`, `elytra_challenge_3`, `parkour_rectangle_3`, `race_the_rainbow` (spawns checked and corrected, `jobs/track-ux`, merged 17 November with autocomplete, no `/track restore`, faster arming and the run-will-count messages). 51 tracks raced on 16 November with their inputs recorded. Wanted next: droppers, elytra courses and maps whose progression survives the import (S192; `jobs/map-scout-2`).
 
-## Who does what (AGENTS.md, S174, S173)
+- **The port, by a better method** (S207–S211): the game itself judges a port, through a differential harness running Mojang's methods headless against the Rust law. A coverage map from the jar measures what is done. Every meter works a ranked backlog, and a speed pass is certified by the same harness. GLM writes port code against the harness; Argon builds the tooling once the launcher lets Antigravity run commands (`jobs/agy-commands`). Wave 2: 28 lenses queued (`jobs/port-wave-2`).
+- **Builds for him:** the refuge, pagoda-sized, in five passes with rendered views between them (`jobs/hearth-small`, `jobs/build-preview`).
+
+## Who does what (AGENTS.md, S174, S173, S209, S210)
 
 | Work | Who |
 |---|---|
 | Specs | the integrator, checked against this plan |
-| Important design and the core | Opus (red-teams, one-way doors) and Astra (the core's build) |
-| Well-specified pieces | Terra |
-| Complex questions and wide reading | Hydrogen; Argon for primary sources |
-| The port only | GLM |
-| Judging GPT's work | Sonnet |
+| Important design and the core | Opus (red-teams, one-way doors) and Astra (the core's build; the Codex window is hers) |
+| The leftover ~20% | Terra |
+| Building tooling, reading, our docs linted against his words | Argon, on its own meter |
+| Premise checks, digests, builds | Hydrogen (reports to the integrator; a smaller model never writes for a bigger one) |
+| The port's code, against the harness | GLM |
+| Judging GPT's and Google's work | Sonnet |
 
 ## Later, in order, once most of the above works (S189)
 
