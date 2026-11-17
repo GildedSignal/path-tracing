@@ -12,6 +12,8 @@ param(
   [string]$Worktree,
   [string]$Base = 'main',
   [string[]]$ReadDir = @(),
+  # Argon or Hydrogen may run commands in a sandbox, writing only in -Worktree (made like a GPT one).
+  [switch]$Commands,
   # Check slots and print what would start, without starting it. Test changes to this script this way:
   # on 14 November a "test" of the slot fix launched a real duplicate job.
   [switch]$DryRun
@@ -81,6 +83,15 @@ if ($Who -in 'terra','astra','sol') {
               argon = 'gemini-4-argon-high'; hydrogen = 'gemini-4-hydrogen-high' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gemini.ps1",'-Job',$Job,'-Model',$model)
   if ($ReadDir) { $a += '-ReadDir'; $a += ($ReadDir -join ',') }
+  if ($Commands) {
+    if ($Who -notin 'argon','hydrogen') { throw '-Commands is for Argon and Hydrogen (S211)' }
+    if (-not $Worktree) { throw '-Commands needs -Worktree D:\path-tracing-wt\<name>' }
+    if (-not (Test-Path $Worktree) -and -not $DryRun) {
+      $ErrorActionPreference = 'Continue'; git -C $Root worktree add -b "wt/$Job" $Worktree $Base 2>&1 | Out-Null; $ErrorActionPreference = 'Stop'
+      if (-not (Test-Path $Worktree)) { throw "worktree failed: $Worktree from $Base" }
+    }
+    $a += @('-Write', $Worktree, '-Commands')
+  }
 }
 # Start-Process does not quote its arguments and this repo's path has a space (clan.md, trap 1).
 $q = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }

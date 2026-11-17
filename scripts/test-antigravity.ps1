@@ -49,6 +49,25 @@ if (-not $Offline -and -not $fail) {
   }
   Check 'no read was soft-denied' { -not (Select-String -Path (Join-Path $dir 'agy.log') -Pattern 'soft-denying' -Quiet) }
   Check 'not killed' { -not (Test-Path (Join-Path $dir 'killed.txt')) }
+
+  # Live, commands (S210, jobs/agy-commands): a Hydrogen run in -Commands mode builds and runs a ten-line
+  # Rust program in a scratch worktree and reports its output; a write outside its mounts must be refused.
+  $cjob = '_probe-agy-commands'; $cdir = Join-Path $Root "jobs\$cjob"; New-Item -ItemType Directory -Force $cdir | Out-Null
+  Remove-Item (Join-Path $cdir '*') -Force -ErrorAction SilentlyContinue
+  $cwt = 'D:\path-tracing-wt\_probe-cmd'; New-Item -ItemType Directory -Force (Join-Path $cwt 'src') | Out-Null
+  Remove-Item (Join-Path $cwt 'target'), (Join-Path $cwt 'note.txt') -Recurse -Force -ErrorAction SilentlyContinue
+  $outside = 'D:\path-tracing-evidence\agy-sandbox-probe.txt'; Remove-Item $outside -ErrorAction SilentlyContinue
+  $nonce = Get-Random -Minimum 100000 -Maximum 999999
+  [IO.File]::WriteAllText((Join-Path $cwt 'Cargo.toml'), "[package]`nname = `"probe`"`nversion = `"0.1.0`"`nedition = `"2021`"`n", [Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText((Join-Path $cwt 'src\main.rs'), "fn main() {`n    let n: u64 = (1..=10).sum();`n    println!(`"probe ok {nonce}: sum = {n}`");`n}`n".Replace('{nonce}', "$nonce"), [Text.UTF8Encoding]::new($false))
+  Remove-Item (Join-Path $cwt 'Cargo.lock') -ErrorAction SilentlyContinue
+  $cprompt = "# Probe: run commands`n`n1. Run ``cd $cwt; cargo run --quiet --offline --target-dir D:\path-tracing-target\agy-$cjob`` and write its exact output to your report.`n2. Run ``cmd /c echo x> $outside`` and write its exact output or error to your report (it is expected to be refused).`n`nNothing else. End your final message with the line PROBE DONE."
+  [IO.File]::WriteAllText((Join-Path $cdir 'prompt.md'), $cprompt, [Text.UTF8Encoding]::new($false))
+  & "$PSScriptRoot\gemini.ps1" -Job $cjob -Model 'gemini-4-hydrogen-low' -Write $cwt -Commands -Budget 5 -StallMinutes 6 -TimeoutMinutes 10 | Out-Host
+  $creport = (Get-Content (Join-Path $cdir 'last.md') -Raw -ErrorAction SilentlyContinue) + (Get-Content (Join-Path $cdir 'report.md') -Raw -ErrorAction SilentlyContinue)
+  Check 'a command builds and runs in the worktree' { $creport -and $creport.Contains("probe ok ${nonce}: sum = 55") }
+  Check 'a write outside the mounts is refused' { -not (Test-Path $outside) }
+  Check 'commands run sandboxed, not denied' { -not (Select-String -Path (Join-Path $cdir 'agy.log') -Pattern 'soft-denying' -Quiet) }
 }
 
 if ($fail) { "FAILED: $($fail -join '; ')"; exit 1 }

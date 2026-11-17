@@ -23,8 +23,12 @@ param(
   # without growing. Over either, the run is killed: an empty Argon run once cost ~10% of its week, and an
   # Opus run the Claude meter's whole week, with nothing to show.
   [int]$Budget = 0,
-  [int]$StallMinutes = 20
+  [int]$StallMinutes = 20,
+  # S210, jobs/agy-commands: let the model run commands, inside agy's terminal sandbox. Needs -Write (the
+  # worktree). See the -Commands block below for what the probes of 17 November established.
+  [switch]$Commands
 )
+if ($Commands -and -not $Write) { throw '-Commands needs -Write <worktree>: commands run and write only there.' }
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 if ($Model -match 'opus') { throw 'Opus does not run on Antigravity (S115, S129): it spent the Claude meter''s week with no output. Use a native Opus sub-agent.' }
@@ -72,6 +76,9 @@ $reportFile = Join-Path $dir 'report.md'
 # S129, measured by scripts\test-antigravity.ps1: absolute drive-letter paths are read; a relative path or
 # a file:/// URL is denied, and one denial ends the run with nothing.
 $contract = "`n`n---`n`n**Read files only by absolute Windows paths with the drive letter** (``C:\...`` or ``D:\...``). A relative path or a ``file:///`` link is denied and ends your run at once with nothing kept: convert any link or relative path to an absolute drive-letter path before you read it.`n`n**Write your report as you go** into the file ``$reportFile``: it is the one file you may write. Create it at the start, and **append what you have found after every three or four files you read**, never only at the end: a denied read ends the run at once, and only what is already in that file survives. Your final message should repeat it."
+if ($Commands) {
+  $contract += "`n`n**You can run commands, inside a sandbox.** They may write only in ``$Write`` (your worktree), ``$dir`` (your job folder), ``D:\path-tracing-target\agy-$Job`` (build output) and ``D:\rust`` (the toolchain); any other write is refused. Your working directory may not be the worktree: start each command with ``cd $Write;`` or pass absolute paths, and build with ``--target-dir D:\path-tracing-target\agy-$Job``. Edit files with your file tools or with commands, inside the worktree only."
+}
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body$contract", $utf8)
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the
@@ -92,12 +99,37 @@ function Convert-PermPaths([string]$p) {
   $forms = @($drive, $lower, ($slash -replace '^[A-Za-z]:',''), "/$drive", "file:///$drive", "file:///$lower", "file://$drive")
   $forms + @($forms | ForEach-Object { $_ -replace ' ','%20' }) | Select-Object -Unique
 }
-$allow = @(); foreach ($f in (Convert-PermPaths $Root)) { $allow += "read_file($f)" }
-foreach ($d in $ReadDir) { foreach ($f in (Convert-PermPaths $d)) { $allow += "read_file($f)" } }
-foreach ($f in (Convert-PermPaths $dir)) { $allow += "write_file($f)"; $allow += "read_file($f)" }
-if ($Write) {
-  foreach ($f in (Convert-PermPaths $Write)) { $allow += "write_file($f)" }
-  $allow += @('command(git)', 'command(cargo)')
+$allow = @()
+if ($Commands) {
+  # Measured on 17 November (jobs/_probe-cmd, scripts/probe-agy-commands.ps1):
+  # - Without --sandbox a command runs "unsandboxed" and needs a rule matching its WHOLE command line:
+  #   command(cargo) does not allow `cargo --version`, command(cargo run) does not allow `cargo run --quiet`.
+  # - With --sandbox, agy builds read-only mounts from the read rules and writable mounts from the write
+  #   rules. Any form without a drive letter (/C:/..., file:///...) is rejected as "non-absolute file path"
+  #   and NO command runs: that was the builds' failure (S210). So only drive-letter forms here.
+  # - A writable mount comes only from a write rule WITHOUT the trailing slash; `D:/x/` stays read-only
+  #   for commands. Writes outside the writable mounts are refused ("Acces refuse").
+  # So: --sandbox, command(*), drive-letter read forms, and writable mounts for the worktree, the job
+  # folder, the build target folder and the Rust toolchain (the same writable roots Codex gets).
+  function Convert-DrivePaths([string]$p) { $s = ($p -replace '\\','/').TrimEnd('/'); @("$s/", ($s.Substring(0,1).ToLower() + $s.Substring(1) + '/')) }
+  foreach ($d in @($Root) + $ReadDir) { foreach ($f in (Convert-DrivePaths $d)) { $allow += "read_file($f)" } }
+  $target = "D:\path-tracing-target\agy-$Job"
+  # Cargo makes a missing target folder through a temporary sibling in its parent, which is not writable:
+  # create it here (measured: "Acces refuse ... at path D:\path-tracing-target\agy-<job>cFMi3n").
+  New-Item -ItemType Directory -Force $target | Out-Null
+  foreach ($w in @($Write, $dir, $target, 'D:\rust')) {
+    $s = ($w -replace '\\','/').TrimEnd('/')
+    $allow += @("write_file($s)", "write_file($s/)", "read_file($s/)")
+  }
+  $allow += 'command(*)'
+} else {
+  foreach ($f in (Convert-PermPaths $Root)) { $allow += "read_file($f)" }
+  foreach ($d in $ReadDir) { foreach ($f in (Convert-PermPaths $d)) { $allow += "read_file($f)" } }
+  foreach ($f in (Convert-PermPaths $dir)) { $allow += "write_file($f)"; $allow += "read_file($f)" }
+  if ($Write) {
+    foreach ($f in (Convert-PermPaths $Write)) { $allow += "write_file($f)" }
+    $allow += @('command(git)', 'command(cargo)')
+  }
 }
 $settings = @{ permissions = @{ allow = $allow } }
 # --settings takes inline JSON or a file path. Inline loses its own quotes when Start-Process builds the
@@ -109,6 +141,7 @@ $a = @('--output-format','json','--model',$Model,'--print-timeout',"$($TimeoutMi
        '--add-dir',$Root,'--settings',$settingsFile,'--log-file',(Join-Path $dir 'agy.log'))
 foreach ($d in $ReadDir) { $a += @('--add-dir',$d) }
 if ($Write) { $a += @('--add-dir',$Write,'--mode','accept-edits') }
+if ($Commands) { $a += '--sandbox' }
 # Start-Process joins arguments with spaces and does not quote them; the repo path has a space in it.
 $quoted = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 
