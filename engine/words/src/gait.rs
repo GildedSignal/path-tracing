@@ -69,6 +69,7 @@ fn orbit<T: Ord + Clone>(mut beats: Vec<T>) -> Vec<T> {
     beats
 }
 /// Discovery runs on a full stomach: resources are guards, not part of a gait.
+#[deprecated(note="Legacy discovery only: the U1 GeneratorStore uses observed law guards")]
 fn fed(state: &mut PlayerState) {
     state.food_level = 20;
     state.saturation = 20.0;

@@ -82,6 +82,8 @@ pub struct Program {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Arguments {
+    /// Repetitions of the word, including the single repetition of a transition.
+    pub count: u32,
     pub yaw_index: u8,
     pub refined_yaw: Option<f32>,
     pub pitch: f32,
@@ -89,7 +91,7 @@ pub struct Arguments {
     pub max_ticks: u32,
 }
 impl Default for Arguments {
-    fn default() -> Self { Self { yaw_index: 0, refined_yaw: None, pitch: 0.0, max_ticks: 256 } }
+    fn default() -> Self { Self { count: 1, yaw_index: 0, refined_yaw: None, pitch: 0.0, max_ticks: 256 } }
 }
 impl Arguments {
     pub fn yaw(self) -> f32 {

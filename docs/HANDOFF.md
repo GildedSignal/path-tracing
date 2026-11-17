@@ -62,7 +62,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 9. **3.2a's "second column" test is near-tautological**; the class redesign replaces it.
 10. **Unmodeled readers:** `LocalPlayer.aiStep:348` resets `sprintTriggerTime` (the double-tap sprint window) through `isSlowDueToUsingItem`; the law has no such state. Boat turn: the port's Mth-table speed is a record until GLM `port-boat-turn-trace` runs the jar's own table.
 11. **S38's bug was never traced:** "bug, when doing a track it deletes sulfur spike from my inventory" (5 November).
-
+- **U1 kernel (branch):** the counts-only miss stays a regression; the integrator's terminal-word ruling is built into the shared extension. Store, exact maps and offline gate status: `jobs/u1/last.md`. Owner: integrator, judge before merging.
 **Open for Julien:** the class (S67–S69): whether it is now where he wants it. The debug world as a one-world check of the block table (parked, S67). `omp auth import` would put Codex into `omp usage` too, but moves his OAuth tokens; not needed now that `meters.ps1` reads Codex's own logs. Two files are deleted in the working tree and not by this session: `Set GLM key.cmd` and `Stop GPT.cmd` (README and `glm-local.ps1` still name the first).
 
 ## Roadmap (approved 9 November, S48; reordered 10 November, S65, and 13 November, S95)

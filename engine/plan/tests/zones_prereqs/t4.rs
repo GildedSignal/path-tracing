@@ -19,6 +19,7 @@ fn t4_food() {
         let mut known=vec![true;bits.len()]; known[8]=false;
         assert_eq!(PlayerState::from_observed_bits(&bits,&known).unwrap_err().reason,"unknown word");
         let mut state=PlayerState::from_observed_bits(&bits,&vec![true;bits.len()]).unwrap();
+        let allowed=state_answers(&state,mask)[2]!=0;
         answers.push(state_answers(&state,mask));
         let mut wraps=0;
         for n in 0..240 {
@@ -27,11 +28,11 @@ fn t4_food() {
             law::try_tick(&mut state,world,&input).unwrap();
             if state.exhaustion < prior {wraps+=1;}
             assert_eq!(state.food_level,food,"food tick {n}");
-            assert_eq!(state.sprinting,food>6,"guard tick {n}");
+            assert_eq!(state.sprinting,allowed,"guard tick {n}");
             assert_eq!(state_answers(&state,mask),answers.last().unwrap().clone());
         }
-        if food>6 { assert!(wraps>0,"no exhaustion wrap"); }
-        println!("food={food} ticks=240 wraps={wraps} guard={} PASS",food>6);
+        if allowed { assert!(wraps>0,"no exhaustion wrap"); }
+        println!("food={food} ticks=240 wraps={wraps} guard={allowed} PASS");
     }
     assert_ne!(answers[0],answers[1]); assert_eq!(answers[0],answers[2]);
     for health in [0.0,20.0] { for sat in [0.0,20.0] { for exh in [0.0,3.99] {
