@@ -1,0 +1,7 @@
+﻿$Root = 'C:\Users\PASCAL\Desktop\path tracing'; Set-Location $Root
+while ((Get-Date) -lt (Get-Date '13:40')) { Start-Sleep 60 }
+foreach ($n in 'port-mining-destroy-speed','port-block-support-pop-family','port-minor-collision-acos','port-regen-dead-guard-and-phase','port-lava-entity-inside','port-boat-land-and-collision','port-boat-mount-dismount','port-boat-trig-index','port-elytra-firework-and-impact','port-pearl-raytrace-and-landing','port-portal-entry-and-create') { Get-ChildItem lab\results -Directory | Where-Object { $_.Name -match "^local-20261117-\d{4}-\d+-\d+-$n$" } | ForEach-Object { Rename-Item $_.FullName ($_.Name + '-zai-limit') } }
+Add-Content -Encoding utf8 lab\queue.txt "# 17 November 13:40: the 11 lenses that hit GLM's 5-hour limit overnight, requeued (wave A then wave B, jobs/port-digest/report.md section 2).`nport-mining-destroy-speed port-block-support-pop-family port-minor-collision-acos port-regen-dead-guard-and-phase port-lava-entity-inside port-boat-land-and-collision port-boat-mount-dismount port-boat-trig-index port-elytra-firework-and-impact port-pearl-raytrace-and-landing port-portal-entry-and-create"
+git add lab/queue.txt; git commit -q -m "Requeue the 11 overnight port lenses that hit GLM's 5-hour limit"
+Add-Content -Encoding utf8 lab\results\queue.log "$(Get-Date -Format 'yyyy-MM-dd HH:mm') queue started (requeue after the Zai limit)"
+& .\scripts\glm-queue.ps1 -Queue lab\queue.txt -Lanes 3
