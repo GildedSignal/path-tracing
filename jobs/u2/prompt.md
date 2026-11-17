@@ -15,6 +15,18 @@
 2. **A failed premise stops only what depends on it.** Build everything else, and record what is red and why.
 3. **Normal priority,** offline only, `CARGO_TARGET_DIR=D:\path-tracing-target\u2`. No game, server or client. Never run `launch.ps1`, `gpt.ps1` or `follow-up.ps1`.
 
+## First: the core's two gates that cannot fail (the judge, `jobs\u1-judge\last.md`)
+Fix these before building on the core. Each fix is proved by a mutation that the fixed gate catches.
+1. **The planted fast path** (`jobs\u1\verify.ps1:65-70`) only deletes the `Stage::Extend` label, and `solve.rs:87` writes that label before any work, so kill test 8 checks a trace the solver writes itself.
+   - Plant a real shortcut instead: a branch that answers uniform ground without the corridor query or the store.
+   - Make the gate detect it from what the solve did: counted corridor queries, store reads and the composed words. The stage labels alone are not evidence.
+2. **"0 law ticks" is a hand increment** (`store.rs:197`). The judge's 1,000 uncounted `try_tick` calls per solve passed every gate. Count ticks where they happen: wrap the `World` that `law::try_tick` reads, as P1's fixed test does (`engine\plan\tests\zones_prereqs\t1.rs`), so any tick through any path is counted.
+3. **The lower findings in the same report:**
+   - the typed caps and program indices (`store.rs:8-10`);
+   - the production `assert_eq!` that re-folds every map (`solve.rs:69`): move it to the tests;
+   - the bundle lookup that only one test guards.
+4. **Speed, after the gates:** the judge traced the ~600 µs warm time to `runs()` re-allocating its pieces and `phase_pair` cloning states per probe (`events.rs:237-263`), and gives a five-step path toward the plan's ~5 µs floor. Apply what keeps the result bit-exact, and report the new distribution.
+
 ## Done means
 - The spec's tests pass or are recorded red, with outputs in `D:\path-tracing-evidence\u2\`. That covers kill test 11, kill test 10 (the reach map holds his route; report the best T after the ladder exit against his 169), the two-speeds soundness test, and the one-mechanism test.
 - The core's gates still pass, including the 13 footprint mutants and the planted fast path.
