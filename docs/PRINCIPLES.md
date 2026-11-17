@@ -351,6 +351,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "say names i'm over those made up names"; "have a plan.md in the doc"; "don't let hydrogen sit iddle"; "please do housekeeping"; "when i ask to explain you explain you don't do" | S179 | **Followed:** [plan.md](plan.md) in plain names; Hydrogen's `names-audit` and `flight-corpus`; this housekeeping |
 | "Explain it first"; "looks good" | S181–S182 | **Followed:** a set is keyed by the exact arriving state, plus plateaus of one coordinate ([representation.md](representation.md):179), after the joints-and-sets red-team (`jobs/u2-redteam/report.md`) |
 | "Yes, adopt it" (families and points; resources and the supporting block out of the key) | S188 | **Followed:** [representation.md](representation.md):179 and [learning.md](learning.md) kill test 11, from `jobs/set-rederive/proposal.md`; the builder's change waits in one job with the simplest case (S187) |
+| "add seed cracking as a later addition"; "converge … into robotics like constraints, that's the real end goal"; kits and many bots ("a silk touch shovel with efficiency V would change A LOT"); "death is a tool"; ender pearl stasis chambers; "the practice tracks are neo jumps so you really need to match my T or faster"; "a specific test where we keep changing the goal again and again" | S189 | **Adopted:** [plan.md](plan.md): step 3 gate (neo jumps), step 4 gate (repeated retargets), "Later" (death as a tool, kits and many bots, seed cracking, the robotics end goal) |
 
 ## Contradictions (kept side by side)
 
