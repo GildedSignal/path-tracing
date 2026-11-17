@@ -359,6 +359,7 @@ Status words: **Followed** (built, or a rule in force), **Adopted** (decided in 
 | "why are we doing a x y for heaving when we could use complex numbers? the player acts as a ball of influence not as a cube and it does so at each step" | S200 | **Answered** in chat, 17 November: between contacts the horizontal tick is one complex affine map and its reach is a disc; contacts are the box on the grid, axis by axis (`shapes.rs:87`), where the bits come from. **Open:** a disc frame for free motion and bounds, the grid only at contacts |
 | "why do you never talk about pitch in addition to your yaw?" | S201 | **Answered** in chat, 17 November: on legs the law never reads pitch (only the swim reads it, `movement.rs:410-420`), so it is a free argument there; it is the control for elytra, the swim, throws and the clicked face |
 | "it doesn't matter since we can change it instantly unlike momentum so now i get it ok now you can pitch opus" | S202 | **Followed:** the disc frame for free motion (S200) sent to the Opus pin re-derivation as an addendum (`jobs/pin-rederive/addendum.md`); the aim carries no memory, so it is an argument, never state |
+| "sure looks good" (Opus's point-and-hold re-derivation) | S203 | **Followed:** [representation.md](representation.md):179, [learning.md](learning.md) kill test 11, [vocabulary.md](vocabulary.md) section 5 (aims), from `jobs/pin-rederive/proposal.md`; Astra resumes `jobs/u2b` on it |
 
 ## Contradictions (kept side by side)
 
