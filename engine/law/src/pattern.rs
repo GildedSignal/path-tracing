@@ -57,6 +57,8 @@ pub enum PatternError {
     NonFiniteGeometry,
     /// More than 65,535 distinct contents.
     TableFull,
+    CodecMismatch,
+    UnknownQuery,
 }
 
 /// A whole model's content seen in `frame`, or None when the frame cannot carry it
@@ -67,14 +69,32 @@ pub fn model_digest(block: &Block, frame: Frame) -> Result<Option<u128>, Pattern
 }
 
 /// One cell's content under the queries in `mask`: what those queries return, nothing else.
-pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<u128, PatternError> {
+pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<crate::codec::Canonical, PatternError> {
+    crate::codec::cell(block, loaded, mask)
+}
+
+/// Canonical bytes for a query; equality must compare these, not the digest alone.
+pub fn cell_bytes(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
+    Ok(crate::codec::cell(block, loaded, mask)?.bytes().to_vec())
+}
+
+/// Compatibility presence API: exact bytes, never a bare 128-bit equality witness.
+pub fn law_digest(block: &Block) -> Result<crate::codec::Canonical, PatternError> {
+    crate::codec::legs_presence(block)
+}
+
+pub(crate) fn encode_cell(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
     let q = |query: Query| mask & query as u8 != 0;
-    let groups = if q(Query::Block) { SHAPES | HOOKS } else {
-        (if q(Query::Shape) { SHAPES } else { 0 }) | (if q(Query::Fluid) { FLUID } else { 0 }) | (if q(Query::Hooks) { HOOKS } else { 0 })
-    };
-    let mut bytes = vec![b'c', mask, (q(Query::Loaded) && loaded) as u8];
+    let known = Query::ALL.iter().fold(0, |bits, &query| bits | query as u8);
+    if mask & !known != 0 { return Err(PatternError::UnknownQuery); }
+    // Exhaustive: adding a read kind cannot silently yield an empty answer.
+    let groups = Query::ALL.iter().filter(|&&query| q(query)).fold(0, |groups, query| groups | match query {
+        Query::Block => SHAPES | HOOKS, Query::Shape => SHAPES, Query::Fluid => FLUID, Query::Hooks => HOOKS, Query::Loaded => 0,
+    });
+    let mut bytes = crate::codec::SCHEMA.to_vec();
+    bytes.extend([b'c', mask, (q(Query::Loaded) && loaded) as u8]);
     encode(&mut bytes, block, groups, FRAMES[0])?;
-    Ok(fnv(&bytes))
+    Ok(bytes)
 }
 
 /// A footprint's form, shared by every entry with it: its cells relative to the start
@@ -100,6 +120,7 @@ pub struct Key {
 /// the word compiler keys proposals on a class of states (docs/vocabulary.md, section 3).
 #[derive(Clone, Debug)]
 pub struct Start {
+    pub question: crate::codec::StateQuestion,
     pub origin: BlockPos,
     pub words: Box<[u64]>,
     pub context: CollisionContext,
@@ -107,7 +128,7 @@ pub struct Start {
 impl Start {
     pub fn exact(state: &PlayerState) -> Self {
         let origin = block_of(state.position);
-        Self { origin, words: start_bits(state, origin), context: CollisionContext::of(state) }
+        Self { question: crate::codec::StateQuestion::Exact, origin, words: start_bits(state, origin), context: CollisionContext::of(state) }
     }
 }
 
@@ -133,28 +154,28 @@ pub struct Hit<'a, V> {
 
 /// Seeded in-memory maps (std's RandomState) over ids, with equality on ids.
 pub struct PatternTable<V> {
-    digests: Vec<u128>,
-    ids: HashMap<u128, u16>,
+    codec: crate::codec::Interner,
     shapes: Vec<Shape>,
     shape_ids: HashMap<Shape, u32>,
     starts: Vec<Box<[u64]>>,
-    start_ids: HashMap<Box<[u64]>, u32>,
+    start_ids: HashMap<crate::codec::StateClassId, u32>,
     shapes_from: HashMap<u32, Vec<u32>>,
     entries: HashMap<Key, Entry<V>>,
-    /// Per (model id, mask, loaded): the digest (0 when not yet computed) and its id.
-    by_model: Vec<(u128, u16)>,
 }
 
 impl<V> Default for PatternTable<V> {
     fn default() -> Self {
-        Self { digests: Vec::new(), ids: HashMap::new(), shapes: Vec::new(), shape_ids: HashMap::new(),
-            starts: Vec::new(), start_ids: HashMap::new(), shapes_from: HashMap::new(), entries: HashMap::new(), by_model: Vec::new() }
+        Self { codec: crate::codec::Interner::default(), shapes: Vec::new(), shape_ids: HashMap::new(),
+            starts: Vec::new(), start_ids: HashMap::new(), shapes_from: HashMap::new(), entries: HashMap::new() }
     }
 }
 
 impl<V> PatternTable<V> {
+    /// The sole content namespace owned by this store, also used by proposals/labels.
+    pub fn codec(&self) -> &crate::codec::Interner { &self.codec }
+    pub fn codec_mut(&mut self) -> &mut crate::codec::Interner { &mut self.codec }
     /// The persistent part: the content behind each id.
-    pub fn digests(&self) -> &[u128] { &self.digests }
+    pub fn digests(&self) -> &[u128] { self.codec.digests() }
     pub fn shapes(&self) -> &[Shape] { &self.shapes }
     pub fn starts(&self) -> &[Box<[u64]>] { &self.starts }
     pub fn entries(&self) -> impl Iterator<Item = (&Key, &Entry<V>)> { self.entries.iter() }
@@ -188,7 +209,7 @@ impl<V> PatternTable<V> {
         let shape = Shape { cells: footprint.reads.iter().map(|(p, &mask)| ([0, 1, 2].map(|a| p[a] - origin[a]), mask)).collect(), environment };
         let mut ids = Vec::with_capacity(shape.cells.len() + 1);
         let mut memo = Memo::default();
-        ids.push(intern(&mut self.digests, &mut self.ids, environment_digest(world, environment, origin))?);
+        ids.push(self.codec.intern(&environment_bytes(world, environment, origin)).ok_or(PatternError::TableFull)?.0);
         for &(offset, mask) in shape.cells.iter() {
             let p = [0, 1, 2].map(|a| origin[a] + offset[a]);
             ids.push(self.cell_id(world, p, mask, &mut memo, true)?.expect("an added content has an id"));
@@ -202,9 +223,10 @@ impl<V> PatternTable<V> {
             None => { self.shapes.push(shape.clone()); self.shape_ids.insert(shape, self.shapes.len() as u32 - 1); self.shapes.len() as u32 - 1 }
         };
         let bits = start.words;
-        let start = match self.start_ids.get(&bits) {
+        let answer = self.codec.intern_state(&crate::codec::state_key(start.question, &bits)).ok_or(PatternError::TableFull)?;
+        let start = match self.start_ids.get(&answer) {
             Some(&id) => id,
-            None => { self.starts.push(bits.clone()); self.start_ids.insert(bits, self.starts.len() as u32 - 1); self.starts.len() as u32 - 1 }
+            None => { self.starts.push(bits); self.start_ids.insert(answer, self.starts.len() as u32 - 1); self.starts.len() as u32 - 1 }
         };
         let from = self.shapes_from.entry(start).or_default();
         if !from.contains(&shape) { from.push(shape); }
@@ -238,11 +260,12 @@ impl<V> PatternTable<V> {
     fn matching(&mut self, world: &impl World, start: &Start, first: bool) -> Vec<Key> {
         let origin = start.origin;
         let mut found = Vec::new();
-        let Some(&start_id) = self.start_ids.get(&start.words) else { return found };
+        let Some(answer) = self.codec.find_state(&crate::codec::state_key(start.question, &start.words)) else { return found };
+        let Some(&start_id) = self.start_ids.get(&answer) else { return found };
         let mut memo = Memo::default();
         'shapes: for index in 0..self.shapes_from[&start_id].len() {
             let shape_id = self.shapes_from[&start_id][index];
-            let Some(&id) = self.ids.get(&environment_digest(world, self.shapes[shape_id as usize].environment, origin)) else { continue };
+            let Some(id) = self.codec.find(&environment_bytes(world, self.shapes[shape_id as usize].environment, origin)).map(|id| id.0) else { continue };
             let mut ids = Vec::with_capacity(self.shapes[shape_id as usize].cells.len() + 1);
             ids.push(id);
             for cell in 0..self.shapes[shape_id as usize].cells.len() {
@@ -263,37 +286,24 @@ impl<V> PatternTable<V> {
         found
     }
 
-    /// A cell's content id, or None for content the table has never held. By model id
-    /// the digest is computed once per (model, mask, loaded) for the table's life.
+    /// A cell's content id, or None for content the table has never held.
     fn cell_id(&mut self, world: &impl World, p: BlockPos, mask: u8, memo: &mut Memo, add: bool) -> Result<Option<u16>, PatternError> {
-        let loaded = world.loaded(p);
-        let slot = world.model_id(p).map(|model| (model as usize) << 6 | (mask as usize & 31) << 1 | loaded as usize);
-        let cached = slot.and_then(|s| self.by_model.get(s).copied()).filter(|&(digest, _)| digest != 0);
-        if let Some((_, id)) = cached { if id != UNSEEN { return Ok(Some(id)); } }
-        let digest = match cached { Some((digest, _)) => digest, None => memo.digest(world, p, mask)? };
-        let id = if add { Some(intern(&mut self.digests, &mut self.ids, digest)?) } else { self.ids.get(&digest).copied() };
-        if let Some(s) = slot {
-            if self.by_model.len() <= s { self.by_model.resize(s + 1, (0, UNSEEN)); }
-            self.by_model[s] = (digest, id.unwrap_or(UNSEEN));
-        }
-        Ok(id)
+        let bytes = memo.bytes(world, p, mask)?;
+        if add { Ok(Some(self.codec.intern(&bytes).ok_or(PatternError::TableFull)?.0)) }
+        else { Ok(self.codec.find(&bytes).map(|id| id.0)) }
     }
 }
 
-/// An id slot whose content the table does not hold yet.
-const UNSEEN: u16 = u16::MAX;
-
-/// Digests by model address, for one call and worlds without model ids: the world is
-/// borrowed throughout, so an address names one content.
+/// Encodings by model address for one call: the borrowed world keeps addresses stable.
 #[derive(Default)]
-struct Memo(HashMap<(*const Block, u8, bool), u128>);
+struct Memo(HashMap<(*const Block, u8, bool), Vec<u8>>);
 impl Memo {
-    fn digest(&mut self, world: &impl World, p: BlockPos, mask: u8) -> Result<u128, PatternError> {
+    fn bytes(&mut self, world: &impl World, p: BlockPos, mask: u8) -> Result<Vec<u8>, PatternError> {
         let (block, loaded) = (world.block(p), world.loaded(p));
-        if let Some(&digest) = self.0.get(&(block as *const Block, mask, loaded)) { return Ok(digest); }
-        let digest = cell_digest(block, loaded, mask)?;
-        self.0.insert((block, mask, loaded), digest);
-        Ok(digest)
+        if let Some(bytes) = self.0.get(&(block as *const Block, mask, loaded)) { return Ok(bytes.clone()); }
+        let bytes = cell_bytes(block, loaded, mask)?;
+        self.0.insert((block, mask, loaded), bytes.clone());
+        Ok(bytes)
     }
 }
 
@@ -305,27 +315,15 @@ fn corner(p: BlockPos) -> Vec3 { Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64
 fn start_bits(start: &PlayerState, origin: BlockPos) -> Box<[u64]> {
     let mut state = start.clone();
     state.t = 0;
+    state.yaw=0.0;state.pitch=0.0;state.input=crate::Input::default();
     state.position = state.position.minus(corner(origin));
     state.main_supporting_block = state.main_supporting_block.map(|p| [0, 1, 2].map(|a| p[a] - origin[a]));
     state.bits().into()
 }
 
 /// The world values a footprint read. MinY is relative to the start block.
-fn environment_digest(world: &impl World, environment: u8, origin: BlockPos) -> u128 {
-    let mut bytes = vec![b'e', environment];
-    if environment & 1 != 0 { bytes.extend((world.min_y() as i64 - origin[1] as i64).to_le_bytes()); }
-    if environment & 2 != 0 { bytes.push(world.fast_lava() as u8); }
-    if environment & 4 != 0 { bytes.push(world.difficulty()); }
-    if environment & 8 != 0 { bytes.push(world.natural_regeneration() as u8); }
-    fnv(&bytes)
-}
-
-fn intern(digests: &mut Vec<u128>, ids: &mut HashMap<u128, u16>, digest: u128) -> Result<u16, PatternError> {
-    if let Some(&id) = ids.get(&digest) { return Ok(id); }
-    let id = u16::try_from(digests.len()).ok().filter(|&id| id != UNSEEN).ok_or(PatternError::TableFull)?;
-    digests.push(digest);
-    ids.insert(digest, id);
-    Ok(id)
+fn environment_bytes(world: &impl World, environment: u8, origin: BlockPos) -> Vec<u8> {
+    crate::codec::environment_mask(world, environment, origin).bytes().to_vec()
 }
 
 /// Every real in [lo, hi] has one sign and one exponent k, with k <= 23 so that an
@@ -343,14 +341,13 @@ pub fn in_scope(scope: [[i32; 2]; 3], shift: BlockPos) -> bool {
 
 /// FNV-1a 128 with explicit constants, independent of std's Hash.
 fn fnv(bytes: &[u8]) -> u128 {
-    bytes.iter().fold(0x6c62272e07bb014262b821756295c58d, |hash, &byte|
-        (hash ^ byte as u128).wrapping_mul(0x0000000001000000000000000000013b))
+    crate::codec::digest(bytes)
 }
 
 fn f64s(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f64>) { values.into_iter().for_each(|v| bytes.extend(v.to_bits().to_le_bytes())); }
 
 /// Every grid cell, empty subdivisions included, as the law's planes see them.
-fn encode_shape(bytes: &mut Vec<u8>, shape: &VoxelShape, frame: Frame) -> Result<bool, PatternError> {
+pub(crate) fn encode_shape(bytes: &mut Vec<u8>, shape: &VoxelShape, frame: Frame) -> Result<bool, PatternError> {
     let mut rows = Vec::new();
     let mut exact = true;
     for (bounds, full) in shape.view().grid_cells() {

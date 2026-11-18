@@ -31,7 +31,7 @@ final class TrackMixinAudit {
             int apply = callIndex(effectTick, "net/minecraft/world/effect/MobEffect", "applyEffectTick");
             require(apply >= 0 && apply < callIndex(effectTick, "net/minecraft/world/effect/MobEffectInstance", "tickDownDuration"),
                 "Effect application precedes expiry, the refill barrier");
-            for (String name : List.of("TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin", "ClientPacketListenerMixin")) {
+            for (String name : List.of("TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin", "ClientPacketListenerMixin", "HopConnectionMixin", "HopServerMixin", "HopInputMixin", "HopRconMixin")) {
                 ClassNode mixin = read(mod, "pathtracing/mixin/" + name);
                 AnnotationNode declaration = annotations(mixin.visibleAnnotations, mixin.invisibleAnnotations).stream()
                     .filter(a -> a.desc.equals("Lorg/spongepowered/asm/mixin/Mixin;")).findFirst().orElseThrow();
@@ -41,7 +41,7 @@ final class TrackMixinAudit {
                     for (AnnotationNode annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
                         if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/Inject;")) continue;
                         for (Object selector : (List<?>) value(annotation, "method")) {
-                            var candidates = target.methods.stream().filter(m -> m.name.equals(selector)).toList();
+                            var candidates = target.methods.stream().filter(m -> m.name.equals(selector) || (m.name + m.desc).equals(selector)).toList();
                             require(candidates.size() == 1, name + ": missing or ambiguous target " + selector);
                             MethodNode method = candidates.getFirst();
                             Type[] parameters = Type.getArgumentTypes(handler.desc);
@@ -76,7 +76,7 @@ final class TrackMixinAudit {
                 }
             }
         }
-        require(injections == 36, "Expected 36 checked injections, got " + injections);
+        require(injections == 50, "Expected original 36 plus 14 R0/capture injections, got " + injections);
         System.out.println("Verified " + injections + " compiled track injections against Minecraft 26.2.");
     }
 

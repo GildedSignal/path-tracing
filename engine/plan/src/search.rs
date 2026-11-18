@@ -252,7 +252,7 @@ impl<'a, T: Timeline> Planner<'a, T> {
     fn near(&self, a: &PlayerState, b: &PlayerState) -> bool {
         let reach = crate::goal::hull(a.bounding_box(), b.bounding_box());
         let grown = law::Aabb { min: reach.min.minus(law::Vec3::new(1.0, 1.0, 1.0)), max: reach.max.plus(law::Vec3::new(1.0, 1.0, 1.0)) };
-        grown.intersects(self.problem.goal.zone())
+        self.problem.goal.touched_boxes(grown,grown)
     }
     /// A word run from `parent` reached `state`: check the goal tick by tick where it could
     /// have been touched, then file the node and try the arithmetic lanes from it.

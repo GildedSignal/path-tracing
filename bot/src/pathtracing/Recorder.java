@@ -38,6 +38,14 @@ public final class Recorder {
     private static List<TickInput> planInputs;
     private static int planTick;
 
+    /** R0 in-memory playback entry. No file, JSONL parser, teleport or settle. */
+    static void legacy_sentence_adapter(Minecraft mc, List<TickInput> inputs) {
+        if (active() || planInputs != null) throw new IllegalStateException("Recording or playback already active");
+        TickInput.holdSettings(mc);
+        if (inputs.isEmpty()) throw new IllegalArgumentException("Empty native sentence");
+        planInputs = List.copyOf(inputs); planTick = 0;
+    }
+
     static int playPlan(Minecraft mc, Path path, Path directory, String track) throws IOException {
         if (active() || planInputs != null) throw new IllegalStateException("A recording or replay is already running.");
         TickInput.holdSettings(mc);
@@ -94,7 +102,7 @@ public final class Recorder {
     static Path planRecording() { return outputPath; }
 
     static void cancelPlan(Minecraft mc) {
-        if (planInputs != null) { planInputs = null; TickInput.release(mc); }
+        if (planInputs != null) { planInputs = null; TickInput.release(mc); ResidentRunner.playbackEnded(); }
     }
     private static double[] start;
     private static int settled;
@@ -318,6 +326,7 @@ public final class Recorder {
             else {
                 TickInput input = planInputs.get(planTick++);
                 input.apply(mc);
+                HopCapture.input(planTick - 1);
                 Tracks.firstInput(mc, input.forward() || input.back() || input.left() || input.right() || input.jump() || input.sneak() || input.sprint());
             }
         }

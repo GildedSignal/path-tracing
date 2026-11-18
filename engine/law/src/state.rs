@@ -49,7 +49,7 @@ pub struct HurtCooldown {
     pub last_raw_hit: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PlayerState {
     pub t: u64,
     pub input: Input,
@@ -119,6 +119,85 @@ pub struct PlayerState {
     pub use_item_speed_multiplier: Option<f32>,
     pub use_item_can_sprint: Option<bool>,
 }
+// Test instrumentation sits at the type, so every Clone call is counted.
+#[cfg(feature = "count-state-copies")]
+std::thread_local! { static STATE_COPIES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+#[cfg(feature = "count-state-copies")]
+pub fn player_state_copies() -> u64 { STATE_COPIES.with(|count| count.get()) }
+impl Clone for PlayerState {
+    fn clone(&self) -> Self {
+        #[cfg(feature = "count-state-copies")]
+        STATE_COPIES.with(|count| count.set(count.get() + 1));
+        Self {
+            t: self.t.clone(),
+            input: self.input.clone(),
+            position: self.position.clone(),
+            velocity: self.velocity.clone(),
+            yaw: self.yaw.clone(),
+            pitch: self.pitch.clone(),
+            on_ground: self.on_ground.clone(),
+            horizontal_collision: self.horizontal_collision.clone(),
+            vertical_collision: self.vertical_collision.clone(),
+            vertical_collision_below: self.vertical_collision_below.clone(),
+            minor_horizontal_collision: self.minor_horizontal_collision.clone(),
+            sprinting: self.sprinting.clone(),
+            sprint_speed_modifier: self.sprint_speed_modifier.clone(),
+            no_physics: self.no_physics.clone(),
+            shift_key_down: self.shift_key_down.clone(),
+            pose: self.pose.clone(),
+            fall_distance: self.fall_distance.clone(),
+            in_water: self.in_water.clone(),
+            in_lava: self.in_lava.clone(),
+            on_climbable: self.on_climbable.clone(),
+            health: self.health.clone(),
+            hurt_cooldown: self.hurt_cooldown.clone(),
+            food_level: self.food_level.clone(),
+            saturation: self.saturation.clone(),
+            exhaustion: self.exhaustion.clone(),
+            food_tick_timer: self.food_tick_timer.clone(),
+            remaining_fire_ticks: self.remaining_fire_ticks.clone(),
+            no_jump_delay: self.no_jump_delay.clone(),
+            stuck_speed_multiplier: self.stuck_speed_multiplier.clone(),
+            movement_this_tick: self.movement_this_tick.clone(),
+            main_supporting_block: self.main_supporting_block.clone(),
+            on_ground_no_blocks: self.on_ground_no_blocks.clone(),
+            crouching: self.crouching.clone(),
+            swimming: self.swimming.clone(),
+            underwater: self.underwater.clone(),
+            eye_in_water: self.eye_in_water.clone(),
+            was_eye_in_water: self.was_eye_in_water.clone(),
+            water_height: self.water_height.clone(),
+            lava_height: self.lava_height.clone(),
+            in_powder_snow: self.in_powder_snow.clone(),
+            was_in_powder_snow: self.was_in_powder_snow.clone(),
+            ticks_frozen: self.ticks_frozen.clone(),
+            leather_boots: self.leather_boots.clone(),
+            movement_speed_base: self.movement_speed_base.clone(),
+            speed_modifiers: self.speed_modifiers.clone(),
+            speed: self.speed.clone(),
+            jump_strength: self.jump_strength.clone(),
+            gravity: self.gravity.clone(),
+            step_height: self.step_height.clone(),
+            friction_modifier: self.friction_modifier.clone(),
+            air_drag_modifier: self.air_drag_modifier.clone(),
+            water_movement_efficiency: self.water_movement_efficiency.clone(),
+            movement_efficiency: self.movement_efficiency.clone(),
+            sneaking_speed: self.sneaking_speed.clone(),
+            safe_fall_distance: self.safe_fall_distance.clone(),
+            fall_damage_multiplier: self.fall_damage_multiplier.clone(),
+            bounciness: self.bounciness.clone(),
+            fall_flying: self.fall_flying.clone(),
+            riding: self.riding.clone(),
+            boat: self.boat.clone(),
+            effects: self.effects.clone(),
+            flying: self.flying.clone(),
+            using_item: self.using_item.clone(),
+            use_item_speed_multiplier: self.use_item_speed_multiplier.clone(),
+            use_item_can_sprint: self.use_item_can_sprint.clone(),
+        }
+    }
+}
+
 impl Default for PlayerState {
     // Entity.<init>; LivingEntity.createLivingAttributes; Player.createAttributes; FoodData.<init>
     fn default() -> Self {
@@ -278,6 +357,19 @@ impl Bits<'_> {
     fn vec3(&mut self) -> Result<Vec3, Refusal> { Ok(Vec3::new(self.f64()?, self.f64()?, self.f64()?)) }
 }
 impl PlayerState {
+    /// Decode an observation only when every encoded word is known.  The mask
+    /// follows the variable-length `bits` schema, including option tags and
+    /// modifier bytes; unknown values cannot be replaced with defaults.
+    pub fn from_observed_bits(words: &[u64], known: &[bool]) -> Result<Self, Refusal> {
+        if known.len() != words.len() {
+            return Err(Refusal { position: known.len().min(words.len()), reason: "known mask length" });
+        }
+        if let Some(position) = known.iter().position(|known| !known) {
+            return Err(Refusal { position, reason: "unknown word" });
+        }
+        Self::from_bits(words)
+    }
+
     /// Decode exactly the representation returned by `bits`.
     pub fn from_bits(words: &[u64]) -> Result<Self, Refusal> {
         let mut b = Bits { words, at: 0 };

@@ -20,6 +20,7 @@ $mcMeta = Get-Content "$Meta\net.minecraft\$McVersion.json" -Raw | ConvertFrom-J
 $classpath = Get-GameClasspath
 
 $jvm = @(
+  '--enable-native-access=ALL-UNNAMED',
   $(if ($Role -eq 'bot') { '-Xmx3G' } else { '-Xmx6G' }), '-Xms1G',
   "-Dpathtracing.role=$Role", "-Dpathtracing.bot=$BotName", "-Dpathtracing.owner=$PlayerName",
   "-Dpathtracing.rig=$Rig"

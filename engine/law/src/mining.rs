@@ -17,7 +17,7 @@ pub struct MiningSample {
 }
 
 impl MiningSample {
-    fn progress(self) -> f32 {
+    pub fn progress(self) -> f32 {
         if self.hardness == -1.0 {
             return 0.0;
         }

@@ -16,3 +16,19 @@ pub use search::{Options, Order, Outcome, Planner, Problem, Stats, Stopped};
 pub use time::{Free, Scheduled, Still, Timeline};
 pub use walk::{Certificate, Halt, Lane, Step, advance, certify, settle};
 pub mod deviation;
+pub mod events;
+pub mod joints;
+pub mod faces;
+pub mod lattice;
+pub mod source;
+pub mod store;
+pub mod solve;
+pub use solve::{solve,Bracket,Kit,Plan,PlanOutcome,Stage,WordStep};
+pub mod families;
+
+pub mod inline;
+pub mod state_view;
+pub mod terminal;
+
+#[cfg(feature="solve-counters")]
+pub mod solve_meter;

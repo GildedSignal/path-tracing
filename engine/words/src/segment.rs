@@ -44,8 +44,17 @@ pub struct Segment {
     pub state: PlayerState,
     /// The cells, environment values and state fields read, and the swept cells.
     pub footprint: Footprint,
+    /// Native read sets at their recorded ticks; qualified once for event invalidation.
+    pub timed_reads: Vec<(u64, Footprint)>,
     pub uses: Uses,
     pub guards: Guards,
+}
+impl Segment {
+    pub fn certify_reads(&self, codec: &mut law::codec::Interner, certificates: &mut law::codec::proof::ReadCertificates,
+        binding: law::codec::proof::Binding, source: &impl law::codec::proof::Source) -> Result<usize, law::codec::proof::Refusal> {
+        let reads: Vec<_> = self.timed_reads.iter().map(|(tick, fp)| (*tick, fp)).collect();
+        certificates.capture(codec, binding, &reads, source)
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SegmentError {
@@ -81,8 +90,12 @@ pub(crate) fn events(a: &PlayerState, b: &PlayerState) -> Exit {
     if body_block(a) != body_block(b) { exit |= ExitKind::BodyBlock.bit(); }
     Exit(exit)
 }
-fn support(world: &impl World, state: &PlayerState) -> Result<Option<u128>, PatternError> {
-    state.main_supporting_block.map(|p| pattern::cell_digest(world.block(p), world.loaded(p), 1 | 16)).transpose()
+/// The joint signature omits only the address-only body-block crossing.
+pub fn joint_events(a:&PlayerState,b:&PlayerState)->Exit {
+    Exit(events(a,b).0 & !ExitKind::BodyBlock.bit())
+}
+fn support(world: &impl World, state: &PlayerState) -> Result<Option<Vec<u8>>, PatternError> {
+    state.main_supporting_block.map(|p| pattern::cell_bytes(world.block(p), world.loaded(p), 1 | 16)).transpose()
 }
 
 pub fn run_segment(world: &impl World, start: &PlayerState, program: &Program, args: Arguments) -> Result<Segment, SegmentError> {
@@ -93,6 +106,8 @@ pub fn run_segment(world: &impl World, start: &PlayerState, program: &Program, a
     // only if the segment had not written it yet.
     let (mut row, mut input) = program.select(&recording, &state, 0, args).ok_or(SegmentError::NoMatchingRow)?;
     let mut ticks = 0;
+    let mut timed_reads = Vec::new();
+    let mut footprint = Footprint::default();
     let exit = loop {
         if ticks == args.max_ticks { return Err(SegmentError::NoEvent { ticks }); }
         let before = state.clone();
@@ -105,12 +120,15 @@ pub fn run_segment(world: &impl World, start: &PlayerState, program: &Program, a
         }
         let next = program.select(&recording, &state, ticks, args).ok_or(SegmentError::NoMatchingRow)?;
         if next.0 != row { exit.0 |= ExitKind::ActiveRow.bit(); }
+        let reads = recording.take_world();
+        footprint.extend(&reads);
+        timed_reads.push((before.t, reads));
         if exit.0 != 0 { break exit; }
         (row, input) = next;
     };
     let uses = Uses { food: state.food_level - start.food_level, saturation: state.saturation - start.saturation,
         exhaustion: state.exhaustion - start.exhaustion, health: state.health - start.health };
-    Ok(Segment { ticks, exit, state, footprint: recording.take(), uses, guards })
+    Ok(Segment { ticks, exit, state, footprint, timed_reads, uses, guards })
 }
 
 /// The price of risk (section 7): does the segment end in the same block and class

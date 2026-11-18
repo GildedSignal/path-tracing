@@ -18,6 +18,11 @@ pub enum Predicate {
     Not(Box<Predicate>),
 }
 impl Predicate {
+    fn constant(&self)->Option<bool> {match self {
+        Self::Always=>Some(true),Self::Not(p)=>p.constant().map(|v|!v),
+        Self::All(ps)=>{let mut known=true;for p in ps {match p.constant() {Some(false)=>return Some(false),None=>known=false,_=>()}}known.then_some(true)},
+        _=>None,
+    }}
     fn matches(&self, world: &impl World, state: &PlayerState, elapsed: u32) -> bool {
         let read = |field| world.read_state(field);
         match self {
@@ -82,6 +87,8 @@ pub struct Program {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Arguments {
+    /// Repetitions of the word, including the single repetition of a transition.
+    pub count: u32,
     pub yaw_index: u8,
     pub refined_yaw: Option<f32>,
     pub pitch: f32,
@@ -89,9 +96,12 @@ pub struct Arguments {
     pub max_ticks: u32,
 }
 impl Default for Arguments {
-    fn default() -> Self { Self { yaw_index: 0, refined_yaw: None, pitch: 0.0, max_ticks: 256 } }
+    fn default() -> Self { Self { count: 1, yaw_index: 0, refined_yaw: None, pitch: 0.0, max_ticks: 256 } }
 }
 impl Arguments {
+    /// Representation limits, not a physics horizon or a learning budget.
+    pub const MAX_TICKS:u64=u32::MAX as u64;
+    pub const MAX_COUNT:u32=u32::MAX;
     pub fn yaw(self) -> f32 {
         self.refined_yaw.unwrap_or_else(|| {
             let index = (self.yaw_index % 64) as u32 * 1024;
@@ -120,6 +130,9 @@ impl Predicate {
     }
 }
 impl Program {
+    pub fn held_input(&self,args:Arguments)->Option<Input> {
+        for row in &self.rows {match row.when.constant()? {false=>continue,true=>return Some(Input {yaw:args.yaw(),pitch:args.pitch,..row.input})}}None
+    }
     /// Its active row is constant inside a segment, so its segment from a state is decided
     /// by the input it selects there.
     pub fn event_bound(&self) -> bool { self.rows.iter().all(|row| row.when.event_bound()) }
@@ -133,6 +146,13 @@ impl Program {
 
 /// 3 movement directions x 2 sprint choices x 3 jump predicates x 3 sneak
 /// predicates. No row names a technique or a block type.
+#[derive(Clone,Copy)]
+#[repr(u16)]
+pub enum HeldPredicate {Never,Always,OnGround}
+/// The product order of the toolkit, defined beside its generator.
+pub const fn tiny_program_id(strafe:i8,sprint:bool,jump:HeldPredicate,sneak:HeldPredicate)->u16 {
+    ((strafe+1) as u16*2+sprint as u16)*9+jump as u16*3+sneak as u16
+}
 pub fn tiny_programs() -> Vec<Program> {
     let predicates = [Predicate::Not(Box::new(Predicate::Always)), Predicate::Always, Predicate::OnGround];
     let mut programs = Vec::new();

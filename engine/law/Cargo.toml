@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+solve-counters = []
+count-state-copies = []
 mutant-axis-tie = []
 mutant-step-up = []
 mutant-edge-backoff = []
@@ -13,4 +15,3 @@ mutant-fluid-wall-above = []
 [[example]]
 name = "fluid-flow-oracle"
 path = "../../oracles/1.9e-fluid-flow-oracle/compare.rs"
-

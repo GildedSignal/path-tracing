@@ -1,0 +1,7 @@
+﻿S203_ORACLE pattern=gap yaw=270 z=0.5 raw=false power=18 pieces=5 cuts=[c057ee5506e671c0, c058158f9357b5e6, c0581b21fd97dcbf, c0582f292dae757a]
+S203_ORACLE pattern=gap yaw=275.625 z=0.5 raw=false power=18 pieces=7 cuts=[c057efa5b8849b7e, c05816c7a0c6ecc0, c0581c7284d93bb3, c0581c72af36067d, c05830613a46ecc0, c05830613b1dac54]
+S203_ORACLE pattern=gap yaw=270 z=1 raw=false power=18 pieces=7 cuts=[c057ee5506e671c0, c058158f9357b5e6, c0581b21d33b11f5, c0581b21fd97dcbf, c0582f292cd7b5e6, c0582f292dae757a]
+S203_ORACLE pattern=step yaw=270 z=0.5 raw=false power=18 pieces=8 cuts=[c057ef29573480b0, c05803610a032749, c05817cdde21fa9f, c0582c74eb3a23a2, c05892db50e3640e, c058ae991a3d6aff, c058c59ef40299a5]
+S203_ORACLE pattern=step yaw=275.625 z=0.5 raw=false power=18 pieces=12 cuts=[c057f0613a46ecc0, c057f06164a3b78b, c05804800d6af3c0, c058048037c7be8b, c05818d3c0817245, c05818d3eade3d0f, c0582d618e42a12d, c0582d618f1960c1, c05893c7f4c2a12d, c058aee5a1617342, c058c5cf27f0eca3]
+S203_ORACLE pattern=glm-ice yaw=270 z=0.5 raw=false power=18 pieces=2 cuts=[c057ee5506e671bf]
+S203_ORACLE pattern=hardtrack-lane-wall yaw=0 z=-101.5 raw=false power=18 pieces=2 cuts=[3faa62d0ef6b851e]

@@ -1,6 +1,5 @@
 package pathtracing;
 
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -8,11 +7,8 @@ import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import pathtracing.planner.Planner;
-import pathtracing.planner.StraightLine;
 
 /**
  * The bot's side. Takes goals from the owner's whispers (goto x y z, come, stop), asks the planner for a
@@ -20,21 +16,14 @@ import pathtracing.planner.StraightLine;
  */
 final class Bot {
     private static final Logger LOGGER = LoggerFactory.getLogger("pathtracing");
-    private static final Planner PLANNER = new StraightLine();
     private static final Pattern WHISPER = Pattern.compile("(\\S+) whispers to you: (.*)");
-    private static final float TURN_PER_TICK = 30;
-    private static final double REACHED = 0.35;
-    private static final int STUCK_TICKS = 60;
-
-    private static List<BlockPos> path = List.of();
-    private static int next;
-    private static double bestDistance;
-    private static int sinceProgress;
+    private static long commandIssue;
     private static int survivalIn = -1;
 
     static void register() {
         // Wait a second: commands sent in the join callback itself are dropped (no command tree yet).
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> survivalIn = 20);
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> { survivalIn = 20; ResidentSource.join(mc); });
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> { ResidentRunner.cancel(mc); HopCapture.flush(); });
         ClientReceiveMessageEvents.CHAT.register((message, signed, sender, type, time) -> {
             if (sender != null && signed != null && sender.name().equals(PathTracingMod.OWNER)) command(signed.signedContent());
             if (sender == null && signed == null) {
@@ -51,7 +40,10 @@ final class Bot {
     }
 
     private static void command(String text) {
+        long[] issueClock = NativeChannel.loadFailure() == null ? NativeChannel.clock() : new long[]{0,0};
         long receivedNanos = System.nanoTime();
+        commandIssue = issueClock[0];
+        HopCapture.hop("chat-mod",0,commandIssue,commandIssue,new long[0]);
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         String[] w = text.trim().split("\\s+");
@@ -83,6 +75,10 @@ final class Bot {
             }
             case "goto" -> {
                 try {
+                    if (w.length == 6) {
+                        if (Long.parseLong(w[5]) != issueClock[1]) throw new IllegalArgumentException("QPC frequency mismatch");
+                        commandIssue = Long.parseLong(w[4]);
+                    }
                     Tracks.cancel(mc, true);
                     goTo(mc, new BlockPos(Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])));
                 } catch (RuntimeException e) {
@@ -106,81 +102,27 @@ final class Bot {
     }
 
     static void goTo(Minecraft mc, BlockPos goal) {
-        BlockPos start = mc.player.blockPosition();
-        long t0 = System.nanoTime();
-        List<BlockPos> planned = PLANNER.plan(mc.level, start, goal);
-        double ms = (System.nanoTime() - t0) / 1e6;
-        if (planned == null || planned.isEmpty()) {
-            stop(mc, String.format("No path to %s (%.1f ms).", goal.toShortString(), ms));
-            return;
-        }
-        path = planned;
-        next = 0;
-        bestDistance = Double.MAX_VALUE;
-        sinceProgress = 0;
-        reply(mc, String.format("Going to %s: %d steps, planned in %.1f ms.", goal.toShortString(), planned.size(), ms));
+        ResidentRunner.request(mc,goal,commandIssue);
     }
 
     private static void tick(Minecraft mc) {
         // Creative players double-tap jump into flight; the bot has to walk like everyone else.
         if (survivalIn >= 0 && survivalIn-- == 0 && mc.getConnection() != null) mc.getConnection().sendCommand("gamemode survival");
         if (Recorder.replaying()) return;
-        if (path.isEmpty()) return;
-        var player = mc.player;
-        if (player == null) {
-            path = List.of();
-            return;
-        }
-        Vec3 pos = player.position();
-        BlockPos target = path.get(next);
-        double dx = target.getX() + 0.5 - pos.x;
-        double dz = target.getZ() + 0.5 - pos.z;
-        double distance = Math.sqrt(dx * dx + dz * dz);
-
-        if (distance < REACHED && Math.abs(pos.y - target.getY()) < 1) {
-            if (++next == path.size()) {
-                stop(mc, "Arrived at " + target.toShortString() + ".");
-                return;
-            }
-            bestDistance = Double.MAX_VALUE;
-            sinceProgress = 0;
-            return;
-        }
-        if (distance < bestDistance - 0.05) {
-            bestDistance = distance;
-            sinceProgress = 0;
-        } else if (++sinceProgress > STUCK_TICKS) {
-            stop(mc, "Stuck at " + player.blockPosition().toShortString() + " heading for " + target.toShortString() + ".");
-            return;
-        }
-
-        // Minecraft yaw: 0 faces +Z, 90 faces -X.
-        float want = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        float turn = wrapDegrees(want - player.getYRot());
-        float previousYaw = player.getYRot();
-        player.setYRot(player.getYRot() + Math.clamp(turn, -TURN_PER_TICK, TURN_PER_TICK));
-        Tracks.firstInput(mc, player.getYRot() != previousYaw);
-        boolean jump = player.onGround() && (player.horizontalCollision || target.getY() > pos.y + 0.5);
-        keys(mc, Math.abs(turn) < 60, jump);
+        ResidentRunner.tick(mc);
     }
 
     private static void stop(Minecraft mc, String why) {
-        path = List.of();
-        keys(mc, false, false);
+        ResidentRunner.cancel(mc);
+        TickInput.release(mc);
         reply(mc, why);
     }
 
     static void clearFollowPath() {
-        path = List.of();
+        ResidentRunner.cancel(Minecraft.getInstance());
     }
 
     static void trackMode() { survivalIn = -1; }
-
-    private static void keys(Minecraft mc, boolean forward, boolean jump) {
-        mc.options.keyUp.setDown(forward);
-        mc.options.keyJump.setDown(jump);
-        Tracks.firstInput(mc, forward || jump);
-    }
 
     static void reply(Minecraft mc, String text) {
         LOGGER.info("[pathtracing] {}", text.replace('\r', ' ').replace('\n', ' '));
@@ -189,8 +131,4 @@ final class Bot {
         } else if (mc.player != null) mc.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(text));
     }
 
-    private static float wrapDegrees(float degrees) {
-        float d = degrees % 360;
-        return d >= 180 ? d - 360 : d < -180 ? d + 360 : d;
-    }
 }

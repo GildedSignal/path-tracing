@@ -17,6 +17,7 @@ final class Pointer {
     private static final double REACH = 256;
 
     static void register() {
+        NativeChannel.loadFailure(); // Load before the first click.
         ClientTickEvents.START_CLIENT_TICK.register(Pointer::tick);
     }
 
@@ -25,6 +26,9 @@ final class Pointer {
         if (player == null || mc.gui.screen() != null || !player.getMainHandItem().is(Items.STICK)) return;
         // Consume the click before vanilla sees it, so the stick never interacts with the block.
         while (mc.options.keyUse.consumeClick()) {
+            long[] issuance = NativeChannel.loadFailure() == null ? NativeChannel.clock() : null;
+            if (issuance == null) { player.sendSystemMessage(Component.literal("Native channel refused: " + NativeChannel.loadFailure())); continue; }
+            HopCapture.hop("issuance",0,issuance[0],issuance[0],new long[]{issuance[1]});
             mc.options.keyUse.setDown(false);
             if (Tracks.stickInHumanMode(mc, player.isShiftKeyDown())) continue;
             if (player.isShiftKeyDown()) {
@@ -48,7 +52,7 @@ final class Pointer {
             if (Tracks.startAtClickedA(mc, block.getBlockPos())) continue;
             // The cell in front of the face you pointed at: on a floor, the air cell the bot should stand in.
             BlockPos goal = block.getBlockPos().relative(block.getDirection());
-            send(mc, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ());
+            send(mc, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ() + " " + issuance[0] + " " + issuance[1]);
         }
     }
 

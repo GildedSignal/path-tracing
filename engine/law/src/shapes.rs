@@ -83,6 +83,16 @@ pub enum Axis {
     Z = 2
 }
 
+/// Spatial comparison thresholds used by shape collision/intersection and
+/// supporting-block ownership. Set compilation pulls these predicates back
+/// through its exact addition maps; their constants remain owned by the law.
+pub fn face_comparisons(body:Aabb,axis:Axis,plane:f64)->[bool;9] {
+    let lo=body.min.get(axis);let hi=body.max.get(axis);
+    [lo+1.0e-7>=plane,hi-1.0e-7>=plane,lo>=plane,hi>=plane,
+     (lo+hi)*0.5>=plane,plane-hi<crate::contact::CONTACT_ZERO,lo-plane<crate::contact::CONTACT_ZERO,
+     plane-hi<crate::contact::CONTACT_HIT,lo-plane<crate::contact::CONTACT_HIT]
+}
+
 // Direction.axisStepOrder
 pub fn axis_step_order(v: Vec3) -> [Axis; 3] {
     let z_first = v.x.abs() < v.z.abs() || (cfg!(feature = "mutant-axis-tie") && v.x.abs() == v.z.abs());
@@ -221,6 +231,7 @@ impl std::ops::Deref for VoxelShape {
     type Target=ShapeData;
     fn deref(&self)->&ShapeData { &self.0 }
 }
+impl VoxelShape {pub(crate) fn same_owner(&self,other:&Self)->bool {std::sync::Arc::ptr_eq(&self.0,&other.0)}}
 impl Default for VoxelShape {
     fn default()->Self {
         static EMPTY: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
@@ -383,11 +394,15 @@ impl ShapeView<'_> {
         lo as i32 - 1
     }
 
-    pub fn collide(self, axis: Axis, b: Aabb, mut distance: f64) -> f64 {
+    pub fn collide(self, axis: Axis, b: Aabb, distance: f64) -> f64 {
+        self.collide_report(axis,b,distance,&mut crate::contact::Outcome::Free)
+    }
+    pub(crate) fn collide_report(self, axis:Axis,b:Aabb,mut distance:f64,outcome:&mut crate::contact::Outcome)->f64 {
         if self.is_empty() {
             return distance;
         }
         if distance.abs() < 1.0e-7 {
+            *outcome=crate::contact::Outcome::Hold {plane:outcome.plane(),remainder:distance};
             return 0.0;
         }
         let a = axis as usize;
@@ -409,8 +424,8 @@ impl ShapeView<'_> {
                 self.coord(a,1)-b.min.get(axis)
             };
             if distance>0.0 {
-                if delta>=-1.0e-7 {distance=distance.min(delta);}
-            } else if delta<=1.0e-7 {distance=distance.max(delta);}
+                if delta>=-1.0e-7 {if delta<distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,0)};}distance=distance.min(delta);}
+            } else if delta<=1.0e-7 {if delta>distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,1)};}distance=distance.max(delta);}
             return distance;
         }
         let sizes = self.sizes();
@@ -439,10 +454,12 @@ impl ShapeView<'_> {
                         };
                         if distance > 0.0 {
                             if delta >= -1.0e-7 {
+                                if delta<distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,i as usize)};}
                                 distance = distance.min(delta);
                             }
                         } else if delta <= 1.0e-7 {
-                            distance = distance.max(delta);
+                            if delta>distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,i as usize+1)};}
+                                distance = distance.max(delta);
                         }
                         return distance;
                     }
