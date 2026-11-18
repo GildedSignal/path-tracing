@@ -1,61 +1,39 @@
-//! Shared living server-side pathfinding mind driving all bots over shared memory.
+//! Shared living server-side pathfinding mind driving up to 10^4 bots over shared memory.
+mod disk_world;
+mod pool;
 mod protocol;
 mod shm;
 mod world_mirror;
 
 use std::{
-    collections::BTreeMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use law::{BlockPos, PlayerState, Vec3, World, codec::Interner};
-use plan::{Goal, Kit, PlanOutcome, source::GeneratorSuperflatSource, store::GeneratorStore};
+use law::{PlayerState, Vec3};
+use pool::{Observer, PlanStatusOut, SolveSummary, SwarmConfig, TierChangeOut, TickCmdOut, VisualOut, WorkerPool};
 use protocol::{
-    BotSyncPayload, FLAG_ARRIVED, FLAG_HORIZ_COL, FLAG_ON_GROUND, FLAG_SETTLED, FLAG_START_SPRINT,
-    FLAG_STOP_SPRINT, MSG_BLOCK_DELTA, MSG_BOT_GOAL, MSG_BOT_PLAN_STATUS, MSG_BOT_REMOVE,
-    MSG_BOT_SELF_SYNC, MSG_BOT_SPAWN, MSG_BOT_STOP, MSG_BOT_TICK_CMD, MSG_CHUNK_UNLOAD,
-    MSG_SECTION_AIR, MSG_SECTION_RLE, MSG_TICK_BEGIN, MSG_TICK_END, MSG_WORLD_RESET,
-    MSG_WORLD_RULES, PLAN_STATUS_ALREADY_THERE, PLAN_STATUS_NEEDS_JOINTS, PLAN_STATUS_READY,
-    PLAN_STATUS_REFUSED, Reader, Writer,
+    BotSyncPayload, MODE_MATERIALIZED, MSG_BLOCK_DELTA, MSG_BOT_GOAL, MSG_BOT_PLAN_STATUS,
+    MSG_BOT_REMOVE, MSG_BOT_SELF_SYNC, MSG_BOT_SPAWN, MSG_BOT_STOP, MSG_BOT_TICK_CMD,
+    MSG_BOT_TIER_CHANGE, MSG_CHUNK_TICKET, MSG_CHUNK_UNLOAD, MSG_OBSERVERS, MSG_SECTION_AIR,
+    MSG_SECTION_RLE, MSG_SWARM_CLEAR, MSG_SWARM_CONFIG, MSG_SWARM_GOAL_BATCH, MSG_SWARM_PLAN_SUMMARY,
+    MSG_SWARM_SPAWN_BATCH, MSG_SWARM_STOP_ALL, MSG_TICK_BEGIN, MSG_TICK_END, MSG_VISUAL_BATCH,
+    MSG_WORLD_RESET, MSG_WORLD_RULES, Reader, Writer,
 };
 use shm::Shm;
-use words::Arguments;
-use world_mirror::WorldMirror;
+use world_mirror::{FxHashMap, WorldMirror};
 
-enum BotPhase {
-    Idle,
-    Executing {
-        steps: Vec<(u16, Arguments, u32)>,
-        idx: usize,
-        elapsed: u32,
-        goal_air: BlockPos,
-        corridor: (BlockPos, BlockPos),
-    },
-    Settling,
+#[derive(Default)]
+struct TickTotals {
+    promotions: u32,
+    demotions: u32,
+    hooked_promotions: u32,
 }
 
-struct BotSlot {
-    state: PlayerState,
-    phase: BotPhase,
-    pending_replan: Option<BlockPos>,
-}
-
-impl BotSlot {
-    fn from_sync(p: &BotSyncPayload) -> Self {
-        Self {
-            state: state_from_sync(p),
-            phase: BotPhase::Idle,
-            pending_replan: None,
-        }
-    }
-
-    fn apply_sync(&mut self, p: &BotSyncPayload, reason: u32) {
-        self.state = state_from_sync(p);
-        if reason != 0 {
-            self.phase = BotPhase::Idle;
-            self.pending_replan = None;
-        }
+impl TickTotals {
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -100,431 +78,109 @@ fn parse_shm_arg() -> PathBuf {
     PathBuf::from(r"D:\path-tracing-run\server-mind.shm")
 }
 
-fn send_plan_status(
-    shm: &Shm,
-    w: &mut Writer,
-    bot_id: u32,
-    status: u32,
-    predicted_ticks: u32,
-    solve_ns: u64,
-    msg: &str,
-) {
+fn send_plan_status(shm: &Shm, w: &mut Writer, p: &PlanStatusOut) {
     w.clear();
-    w.u32(bot_id);
-    w.u32(status);
-    w.u32(predicted_ticks);
-    w.u64(solve_ns);
-    w.str(msg);
+    w.u32(p.bot_id);
+    w.u32(p.status);
+    w.u32(p.predicted_ticks);
+    w.u64(p.solve_ns);
+    w.str(&p.msg);
     let _ = shm.push_e2s(MSG_BOT_PLAN_STATUS, &w.buf);
 }
 
-fn send_tick_cmd(
-    shm: &Shm,
-    w: &mut Writer,
-    bot_id: u32,
-    keys: u32,
-    flags: u32,
-    state: &PlayerState,
-) {
+fn send_tier_change(shm: &Shm, w: &mut Writer, t: &TierChangeOut) {
     w.clear();
-    w.u32(bot_id);
-    w.u32(keys);
-    w.u32(flags);
-    w.f64(state.position.x);
-    w.f64(state.position.y);
-    w.f64(state.position.z);
-    w.f32(state.yaw);
-    w.f32(state.pitch);
+    w.u32(t.bot_id);
+    w.u32(t.bot_index);
+    w.u8(t.new_tier);
+    w.u32(t.flags);
+    w.f64(t.state.position.x);
+    w.f64(t.state.position.y);
+    w.f64(t.state.position.z);
+    w.f64(t.state.velocity.x);
+    w.f64(t.state.velocity.y);
+    w.f64(t.state.velocity.z);
+    w.f32(t.state.yaw);
+    w.f32(t.state.pitch);
+    let _ = shm.push_e2s(MSG_BOT_TIER_CHANGE, &w.buf);
+}
+
+fn send_tick_cmd(shm: &Shm, w: &mut Writer, c: &TickCmdOut) {
+    w.clear();
+    w.u32(c.bot_id);
+    w.u32(c.keys);
+    w.u32(c.flags);
+    w.f64(c.x);
+    w.f64(c.y);
+    w.f64(c.z);
+    w.f32(c.yaw);
+    w.f32(c.pitch);
     let _ = shm.push_e2s(MSG_BOT_TICK_CMD, &w.buf);
 }
 
-fn corridor_bounds(
-    p: BlockPos,
-    a: BlockPos,
-    goal_solid: BlockPos,
-    min_y: i32,
-    max_y: i32,
-) -> (BlockPos, BlockPos) {
-    let cl = [
-        p[0].min(goal_solid[0]) - 8,
-        (a[1].min(goal_solid[1]) - 1).max(min_y),
-        p[2].min(goal_solid[2]) - 8,
-    ];
-    let ch = [
-        p[0].max(goal_solid[0]) + 8,
-        (p[1].max(goal_solid[1]) + 8).min(max_y),
-        p[2].max(goal_solid[2]) + 8,
-    ];
-    (cl, ch)
-}
-
-fn solve_bot(
-    bot_id: u32,
-    bot: &mut BotSlot,
-    goal_air: BlockPos,
-    world: &WorldMirror,
-    store: &GeneratorStore,
-    codec: &mut Interner,
-    shm: &Shm,
-    w: &mut Writer,
-) {
-    let goal_solid = [goal_air[0], goal_air[1] - 1, goal_air[2]];
-    let p = [
-        bot.state.position.x.floor() as i32,
-        bot.state.position.y.floor() as i32,
-        bot.state.position.z.floor() as i32,
-    ];
-    let support = bot
-        .state
-        .main_supporting_block
-        .filter(|&c| world.loaded(c) && !world.is_air(c))
-        .or_else(|| {
-            (1..=8)
-                .map(|d| [p[0], p[1] - d, p[2]])
-                .find(|&c| world.loaded(c) && !world.is_air(c))
-        });
-    let Some(a) = support else {
-        bot.phase = BotPhase::Idle;
-        send_plan_status(
-            shm,
-            w,
-            bot_id,
-            PLAN_STATUS_REFUSED,
-            0,
-            0,
-            "no ground under bot within 8 blocks",
-        );
-        return;
-    };
-    if bot.state.main_supporting_block.is_none() && bot.state.on_ground {
-        bot.state.main_supporting_block = Some(a);
-    }
-
-    let (cl, ch) = corridor_bounds(p, a, goal_solid, world.min_loaded_y(), world.max_loaded_y());
-
-    if let Err(why) = world.check_corridor_valid(cl, ch) {
-        bot.phase = BotPhase::Idle;
-        send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, 0, &why);
-        return;
-    }
-
-    let corridor = match GeneratorSuperflatSource::from_world(world, (cl, ch), a) {
-        Ok(c) => c,
-        Err(why) => {
-            bot.phase = BotPhase::Idle;
-            send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, 0, &why);
-            return;
-        }
-    };
-
-    let t0 = Instant::now();
-    let solved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        plan::solve(
-            &bot.state,
-            Goal { cell: goal_solid },
-            Kit::BareLegs,
-            &corridor,
-            store,
-            codec,
-            u64::MAX,
-        )
-    }));
-    let solve_ns = t0.elapsed().as_nanos().min(u64::MAX as u128) as u64;
-
-    let result = match solved {
-        Ok(r) => r,
-        Err(panic_payload) => {
-            let msg = panic_payload
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic_payload.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_else(|| "planner panic".to_owned());
-            bot.phase = BotPhase::Idle;
-            send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, solve_ns, &msg);
-            return;
-        }
-    };
-
-    match result.outcome {
-        PlanOutcome::Ready(found) => {
-            if found.ticks == 0 || found.words.is_empty() {
-                bot.phase = BotPhase::Idle;
-                send_plan_status(
-                    shm,
-                    w,
-                    bot_id,
-                    PLAN_STATUS_ALREADY_THERE,
-                    0,
-                    solve_ns,
-                    "Already there.",
-                );
-            } else {
-                let steps: Vec<(u16, Arguments, u32)> = found
-                    .words
-                    .iter()
-                    .map(|step| (step.program, step.args, step.ticks))
-                    .collect();
-                let ticks = found.ticks.min(u32::MAX as u64) as u32;
-                bot.phase = BotPhase::Executing {
-                    steps,
-                    idx: 0,
-                    elapsed: 0,
-                    goal_air,
-                    corridor: (cl, ch),
-                };
-                send_plan_status(shm, w, bot_id, PLAN_STATUS_READY, ticks, solve_ns, "");
-            }
-        }
-        PlanOutcome::NeedsJoints { exception, .. } => {
-            bot.phase = BotPhase::Idle;
-            send_plan_status(
-                shm,
-                w,
-                bot_id,
-                PLAN_STATUS_NEEDS_JOINTS,
-                0,
-                solve_ns,
-                &format!("NeedsJoints at {exception:?}"),
-            );
-        }
-        PlanOutcome::Unknown(refusal) => {
-            bot.phase = BotPhase::Idle;
-            let why = result
-                .explanation
-                .unwrap_or_else(|| format!("{refusal:?}"));
-            send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, solve_ns, &why);
-        }
-    }
-}
-
-fn is_settled(state: &PlayerState) -> bool {
-    state.on_ground
-        && state.velocity.x == 0.0
-        && state.velocity.z == 0.0
-        && !state.sprinting
-        && state.no_jump_delay == 0
-}
-
-fn input_keys(input: &law::Input) -> u32 {
-    [
-        input.forward,
-        input.back,
-        input.left,
-        input.right,
-        input.jump,
-        input.sneak,
-        input.sprint,
-    ]
-    .iter()
-    .enumerate()
-    .fold(0u32, |mask, (bit, &b)| mask | (u32::from(b) << bit))
-}
-
-fn step_all_bots(
-    server_tick: u64,
-    bots: &mut BTreeMap<u32, BotSlot>,
-    world: &WorldMirror,
-    store: &GeneratorStore,
-    codec: &mut Interner,
-    programs: &[words::Program],
-    shm: &Shm,
-    w: &mut Writer,
-) {
-    let replans: Vec<(u32, BlockPos)> = bots
-        .iter_mut()
-        .filter_map(|(&id, b)| b.pending_replan.take().map(|g| (id, g)))
-        .collect();
-    for (id, goal_air) in replans {
-        if let Some(bot) = bots.get_mut(&id) {
-            solve_bot(id, bot, goal_air, world, store, codec, shm, w);
-        }
-    }
-
-    let mut active_bots = 0u32;
-    for (&bot_id, bot) in bots.iter_mut() {
-        let phase = std::mem::replace(&mut bot.phase, BotPhase::Idle);
-        match phase {
-            BotPhase::Idle => {}
-            BotPhase::Executing {
-                steps,
-                mut idx,
-                mut elapsed,
-                goal_air,
-                corridor,
-            } => {
-                active_bots += 1;
-                let (prog, args, ticks) = steps[idx];
-                let selected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    programs[prog as usize].select(world, &bot.state, elapsed, args)
-                }));
-                let input = match selected {
-                    Ok(Some((_, inp))) => inp,
-                    Ok(None) => {
-                        send_plan_status(
-                            shm,
-                            w,
-                            bot_id,
-                            PLAN_STATUS_REFUSED,
-                            0,
-                            0,
-                            "word program has no row",
-                        );
-                        continue;
-                    }
-                    Err(_) => {
-                        send_plan_status(
-                            shm,
-                            w,
-                            bot_id,
-                            PLAN_STATUS_REFUSED,
-                            0,
-                            0,
-                            "word program select panicked",
-                        );
-                        continue;
-                    }
-                };
-
-                let prev_sprinting = bot.state.sprinting;
-                let tick_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    law::try_tick(&mut bot.state, world, &input)
-                }));
-                match tick_res {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, 0, &e.0);
-                        continue;
-                    }
-                    Err(_) => {
-                        send_plan_status(
-                            shm,
-                            w,
-                            bot_id,
-                            PLAN_STATUS_REFUSED,
-                            0,
-                            0,
-                            "law tick panicked",
-                        );
-                        continue;
-                    }
-                }
-
-                elapsed += 1;
-                if elapsed >= ticks {
-                    idx += 1;
-                    elapsed = 0;
-                }
-                let arrived = idx >= steps.len();
-                let mut settled = false;
-                if arrived {
-                    if is_settled(&bot.state) {
-                        settled = true;
-                        bot.phase = BotPhase::Idle;
-                    } else {
-                        bot.phase = BotPhase::Settling;
-                    }
-                } else {
-                    bot.phase = BotPhase::Executing {
-                        steps,
-                        idx,
-                        elapsed,
-                        goal_air,
-                        corridor,
-                    };
-                }
-
-                let mut flags = 0u32;
-                if bot.state.on_ground {
-                    flags |= FLAG_ON_GROUND;
-                }
-                if bot.state.horizontal_collision {
-                    flags |= FLAG_HORIZ_COL;
-                }
-                if !prev_sprinting && bot.state.sprinting {
-                    flags |= FLAG_START_SPRINT;
-                } else if prev_sprinting && !bot.state.sprinting {
-                    flags |= FLAG_STOP_SPRINT;
-                }
-                if arrived {
-                    flags |= FLAG_ARRIVED;
-                }
-                if settled {
-                    flags |= FLAG_SETTLED;
-                }
-
-                send_tick_cmd(shm, w, bot_id, input_keys(&input), flags, &bot.state);
-            }
-            BotPhase::Settling => {
-                active_bots += 1;
-                let prev_sprinting = bot.state.sprinting;
-                let coast = law::Input {
-                    yaw: bot.state.yaw,
-                    pitch: bot.state.pitch,
-                    ..Default::default()
-                };
-                let tick_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    law::try_tick(&mut bot.state, world, &coast)
-                }));
-                match tick_res {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, 0, &e.0);
-                        continue;
-                    }
-                    Err(_) => {
-                        send_plan_status(
-                            shm,
-                            w,
-                            bot_id,
-                            PLAN_STATUS_REFUSED,
-                            0,
-                            0,
-                            "law settle panicked",
-                        );
-                        continue;
-                    }
-                }
-
-                let settled = is_settled(&bot.state);
-                if !settled {
-                    bot.phase = BotPhase::Settling;
-                }
-                let mut flags = 0u32;
-                if bot.state.on_ground {
-                    flags |= FLAG_ON_GROUND;
-                }
-                if bot.state.horizontal_collision {
-                    flags |= FLAG_HORIZ_COL;
-                }
-                if !prev_sprinting && bot.state.sprinting {
-                    flags |= FLAG_START_SPRINT;
-                } else if prev_sprinting && !bot.state.sprinting {
-                    flags |= FLAG_STOP_SPRINT;
-                }
-                if settled {
-                    flags |= FLAG_SETTLED;
-                }
-                send_tick_cmd(shm, w, bot_id, 0, flags, &bot.state);
-            }
-        }
-    }
-
+fn send_chunk_ticket(shm: &Shm, w: &mut Writer, cx: i32, cz: i32, level: u8) {
     w.clear();
-    w.u64(server_tick);
-    w.u32(active_bots);
-    w.u32(world.section_count() as u32);
-    let _ = shm.push_e2s(MSG_TICK_END, &w.buf);
-    shm.set_engine_tick_seq(server_tick);
+    w.i32(cx);
+    w.i32(cz);
+    w.u8(level);
+    let _ = shm.push_e2s(MSG_CHUNK_TICKET, &w.buf);
 }
 
+fn send_visual_batch(shm: &Shm, w: &mut Writer, visuals: &[VisualOut]) {
+    const MAX_PER_FRAME: usize = 2048;
+    for chunk in visuals.chunks(MAX_PER_FRAME) {
+        w.clear();
+        w.u32(chunk.len() as u32);
+        for v in chunk {
+            w.u32(v.bot_id);
+            w.f64(v.x);
+            w.f64(v.y);
+            w.f64(v.z);
+            w.f32(v.vx);
+            w.f32(v.vy);
+            w.f32(v.vz);
+            w.f32(v.yaw);
+            w.f32(v.pitch);
+            w.u8(v.flags);
+        }
+        let _ = shm.push_e2s(MSG_VISUAL_BATCH, &w.buf);
+    }
+}
+
+fn send_plan_summary(shm: &Shm, w: &mut Writer, sum: &mut SolveSummary, total: u32, batch_wall_ns: u64) {
+    let (min_ns, med_ns, max_ns) = if sum.solve_ns_samples.is_empty() {
+        (0, 0, 0)
+    } else {
+        sum.solve_ns_samples.sort_unstable();
+        let n = sum.solve_ns_samples.len();
+        (sum.solve_ns_samples[0], sum.solve_ns_samples[n / 2], sum.solve_ns_samples[n - 1])
+    };
+    w.clear();
+    w.u32(total);
+    w.u32(sum.ready);
+    w.u32(sum.already);
+    w.u32(sum.joints);
+    w.u32(sum.refused);
+    w.u64(min_ns);
+    w.u64(med_ns);
+    w.u64(max_ns);
+    w.u64(batch_wall_ns);
+    w.u32(sum.min_pred_t);
+    w.u32(sum.max_pred_t);
+    w.str(&sum.sample_msg);
+    let _ = shm.push_e2s(MSG_SWARM_PLAN_SUMMARY, &w.buf);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn handle_message(
     msg_type: u16,
     payload: &[u8],
-    world: &mut WorldMirror,
-    store: &mut GeneratorStore,
-    codec: &mut Interner,
-    bots: &mut BTreeMap<u32, BotSlot>,
-    programs: &[words::Program],
+    world: &Arc<RwLock<WorldMirror>>,
+    pool: &mut WorkerPool,
+    config: &mut SwarmConfig,
+    observers: &mut Vec<Observer>,
+    ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
+    totals: &mut TickTotals,
     shm: &Shm,
     w: &mut Writer,
 ) -> Result<(), String> {
@@ -534,20 +190,28 @@ fn handle_message(
             let session = r.u64()?;
             let difficulty = r.u8()?;
             let natural_regen = r.u8()? != 0;
-            world.reset(session, difficulty, natural_regen);
-            *store = GeneratorStore::default();
-            *codec = Interner::default();
+            let world_dir = r.str()?;
+            {
+                let mut guard = world.write().unwrap();
+                guard.reset(session, difficulty, natural_regen);
+                if !world_dir.is_empty() {
+                    guard.set_world_dir(Path::new(world_dir));
+                }
+            }
+            pool.reset_stores();
+            ticket_last_sent.clear();
+            totals.reset();
         }
         MSG_WORLD_RULES => {
             let difficulty = r.u8()?;
             let natural_regen = r.u8()? != 0;
-            world.set_rules(difficulty, natural_regen);
+            world.write().unwrap().set_rules(difficulty, natural_regen);
         }
         MSG_SECTION_AIR => {
             let cx = r.i32()?;
             let cy = r.i32()?;
             let cz = r.i32()?;
-            world.set_section_air(cx, cy, cz);
+            world.write().unwrap().set_section_air(cx, cy, cz);
         }
         MSG_SECTION_RLE => {
             let cx = r.i32()?;
@@ -565,52 +229,38 @@ fn handle_message(
                 let idx = r.u16()?;
                 runs.push((len, idx));
             }
-            world.set_section_rle(cx, cy, cz, &names, &runs)?;
+            world
+                .write()
+                .unwrap()
+                .set_section_rle(cx, cy, cz, &names, &runs)?;
         }
         MSG_BLOCK_DELTA => {
             let x = r.i32()?;
             let y = r.i32()?;
             let z = r.i32()?;
             let state = r.str()?;
-            world.set_block_delta([x, y, z], state);
-            for bot in bots.values_mut() {
-                if let BotPhase::Executing {
-                    goal_air,
-                    corridor: (lo, hi),
-                    ..
-                } = &bot.phase
-                    && x >= lo[0]
-                    && x <= hi[0]
-                    && y >= lo[1]
-                    && y <= hi[1]
-                    && z >= lo[2]
-                    && z <= hi[2]
-                {
-                    bot.pending_replan = Some(*goal_air);
-                }
+            let changed = world.write().unwrap().set_block_delta([x, y, z], state);
+            if changed {
+                pool.replan_in_corridor([x, y, z]);
             }
         }
         MSG_CHUNK_UNLOAD => {
             let cx = r.i32()?;
             let cz = r.i32()?;
-            world.unload_chunk(cx, cz);
+            world.write().unwrap().unload_chunk(cx, cz);
         }
         MSG_BOT_SPAWN => {
             let sync = BotSyncPayload::read(&mut r)?;
-            bots.insert(sync.bot_id, BotSlot::from_sync(&sync));
+            pool.spawn_one(sync.bot_id, MODE_MATERIALIZED, state_from_sync(&sync));
         }
         MSG_BOT_REMOVE => {
             let bot_id = r.u32()?;
-            bots.remove(&bot_id);
+            pool.remove_one(bot_id);
         }
         MSG_BOT_SELF_SYNC => {
             let sync = BotSyncPayload::read(&mut r)?;
             let reason = r.u32()?;
-            if let Some(bot) = bots.get_mut(&sync.bot_id) {
-                bot.apply_sync(&sync, reason);
-            } else {
-                bots.insert(sync.bot_id, BotSlot::from_sync(&sync));
-            }
+            pool.self_sync(sync.bot_id, state_from_sync(&sync), reason);
         }
         MSG_BOT_GOAL => {
             let bot_id = r.u32()?;
@@ -618,23 +268,136 @@ fn handle_message(
             let gy = r.i32()?;
             let gz = r.i32()?;
             let _issue_qpc = r.u64()?;
-            if let Some(bot) = bots.get_mut(&bot_id) {
-                bot.pending_replan = None;
-                solve_bot(bot_id, bot, [gx, gy, gz], world, store, codec, shm, w);
-            } else {
-                send_plan_status(shm, w, bot_id, PLAN_STATUS_REFUSED, 0, 0, "unknown bot");
+            for p in pool.goal_one(bot_id, [gx, gy, gz]) {
+                send_plan_status(shm, w, &p);
             }
         }
         MSG_BOT_STOP => {
             let bot_id = r.u32()?;
-            if let Some(bot) = bots.get_mut(&bot_id) {
-                bot.phase = BotPhase::Idle;
-                bot.pending_replan = None;
+            pool.stop_one(bot_id);
+        }
+        MSG_SWARM_SPAWN_BATCH => {
+            let count = r.u32()?;
+            let start_bot_id = r.u32()?;
+            let start_index = r.u32()?;
+            let mode = r.u8()?;
+            let cols = r.u32()?;
+            let base_x = r.f64()?;
+            let base_y = r.f64()?;
+            let base_z = r.f64()?;
+            let spacing_x = r.f64()?;
+            let spacing_z = r.f64()?;
+            pool.spawn_batch(
+                count,
+                start_bot_id,
+                start_index,
+                mode,
+                cols,
+                base_x,
+                base_y,
+                base_z,
+                spacing_x,
+                spacing_z,
+            );
+        }
+        MSG_SWARM_CLEAR => {
+            pool.clear();
+            ticket_last_sent.clear();
+            totals.reset();
+        }
+        MSG_SWARM_GOAL_BATCH => {
+            let gx = r.i32()?;
+            let gy = r.i32()?;
+            let gz = r.i32()?;
+            let grid_formation = r.u8()? == 0;
+            let _issue_qpc = r.u64()?;
+            let t0 = Instant::now();
+            let mut sum = pool.goal_batch(gx, gy, gz, grid_formation);
+            let wall_ns = t0.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            for p in &sum.statuses {
+                send_plan_status(shm, w, p);
             }
+            send_plan_summary(shm, w, &mut sum, pool.total_bots() as u32, wall_ns);
+        }
+        MSG_SWARM_STOP_ALL => {
+            pool.stop_all();
+        }
+        MSG_OBSERVERS => {
+            let count = r.u32()? as usize;
+            observers.clear();
+            observers.reserve(count);
+            for _ in 0..count {
+                let _id = r.u32()?;
+                let x = r.f64()?;
+                let y = r.f64()?;
+                let z = r.f64()?;
+                let view_dist = r.f32()?;
+                observers.push(Observer {
+                    x,
+                    y,
+                    z,
+                    view_dist,
+                });
+            }
+        }
+        MSG_SWARM_CONFIG => {
+            config.max_visual = r.u32()?;
+            config.max_materialized = r.u32()?;
+            config.materialize_radius = r.f32()?;
+            config.canary_count = r.u32()?;
+            config.canary_period = r.u32()?;
         }
         MSG_TICK_BEGIN => {
             let server_tick = r.u64()?;
-            step_all_bots(server_tick, bots, world, store, codec, programs, shm, w);
+            let tick_t0 = Instant::now();
+            let (outputs, tickets) = pool.step_tick(server_tick, *config, observers, ticket_last_sent);
+
+            for (coord, level) in tickets {
+                send_chunk_ticket(shm, w, coord[0], coord[1], level);
+            }
+            for p in &outputs.plan_statuses {
+                send_plan_status(shm, w, p);
+            }
+            for tc in &outputs.tier_changes {
+                send_tier_change(shm, w, tc);
+            }
+            for cmd in &outputs.tick_cmds {
+                send_tick_cmd(shm, w, cmd);
+            }
+            if !outputs.visuals.is_empty() {
+                send_visual_batch(shm, w, &outputs.visuals);
+            }
+
+            totals.promotions += outputs.stats.promotions;
+            totals.demotions += outputs.stats.demotions;
+            totals.hooked_promotions += outputs.stats.hooked_promotions;
+
+            let (total_sections, disk_sections) = {
+                let wg = world.read().unwrap();
+                (wg.section_count() as u32, wg.disk_section_count() as u32)
+            };
+            let mind_tick_ns = tick_t0.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+
+            w.clear();
+            w.u64(server_tick);
+            w.u32(outputs.stats.active_bots);
+            w.u32(total_sections);
+            w.u32(disk_sections);
+            w.u32(pool.total_bots() as u32);
+            w.u32(outputs.stats.virt_count);
+            w.u32(outputs.stats.vis_count);
+            w.u32(outputs.stats.mat_count);
+            w.u32(outputs.stats.arrived_count);
+            w.u32(outputs.stats.settled_count);
+            w.u32(outputs.stats.exact_t_count);
+            w.u32(outputs.stats.min_act_t);
+            w.u32(outputs.stats.max_act_t);
+            w.u32(totals.promotions);
+            w.u32(totals.demotions);
+            w.u32(totals.hooked_promotions);
+            w.u64(mind_tick_ns);
+            let _ = shm.push_e2s(MSG_TICK_END, &w.buf);
+            shm.set_engine_tick_seq(server_tick);
         }
         other => return Err(format!("unknown s2e message {other}")),
     }
@@ -650,11 +413,13 @@ fn main() {
     let (mut last_server_epoch, engine_epoch) = shm.init_engine();
     shm.set_engine_heartbeat_ms(now_ms());
 
-    let mut world = WorldMirror::new();
-    let mut store = GeneratorStore::default();
-    let mut codec = Interner::default();
-    let programs = words::tiny_programs();
-    let mut bots: BTreeMap<u32, BotSlot> = BTreeMap::new();
+    let world = Arc::new(RwLock::new(WorldMirror::new()));
+    let programs = Arc::new(words::tiny_programs());
+    let mut pool = WorkerPool::new(world.clone(), programs);
+    let mut config = SwarmConfig::default();
+    let mut observers = Vec::new();
+    let mut ticket_last_sent = FxHashMap::default();
+    let mut totals = TickTotals::default();
 
     eprintln!(
         "mind ready on {} (server_epoch={}, engine_epoch={})",
@@ -672,10 +437,12 @@ fn main() {
         let se = shm.server_epoch();
         if se != last_server_epoch {
             last_server_epoch = se;
-            bots.clear();
-            world.reset(0, 0, true);
-            store = GeneratorStore::default();
-            codec = Interner::default();
+            pool.clear();
+            pool.reset_stores();
+            world.write().unwrap().reset(0, 0, true);
+            observers.clear();
+            ticket_last_sent.clear();
+            totals.reset();
         }
 
         let mut processed = false;
@@ -684,11 +451,12 @@ fn main() {
             if let Err(why) = handle_message(
                 msg_type,
                 &scratch,
-                &mut world,
-                &mut store,
-                &mut codec,
-                &mut bots,
-                &programs,
+                &world,
+                &mut pool,
+                &mut config,
+                &mut observers,
+                &mut ticket_last_sent,
+                &mut totals,
                 &shm,
                 &mut writer,
             ) {
@@ -709,18 +477,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use law::{World, codec::Interner};
+    use plan::{Goal, Kit, PlanOutcome, store::GeneratorStore};
 
-    #[test]
-    fn fence_delta_triggers_needs_joints() {
+    fn build_flat_mirror(cx_range: std::ops::RangeInclusive<i32>, cz_range: std::ops::RangeInclusive<i32>) -> WorldMirror {
         let mut world = WorldMirror::new();
         world.reset(1, 0, true);
         let palette = ["minecraft:air", "minecraft:grass_block[snowy=false]"];
         let runs = [(768u16, 0u16), (256, 1), (3072, 0)];
-        for cx in -1..=3 {
-            for cz in -1..=1 {
+        for cx in cx_range {
+            for cz in cz_range.clone() {
                 world.set_section_rle(cx, -4, cz, &palette, &runs).unwrap();
+                world.set_section_air(cx, -3, cz);
             }
         }
+        world
+    }
+
+    #[test]
+    fn fence_delta_triggers_needs_joints() {
+        let mut world = build_flat_mirror(-1..=3, -1..=1);
         world.set_block_delta(
             [20, -60, 0],
             "minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]",
@@ -733,31 +509,129 @@ mod tests {
             food_level: 20,
             ..PlayerState::default()
         };
-        let a = [0, -61, 0];
-        let goal_solid = [30, -61, 0];
-        let (cl, ch) = corridor_bounds(
+        let (cl, ch) = pool::corridor_bounds(
             [0, -60, 0],
-            a,
-            goal_solid,
+            [0, -61, 0],
+            [30, -61, 0],
             world.min_loaded_y(),
             world.max_loaded_y(),
         );
         world.check_corridor_valid(cl, ch).unwrap();
-        let corridor = GeneratorSuperflatSource::from_world(&world, (cl, ch), a).unwrap();
         let store = GeneratorStore::default();
         let mut codec = Interner::default();
         let res = plan::solve(
             &state,
-            Goal { cell: goal_solid },
+            Goal { cell: [30, -61, 0] },
             Kit::BareLegs,
-            &corridor,
+            &world,
             &store,
             &mut codec,
             u64::MAX,
         );
         match res.outcome {
             PlanOutcome::NeedsJoints { exception, .. } => assert_eq!(exception, [20, -60, 0]),
-            other => panic!("expected NeedsJoints at [20, -60, 0], got {other:?} ({:?})", res.explanation),
+            other => panic!(
+                "expected NeedsJoints at [20, -60, 0], got {other:?} ({:?})",
+                res.explanation
+            ),
         }
+    }
+
+    #[test]
+    fn world_mirror_hooked_pressure_plate_allows_solve_and_flags_hooked() {
+        let mut world = build_flat_mirror(-1..=3, -1..=1);
+        assert!(world.set_block_delta(
+            [15, -60, 0],
+            "minecraft:oak_pressure_plate[powered=false]",
+        ));
+        let state = PlayerState {
+            position: Vec3::new(0.5, -60.0, 0.5),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, 0]),
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        let (cl, ch) = pool::corridor_bounds(
+            [0, -60, 0],
+            [0, -61, 0],
+            [30, -61, 0],
+            world.min_loaded_y(),
+            world.max_loaded_y(),
+        );
+        let store = GeneratorStore::default();
+        let mut codec = Interner::default();
+        let res = plan::solve(
+            &state,
+            Goal { cell: [30, -61, 0] },
+            Kit::BareLegs,
+            &world,
+            &store,
+            &mut codec,
+            u64::MAX,
+        );
+        assert!(matches!(res.outcome, PlanOutcome::Ready(_)), "{:?}", res.outcome);
+        assert_eq!(world.corridor_has_hooked(cl, ch), Some([15, -60, 0]));
+        assert!(!world.set_block_delta(
+            [15, -60, 0],
+            "minecraft:oak_pressure_plate[powered=true]",
+        ));
+    }
+
+    #[test]
+    fn disk_world_loads_unloaded_far_chunk() {
+        let lab_world = Path::new(r"D:\path-tracing-lab\server\world");
+        if !lab_world.is_dir() {
+            return;
+        }
+        let mut world = WorldMirror::new();
+        world.reset(1, 0, true);
+        world.set_world_dir(lab_world);
+        let loaded = world.ensure_chunks_from_disk(&[[350, 255]]);
+        assert_eq!(loaded, 1);
+        assert!(!world.is_server_loaded(350, 255));
+        assert!(world.loaded([5600, -61, 4080]));
+        assert!(!world.is_air([5600, -61, 4080]));
+        assert!(world.is_air([5600, -60, 4080]));
+    }
+
+    #[test]
+    fn worker_pool_steps_10000_virtual_bots_fast() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-14..=-1, -14..=-5)));
+        let programs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::new(world, programs);
+
+        pool.spawn_batch(
+            10_000,
+            1,
+            0,
+            protocol::MODE_VIRTUAL,
+            100,
+            -200.5,
+            -60.0,
+            -200.5,
+            1.0,
+            1.0,
+        );
+        assert_eq!(pool.total_bots(), 10_000);
+
+        let solve_t0 = Instant::now();
+        let sum = pool.goal_batch(-120, -60, -200, true);
+        let solve_ms = solve_t0.elapsed().as_secs_f64() * 1e3;
+        assert_eq!(sum.ready, 10_000, "ready={}, refused={}, sample={}", sum.ready, sum.refused, sum.sample_msg);
+        assert_eq!(sum.refused, 0);
+
+        let mut last_sent = FxHashMap::default();
+        let mut tick_ms = Vec::new();
+        for tick in 1..=5u64 {
+            let t0 = Instant::now();
+            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent);
+            tick_ms.push(t0.elapsed().as_secs_f64() * 1e3);
+            assert_eq!(out.stats.active_bots, 10_000);
+            assert_eq!(out.stats.virt_count, 10_000);
+        }
+        eprintln!(
+            "10k virtual test: solve_ms={:.2} tick_ms={:?}",
+            solve_ms, tick_ms
+        );
     }
 }

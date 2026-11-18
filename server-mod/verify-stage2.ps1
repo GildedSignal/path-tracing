@@ -139,7 +139,7 @@ try {
   Start-Mind
   Await {
     $s = Rcon 'swarm status'
-    ($s -match 'engine=connected') -and ($s -match 'engine_epoch=2') -and ($s -notmatch 'sections=0\b')
+    ($s -match 'engine=connected') -and ($s -match 'engine_epoch=2') -and ($s -notmatch '\bsections=0\b')
   } 15 'Flight 3 mind hot-reload'
   $f3Up = Rcon 'swarm status'
   Write-Output "FLIGHT 3 (reconnected): $f3Up"

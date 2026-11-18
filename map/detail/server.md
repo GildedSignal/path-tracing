@@ -49,11 +49,11 @@ A `ServerPlayer` is a heavy materialization of a bot, never the bot itself. Ever
 
 ## The server savings and bytecode catches
 
-1. **Bots don't observe in `ChunkMap`:** cancel `ChunkMap.updateChunkTracking(bot)`, filter bots out of `ServerLevel.players()` inside `ChunkMap.tick()` and `ChunkMap.addEntity()`, skip adding bots to `movedPlayers` in `ChunkMap.tick()`, and cancel `ChunkMap$TrackedEntity.updatePlayer(bot)` at `HEAD`. Real players still see materialized bots normally.
+1. **Bots don't observe or drive chunk loading in `ChunkMap`:** return `true` from `ChunkMap.skipPlayer(bot)` (stopping `distanceManager.addPlayer` from loading a `25×25` chunk disc per materialized bot), cancel `ChunkMap.updateChunkTracking(bot)`, filter bots out of `ServerLevel.players()` inside `ChunkMap.tick()`, `ChunkMap.addEntity()`, and `ChunkMap.move()`, and cancel `ChunkMap$TrackedEntity.updatePlayer(bot)` at `HEAD`. Real players still see materialized bots normally.
 2. **`ServerWaypointManager` bytecode catch:** setting `Attributes.WAYPOINT_RECEIVE_RANGE = 0` alone does **not** eliminate the $O(N^2)$ loop, because `ServerWaypointManager.updatePlayer(bot)` still runs `Sets.difference(waypoints, row.keySet())` across all transmitters every tick. Keep bots out of `ServerWaypointManager.players` (observers) in `addPlayer`/`updatePlayer`/`removePlayer` while calling `trackWaypoint`/`untrackWaypoint` so real players still see bots on the locator bar.
 3. **World changes reach the engine once:** a block-change and entity hook streams tick-stamped deltas into the engine's single world snapshot in shared memory, not once per bot.
 4. **Player queries go through a spatial index:** `Mob.checkDespawn`, `PlayerSensor`, and `NaturalSpawner` otherwise scan `level.players()` every tick ($O(\text{mobs} \times N)$). Only materialized bots with presence sit in those lists.
-5. **Bot persistence in bulk:** `PlayerList.saveAll` otherwise writes three files per player synchronously every 6,000 ticks; bots save in bulk through the engine.
+5. **No synchronous per-bot player saves:** `PlayerListMixin` cancels `PlayerList.save(ServerPlayer)` for `SwarmBot`s so spawns, demotions, and `saveAll` avoid writing per-bot `.dat`, stats, and advancement JSON files synchronously on the server thread; bots persist through the engine in bulk.
 
 ## The self channel (server → engine, per materialized bot)
 
@@ -82,21 +82,33 @@ A bot on an in-process sink connection receives no network stream; after a `tele
 - **Separate Rust process over shared memory, pipelined one tick ahead:** an uncatchable fault (`abort`, stack overflow, OOM, unsafe/SIMD/GPU crash) inside the server JVM would kill the server mid-region-save and risk corrupting Julien's world (ruin, not a price), and Windows locks loaded JNI DLLs so every rebuild would force a server restart. Out-of-process IPC gives zero world-ruin risk and ~1 s Rust hot-reloads while the server and his client stay live. On disconnect, materialized bots drop to scripted idle. Only flips back to in-process if a measured handoff at 2,000 TPS cannot be pipelined and exceeds ~5% of the 0.5 ms tick.
 - **Perf-mod policy:** `FerriteCore`, `Krypton`, and `ScalableLux` run in both the server and lab rig (strict vanilla parity). `Lithium` and `C2ME` run on the live swarm server (strict vanilla logic parity, parallel chunk loading/I/O) and stay out of the bare law-verification judge rig so the judge stays pure Mojang bytecode ([engine.md](engine.md)). `Alternate Current` is excluded because it alters vanilla redstone dust update order.
 
-## Live server runtime and Stage 2 flights
+## Live server runtime and verified flights
 
-`server-mod/` (`ServerMindMod`, `WorldBridge`, `SwarmManager`, `SwarmBot`, `ShmBridge`, plus 6 mixins) connects dedicated Mojang 26.2 directly to out-of-process Rust `engine/mind/` (`mind.exe`, `WorldMirror`, `protocol`, `shm`) over Windows memory-mapped lock-free SPSC rings (`s2e` 16 MiB, `e2s` 4 MiB):
+`server-mod/` (`ServerMindMod`, `WorldBridge`, `SwarmManager`, `VisualProjector`, `SwarmBot`, `ShmBridge`, plus 10 mixins) connects dedicated Mojang 26.2 directly to out-of-process Rust `engine/mind/` (`mind.exe`, `WorkerPool`, `WorldMirror`, `DiskWorld`, `protocol`, `shm`) over Windows memory-mapped lock-free SPSC rings (`s2e` 16 MiB, `e2s` 4 MiB):
 
-- **World delta stream:** initial/reconnected chunks stream via RLE sections (`MSG_SECTION_AIR` / `MSG_SECTION_RLE`), stale chunk entries are pruned on reconnect so `loaded_chunks × 24` sections stay exact, and `LevelChunkMixin` on `LevelChunk.setBlockState` queues live `MSG_BLOCK_DELTA` updates each tick.
-- **Per-bot self-channel and control:** `/swarm spawn|goto|stop|remove|formation|stick|status|profile reset` and `/msg PathBot goto|stop` drive observer-filtered `SwarmBot`s. `solve_bot` sizes the `GeneratorSuperflatSource` corridor with a `±8` horizontal margin and `+8` vertical headroom (clamped to loaded Y) so `Crossing::run`'s speculative jump probe stays inside loaded bounds before `corridor_query` inspects `scars`. On `mind.exe` reconnect, `engine_epoch` increments, `WorldBridge.syncAll` snapshots loaded chunks, and active `SwarmBot`s resync cleanly.
+- **Sharded parallel engine (`WorkerPool`, up to 12 workers):** each worker owns an independent `GeneratorStore` and `Interner`. `goal_batch` and `goal_one` preload start-to-goal corridors via shared `insert_corridor_chunks` from parallel `DiskWorld` (cached `.mca` files opened with `FILE_SHARE_READ | WRITE | DELETE` and decoded in `std::thread::scope`) and solve in parallel, holding total `mind.exe` RAM at `13–31 MiB` for up to 10,000 bots (`6 passed; 0 failed` in `cargo test --offline -p mind`).
+- **World delta stream & frozen `WorldMirror`:** initial and reconnected server chunks stream via `MSG_SECTION_AIR` / `MSG_SECTION_RLE`, stored compactly as `AllAir`, uniform-Y `Layered`, or bit-packed `Palette` sections with `FxHasher`. `LevelChunkMixin` queues live `MSG_BLOCK_DELTA` edits; `unload_chunk` removes server-loaded status while keeping sections frozen in `WorldMirror` for unloaded Virtual corridors.
+- **Observer tiering, visual packets, and causal tickets:** `VisualProjector` drives non-materialized visible bots using vanilla packets (`ClientboundPlayerInfoUpdatePacket`, `ClientboundAddEntityPacket` for `EntityTypes.PLAYER`, `ClientboundSetEntityDataPacket`, `ClientboundEntityPositionSyncPacket`, `ClientboundRotateHeadPacket`, `ClientboundTrackedWaypointPacket`). Materialized promotions check `world.is_server_loaded` on current and next corridor chunks, request/refresh `TicketType.ENDER_PEARL` tickets every 15 ticks via `WorldBridge.requestTicket` (`ticketLevel = Math.max(31, level - 1)` for `FULL` travel at `32` and `BLOCK_TICKING` hooked blocks at `31`), pace non-hooked promotions (`<= 1`/tick), and snapshot `prev_state` before stepping `law::try_tick` so mid-flight tier switches incur zero teleports. `corridor_has_hooked` scans sections and triggers immediate causal promotion when entering hooked blocks (`oak_pressure_plate`, fluids, inside blocks), while staggered audit canaries periodically sample Virtual bots against the server.
+- **Commands:** `/swarm spawn <1..10000> [spacing] [auto|virtual|materialized] [x y z [cols]]`, `/swarm goto|stop|remove|formation|stick|config|observer|status|profile reset`, and `/msg PathBot goto|stop`. On `mind.exe` reconnect, `engine_epoch` increments, `WorldBridge.syncAll` snapshots server-loaded chunks, and active `SwarmBot`s resync cleanly.
 
-Stage 2 live verification (`server-mod/verify-stage2.ps1`, evidence in `D:\path-tracing-evidence\stage2-flight-20261118-b`): **0 teleports** and **0 `"moved wrongly"`** across all 4 flights:
+Stage 3 three-tier verification (`server-mod/verify-stage3.ps1`, evidence in `D:\path-tracing-evidence\stage3-flight-20261118-f`) passes all 5 flights with **0 teleports** and **0 `"moved wrongly"`**:
 
-| Flight | Bots | Goal | Solve (µs, min/med/max) | Predicted / Actual T | Exact T | Server tick ms (min/med/p90/p99/max) | Outcome |
-|---|---:|---|---|---|---|---|---|
-| 1. Single bot flat | 1 | `50 -60 0` | `141.4 / 141.4 / 141.4` | `144 / 144` | `1/1` | `0.902 / 2.024 / 4.961 / 18.016 / 43.465 (n=152)` | `ready:1`, settled |
-| 2. 50-bot shared store | 50 | `80 -60 0` (grid) | `4.8 / 7.5 / 11.1` | `228 / 228` | `50/50` | `2.751 / 4.392 / 6.866 / 32.170 / 45.672 (n=236)` | `ready:50`, settled |
-| 3. Hot-reload + return | 50 | kill/restart → `10 -60 0` | `4.0 / 4.1 / 139.7` | `204 / 204` | `50/50` | `2.814 / 3.614 / 4.582 / 11.100 / 26.582 (n=212)` | `engine_epoch=2`, `20,184` sections (`841` chunks), settled |
-| 4. Live `oak_fence` delta | 1 | `setblock 20 -60 0` → `30 -60 0` | `28.4 / 28.4 / 28.4` | `—` | `—` | `n/a` (refused) | `joints:1`, `NeedsJoints at [20, -60, 0]` |
+| Flight | Bots & mode | Goal | Solve (µs, min/med/max) | Exact T (`pred / act`) | Tick ms (`min/med/p90/p99/max`) | `mind_ms` (`med/max`) | Tiering, chunks & RAM |
+|---|---|---|---:|---:|---|---|---|
+| 1. 1k dense | `1,000 auto` (8 canaries) | `80` blks | `4.2 / 5.7 / 286.8` | `1000/1000` (`228`) | `1.110 / 2.188 / 7.756 / 25.605 / 220.104 (n=237)` | `0.788 / 1.763` | `mat:8`, `prom=27 dem=19`, `52` chunks, `1,367.6 MiB` |
+| 2. 10k dense | `10,000 auto` (8 canaries) | `80` blks | `4.2 / 5.8 / 36.4` | `10000/10000` (`228`) | `4.307 / 8.328 / 12.037 / 21.468 / 80.281 (n=237)` | `7.011 / 12.532` | `mat:8`, `prom=26 dem=18`, `95` chunks, `1,584.2 MiB` (`20.6` mind) |
+| 3. 1k dispersed `.mca` | `1,000 auto` (4 canaries) | `5310 -60 3960` | `4.0 / 5.7 / 286.9` | `1000/1000` (`171`) | `0.721 / 1.572 / 2.512 / 8.713 / 30.800 (n=179)` | `0.779 / 1.507` | `4,560` disk sec, `102` chunks, `tickets=108`, `1,423.8 MiB` |
+| 4. Observer tiering | `200 auto` + `TestHuman` | `-140 -60 -200` | `4.7 / 6.3 / 22.3` | `200/200` (`169..171`) | `0.206 / 0.819 / 4.735 / 6.502 / 6.706 (n=188)` | `0.240 / 0.448` | `obs`: `virt:120,vis:75,mat:5`; `prom=34 dem=34`, `vis_pkts=11,299` |
+| 5. Hooked plates | `1 auto` across `14..19` | `30 -60 0` | `60.2 / 60.2 / 60.2` | `1/1` (`87`) | `0.290 / 0.765 / 1.048 / 12.092 / 12.092 (n=95)` | `0.079 / 0.169` | `hook_prom=1`, `tickets=14`, lit `copper_bulb`s `15,16,19` |
+
+Stage 2 regression (`server-mod/verify-stage2.ps1`, evidence in `D:\path-tracing-evidence\stage3-s2final-20261118-b`) passes all 4 flights with **0 teleports** and **0 `"moved wrongly"`**:
+
+| Flight | Bots | Goal | Solve (µs, min/med/max) | Exact T (`pred / act`) | Server tick ms (`min/med/p90/p99/max`) | Outcome |
+|---|---:|---|---|---|---|---|
+| 1. Single bot flat | 1 | `50 -60 0` | `162.8 / 162.8 / 162.8` | `1/1` (`144`) | `0.825 / 1.169 / 2.020 / 11.853 / 16.683 (n=153)` | `ready:1`, settled |
+| 2. 50-bot flat | 50 | `80 -60 0` (grid) | `4.7 / 6.9 / 130.8` | `50/50` (`228`) | `1.184 / 2.362 / 5.024 / 11.235 / 23.968 (n=237)` | `ready:50`, settled |
+| 3. Hot-reload + return | 50 | `mind` restart → `10 -60 0` | `4.4 / 5.1 / 147.1` | `50/50` (`204`) | `0.832 / 1.575 / 2.282 / 3.648 / 23.386 (n=213)` | `engine_epoch=2`, `9 → 27` chunks, settled |
+| 4. Live `oak_fence` delta | 1 | `setblock 20 -60 0` → `30 -60 0` | `28.6 / 28.6 / 28.6` | `—` | `0.601 / 1.919 / 4.652 / 51.119 / 82.896 (n=510)` | `joints:1`, `NeedsJoints at [20, -60, 0]` |
 
 ## Interfaces and gates
 

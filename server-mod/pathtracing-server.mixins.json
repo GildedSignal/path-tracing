@@ -8,7 +8,11 @@
     "WaypointManagerMixin",
     "LevelChunkMixin",
     "FoodDataAccessor",
-    "LivingEntityAccessor"
+    "LivingEntityAccessor",
+    "PlayerListMixin",
+    "PlayerInfoPacketAccessor",
+    "EntityAccessor",
+    "AvatarAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
