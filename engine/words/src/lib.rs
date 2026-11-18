@@ -1,4 +1,4 @@
-//! Movement words (docs/vocabulary.md, sections 1 to 7): segments cut by the event
+//! Movement words (map/detail/vocabulary.md, sections 1 to 7): segments cut by the event
 //! rule, the class that proposes, gaits, and the proposal table. The class only
 //! proposes; every segment handed out was replayed through the law.
 pub mod class;

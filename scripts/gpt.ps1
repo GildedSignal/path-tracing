@@ -1,5 +1,5 @@
 # Runs a GPT job through the Codex CLI that the Codex app installs (AGENTS.md). The prompt is the drift
-# guard (the goal and philosophy sections of docs/PRINCIPLES.md, verbatim) followed by jobs/<id>/prompt.md.
+# guard (map/goal.md, principles.md and architecture.md, whole) followed by jobs/<id>/prompt.md.
 #   .\scripts\gpt.ps1 -Job 1.2-recorder -Worktree D:\path-tracing-wt\recorder
 #   .\scripts\gpt.ps1 -Job 1.2-recorder -Worktree D:\path-tracing-wt\recorder -Resume <session id>
 param(
@@ -26,9 +26,9 @@ if (-not $codex) { throw 'codex.exe not found under %LOCALAPPDATA%\OpenAI\Codex\
 
 $dir = Join-Path $Root "jobs\$Job"
 $utf8 = [Text.UTF8Encoding]::new($false)
-$principles = [IO.File]::ReadAllText((Join-Path $Root 'docs\PRINCIPLES.md'), $utf8)
-$guard = [regex]::Match($principles, '(?s)## The goal.*?(?=\n## From Emergent Space)').Value
-if (-not $guard) { throw 'Could not find the goal and philosophy sections in docs/PRINCIPLES.md' }
+# The map leads every prompt (S236, the overhaul's C2): the goal, the principles and the architecture, whole.
+$guard = (@('goal','principles','architecture') | ForEach-Object { [IO.File]::ReadAllText((Join-Path $Root "map\$_.md"), $utf8) }) -join "`n`n"
+if ($Job -match 'judge') { $guard += "`n`n**The judge's first question:** does this work obey the map above (one mechanism, the generator stored once, precision only where a decision can flip, the game as the judge)? A diff that matches its spec but breaks the map is a FAIL.`n" }
 $job = [IO.File]::ReadAllText((Join-Path $dir 'prompt.md'), $utf8)
 $full = Join-Path $dir 'full-prompt.md'
 # S104: Terra ends its turn after a few minutes and ~20 lines, reporting "incomplete", whatever the spec

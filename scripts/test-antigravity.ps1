@@ -31,8 +31,8 @@ if (-not $Offline -and -not $fail) {
   $forms = [ordered]@{
     'backslash'  = (Join-Path $Root 'docs\clan.md')
     'slash'      = ($Root -replace '\\','/') + '/AGENTS.md'
-    'no drive'   = (($Root -replace '\\','/') -replace '^[A-Za-z]:','') + '/docs/HANDOFF.md'
-    'relative'   = 'docs/PRINCIPLES.md'
+    'no drive'   = (($Root -replace '\\','/') -replace '^[A-Za-z]:','') + '/map/now.md'
+    'relative'   = 'map/principles.md'
     'worktree'   = (Join-Path $wt 'README.md')
     'file url'   = 'file:///' + (($Root -replace '\\','/') -replace ' ','%20') + '/README.md'
   }

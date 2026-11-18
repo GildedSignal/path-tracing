@@ -1,6 +1,6 @@
 # Learning: one loop at every scale
 
-**Status: approved by Julien three times.** Learning as one queue on 16 November (S169), folded into section 2. The learning idea on 12 November (S93), after a Fable red-team whose changes are written in. The unified plan on 16 November (S165: "this is a beautiful plan i approve it"; S166: the recommendations "seem sensible"), folded in the same day as section 0. His turns: S83–S96, S116–S134, S161–S166 ([reference](reference/julien-2026-11-10.md)). Section 0 is acting. Section 1 is what stands. Section 2 is learning's loop. The full argument, Fermi inputs and sources: `jobs/unified-plan/plan.md`.
+**Status: approved by Julien three times.** Learning as one queue on 16 November (S169), folded into section 2. The learning idea on 12 November (S93), after a Fable red-team whose changes are written in. The unified plan on 16 November (S165: "this is a beautiful plan i approve it"; S166: the recommendations "seem sensible"), folded in the same day as section 0. His turns: S83–S96, S116–S134, S161–S166 ([reference](../../archive/turns/julien-2026-11-10.md)). Section 0 is acting. Section 1 is what stands. Section 2 is learning's loop. The full argument, Fermi inputs and sources: `jobs/unified-plan/plan.md`.
 
 ## 0. Acting: one loop for every terrain
 

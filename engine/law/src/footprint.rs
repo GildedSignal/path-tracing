@@ -42,7 +42,7 @@ pub struct Footprint {
     /// Cells of the conservative enclosing box of each body segment.
     pub swept: BTreeSet<BlockPos>,
     pub environment: Vec<EnvironmentRead>,
-    /// The state fields read before they were written (docs/vocabulary.md, section 3).
+    /// The state fields read before they were written (map/detail/vocabulary.md, section 3).
     pub state_reads: StateReads,
 }
 

@@ -1,4 +1,4 @@
-//! Pattern keys and the pattern table (docs/footprints.md, section 3). A cell enters
+//! Pattern keys and the pattern table (map/detail/footprints.md, section 3). A cell enters
 //! the key as the content of the queries that read it; a hit proposes reuse.
 use std::collections::HashMap;
 use crate::{Aabb, Block, BlockPos, CollisionContext, Inside, PlayerState, Vec3, VoxelShape, World};
@@ -117,7 +117,7 @@ pub struct Key {
 
 /// What an entry's start is keyed on: the start block, the words that stand for the
 /// state, and the context for the extra-collider probe. `exact` is the bit-equal start;
-/// the word compiler keys proposals on a class of states (docs/vocabulary.md, section 3).
+/// the word compiler keys proposals on a class of states (map/detail/vocabulary.md, section 3).
 #[derive(Clone, Debug)]
 pub struct Start {
     pub question: crate::codec::StateQuestion,

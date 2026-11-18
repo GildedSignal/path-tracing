@@ -1,4 +1,4 @@
-//! The planner (job 3.2b; docs/learning.md, vocabulary.md section 10): standard pathfinding
+//! The planner (job 3.2b; map/detail/learning.md, vocabulary.md section 10): standard pathfinding
 //! over words. Nodes are exact states, edges are words certified by the law, the cost is
 //! ticks. A lossy layer (the bounds, the backward sets) orders and never decides.
 pub mod arith;

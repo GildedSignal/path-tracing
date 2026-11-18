@@ -322,7 +322,7 @@ pub trait World {
     /// Conservative body worldtube, including motion when inside hooks are absent.
     fn observe_sweep(&self, _from: Aabb, _to: Aabb) {}
     /// Observation only: the state fields the law reads and writes, in order. A recording
-    /// world keeps those read before written (docs/vocabulary.md, section 3).
+    /// world keeps those read before written (map/detail/vocabulary.md, section 3).
     #[inline(always)]
     fn read_state(&self, _field: crate::state_reads::StateField) {}
     #[inline(always)]

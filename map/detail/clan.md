@@ -1,6 +1,6 @@
 # The clan: who does what, and why
 
-The team table in [AGENTS.md](../AGENTS.md) says who holds each role. This file says **how a job is assigned**, and it is the file that changes when a companion joins or a measurement moves someone.
+The team table in [AGENTS.md](../../AGENTS.md) says who holds each role. This file says **how a job is assigned**, and it is the file that changes when a companion joins or a measurement moves someone.
 
 Julien, S10: "plan for the whole build with the appropriate sub-agents doing the right things with the right intellect tackling things in the right order." S12: GPT "tends to be good with well formed tasks while you do better when taste is required." S102 adds the Google AI Pro plan, and with it Argon and Hydrogen.
 
@@ -135,7 +135,7 @@ A job is a folder: `jobs/<id>/prompt.md` is the spec, `jobs/<id>/last.md` the re
 
 ## 5c. Rules from the 14 November post-mortem (S128)
 
-Evidence and costs: [reference/postmortem-2026-11-14.md](reference/postmortem-2026-11-14.md).
+Evidence and costs: [reference/postmortem-2026-11-14.md](../../archive/postmortems/postmortem-2026-11-14.md).
 1. Every launch goes through `launch.ps1`, detached, at Normal priority (S158); anything that must outlive a turn is a detached process, never an in-session background task. Test launcher changes with `-DryRun`.
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`; Antigravity `report.md` every few files). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.

@@ -82,7 +82,7 @@ Each tick row has:
 - `startSprinting` and `startSprintSpeedModifier`, the sprint flag and the presence of the
   `minecraft:sprinting` modifier read at START, and `sprintSpeedModifier`, its presence at END. They are
   independent: `ClientPacketListener.handleSetEntityData` sets the flag without `LivingEntity.setSprinting`,
-  so the law reads the START pair as server-driven input (docs/engine.md). `initialPlayer` also carries
+  so the law reads the START pair as server-driven input (map/detail/engine.md). `initialPlayer` also carries
   `sprintSpeedModifier`;
 - `startPose`, the pose at START. The server echoes its own, lagging pose to the player
   (`ServerEntity.sendDirtyEntityData`), and the packet resizes the box between ticks

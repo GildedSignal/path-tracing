@@ -1,6 +1,6 @@
 # Movement words
 
-The word compiler's movement half (docs/vocabulary.md version 2, sections 1 to 7 and 11).
+The word compiler's movement half (map/detail/vocabulary.md version 2, sections 1 to 7 and 11).
 Consumer: job 3.2b, the movement planner.
 
 - **`run_segment`** runs a program through the law, on a `RecordingWorld`, until the

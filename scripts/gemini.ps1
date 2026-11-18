@@ -1,5 +1,5 @@
-# Runs a Google job through the Antigravity CLI (AGENTS.md, docs/clan.md). The prompt is the drift guard
-# (the goal and philosophy sections of docs/PRINCIPLES.md, verbatim) followed by jobs/<id>/prompt.md, piped
+# Runs a Google job through the Antigravity CLI (AGENTS.md, map/detail/clan.md). The prompt is the drift guard
+# (map/goal.md, principles.md and architecture.md, whole) followed by jobs/<id>/prompt.md, piped
 # on stdin because a job prompt is far past the Windows command-line limit.
 #   .\scripts\gemini.ps1 -Job corpus-contradictions -Model gemini-4-argon-high
 #   .\scripts\gemini.ps1 -Job <id> -Model gemini-4-hydrogen-high -Write D:\path-tracing-wt\<id>
@@ -63,9 +63,9 @@ $dir = Join-Path $Root "jobs\$Job"
 if (-not (Test-Path (Join-Path $dir 'prompt.md'))) { throw "No prompt at $dir\prompt.md" }
 $utf8 = [Text.UTF8Encoding]::new($false)   # a BOM made settings.json be rejected until 1.5.8; never write one
 
-$principles = [IO.File]::ReadAllText((Join-Path $Root 'docs\PRINCIPLES.md'), $utf8)
-$guard = [regex]::Match($principles, '(?s)## The goal.*?(?=\n## From Emergent Space)').Value
-if (-not $guard) { throw 'Could not find the goal and philosophy sections in docs/PRINCIPLES.md' }
+# The map leads every prompt (S236, the overhaul's C2): the goal, the principles and the architecture, whole.
+$guard = (@('goal','principles','architecture') | ForEach-Object { [IO.File]::ReadAllText((Join-Path $Root "map\$_.md"), $utf8) }) -join "`n`n"
+if ($Job -match 'judge') { $guard += "`n`n**The judge's first question:** does this work obey the map above (one mechanism, the generator stored once, precision only where a decision can flip, the game as the judge)? A diff that matches its spec but breaks the map is a FAIL.`n" }
 $body = [IO.File]::ReadAllText((Join-Path $dir 'prompt.md'), $utf8)
 $full = Join-Path $dir 'full-prompt.md'
 # S113-S115: a refused read_file has twice ended a run with its whole report lost (Argon on 14 November:

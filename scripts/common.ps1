@@ -36,7 +36,7 @@ $ClientPerfMods = @(
 )
 # Your client only. Dynamic FPS throttles unfocused windows, which is exactly what the bot window always is.
 # Lithium and C2ME rewrite game logic (Lithium patches collisions), so the bot's client and the server,
-# which are the judge of the law, run Mojang's code without them (docs/engine.md).
+# which are the judge of the law, run Mojang's code without them (map/detail/engine.md).
 $PlayerOnlyMods = @('dynamic-fps-*', 'lithium-fabric-*', 'c2me-fabric-*')
 $ServerPerfMods = @('ferritecore-*', 'krypton-*', 'ScalableLux-*')
 $PerfConfigs = @(
