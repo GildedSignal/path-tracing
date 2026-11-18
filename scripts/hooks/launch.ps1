@@ -18,6 +18,7 @@ if ($Phase -eq 'pre') {
   exit 0
 }
 # post: wait while a runner for this job is alive, then wake the model.
+if (($in.tool_response | ConvertTo-Json -Depth 4 -Compress) -notmatch "launched $([regex]::Escape($job)) on") { exit 0 }   # only a real launch arms a watcher
 Start-Sleep 30
 while (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match "(gpt|gemini)\.ps1.*-Job $([regex]::Escape($job))(\s|$)" }) { Start-Sleep 60 }
 [Console]::Error.WriteLine("Job $job ($who) has ended at $(Get-Date -Format HH:mm). Read jobs\$job\last.md and judge it.")
