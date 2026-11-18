@@ -59,6 +59,8 @@ pub mod entity_contact;
 pub mod state_reads;
 
 pub mod boat;
+pub mod elytra;
+pub mod pearl;
 
 #[cfg(feature = "count-state-copies")]
 pub use state::player_state_copies;
