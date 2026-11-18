@@ -17,7 +17,7 @@ while ($true) {
   if ($out -and $out.Name -like '*-zai-limit') {
     $ms = [regex]::Match((Get-Content -Raw (Join-Path $out.FullName 'author.log') -ErrorAction SilentlyContinue), 'retry-after-ms=(\d+)').Groups[1].Value
     $wait = if ($ms) { [int]([long]$ms / 1000) + 60 } else { 1800 }
-    Write-Log "zai limit on $job: retry in $([int]($wait / 60)) min"
+    Write-Log "zai limit on ${job}: retry in $([int]($wait / 60)) min"
     Start-Sleep $wait
     continue
   }
