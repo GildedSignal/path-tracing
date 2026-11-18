@@ -13,10 +13,12 @@ final class ResidentRunner {
     private static boolean waiting;
     private static boolean executing;
     static void playbackEnded() { executing=false; }
-    static void sourceChanged() {
-        if (!executing) return;
+    // The plan's corridor in x and z, as the planner reads it: a block edit inside it can change the plan; new chunks cannot.
+    private static int[] corridor = new int[4];
+    static void sourceChanged(long[] data) {
+        if (!executing || data[0] != 2 || data[3] < corridor[0] || data[3] > corridor[2] || data[5] < corridor[1] || data[5] > corridor[3]) return;
         var mc=Minecraft.getInstance(); cancel(mc); TickInput.release(mc);
-        Bot.reply(mc,"Native legacy playback stopped on a source event; continuation repair belongs to F.");
+        Bot.reply(mc,"Stopped: the block at " + data[3] + " " + data[4] + " " + data[5] + " changed inside the plan's corridor.");
     }
     static void event(String kind) {
         var mc = Minecraft.getInstance();
@@ -57,6 +59,8 @@ final class ResidentRunner {
             long[] meta = PlayerSnapshot.context(mc,received);
             HopCapture.hop("request-context",version,issue,received,meta);
             BlockPos goal = pending; pending = null;
+            BlockPos at = mc.player.blockPosition();
+            corridor = new int[]{Math.min(at.getX(),goal.getX())-8,Math.min(at.getZ(),goal.getZ())-8,Math.max(at.getX(),goal.getX())+8,Math.max(at.getZ(),goal.getZ())+8};
             long[] answer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,
                 new long[]{goal.getX(),goal.getY()-1,goal.getZ()},issue,version);
             HopCapture.hop("mod-request",version,issue,received,answer);

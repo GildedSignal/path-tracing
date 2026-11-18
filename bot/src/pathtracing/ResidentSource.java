@@ -32,7 +32,7 @@ public final class ResidentSource {
     }
     private static void send(long[] data) {
         long[] answer = NativeChannel.PublishSourceDelta(data);
-        ResidentRunner.sourceChanged();
+        ResidentRunner.sourceChanged(data);
         if (answer[0] == 3) throw new IllegalStateException("Source publication refused");
     }
     public static void chunk(int x, int z) {
