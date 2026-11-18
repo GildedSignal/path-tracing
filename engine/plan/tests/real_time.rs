@@ -33,7 +33,6 @@ fn stats(name: &str, times: &mut [u128], refused: usize, floor_ns: f64) {
 fn command(from: &law::PlayerState, origin: &str, goal: Goal, source: &GeneratorSuperflatSource,
            store: &GeneratorStore, codec: &mut Interner, times: &mut Vec<u128>) -> Option<plan::solve::Plan> {
     let before=store.preparation_ticks();
-    let work=store.joints.borrow().work;
     #[cfg(feature="solve-counters")]
     plan::solve_meter::begin(from.position,goal.center());
     BYTES.set(Some(0));
@@ -45,37 +44,30 @@ fn command(from: &law::PlayerState, origin: &str, goal: Goal, source: &Generator
     println!("WORK from={origin} goal={:?} {:?}",goal.cell,plan::solve_meter::finish());
     times.push(ns);
     let ticks=store.preparation_ticks()-before;
-    let stops=store.joints.borrow().work.terminal_builds-work.terminal_builds;
     let learned: u128=result.stages.iter().filter_map(|s| match s {
         plan::Stage::Learn{nanos,..}=>Some(*nanos), _=>None,
     }).sum();
-    println!("CMD from={origin} goal={:?} ns={ns} allocated_bytes={bytes} law_ticks={ticks} kernel_ns={learned} stop_builds={stops}",goal.cell);
-    #[cfg(feature="solve-counters")]
-    println!("LAYOUT from={origin} max_bundle_bytes={} stop_build_ns={} stop_lookups={}",store.max_bundle_bytes(),store.joints.borrow().work.terminal_build_ns-work.terminal_build_ns,store.joints.borrow().work.terminal_lookups-work.terminal_lookups);
+    println!("CMD from={origin} goal={:?} ns={ns} allocated_bytes={bytes} law_ticks={ticks} kernel_ns={learned}",goal.cell);
+    if before!=0 {assert_eq!(ticks,0,"new preparation for {:?}",goal.cell);}
     match result.outcome {
         PlanOutcome::Ready(p)=>{
             println!("END from={origin} goal={:?} T={} bits={:x?} profile={:?}",goal.cell,p.ticks,p.end.bits(),p.thinking);
-            // Verify the retained moving command at native resolution outside the timer.
-            if origin=="moving" && goal.cell==[-388,-61,-317] {
-                let programs=words::tiny_programs();
-                let mut state=from.clone();
-                let mut hit=None;
-                for w in &p.words {
-                    for t in 0..w.ticks {
-                        let prior=state.clone();
-                        let input=programs[w.program as usize].select(source,&state,t,w.args).unwrap().1;
-                        law::try_tick(&mut state,source,&input).unwrap();
-                        if goal.touched(&prior,&state) {hit.get_or_insert(state.t-from.t);}
-                    }
-                    println!("RETARGET_WORD program={} yaw={:?} ticks={}",w.program,w.args.refined_yaw,w.ticks);
+            let programs=words::tiny_programs();
+            let mut state=from.clone();
+            let mut hit=goal.touched(from,from).then_some(0);
+            for w in &p.words {
+                let program=&programs[w.program as usize];
+                let keys=program.held_input(w.args);
+                for t in 0..w.ticks {
+                    let before=state.bounding_box();
+                    let input=keys.unwrap_or_else(||program.select(source,&state,t,w.args).unwrap().1);
+                    law::try_tick(&mut state,source,&input).unwrap();
+                    if goal.touched_boxes(before,state.bounding_box()) {hit.get_or_insert(state.t-from.t);}
                 }
-                assert_eq!(hit,Some(p.ticks));
-                let expected=p.end.bits();
-                let actual=state.bits();
-                let differences:Vec<_>=actual.iter().zip(&expected).enumerate()
-                    .filter(|(_,pair)|pair.0!=pair.1).collect();
-                println!("RETARGET_NATIVE first_touch={} mismatched_words={differences:x?}",p.ticks);
+                assert_eq!(state.position,w.end.position,"word end at {} for {:?}",state.t,goal.cell);
+                assert_eq!(state.velocity,w.end.velocity,"word velocity at {} for {:?}",state.t,goal.cell);
             }
+            assert_eq!(hit,Some(p.ticks),"goal {:?}: replay {hit:?}, prediction {}",goal.cell,p.ticks);
             Some(p)
         }
         outcome=>{println!("REFUSED from={origin} goal={:?} outcome={outcome:?} reason={:?}",goal.cell,result.explanation); None}
@@ -94,6 +86,8 @@ fn real_time_per_command() {
         let d=10f64.powf(2.0+4.0*(lcg(s) as f64/(1u64<<31) as f64));
         Goal {cell:[(d*angle.cos()).round() as i32,-61,(d*angle.sin()).round() as i32]}
     };
+    let mut warmup=Vec::new();
+    command(&start,"first",Goal {cell:[0,-61,100]},&source,&store,&mut codec,&mut warmup).unwrap();
     // 1. New goals from standing, one after another, on the same living store.
     let mut times=Vec::new();let mut refused=0;let mut moving_starts=Vec::new();
     for _ in 0..n {
@@ -111,11 +105,14 @@ fn real_time_per_command() {
         if command(s,"moving",g,&source,&store,&mut codec,&mut times).is_none() {refused+=1;}
     }
     stats("new goal, while moving",&mut times,refused,10_000.0);
-    // 3. The same goal asked again (what the old "warm" figure measured), for comparison only.
-    let g=Goal {cell:[1_000_000,-61,0]};let _=solve(&start,g,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);
+    assert_eq!(refused,0);
+    // The original moving regression starts 265 ticks into the preceding jump word.
+    let mut retained=start.clone();
+    let input=law::Input {forward:true,jump:true,sprint:true,yaw:f32::from_bits(1135073362),..Default::default()};
+    for _ in 0..265 {law::try_tick(&mut retained,&source,&input).unwrap();}
+    let p=command(&retained,"retained",Goal {cell:[-388,-61,-317]},&source,&store,&mut codec,&mut Vec::new()).unwrap();
+    assert!(p.ticks<=1666,"retained moving command T={}",p.ticks);
     let mut times=Vec::new();
-    for _ in 0..n {let clock=Instant::now();let _=solve(&start,g,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);times.push(clock.elapsed().as_nanos());}
-    let mut audited=Vec::new();
-    command(&start,"repeat",g,&source,&store,&mut codec,&mut audited).unwrap();
+    for _ in 0..n {command(&start,"repeat",Goal {cell:[0,-61,100]},&source,&store,&mut codec,&mut times).unwrap();}
     stats("same goal again (repeat)",&mut times,0,1_000.0);
 }

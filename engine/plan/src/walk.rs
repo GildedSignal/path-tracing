@@ -57,7 +57,7 @@ pub fn settle<T: Timeline>(timeline: &T, column: [f64; 3], tick: u64) -> Result<
 pub struct Certificate {
     /// Ticks from the start state to the first touch of the goal.
     pub ticks: u32,
-    /// The same on the track's clock: from the first sample off A (Tracks.java, `onA`).
+    /// The same on the track's clock: from the last sample on A (Tracks.java, `onA`).
     pub clock: Option<u32>,
     /// The steps as replayed, cut at the touch.
     pub steps: Vec<Step>,
@@ -75,7 +75,7 @@ pub struct Certificate {
 pub fn certify<T: Timeline>(timeline: &T, programs: &[Program], start: &PlayerState, steps: &[Step], goal: &Goal, a: Option<BlockPos>, tube: bool) -> Result<Certificate, String> {
     let on_a = |state: &PlayerState| a.is_some() && state.on_ground && state.main_supporting_block == a;
     let mut state = start.clone();
-    let (mut left, mut total) = (if on_a(&state) { None } else { Some(0u32) }, 0u32);
+    let (mut origin, mut total) = (0u32, 0u32);
     let mut out = Certificate { ticks: 0, clock: None, steps: Vec::new(), ends: Vec::new(), tube: Vec::new(), reads: 0, end: start.clone() };
     let mut reads = std::collections::BTreeSet::new();
     for step in steps {
@@ -96,11 +96,11 @@ pub fn certify<T: Timeline>(timeline: &T, programs: &[Program], start: &PlayerSt
             }
             total += 1;
             if state.health <= 0.0 { return Err(format!("dead at tick {total}")); }
-            if left.is_none() && !on_a(&state) { left = Some(total); }
+            if on_a(&state) { origin = total; }
             if goal.touched(&before, &state) {
                 out.steps.push(Step { ticks: elapsed + 1, ..*step });
                 out.ends.push(state.bits());
-                (out.ticks, out.clock, out.reads, out.end) = (total, left.map(|left| total - left), reads.len(), state);
+                (out.ticks, out.clock, out.reads, out.end) = (total, (!on_a(&state)).then_some(total - origin), reads.len(), state);
                 return Ok(out);
             }
         }

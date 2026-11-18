@@ -1,53 +1,49 @@
-//! One loop. No source type, terrain name, uniform-ground flag, or legacy planner.
+//! One command extends a word, then certifies its swept corridor.
 use std::sync::Arc;
-use crate::{inline::List,state_view::{StateSource,StateAt,Cursor}};
-use law::{PlayerState,Vec3,BlockPos,World,codec::{Interner,LabelId,proof::Refusal}};
+use law::{Aabb,BlockPos,PlayerState,Vec3,codec::{Interner,LabelId,proof::Refusal}};
+use crate::{Goal,events::{self,Event,EventKind},inline::List,lattice,source::{CorridorSource,CorridorResult,CorridorProof},state_view::StateAt,store::{Gait,GeneratorStore,Phase,SPRINT,SPRINT_JUMP,WALK,sprint_allowed}};
 use words::Arguments;
-use crate::{Goal,events::{self,Event,EventKind},lattice,source::{CorridorSource,CorridorResult,CorridorProof},store::{GeneratorStore,WordKernel,WordBundle,SPRINT_JUMP,WALK,sprint_allowed}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Kit {BareLegs}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct Bracket {pub lb:u64,pub ub:Option<u64>}
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub enum Stage {Bracket,ClosedCheck,Extend,Cut,Compose,Allocate,Learn {program:u16,yaw:u16,ticks:u64,nanos:u128}}
+pub enum Stage {Bracket,ClosedCheck,Extend,Cut,Compose,Allocate,Learn {program:u16,ticks:u64,nanos:u128}}
 #[derive(Clone,Debug)]
 pub struct WordStep {pub program:u16,pub args:Arguments,pub ticks:u32,pub expected_end_t:u64,pub events:WordEvents,pub certificate:CorridorProof,pub end:StateAt}
-#[derive(Clone,Debug)]
-struct EventSpan {
-    kernel:Arc<WordKernel>,prefix:bool,start:[f64;2],start_t:u64,ticks:u64,
-}
 #[derive(Clone,Debug,Default)]
 pub struct WordEvents {
-    span:Option<EventSpan>, marks:List<Event,3>,
+    marks:List<Event,3>, span:Option<Span>,
     trace:std::cell::OnceCell<(Vec<Event>,usize)>,
 }
+#[derive(Clone,Debug)]
+struct Span {gait:Arc<Gait>,start:Motion,top:f64,held:bool,yaw:u16,ticks:u32,count:u32}
 impl WordEvents {
     fn trace(&self)->&(Vec<Event>,usize) {
         self.trace.get_or_init(|| {
-            let mut events=self.marks.to_vec();
-            let mut segments=0;
+            let mut events=self.marks.to_vec();let mut segments=0;
             if let Some(s)=&self.span {
-                let maps=if s.prefix {&s.kernel.transient_maps} else {&s.kernel.cycle_maps};
-                for (map,start) in maps.iter().zip(s.start) {
-                    segments+=map.trace_boundaries(start,s.ticks,|t|events.push(Event {
-                        tick:s.start_t+t,kind:EventKind::BinadeCrossing,
-                    })).1;
+                let mut m=s.start;let dir=direction(s.yaw);
+                let rows=if s.held {std::slice::from_ref(&s.gait.grounded)} else {&s.gait.phases};
+                let mut ds=[Vec::new(),Vec::new()];
+                let n=if s.count>1 {rows.len()} else {s.ticks as usize};
+                for _ in 0..n {
+                    let phase=m.phase;
+                    let d=m.tick(&rows[phase],dir,(phase+1)%rows.len(),s.top);
+                    for a in 0..2 {ds[a].push(d[a]);}
+                }
+                for (axis,(ds,p)) in ds.into_iter().zip([s.start.p.x,s.start.p.z]).enumerate() {
+                    segments+=events::Map::axis(axis,ds).trace_boundaries(p,s.ticks.into(),|t|
+                        events.push(Event {tick:s.start.t+t,kind:EventKind::BinadeCrossing})).1;
                 }
             }
-            events.sort_unstable_by_key(|e|(e.tick,event_order(&e.kind)));
+            events.sort_by_key(|e|e.tick);
             events.dedup();
             (events,segments)
         })
     }
     pub fn map_segments(&self)->usize {self.trace().1}
-}
-fn event_order(kind:&EventKind)->u8 {
-    match kind {
-        EventKind::BinadeCrossing=>0,EventKind::FoodGuard{..}=>1,
-        EventKind::LoadedBoundary=>2,EventKind::ZoneLabelBoundary=>3,
-        EventKind::YawSwitch=>4,EventKind::GoalBoundary=>5,
-    }
 }
 impl std::ops::Deref for WordEvents {
     type Target=[Event];
@@ -62,224 +58,228 @@ pub enum PlanOutcome {Ready(Plan),NeedsJoints {exception:BlockPos,exceptions:usi
 #[derive(Clone,Debug)]
 pub struct SolveResult {pub outcome:PlanOutcome,pub stages:List<Stage,16>,pub explanation:Option<String>}
 
-fn prepare(store:&GeneratorStore,label:LabelId,source:&impl World,from:&impl StateSource,program:u16,yaw:u16,stages:&mut List<Stage,16>)->Result<Arc<WordKernel>,String> {
-    if let Some(k)=store.get(label,from,program,yaw) {return Ok(k);}
-    let tick=store.preparation_ticks();let clock=std::time::Instant::now();
-    let observed=from.view().materialize();let answer=store.prepare(label,source,&observed,program,yaw);
-    stages.push(Stage::Learn {program,yaw,ticks:store.preparation_ticks()-tick,nanos:clock.elapsed().as_nanos()});answer
-}
-#[derive(Clone)]
-struct Leg<'a> {kernel:Arc<WordKernel>,from:Cursor<'a>,ticks:u64,cycle_only:bool}
-fn word_lower_bound(k:&WordKernel,from:&impl StateSource,goal:Goal)->u64 {
-    let step=k.max_body_step;
-    if step==0.0 {return u64::MAX;}
-    let zone=goal.zone();let p=from.view().position;
-    let extent=[p.x.abs(),p.y.abs(),p.z.abs(),zone.min.x.abs(),zone.min.y.abs(),zone.min.z.abs(),zone.max.x.abs(),zone.max.y.abs(),zone.max.z.abs()].into_iter().fold(0.0f64,f64::max)+step+from.view().phase.pose.height() as f64;
-    let ulp=2.0f64.powi(events::Binary64::of(extent.next_up()).exp);
-    let upper=(step+2.0*ulp*3.0f64.sqrt()).next_up();
-    (goal.gap(from)/upper).next_down().ceil().max(0.0) as u64
-}
-fn append_steps(out:&mut List<WordStep,12>,leg:&Leg<'_>,proof:&CorridorProof) {
-    let k=&leg.kernel;let head=if leg.cycle_only {0} else {leg.ticks.min(k.transient_ticks as u64)};
-    let rest=leg.ticks-head;let cycles=rest/k.cycle_period as u64;let tail=rest%k.cycle_period as u64;
-    let mut offset=0;let mut previous=leg.from.clone();
-    for (ticks,count) in [(head,1),(cycles*k.cycle_period as u64,cycles),(tail,1)] {
-        if ticks==0 {continue;}
-        offset+=ticks;
-
-        let before=previous.view();
-        let start=[before.position.x,before.position.z];
-        let prefix=offset<=head;
-        let maps=if prefix {&k.transient_maps} else {&k.cycle_maps};
-        let end=k.readout_position(&leg.from,offset,leg.cycle_only,maps[0].advance(start[0],ticks),maps[1].advance(start[1],ticks));
-        let events=WordEvents {span:Some(EventSpan {kernel:k.clone(),prefix,start,start_t:before.t,ticks}),..Default::default()};
-        previous=Cursor::Generated(end.clone());
-        out.push(WordStep {program:k.program,args:Arguments {count:count as u32,..k.arguments},ticks:ticks.try_into().expect("word tick width"),expected_end_t:end.t,events,certificate:proof.clone(),end});
+#[derive(Clone,Copy,Debug)]
+struct Motion {p:Vec3,v:Vec3,phase:usize,t:u64,wanted:Vec3}
+impl Motion {
+    fn tick(&mut self,row:&Phase,dir:[f64;2],next:usize,top:f64)->[f64;2] {
+        #[cfg(feature="solve-counters")] crate::solve_meter::phase(row);
+        if self.v.horizontal_sqr()<9.0e-6 {self.v.x=0.0;self.v.z=0.0;}
+        let axis=|v:f64,d:f64| (v+d*row.impulse)+d*row.forward;
+        let x=axis(self.v.x,dir[0]);let z=axis(self.v.z,dir[1]);
+        self.wanted=Vec3::new(x,row.wanted_y,z);
+        let moved=|d:f64|if row.contact && d.abs()<1.0e-7 {0.0} else {d};
+        let ds=[moved(x),moved(z)];
+        self.p.x+=ds[0];self.p.z+=ds[1];
+        self.p.y=if row.after.on_ground {top} else {self.p.y+row.dy};
+        self.v=Vec3::new((x*row.factor)*row.drag,row.after.velocity.y,(z*row.factor)*row.drag);
+        self.t+=1;self.phase=next;
+        ds
     }
 }
+fn direction(yaw:u16)->[f64;2] {let (x,z)=lattice::direction(yaw);[x,z]}
+fn dot(a:Vec3,b:[f64;2])->f64 {a.x*b[0]+a.z*b[1]}
+fn cross(a:Vec3,b:[f64;2])->f64 {a.x*b[1]-a.z*b[0]}
 
+struct Crossing<'a> {
+    gait:&'a Arc<Gait>, from:&'a PlayerState, goal:Goal, top:f64, radius:f64,
+    min:Vec3,max:Vec3, words:List<WordStep,12>, proof:CorridorProof, bearing_ns:u128,
+}
+impl Crossing<'_> {
+    fn include(&mut self,p:Vec3) {
+        self.min=Vec3::new(self.min.x.min(p.x),self.min.y.min(p.y),self.min.z.min(p.z));
+        self.max=Vec3::new(self.max.x.max(p.x),self.max.y.max(p.y),self.max.z.max(p.z));
+    }
+    fn emit(&mut self,start:Motion,m:Motion,row:&Phase,program:u16,yaw:u16,count:u64)->Result<(),String> {
+        if start.t==m.t {return Ok(());}
+        let mut end=StateAt::shared(row.after.clone());
+        end.position=m.p;end.velocity=m.v;end.movement=Some(m.wanted);end.t=m.t;end.yaw=lattice::yaw(yaw);
+        end.main_supporting_block=row.after.main_supporting_block.map(|_|[m.p.x.floor() as i32,self.proof.min[1],m.p.z.floor() as i32]);
+        end.health=self.from.health;end.food_level=self.from.food_level;end.food_tick_timer=self.from.food_tick_timer;
+        end.saturation=self.from.saturation;end.exhaustion=self.from.exhaustion;
+        let args=Arguments {count:count.try_into().map_err(|_|"count width")?,refined_yaw:Some(end.yaw),..Default::default()};
+        let ticks=(m.t-start.t).try_into().map_err(|_|"tick width")?;
+        let mut events=WordEvents {span:Some(Span {gait:self.gait.clone(),start,top:self.top,
+            held:program!=SPRINT_JUMP,yaw,ticks,count:args.count}),..Default::default()};
+        if self.words.last().is_some_and(|w|w.args.refined_yaw!=args.refined_yaw) {events.marks.push(Event {tick:start.t,kind:EventKind::YawSwitch});}
+        self.words.push(WordStep {program,args,ticks,expected_end_t:m.t,
+            events,certificate:self.proof.clone(),end});
+        Ok(())
+    }
+    // Momentum shifts the origin of the bearing. Sum the geometric tail of the
+    // carried velocity over one period; this chooses an aim, never a touch tick.
+    fn bearing(&self,m:Motion,rows:&[Phase])->[u16;2] {
+        let mut drag=1.0;let mut carry=0.0;
+        for i in 0..rows.len() {
+            let row=&rows[(m.phase+i)%rows.len()];
+            carry+=drag;drag*=row.factor*row.drag;
+        }
+        let d=self.goal.center().minus(m.p);
+        let memory=carry/(1.0-drag);
+        lattice::bracket(d.x-memory*m.v.x,d.z-memory*m.v.z)
+    }
+    fn run(&mut self,mut m:Motion)->Result<(),String> {
+        let gait=self.gait;
+        let mut held=gait.program==WALK;
+        loop {
+            let rows=if held {std::slice::from_ref(&gait.grounded)} else {&gait.phases};
+            let program=if held && gait.program==SPRINT_JUMP {SPRINT} else {gait.program};
+            let clock=std::time::Instant::now();
+            let pair=self.bearing(m,rows);
+            let yaw=pair[0];let dir=direction(yaw);
+            self.bearing_ns+=clock.elapsed().as_nanos();
+            let mut start=m;
+            loop {
+                let before=m;
+                let mut lo=before.p;let mut hi=before.p;
+                // A partial cycle at entry ends at the next landing.
+                for i in m.phase..rows.len() {
+                    let next=if i+1==rows.len() {0} else {i+1};
+                    m.tick(&rows[i],dir,next,self.top);
+                    lo=Vec3::new(lo.x.min(m.p.x),lo.y.min(m.p.y),lo.z.min(m.p.z));
+                    hi=Vec3::new(hi.x.max(m.p.x),hi.y.max(m.p.y),hi.z.max(m.p.z));
+                }
+                self.include(lo);self.include(hi);
+                let height=self.from.pose.height();
+                let body=|p|Aabb::player(p,height);
+                if self.goal.touched_boxes(body(lo),body(hi)) {
+                    let mut probe=before;
+                    for i in before.phase..rows.len() {
+                        let prior=probe.p;
+                        probe.tick(&rows[i],dir,if i+1==rows.len() {0} else {i+1},self.top);
+                        if self.goal.touched_boxes(body(prior),body(probe.p)) {
+                            self.emit(start,probe,&rows[i],program,yaw,1)?;
+                            return Ok(());
+                        }
+                    }
+                }
+                let remaining=self.goal.center().minus(m.p);
+                let projection=dot(remaining,dir);
+                // B can enter the next jump's swept horizontal interval. Read
+                // that jump first, then hold this landing if the jump misses B.
+                let edge=(self.radius+0.5)*(dir[0].abs()+dir[1].abs());
+                if projection<=edge && !held && before.phase==0 {
+                    m=before;
+                    self.emit(start,m,gait.phases.last().unwrap(),program,yaw,1)?;
+                    let ground_body=body(Vec3::new(m.p.x,self.top,m.p.z));
+                    let (above,below)=self.goal.axis_sides(ground_body,ground_body,1);
+                    if !(above && below) {return Err("goal lies outside the landing's vertical interval".into());}
+                    held=true;break;
+                }
+                if projection<=0.0 && held {
+                    self.emit(start,m,&gait.grounded,program,yaw,1)?;
+                    if remaining.horizontal_sqr()>=self.goal.center().minus(start.p).horizontal_sqr() {
+                        return Err("bearing cannot bring the body to the goal".into());
+                    }
+                    break;
+                }
+                if before.phase!=0 || m.v.x!=before.v.x || m.v.z!=before.v.z {continue;}
+
+                // At equal velocities the next period has the same addition operands.
+                // The bearing changes at the second table yaw, or at B's near face.
+                self.emit(start,m,rows.last().unwrap(),program,yaw,1)?;
+                let mut dx=List::<f64,16>::new();let mut dz=List::<f64,16>::new();
+                let mut probe=m;
+                for (i,row) in rows.iter().enumerate() {
+                    let d=probe.tick(row,dir,if i+1==rows.len() {0} else {i+1},self.top);
+                    dx.push(d[0]);dz.push(d[1]);
+                }
+                let displacement=Vec3::new(dx.iter().sum(),0.0,dz.iter().sum());
+                let speed=dot(displacement,dir);
+                if speed<=0.0 {return Err("word has zero advance".into());}
+                let count=((projection-edge)/speed).floor().max(0.0);
+                let other=direction(pair[1]);let det=cross(displacement,other);
+                let switch=cross(remaining,other)/det;
+                let count=if switch>=1.0 && switch<count {switch.floor()} else {count};
+                if count>f64::from(u32::MAX)/rows.len() as f64 {return Err("word exceeds script width".into());}
+                let q=count as u64;
+                start=m;
+                let at=|cycles|Vec3::new(events::advance_cycles(0,start.p.x,&dx,cycles),start.p.y,
+                    events::advance_cycles(1,start.p.z,&dz,cycles));
+                let enters=|end|[0,2].into_iter().all(|axis| {
+                    let (low,high)=self.goal.axis_sides(body(start.p),body(end),axis);
+                    low && high
+                });
+                let mut safe=q;
+                m.p=at(safe);
+                if safe>0 && enters(m.p) {
+                    let mut first=0;
+                    while first<safe {
+                        let mid=first+(safe-first)/2;
+                        if enters(at(mid)) {safe=mid;} else {first=mid+1;}
+                    }
+                    safe=first.saturating_sub(1);
+                    m.p=at(safe);
+                }
+                m.t+=safe*rows.len() as u64;
+                self.include(m.p);
+                self.emit(start,m,rows.last().unwrap(),program,yaw,safe)?;
+                if safe>0 {break;}
+                // The next period crosses the near face; take it through the
+                // same exact two-axis and vertical touch predicate.
+                start=m;
+            }
+            if m.t-self.from.t>Arguments::MAX_TICKS {return Err("sentence exceeds script width".into());}
+            if held {m.phase=0;}
+        }
+    }
+}
 pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store:&GeneratorStore,codec:&mut Interner,deadline_ticks:u64)->SolveResult {
-    let Kit::BareLegs=kit; // A new kit must supply its own bound and word data.
+    let Kit::BareLegs=kit;
     let mut stages=crate::list![Stage::Bracket,Stage::ClosedCheck];
     let bracket=Bracket {lb:to.lower_bound(from) as u64,ub:None};
-    if !store.bind_codec(codec) {return SolveResult {outcome:PlanOutcome::Unknown(Refusal::Schema),stages,explanation:Some("generator store belongs to another codec".into())};}
-    if to.touched(from,from) {
-        let label=match source.entry_label(codec,from) {Ok(label)=>label,Err(r)=>return SolveResult {outcome:PlanOutcome::Unknown(r),stages,explanation:None}};
-        return SolveResult {outcome:PlanOutcome::Ready(Plan {ticks:0,words:List::new(),end:StateAt::point(from.clone()),bracket:Bracket {lb:0,ub:Some(0)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking:Default::default()}),stages,explanation:None};
-    }
-    if source.difficulty()!=0 {return SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some("U1 requires invariant resource guards; server food crossings are not predicted".into())};}
-    // Read the certified joint relation for EVERY query. A known chain closes
-    // the bracket; an absent chain supplies no negative reach claim.
-    if let Some(route)=store.joints.borrow_mut().route(from,to) {
-        let label=route.words.first().unwrap().certificate.label;
-        stages.extend([Stage::Extend,Stage::Cut,Stage::Compose,Stage::ClosedCheck,Stage::Allocate]);
-        return SolveResult {outcome:PlanOutcome::Ready(Plan {ticks:route.ticks,words:route.words,end:route.end,
-            bracket:Bracket {lb:bracket.lb,ub:Some(route.ticks)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking:Default::default()}),stages,explanation:None};
-    }
-    stages.push(Stage::Extend);
-    let mut thinking=ThinkingCosts::default();let entry_clock=std::time::Instant::now();
-    let mut work=||->Result<(List<Leg<'_>,4>,LabelId,lattice::LatticeCost),String> {
-        let label=source.entry_label(codec,from).map_err(|e|format!("entry label: {e:?}"))?;
-        let delta=to.center().minus(from.position);let pair=lattice::bracket(delta.x,delta.z);
-        let program=if sprint_allowed(from) {SPRINT_JUMP} else {WALK};
-        let bundle=if let Some(bundle)=store.bundle(label,from,program,pair) {bundle} else {
-            let first=prepare(store,label,source,from,program,pair[0],&mut stages)?;
-            let c1=first.readout(from,first.transient_ticks as u64,false);
-            let second=prepare(store,label,source,&c1,program,pair[1],&mut stages)?;
-            let mut incumbents=Vec::new();let mut terminals=Vec::new();
-            for word in store.words() {if sprint_allowed(from) || word==WALK {incumbents.push(prepare(store,label,source,from,word,pair[0],&mut stages)?);}}
-            for phase in 0..second.cycle_period {
-                let state=second.phase(phase as usize);let mut rows=Vec::new();
-                for word in store.words() {if sprint_allowed(&state) || word==WALK {rows.push(prepare(store,label,source,&state,word,pair[1],&mut stages)?);}}
-                terminals.push(crate::store::StopWords::new(&rows));
-            }
-            let mut incumbent_terminals=Vec::new();
-            for gait in &incumbents {
-                let mut phases=Vec::new();
-                for phase in 0..gait.cycle_period {
-                    let state=gait.phase(phase as usize);let mut rows=Vec::new();
-                    for word in store.words() {if sprint_allowed(&state) || word==WALK {rows.push(prepare(store,label,source,&state,word,gait.yaw_index,&mut stages)?);}}
-                    phases.push(crate::store::StopWords::new(&rows));
-                }incumbent_terminals.push(phases);
-            }
-            store.file_bundle(label,from,program,pair,WordBundle {first,second,incumbents,terminals,incumbent_terminals})
+    let clock=std::time::Instant::now();
+    let mut work=||->Result<PlanOutcome,String> {
+        if !store.bind_codec(codec) {return Ok(PlanOutcome::Unknown(Refusal::Schema));}
+        let at_goal=to.touched(from,from);
+        let known=if at_goal {None} else {store.joints.borrow_mut().route(from,to)};
+        let label=match known.as_ref().and_then(|route|route.words.first()) {
+            Some(word)=>word.certificate.label,
+            None=>source.entry_label(codec,from).map_err(|e|format!("entry label: {e:?}"))?,
         };
-        let first=&bundle.first;
-        let c1=first.readout(from,first.transient_ticks as u64,false);
-        let second=&bundle.second;
-        let c2=second.readout(&c1,second.transient_ticks as u64,false);
-        thinking.entry_ns=entry_clock.elapsed().as_nanos();let bearing_clock=std::time::Instant::now();
-        let e=c2.position.minus(from.position);
-        let target=delta.minus(e);
-        let d1=first.bearing_displacement(to.center());let d2=second.bearing_displacement(to.center());let d=d1.plus(d2);
-        let radius=from.bounding_box().max.minus(from.position);
-        // A fundamental-cell rectangle for the bearing. It retains the whole
-        // Euclidean remainder; it never asserts that these counts touch B.
-        let lo=Vec3::new(target.x-d.x.max(0.0)-radius.x,0.0,target.z-d.z.max(0.0)-radius.z);
-        let hi=Vec3::new(target.x-d.x.min(0.0)+radius.x,0.0,target.z-d.z.min(0.0)+radius.z);
-        let cap=Arguments::MAX_COUNT/first.cycle_period.max(second.cycle_period);
-        let bearing=lattice::counts(d1,d2,lo,hi,cap);
-        thinking.bearing_ns=bearing_clock.elapsed().as_nanos();let inverse_clock=std::time::Instant::now();
-        let mut candidates:List<(u64,List<Leg<'_>,4>),32>=List::new();
-        // The same store words also supply an incumbent from the observed
-        // state, including displacements shorter than their entry transient.
-        let mut incumbents:List<_,4>=bundle.incumbents.iter().enumerate().map(|(i,k)|(word_lower_bound(k,from,to),i,k)).collect();
-        incumbents.sort_unstable_by_key(|&(lower,_,_)|lower);
-        for (lower,index,k) in incumbents {
-            let best=candidates.iter().map(|c|c.0).min().unwrap_or(words::Arguments::MAX_TICKS+1);
-            if lower>=best {continue;}
-            let head=k.transient_ticks as u64;
-            if lower<=head {
-                if let Some(t)=events::first_touch_readout(from.position,&k.transient_maps[0],&k.transient_maps[1],&k.prefix_geometry(from),to,head.min(best-1),false) {
-                    candidates.push((t,crate::list![Leg {kernel:k.clone(),from:Cursor::Observed(from),ticks:t,cycle_only:false}]));
-                }
+        let mut thinking=ThinkingCosts::default();
+        let route=if at_goal {crate::joints::Route {words:List::new(),ticks:0,end:StateAt::point(from.clone())}}
+        else if let Some(r)=known {stages.extend([Stage::Extend,Stage::Cut,Stage::Compose]);r}
+        else {
+            if source.difficulty()!=0 || from.effects || from.boat || from.riding || from.fall_flying || from.flying || from.using_item || from.in_lava || from.in_water || from.crouching {
+                return Err("word needs bare legs and invariant resource guards".into());
             }
-            if head>=best {continue;}
-            let base=k.readout(from,head,false);
-            let horizon=events::horizon(&base,to,k.cycle_increments.iter().copied(),k.cycle_displacement);
-            let approach=events::Approach::new(&k.cycle_maps,base.position,horizon);
-            let Some(touch)=approach.touch(base.position,&k.cycle_geometry(&base),to) else {continue;};
-            let touch=touch.max(1);let p=k.cycle_period as u64;let block=(touch-1)/p*p;
-            for phase in 0..p {
-                let mut cut=block+phase;if cut>=touch {if cut<p {continue;}cut-=p;}
-                let carried=k.readout_position(&base,cut,true,approach.axes[0].at(cut),approach.axes[1].at(cut));
-                let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
-                if head+cut+u64::from(to.lower_bound(&carried)).max(1)>=best {continue;}
-                let stops=store.stop_words(&bundle.incumbent_terminals[index][phase as usize]);
-                let Some((terminal,t))=store.joints.borrow_mut().terminal(label,k,phase as u32,&stops,&carried,to)? else {continue;};
-                let total=head+cut+t;let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
-                if total>=best {continue;}
-                candidates.push((total,crate::list![Leg {kernel:k.clone(),from:Cursor::Observed(from),ticks:head+cut,cycle_only:false},Leg {kernel:terminal,from:Cursor::Generated(carried),ticks:t,cycle_only:false}]));
-            }
-        }
-        let mut lattice_cost=lattice::LatticeCost::default();
-        let mut bearings:List<_,2>=List::new();
-        if let Some((q,cost))=bearing {lattice_cost=cost;bearings.push(q);}
-        if let Some(q)=lattice::bearing_cell(d1,d2,target) {if !bearings.contains(&q) {bearings.push(q);}}
-        for q in bearings {
-            let t1=first.transient_ticks as u64+q[0] as u64*first.cycle_period as u64;
-            let end1=first.readout(from,t1,false);
-            let t2=second.transient_ticks as u64+q[1] as u64*second.cycle_period as u64;
-            let base=second.readout(&end1,t2,false);
-            // Extend to the goal event, relaxing only vertical eligibility to
-            // locate its approach. The terminal preimage restores all phases.
-            let horizon=events::horizon(&base,to,second.cycle_increments.iter().copied(),second.cycle_displacement);
-            let approach=events::Approach::new(&second.cycle_maps,base.position,horizon);
-            if let Some(touch)=approach.touch(base.position,&second.cycle_geometry(&base),to) {
-                let p=second.cycle_period as u64;
-                let block=(touch-1)/p*p;
-                for phase in 0..p {
-                    let mut cut=block+phase;
-                    if cut>=touch {if cut<p {continue;}cut-=p;}
-                    let carried=second.readout_position(&base,cut,true,approach.axes[0].at(cut),approach.axes[1].at(cut));
-                    let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
-                    if t1+t2+cut+u64::from(to.lower_bound(&carried)).max(1)>=best {continue;}
-                    let stops=store.stop_words(&bundle.terminals[phase as usize]);
-                    let Some((terminal,t))=store.joints.borrow_mut().terminal(label,second,phase as u32,&stops,&carried,to)? else {continue;};
-                    let total=t1+t2+cut+t;
-                    let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
-                    if total>=best {continue;}
-                    let legs=crate::list![Leg {kernel:first.clone(),from:Cursor::Observed(from),ticks:t1,cycle_only:false},
-                        Leg {kernel:second.clone(),from:Cursor::Generated(end1.clone()),ticks:t2,cycle_only:false},
-                        Leg {kernel:second.clone(),from:Cursor::Generated(base.clone()),ticks:cut,cycle_only:true},
-                        Leg {kernel:terminal,from:Cursor::Generated(carried),ticks:t,cycle_only:false}];
-                    candidates.push((total,legs));
-                }            }
-        }
-        let (_,legs)=candidates.into_iter().min_by_key(|(ticks,_)|*ticks).ok_or("no word preimage reaches the goal")?;
-        thinking.inverse_ns=inverse_clock.elapsed().as_nanos();
-        Ok((legs,label,lattice_cost))
+            stages.push(Stage::Extend);
+            let program=if sprint_allowed(from) {SPRINT_JUMP} else {WALK};
+            let ticks=store.preparation_ticks();
+            let g=store.gait(label,source,from,program)?;
+            thinking.entry_ns=clock.elapsed().as_nanos();
+            if store.preparation_ticks()!=ticks {stages.push(Stage::Learn {program,ticks:store.preparation_ticks()-ticks,nanos:thinking.entry_ns});}
+            let support=source.support_cell(from);
+            let height=source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
+            let top=f64::from(support[1])+height;
+            let phase=g.entry(from,top).ok_or("vertical phase outside this word")?;
+            let m=Motion {p:from.position,v:from.velocity,phase,t:from.t,wanted:from.movement_this_tick.unwrap_or_default()};
+            let radius=Aabb::player(Vec3::default(),from.pose.height()).max.x;
+            let mut crossing=Crossing {gait:&g,from,goal:to,top,radius,min:m.p,max:m.p,words:List::new(),
+                proof:CorridorProof {label,min:support,max:support,version:law::LAW_HASH},bearing_ns:0};
+            let time=std::time::Instant::now();
+            let arrival=crossing.run(m);
+            thinking.bearing_ns=crossing.bearing_ns;
+            thinking.inverse_ns=time.elapsed().as_nanos()-thinking.bearing_ns;
+            let time=std::time::Instant::now();
+            let lo=[(crossing.min.x-radius).floor() as i32,support[1].min(crossing.min.y.floor() as i32),(crossing.min.z-radius).floor() as i32];
+            let hi=[(crossing.max.x+radius).floor() as i32,(crossing.max.y+f64::from(from.pose.height())).floor() as i32,(crossing.max.z+radius).floor() as i32];
+            let proof=match source.corridor_query(codec,label,lo,hi) {
+                CorridorResult::Clear(p)=>p,
+                CorridorResult::Exception {first_pos,exceptions}=>{stages.push(Stage::Cut);store.joints.borrow_mut().enqueue(from,bracket.lb,format!("corridor exception {first_pos:?}"));return Ok(PlanOutcome::NeedsJoints {exception:first_pos,exceptions,bracket});},
+                CorridorResult::Unknown(r)=>return Ok(PlanOutcome::Unknown(r)),
+            };
+            arrival?;
+            let mut words=crossing.words;
+            for w in &mut words {w.certificate=proof.clone();}
+            if let Some(w)=words.first_mut() {w.events.marks.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
+            if let Some(w)=words.last_mut() {w.events.marks.push(Event {tick:w.end.t,kind:EventKind::GoalBoundary});}
+            stages.extend([Stage::Cut,Stage::Compose]);
+            thinking.output_ns=time.elapsed().as_nanos();
+            crate::joints::compose_chain(from,to,words,&mut store.joints.borrow_mut().work)
+        };
+        stages.extend([Stage::ClosedCheck,Stage::Allocate]);
+        Ok(PlanOutcome::Ready(Plan {ticks:route.ticks,words:route.words,end:route.end,bracket:Bracket {lb:bracket.lb,ub:Some(route.ticks)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking}))
     };
-    let (legs,label,lattice_cost)=match work() {Ok(v)=>v,Err(explanation)=>return SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some(explanation)}};
-    let output_clock=std::time::Instant::now();
-    let mut min=from.position;let mut max=from.position;
-    let mut halo=[[0,0];3];
-    for leg in &legs {
-        let (lo,hi)=leg.kernel.envelope_view(&leg.from,leg.ticks,leg.cycle_only);
-        min=Vec3::new(min.x.min(lo.x),min.y.min(lo.y),min.z.min(lo.z));max=Vec3::new(max.x.max(hi.x),max.y.max(hi.y),max.z.max(hi.z));
-        for (a,h) in halo.iter_mut().enumerate() {h[0]=h[0].min(leg.kernel.cycle_reads_relative[a][0]);h[1]=h[1].max(leg.kernel.cycle_reads_relative[a][1]);}
-    }
-    let low=[min.x.floor() as i32+halo[0][0],min.y.floor() as i32+halo[1][0],min.z.floor() as i32+halo[2][0]];
-    let high=[max.x.floor() as i32+halo[0][1],max.y.floor() as i32+halo[1][1],max.z.floor() as i32+halo[2][1]];
-    let proof=match source.corridor_query(codec,label,low,high) {
-        CorridorResult::Clear(p)=>p,
-        CorridorResult::Exception {first_pos,exceptions}=>{stages.push(Stage::Cut);store.joints.borrow_mut().enqueue(from,bracket.lb,format!("corridor exception {first_pos:?}"));return SolveResult {outcome:PlanOutcome::NeedsJoints {exception:first_pos,exceptions,bracket},stages,explanation:None};},
-        CorridorResult::Unknown(r)=>return SolveResult {outcome:PlanOutcome::Unknown(r),stages,explanation:None},
-    };
-    // A goal boundary and a terrain boundary go through the same cut/extend.
-    stages.extend([Stage::Cut,Stage::Extend,Stage::Compose]);
-    let mut words=List::new();for leg in &legs {append_steps(&mut words,leg,&proof);}
-    let end=words.last().map(|w|w.end.clone()).unwrap_or_else(||StateAt::point(from.clone()));
-    if let Some(step)=words.first_mut() {step.events.marks.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
-    for i in 1..words.len() {if words[i].args.refined_yaw!=words[i-1].args.refined_yaw {let tick=words[i-1].expected_end_t;words[i].events.marks.push(Event {tick,kind:EventKind::YawSwitch});}}
-    if let Some(step)=words.last_mut() {step.events.marks.push(Event {tick:end.t,kind:EventKind::GoalBoundary});}
-    let route=crate::joints::compose_chain(from,to,words,&mut store.joints.borrow_mut().work);let words=route.words;let ticks=route.ticks;let end=route.end;
-    stages.extend([Stage::ClosedCheck,Stage::Allocate]);
-    thinking.output_ns=output_clock.elapsed().as_nanos();
-    SolveResult {outcome:PlanOutcome::Ready(Plan {ticks,words,end,bracket:Bracket {lb:bracket.lb,ub:Some(ticks)},label,deadline:deadline_ticks,lattice_cost,thinking}),stages,explanation:None}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn approach_waits_for_minor_axis() {
-        use crate::source::GeneratorSuperflatSource;
-        let source=GeneratorSuperflatSource::new(-61,law::Block::full(),[-1024,-64,-1024],[1024,20,1024]);
-        let start=crate::settle(&crate::Still(&source),[0.5,-60.0,0.5],0).unwrap();
-        let store=GeneratorStore::default();
-        let label=crate::source::label(&mut Interner::default(),&source,&start).unwrap();
-        let yaw=lattice::bracket(2.0,1.0)[0];
-        let k=store.prepare(label,&source,&start,WALK,yaw).unwrap();
-        let mut base=k.readout(&start,k.transient_ticks as u64,false);
-        // X starts inside B. The smaller Z displacement reaches its face on tick two.
-        let goal=Goal {cell:[0,-61,0]};
-        base.position.x=0.0;
-        base.position.z= -law::Aabb::player(Vec3::default(),start.pose.height()).max.z
-            -1.5*k.cycle_increments[0].z;
-        let geometry=k.cycle_geometry(&base);
-        assert_eq!(events::first_touch_readout(base.position,&k.cycle_maps[0],&k.cycle_maps[1],&geometry,goal,4,false),Some(2));
-        let approach=events::Approach::new(&k.cycle_maps,base.position,4);
-        assert_eq!(approach.touch(base.position,&geometry,goal),Some(2));
-    }
+    match work() {Ok(outcome)=>SolveResult {outcome,stages,explanation:None},Err(e)=>SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some(e)}}
 }

@@ -308,6 +308,8 @@ impl CollisionContext {
 pub trait World {
     /// Observation at the shared native tick entry, including refused ticks.
     fn observe_tick(&self) {}
+    fn observe_air_travel(&self, _forward: f64, _drag: f32) {}
+    fn observe_speed_factor(&self, _factor: f64) {}
     fn observe_axis_contact(&self,_contact:crate::contact::AxisContact) {}
     fn block(&self, position: BlockPos) -> &Block;
 

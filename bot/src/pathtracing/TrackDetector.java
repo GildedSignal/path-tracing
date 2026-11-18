@@ -30,6 +30,8 @@ final class TrackDetector {
             boolean wasArmed = armed;
             running = false;
             armed = true;
+            startTick = tick;
+            startGameTime = gameTime;
             ticks = 0;
             gameTicks = 0;
             boolean refill = rearmRequested;
@@ -40,8 +42,6 @@ final class TrackDetector {
         if (armed) {
             armed = false;
             running = true;
-            startTick = tick;
-            startGameTime = gameTime;
             event = Event.START;
         }
         if (running) {

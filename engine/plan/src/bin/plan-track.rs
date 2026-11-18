@@ -1,4 +1,4 @@
-﻿use std::{collections::HashMap, path::PathBuf, time::Instant};
+use std::{collections::HashMap, path::PathBuf, time::Instant};
 use plan::flight::{fly_with_budget, track_at};
 
 struct View(PathBuf);
@@ -30,7 +30,7 @@ fn run() -> Result<(u32, u128), String> {
         }
     }
     if start.as_deref() != Some("settled") { return Err("only --start settled is supported; PlayerState::from_bits is unavailable".into()); }
-    let mode = match mode.as_deref() { Some("3") => '3', Some("5") => '5', Some("b") => 'b', _ => return Err("mode must be 3, 5, or b".into()) };
+    let mode = match mode.as_deref() { Some("solve") => 's', Some("3") => '3', Some("5") => '5', Some("b") => 'b', _ => return Err("mode must be solve, 3, 5, or b".into()) };
     let out = out.ok_or("missing --out")?;
     let known = include_str!("../../../world/tests/fixtures/tracks.txt").lines().find(|line| line.split_whitespace().next() == Some(name.as_str()));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -50,19 +50,20 @@ fn run() -> Result<(u32, u128), String> {
     let bounds = std::fs::read_to_string(view.0.join("bounds.txt")).map_err(|e| e.to_string())?;
     let track = track_at(known.unwrap_or(&bounds), &records, &view.0).map_err(|e| format!("track does not load: {e}"))?;
     drop(view);
+    if mode == 's' { return plan::flight::solve_track(&track,&out); }
     let mut log = Vec::new();
     let row = fly_with_budget(&track, mode, &words::tiny_programs(), &mut HashMap::new(), 20.0, false, &mut log, cap, Some(&out));
     if !row.found {
         let log = String::from_utf8_lossy(&log);
         return Err(log.lines().find(|line| line.contains("NO SENTENCE:")).unwrap_or("search found no sentence").replace('\n', " "));
     }
-    Ok((row.ticks, started.elapsed().as_millis()))
+    Ok((row.ticks, started.elapsed().as_micros()))
 }
 
 fn main() {
     let result = std::panic::catch_unwind(run);
     match result {
-        Ok(Ok((ticks, ms))) => println!("SENTENCE {ticks} thinking {ms}"),
+        Ok(Ok((ticks, micros))) => println!("SENTENCE {ticks} thinking {micros}"),
         Ok(Err(reason)) => { println!("NO SENTENCE {reason}"); std::process::exit(3); }
         Err(_) => { println!("NO SENTENCE planner or export failed"); std::process::exit(3); }
     }

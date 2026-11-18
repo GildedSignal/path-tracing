@@ -435,7 +435,8 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
     } else {
         1.0
     };
-    write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, friction_speed(state, world, f), read_state!(world, state.yaw)));
+    let acceleration = friction_speed(state, world, f);
+    write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, acceleration, read_state!(world, state.yaw)));
     handle_climbable(state, world);
     let collision = move_player(state, world, read_state!(world, state.velocity))?;
     let mut velocity = read_state!(world, state.velocity);
@@ -451,6 +452,7 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
     };
     let drag = math::modified_friction(0.91, read_state!(world, state.air_drag_modifier));
     let horizontal = f*drag;
+    world.observe_air_travel(movement.z * acceleration as f64, horizontal);
     let vertical = math::modified_friction(0.98, read_state!(world, state.air_drag_modifier));
     write_state!(world, state.velocity) = Vec3::new(velocity.x*horizontal as f64, vy*vertical as f64, velocity.z*horizontal as f64);
     Ok(collision)
@@ -800,6 +802,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     }
     let factor=speed_factor(state, world);
     let factor=(factor+read_state!(world, state.movement_efficiency)*(1.0f32-factor)) as f64;
+    world.observe_speed_factor(factor);
     write_state!(world, state.velocity)=read_state!(world, state.velocity).multiply(Vec3::new(factor, 1.0, factor));
     Ok(Some((wanted, moved)))
 }
