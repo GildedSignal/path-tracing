@@ -4,7 +4,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## In flight
 
-- **Astra 6.2, `jobs/flat-ground`** (worktree `D:\path-tracing-wt\flat-ground`, from `75b2b90`, launched 15:40): first the new core flies in his game (`plan-track --mode solve` writes the tick script the mod plays), then flat ground as the map says: the gait stored once, the yaw put in, nothing relearned per command. She was launched before the job-watcher hook existed, so a background Bash waiter wakes the integrator; if it is gone, check `jobs\flat-ground\last.md` and the worktree. Codex week at 89%: this is the last Astra run before its reset.
+- **Astra 6.2, `jobs/flat-ground`: stopped, prompt rewritten, waiting for him to see it.** Her first run (15:54–15:58, a prompt from before the map) stopped on its own stop rule: the predicted T counts from the last tick on A, the track clock from the first tick off it (300 against 299 on `straight100`). The map decides it (T from the click), so the new prompt moves the detector's origin and keeps "stop" only for a broken one mechanism. Next: a fresh run, not a resume, after `wt/flat-ground` is fast-forwarded to `main`. Codex week at 89%: the last Astra run before its reset.
 - **Hydrogen's port build A** (`wt/port-build-a`: mining speed, boat, elytra boost, ender pearl): builds and passes; its Sonnet judge could not run commands and judged by reading. Merge after a flight.
 
 ## The overhaul (`jobs/overhaul/plan.md`, approved S240): state
