@@ -29,7 +29,7 @@ His words are the source; each line names its turn (the register and the verbati
 ## Working
 
 19. **Fly early, then iterate by the bottleneck** (X4: the SpaceX loop; S20: cathedral for the law and the representation). Every step ends in a flight he can use.
-20. **Work enters only through a bottleneck on the goal** (S87). No job without a consumer; an idle meter is not waste.
+20. **Every meter works** (S241: GLM "waiting doing nothing for now which is bad"). The bottleneck on the goal comes first; idle companions take the next useful work.
 21. **Less code is better on every level** (S44, S49). Each step ends by deleting what it made dead.
 22. **Agency for the companions** (S237): a clear job, conditions and gate; how they reach it is theirs. Only what cannot be undone stays closed.
 23. **The right mind for the job; a smaller model never writes for a bigger one** (S10, S12, S174, S210).

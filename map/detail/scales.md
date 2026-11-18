@@ -140,7 +140,7 @@ A crash mid-mission leaves water flowing and blocks placed. Obligations are writ
 
 ### 4.10 What we don't build
 
-- A mob AI port before it has a consumer (S20 stands: mobs are law; they stay cones until a mob-farm word or a fight needs more).
+- A mob AI port (S20 stands: mobs are law; they stay cones until a mob-farm word or a fight needs more).
 - A worldgen port.
 - A search per bot per decision at swarm scale (shared fields, plus one replay).
 - Discs, observation and validation for bots.

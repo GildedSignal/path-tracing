@@ -34,7 +34,7 @@ finish() {
   if [[ ${active:-false} == true ]]; then
     capture_changes interrupted.patch || status=1
   fi
-  # The author transcript stays out of the run folder until the checker has exited.
+  # The author transcript joins the run folder after the author has exited.
   cp -- "$scratch/"*-prompt.md "$scratch/"*.log "$out/" 2>/dev/null || true
   scrub_results "$out" || status=1
   rm -f -- "$scratch/"*-prompt.md "$scratch/"*.log "$scratch/index" "$scratch/index.lock"
@@ -44,7 +44,7 @@ finish() {
 main() {
   [[ ${GITHUB_ACTIONS:-} == true || ${GLM_LOCAL:-} == S43 ]] || die 'GLM runs only on GitHub Actions or through scripts/glm-local.ps1 (S43); local verification must use the offline stub test'
   [[ $# == 2 || $# == 3 ]] || die 'Usage: lab/run.sh <lens> <run-id> [author-minutes]'
-  local lens=$1 id=$2 minutes=${3:-60} checker_minutes author_status=0 checker_status=0 grade claim first author_complete=true
+  local lens=$1 id=$2 minutes=${3:-60} author_status=0 state claim first author_complete=true
   [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README ]] || die 'Invalid lens name'
   [[ $id =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die 'Invalid run id'
   [[ $minutes =~ ^[1-9][0-9]{0,2}$ ]] && (( minutes <= 180 )) || die 'author-minutes must be an integer from 1 to 180'
@@ -64,7 +64,6 @@ main() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   printf '%s\n' "$base" > "$out/base"
-  checker_minutes=$(( (minutes + 1) / 2 ))
   {
     preamble
     cat "jobs/$lens/prompt.md"
@@ -91,11 +90,11 @@ PROMPT
     rm -f -- "$out/dossier.md"
     printf 'Claim: The author produced no dossier.\n' > "$out/dossier.md"
   fi
-  # No checker session (S235: "cheaper to fix than to prevent"): the work is judged in the game and by the integrator.
+  # The work is judged in the game and by the integrator (S235: "cheaper to fix than to prevent").
   claim=$(grep -m1 '^Claim: ' "$out/dossier.md" | sed 's/^Claim: //' | tr -d '' || true)
-  grade=unchecked; [[ $author_complete == true && $author_status == 0 ]] || grade=incomplete
+  state=done; [[ $author_complete == true && $author_status == 0 ]] || state=incomplete
   claim=${claim:-The author produced no one-sentence claim.}
-  printf '%s | %s | %s | %s\n' "$id" "$lens" "$grade" "$claim" > "$out/DONE"
+  printf '%s | %s | %s | %s\n' "$id" "$lens" "$state" "$claim" > "$out/DONE"
   [[ $author_status == 0 ]]
 }
 main "$@"
