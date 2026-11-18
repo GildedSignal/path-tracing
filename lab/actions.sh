@@ -44,8 +44,8 @@ main() {
     echo "Choose 1 to $max_lenses space-separated lenses" >&2; exit 2;
   }
   for lens in "${lenses[@]}"; do
-    [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README && -f lab/lenses/$lens.md ]] || {
-      echo 'Each lens must name an existing lab/lenses/<lens>.md file' >&2; exit 2;
+    [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README && -f jobs/$lens/prompt.md ]] || {
+      echo 'Each name must be a job with jobs/<id>/prompt.md' >&2; exit 2;
     }
   done
   host=$(mktemp -d "$RUNNER_TEMP/glm-lab.XXXXXXXX")

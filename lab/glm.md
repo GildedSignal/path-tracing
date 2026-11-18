@@ -44,4 +44,5 @@ GLM writes port code only against the harness (S208), never designs (Opus does),
 - **GLM's binding limit is its 5-hour token window.** On 9 November, about 18 lanes (each an author plus a checker) used one window. The usage bar lags, so a checker that dies on HTTP 429 leaves a "lead" grade that means nothing: read `checker.log` before trusting one.
 - **Launch:** `scripts\glm-local.ps1 -Lenses "<space-separated>" -Minutes 60`. Results go to `lab\results\local-*`, which git ignores. Z.ai refuses GitHub's machines, so the workflow was removed.
 - **The key** is stored by `scripts\set-glm-key.ps1` (one click, a Windows dialog, encrypted for Julien's account). It goes only into an omp process's environment, and runners delete any output file that contains it.
+- **No lens library, no queue** (S235): a GLM run is a prompt the integrator writes, `jobs/<id>/prompt.md`; deltas against the game are fixed when seen, not prevented.
 - **No wiki** (S234, 18 November): a result lives in its run folder (`dossier.md`, `check.md`) until it is ported; the code is the record.

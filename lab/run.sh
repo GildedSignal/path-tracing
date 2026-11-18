@@ -51,7 +51,7 @@ main() {
   [[ -n ${ZAI_API_KEY:-} ]] || die 'ZAI_API_KEY is missing'
   command -v omp >/dev/null || die 'omp is missing; run bash lab/setup.sh on the Actions runner'
   cd "$(git rev-parse --show-toplevel)"
-  [[ -f lab/lenses/$lens.md ]] || die "Missing integrator lens: lab/lenses/$lens.md"
+  [[ -f jobs/$lens/prompt.md ]] || die "Missing prompt: jobs/$lens/prompt.md"
   [[ -z $(git status --porcelain --untracked-files=all --ignored) ]] || die 'Refusing a dirty worktree (including ignored files); use a fresh disposable worktree'
   out=lab/results/$id
   [[ ! -e $out && ! -L $out ]] || die 'Run folder already exists'
@@ -67,7 +67,7 @@ main() {
   checker_minutes=$(( (minutes + 1) / 2 ))
   {
     preamble
-    cat "lab/lenses/$lens.md"
+    cat "jobs/$lens/prompt.md"
     cat <<PROMPT
 
 ## This run
