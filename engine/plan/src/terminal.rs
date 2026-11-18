@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use law::codec::LabelId;
 use crate::{Goal,store::WordKernel,state_view::{StateSource,View}};
-#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Chart {pub exponent:u64,pub edge:i32,pub interior:bool}
 fn chart(cell:i32,pad:f64)->(Chart,i32) {
     let lo=cell as f64-pad;let hi=cell as f64+1.0+pad;
@@ -15,7 +15,7 @@ fn chart(cell:i32,pad:f64)->(Chart,i32) {
         (Chart {exponent:tag(lo),edge:0,interior:true},middle as i32)
     } else {(Chart {exponent:tag(cell as f64),edge:cell,interior:false},cell)}
 }
-#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct Key {pub label:u32,pub gait:u64,pub phase:u32,pub charts:[Chart;2],pub y:u64,pub target_y:i32}
 #[derive(Clone,Debug)]
 pub struct Row {pub intervals:[(i128,i128);2],pub ticks:u32,pub word:usize}
@@ -34,10 +34,12 @@ impl Request {
 }
 fn replace(mut view:View<'_>,axis:usize,x:f64)->View<'_> {if axis==0 {view.position.x=x;}else {view.position.z=x;}view}
 fn axis_preimage(k:&Arc<WordKernel>,v:View<'_>,goal:Goal,t:u64,axis:usize,domain:(u64,u64))->Option<(u64,u64)> {
+    // A horizontal half-space reads one coordinate. Both boxes retain the
+    // law's player width and Goal still owns the closed-face comparison.
+    let body=|p|law::Aabb::player(law::Vec3::new(p,v.position.y,p),v.phase.pose.height());
     let sides=|bits| {
-        let at=replace(v,axis,crate::joints::unordered(bits));
-        let before=k.readout(&at,t-1,false);let after=k.readout(&at,t,false);
-        let b=before.bounding_box();let a=after.bounding_box();goal.axis_sides(b,a,axis)
+        let (before,after)=k.axis_step(axis/2,crate::joints::unordered(bits),t);
+        goal.axis_sides(body(before),body(after),axis)
     };
     let (mut lo,mut hi)=domain;
     if !sides(hi).0 || !sides(lo).1 {return None;}
@@ -73,7 +75,6 @@ impl Set {
         Ok(Self {key:request.key,words:words.to_vec(),rows,canonical:[goal.cell[0],goal.cell[2]],domain,law_hash:law::LAW_HASH})
     }
     pub fn lookup(&self,from:&impl StateSource,goal:Goal)->Option<(Arc<WordKernel>,u64)> {
-        if self.law_hash!=law::LAW_HASH {return None;}
         let p=from.view().position;
         let entry=[crate::joints::ordered(p.x) as i128-crate::joints::ordered(goal.cell[0] as f64) as i128,
                    crate::joints::ordered(p.z) as i128-crate::joints::ordered(goal.cell[2] as f64) as i128];

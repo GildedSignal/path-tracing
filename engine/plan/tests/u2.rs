@@ -295,6 +295,19 @@ fn u2_kill10_discovered_program_current_record() {
     let counted=MeteredWorld::new(&w);let result=plan::solve(&start,goal,plan::Kit::BareLegs,&counted,&store,&mut codec,u64::MAX);
     let plan::PlanOutcome::Ready(p)=result.outcome else {panic!("no witnessed route")};
     assert_eq!(first_touch,Some(expected));assert_eq!(p.ticks,expected);assert!(expected<=169);assert_eq!(p.end.bits(),s.bits());assert_eq!(counted.ticks(),0);
+    let batch=16;
+    let mut samples=Vec::new();
+    for _ in 0..60 {
+        let clock=std::time::Instant::now();
+        for _ in 0..batch {
+            let r=std::hint::black_box(plan::solve(&start,goal,plan::Kit::BareLegs,&counted,&store,&mut codec,u64::MAX));
+            assert!(matches!(r.outcome,plan::PlanOutcome::Ready(ref plan) if plan.ticks==expected));
+        }
+        samples.push(clock.elapsed().as_nanos()/batch);
+    }
+    samples.sort_unstable();
+    assert_eq!(counted.ticks(),0);
+    println!("SEEN_TRACK_REPEAT batch={batch} min_ns={} median_ns={} p90_ns={} max_ns={} samples_ns={samples:?}",samples[0],(samples[29]+samples[30])/2,samples[53],samples[59]);
     println!("U2_KT10_REPLAY best={expected} human=169 margin={} law_hash={:x?} cold_template_bytes={} cold_state_bytes={} edges={} acting_native_ticks=0 first_touch_exact=true",169-expected,law::LAW_HASH,store.joints.borrow().template_bytes(),store.joints.borrow().cold_state_bytes(),store.joints.borrow().edge_count());
 }
 
@@ -422,6 +435,22 @@ fn u2_all_family_patterns_diagnostic() {
 
 #[path="u2b/pin_gate.rs"]
 mod s203;
+
+#[test]
+fn contact_observation_preserves_native_recurrence() {
+    for (name, world, start, input, lo, hi, _, _) in s203::fixtures() {
+        for x in [lo, hi] {
+            let mut plain = start.clone();
+            plain.position.x = x;
+            let mut observed = plain.clone();
+            for tick in 1..=24 {
+                law::try_tick(&mut plain, &world, &input).unwrap();
+                law::contact::tick(&mut observed, &world, &input).unwrap();
+                assert_eq!(plain.bits(), observed.bits(), "{name} x={x} tick={tick}");
+            }
+        }
+    }
+}
 
 #[path="u2b/pins_point_hold.rs"]
 mod s203_gate;

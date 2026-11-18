@@ -1,4 +1,4 @@
-﻿//! Owned handles to immutable phase templates. A readout contains the changing
+//! Owned handles to immutable phase templates. A readout contains the changing
 //! coordinates/resources, not another PlayerState. Materialization is explicit.
 use std::sync::Arc;
 use law::{PlayerState,Vec3,BlockPos};
@@ -16,8 +16,9 @@ impl StateAt {
     pub fn point(state:PlayerState)->Self {Self::shared(Arc::new(state))}
     pub fn shared(state:Arc<PlayerState>)->Self {let v=state.view();let out=Self {owner:Template::Point(state.clone()),position:v.position,t:v.t,velocity:v.phase.velocity,main_supporting_block:v.main_supporting_block,food_level:v.food_level,health:v.health,saturation:v.saturation,exhaustion:v.exhaustion,food_tick_timer:v.food_tick_timer};out}
     pub(crate) fn kernel(kernel:Arc<WordKernel>,index:usize,prefix:bool,from:View<'_>,position:Vec3,ticks:u64)->Self {
-        let phase=if prefix {&kernel.transient_states[index]} else {&kernel.cycle_states[index]};let velocity=phase.velocity;
-        let main_supporting_block=phase.main_supporting_block.map(|_|[position.x.floor() as i32,(position.y-1.0).floor() as i32,position.z.floor() as i32]);
+        let phase=kernel.phase_record(prefix,index);
+        let velocity=phase.velocity;
+        let main_supporting_block=phase.supported.then(||[position.x.floor() as i32,(position.y-1.0).floor() as i32,position.z.floor() as i32]);
         Self {owner:Template::Kernel {kernel,index,prefix},position,t:from.t+ticks,velocity,main_supporting_block,food_level:from.food_level,health:from.health,saturation:from.saturation,exhaustion:from.exhaustion,food_tick_timer:from.food_tick_timer}
     }
     pub fn phase(&self)->&PlayerState {match &self.owner {Template::Point(s)=>s,Template::Kernel {kernel,index,prefix}=>if *prefix {&kernel.transient_states[*index]}else {&kernel.cycle_states[*index]}}}

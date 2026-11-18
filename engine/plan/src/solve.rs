@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{inline::List,state_view::{StateSource,StateAt,Cursor}};
 use law::{PlayerState,Vec3,BlockPos,World,codec::{Interner,LabelId,proof::Refusal}};
 use words::Arguments;
-use crate::{Goal,events::{self,Event,EventKind},lattice,source::{self,CorridorSource,CorridorResult,CorridorProof},store::{GeneratorStore,WordKernel,WordBundle,SPRINT_JUMP,WALK,sprint_allowed}};
+use crate::{Goal,events::{self,Event,EventKind},lattice,source::{CorridorSource,CorridorResult,CorridorProof},store::{GeneratorStore,WordKernel,WordBundle,SPRINT_JUMP,WALK,sprint_allowed}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Kit {BareLegs}
@@ -12,7 +12,47 @@ pub struct Bracket {pub lb:u64,pub ub:Option<u64>}
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub enum Stage {Bracket,ClosedCheck,Extend,Cut,Compose,Allocate,Learn {program:u16,yaw:u16,ticks:u64,nanos:u128}}
 #[derive(Clone,Debug)]
-pub struct WordStep {pub program:u16,pub args:Arguments,pub ticks:u32,pub expected_end_t:u64,pub events:List<Event,48>,pub certificate:CorridorProof,pub end:StateAt,pub map_segments:usize}
+pub struct WordStep {pub program:u16,pub args:Arguments,pub ticks:u32,pub expected_end_t:u64,pub events:WordEvents,pub certificate:CorridorProof,pub end:StateAt}
+#[derive(Clone,Debug)]
+struct EventSpan {
+    kernel:Arc<WordKernel>,prefix:bool,start:[f64;2],start_t:u64,ticks:u64,
+}
+#[derive(Clone,Debug,Default)]
+pub struct WordEvents {
+    span:Option<EventSpan>, marks:List<Event,3>,
+    trace:std::cell::OnceCell<(Vec<Event>,usize)>,
+}
+impl WordEvents {
+    fn trace(&self)->&(Vec<Event>,usize) {
+        self.trace.get_or_init(|| {
+            let mut events=self.marks.to_vec();
+            let mut segments=0;
+            if let Some(s)=&self.span {
+                let maps=if s.prefix {&s.kernel.transient_maps} else {&s.kernel.cycle_maps};
+                for (map,start) in maps.iter().zip(s.start) {
+                    segments+=map.trace_boundaries(start,s.ticks,|t|events.push(Event {
+                        tick:s.start_t+t,kind:EventKind::BinadeCrossing,
+                    })).1;
+                }
+            }
+            events.sort_unstable_by_key(|e|(e.tick,event_order(&e.kind)));
+            events.dedup();
+            (events,segments)
+        })
+    }
+    pub fn map_segments(&self)->usize {self.trace().1}
+}
+fn event_order(kind:&EventKind)->u8 {
+    match kind {
+        EventKind::BinadeCrossing=>0,EventKind::FoodGuard{..}=>1,
+        EventKind::LoadedBoundary=>2,EventKind::ZoneLabelBoundary=>3,
+        EventKind::YawSwitch=>4,EventKind::GoalBoundary=>5,
+    }
+}
+impl std::ops::Deref for WordEvents {
+    type Target=[Event];
+    fn deref(&self)->&[Event] {&self.trace().0}
+}
 #[derive(Clone,Debug)]
 pub struct Plan {pub ticks:u64,pub words:List<WordStep,12>,pub end:StateAt,pub bracket:Bracket,pub label:LabelId,pub deadline:u64,pub lattice_cost:lattice::LatticeCost,pub thinking:ThinkingCosts}
 #[derive(Clone,Copy,Default,Debug)]
@@ -30,7 +70,6 @@ fn prepare(store:&GeneratorStore,label:LabelId,source:&impl World,from:&impl Sta
 }
 #[derive(Clone)]
 struct Leg<'a> {kernel:Arc<WordKernel>,from:Cursor<'a>,ticks:u64,cycle_only:bool}
-fn cycle_at(k:&Arc<WordKernel>,from:&impl StateSource,ticks:u64)->StateAt {k.readout(from,ticks,true)}
 fn word_lower_bound(k:&WordKernel,from:&impl StateSource,goal:Goal)->u64 {
     let step=k.max_body_step;
     if step==0.0 {return u64::MAX;}
@@ -48,14 +87,14 @@ fn append_steps(out:&mut List<WordStep,12>,leg:&Leg<'_>,proof:&CorridorProof) {
         if ticks==0 {continue;}
         offset+=ticks;
 
-        let mut events=List::new();
-        let mut map_segments=0;
-        let before=previous.view();let mut xy=[before.position.x,before.position.z];
-        let maps=if offset<=head {&k.transient_maps} else {&k.cycle_maps};
-        for a in 0..2 {let (at,segments)=maps[a].trace_boundaries(xy[a],ticks,|tick|events.push(Event {tick:before.t+tick,kind:EventKind::BinadeCrossing}));xy[a]=at;map_segments+=segments;}
-        let end=k.readout_position(&leg.from,offset,leg.cycle_only,xy[0],xy[1]);previous=Cursor::Generated(end.clone());
-        events.sort_unstable_by_key(|e|e.tick);events.dedup();
-        out.push(WordStep {program:k.program,args:Arguments {count:count as u32,..k.arguments},ticks:ticks.try_into().expect("word tick width"),expected_end_t:end.t,events,certificate:proof.clone(),end,map_segments});
+        let before=previous.view();
+        let start=[before.position.x,before.position.z];
+        let prefix=offset<=head;
+        let maps=if prefix {&k.transient_maps} else {&k.cycle_maps};
+        let end=k.readout_position(&leg.from,offset,leg.cycle_only,maps[0].advance(start[0],ticks),maps[1].advance(start[1],ticks));
+        let events=WordEvents {span:Some(EventSpan {kernel:k.clone(),prefix,start,start_t:before.t,ticks}),..Default::default()};
+        previous=Cursor::Generated(end.clone());
+        out.push(WordStep {program:k.program,args:Arguments {count:count as u32,..k.arguments},ticks:ticks.try_into().expect("word tick width"),expected_end_t:end.t,events,certificate:proof.clone(),end});
     }
 }
 
@@ -65,7 +104,7 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
     let bracket=Bracket {lb:to.lower_bound(from) as u64,ub:None};
     if !store.bind_codec(codec) {return SolveResult {outcome:PlanOutcome::Unknown(Refusal::Schema),stages,explanation:Some("generator store belongs to another codec".into())};}
     if to.touched(from,from) {
-        let label=match source::label(codec,source,from) {Ok(label)=>label,Err(r)=>return SolveResult {outcome:PlanOutcome::Unknown(r),stages,explanation:None}};
+        let label=match source.entry_label(codec,from) {Ok(label)=>label,Err(r)=>return SolveResult {outcome:PlanOutcome::Unknown(r),stages,explanation:None}};
         return SolveResult {outcome:PlanOutcome::Ready(Plan {ticks:0,words:List::new(),end:StateAt::point(from.clone()),bracket:Bracket {lb:0,ub:Some(0)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking:Default::default()}),stages,explanation:None};
     }
     if source.difficulty()!=0 {return SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some("U1 requires invariant resource guards; server food crossings are not predicted".into())};}
@@ -80,7 +119,7 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
     stages.push(Stage::Extend);
     let mut thinking=ThinkingCosts::default();let entry_clock=std::time::Instant::now();
     let mut work=||->Result<(List<Leg<'_>,4>,LabelId,lattice::LatticeCost),String> {
-        let label=source::label(codec,source,from).map_err(|e|format!("entry label: {e:?}"))?;
+        let label=source.entry_label(codec,from).map_err(|e|format!("entry label: {e:?}"))?;
         let delta=to.center().minus(from.position);let pair=lattice::bracket(delta.x,delta.z);
         let program=if sprint_allowed(from) {SPRINT_JUMP} else {WALK};
         let bundle=if let Some(bundle)=store.bundle(label,from,program,pair) {bundle} else {
@@ -92,7 +131,7 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
             for phase in 0..second.cycle_period {
                 let state=second.phase(phase as usize);let mut rows=Vec::new();
                 for word in store.words() {if sprint_allowed(&state) || word==WALK {rows.push(prepare(store,label,source,&state,word,pair[1],&mut stages)?);}}
-                terminals.push(rows);
+                terminals.push(crate::store::StopWords::new(&rows));
             }
             let mut incumbent_terminals=Vec::new();
             for gait in &incumbents {
@@ -100,7 +139,7 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
                 for phase in 0..gait.cycle_period {
                     let state=gait.phase(phase as usize);let mut rows=Vec::new();
                     for word in store.words() {if sprint_allowed(&state) || word==WALK {rows.push(prepare(store,label,source,&state,word,gait.yaw_index,&mut stages)?);}}
-                    phases.push(rows);
+                    phases.push(crate::store::StopWords::new(&rows));
                 }incumbent_terminals.push(phases);
             }
             store.file_bundle(label,from,program,pair,WordBundle {first,second,incumbents,terminals,incumbent_terminals})
@@ -137,18 +176,17 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
             }
             if head>=best {continue;}
             let base=k.readout(from,head,false);
-            let axis=if k.cycle_displacement.x.abs()>=k.cycle_displacement.z.abs() {0} else {2};
-            let positive=if axis==0 {k.cycle_displacement.x>=0.0} else {k.cycle_displacement.z>=0.0};
-            let zone=to.zone();let body=law::Aabb::player(Vec3::default(),from.pose.height());
-            let target=if positive {[zone.min.x-body.max.x,zone.min.z-body.max.z][axis/2]}else {[zone.max.x-body.min.x,zone.max.z-body.min.z][axis/2]};
-            let position=if axis==0 {base.position.x}else {base.position.z};
-            let Some(touch)=k.cycle_maps[axis/2].first_cross(position,target,words::Arguments::MAX_TICKS) else {continue;};
+            let horizon=events::horizon(&base,to,k.cycle_increments.iter().copied(),k.cycle_displacement);
+            let approach=events::Approach::new(&k.cycle_maps,base.position,horizon);
+            let Some(touch)=approach.touch(base.position,&k.cycle_geometry(&base),to) else {continue;};
             let touch=touch.max(1);let p=k.cycle_period as u64;let block=(touch-1)/p*p;
-            let anchor_cut=block.saturating_sub(p);let anchor=k.readout(&base,anchor_cut,true);
             for phase in 0..p {
                 let mut cut=block+phase;if cut>=touch {if cut<p {continue;}cut-=p;}
-                let carried=k.readout(&anchor,cut-anchor_cut,true);
-                let Some((terminal,t))=store.joints.borrow_mut().terminal(label,k,phase as u32,&bundle.incumbent_terminals[index][phase as usize],&carried,to)? else {continue;};
+                let carried=k.readout_position(&base,cut,true,approach.axes[0].at(cut),approach.axes[1].at(cut));
+                let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
+                if head+cut+u64::from(to.lower_bound(&carried)).max(1)>=best {continue;}
+                let stops=store.stop_words(&bundle.incumbent_terminals[index][phase as usize]);
+                let Some((terminal,t))=store.joints.borrow_mut().terminal(label,k,phase as u32,&stops,&carried,to)? else {continue;};
                 let total=head+cut+t;let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
                 if total>=best {continue;}
                 candidates.push((total,crate::list![Leg {kernel:k.clone(),from:Cursor::Observed(from),ticks:head+cut,cycle_only:false},Leg {kernel:terminal,from:Cursor::Generated(carried),ticks:t,cycle_only:false}]));
@@ -166,14 +204,18 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
             // Extend to the goal event, relaxing only vertical eligibility to
             // locate its approach. The terminal preimage restores all phases.
             let horizon=events::horizon(&base,to,second.cycle_increments.iter().copied(),second.cycle_displacement);
-            if let Some(touch)=events::first_touch_readout(base.position,&second.cycle_maps[0],&second.cycle_maps[1],&second.cycle_geometry(&base),to,horizon,true) {
+            let approach=events::Approach::new(&second.cycle_maps,base.position,horizon);
+            if let Some(touch)=approach.touch(base.position,&second.cycle_geometry(&base),to) {
                 let p=second.cycle_period as u64;
                 let block=(touch-1)/p*p;
                 for phase in 0..p {
                     let mut cut=block+phase;
                     if cut>=touch {if cut<p {continue;}cut-=p;}
-                    let carried=cycle_at(&second,&base,cut);
-                    let Some((terminal,t))=store.joints.borrow_mut().terminal(label,second,phase as u32,&bundle.terminals[phase as usize],&carried,to)? else {continue;};
+                    let carried=second.readout_position(&base,cut,true,approach.axes[0].at(cut),approach.axes[1].at(cut));
+                    let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
+                    if t1+t2+cut+u64::from(to.lower_bound(&carried)).max(1)>=best {continue;}
+                    let stops=store.stop_words(&bundle.terminals[phase as usize]);
+                    let Some((terminal,t))=store.joints.borrow_mut().terminal(label,second,phase as u32,&stops,&carried,to)? else {continue;};
                     let total=t1+t2+cut+t;
                     let best=candidates.iter().map(|c|c.0).min().unwrap_or(u64::MAX);
                     if total>=best {continue;}
@@ -208,12 +250,36 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
     stages.extend([Stage::Cut,Stage::Extend,Stage::Compose]);
     let mut words=List::new();for leg in &legs {append_steps(&mut words,leg,&proof);}
     let end=words.last().map(|w|w.end.clone()).unwrap_or_else(||StateAt::point(from.clone()));
-    if let Some(step)=words.first_mut() {step.events.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
-    for i in 1..words.len() {if words[i].args.refined_yaw!=words[i-1].args.refined_yaw {let tick=words[i-1].expected_end_t;words[i].events.push(Event {tick,kind:EventKind::YawSwitch});}}
-    if let Some(step)=words.last_mut() {step.events.push(Event {tick:end.t,kind:EventKind::GoalBoundary});}
-    for step in &mut words {step.events.sort_unstable_by_key(|e|e.tick);}
+    if let Some(step)=words.first_mut() {step.events.marks.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
+    for i in 1..words.len() {if words[i].args.refined_yaw!=words[i-1].args.refined_yaw {let tick=words[i-1].expected_end_t;words[i].events.marks.push(Event {tick,kind:EventKind::YawSwitch});}}
+    if let Some(step)=words.last_mut() {step.events.marks.push(Event {tick:end.t,kind:EventKind::GoalBoundary});}
     let route=crate::joints::compose_chain(from,to,words,&mut store.joints.borrow_mut().work);let words=route.words;let ticks=route.ticks;let end=route.end;
     stages.extend([Stage::ClosedCheck,Stage::Allocate]);
     thinking.output_ns=output_clock.elapsed().as_nanos();
     SolveResult {outcome:PlanOutcome::Ready(Plan {ticks,words,end,bracket:Bracket {lb:bracket.lb,ub:Some(ticks)},label,deadline:deadline_ticks,lattice_cost,thinking}),stages,explanation:None}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn approach_waits_for_minor_axis() {
+        use crate::source::GeneratorSuperflatSource;
+        let source=GeneratorSuperflatSource::new(-61,law::Block::full(),[-1024,-64,-1024],[1024,20,1024]);
+        let start=crate::settle(&crate::Still(&source),[0.5,-60.0,0.5],0).unwrap();
+        let store=GeneratorStore::default();
+        let label=crate::source::label(&mut Interner::default(),&source,&start).unwrap();
+        let yaw=lattice::bracket(2.0,1.0)[0];
+        let k=store.prepare(label,&source,&start,WALK,yaw).unwrap();
+        let mut base=k.readout(&start,k.transient_ticks as u64,false);
+        // X starts inside B. The smaller Z displacement reaches its face on tick two.
+        let goal=Goal {cell:[0,-61,0]};
+        base.position.x=0.0;
+        base.position.z= -law::Aabb::player(Vec3::default(),start.pose.height()).max.z
+            -1.5*k.cycle_increments[0].z;
+        let geometry=k.cycle_geometry(&base);
+        assert_eq!(events::first_touch_readout(base.position,&k.cycle_maps[0],&k.cycle_maps[1],&geometry,goal,4,false),Some(2));
+        let approach=events::Approach::new(&k.cycle_maps,base.position,4);
+        assert_eq!(approach.touch(base.position,&geometry,goal),Some(2));
+    }
 }

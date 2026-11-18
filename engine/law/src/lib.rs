@@ -62,3 +62,5 @@ pub mod boat;
 
 #[cfg(feature = "count-state-copies")]
 pub use state::player_state_copies;
+
+pub mod solve_meter;

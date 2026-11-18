@@ -1,6 +1,6 @@
 //! Presence over one worldtube. The generator is a source implementation, not a solver lane.
 use std::{cell::Cell, collections::BTreeMap};
-use law::{Block, BlockPos, PlayerState, World, codec::{self, Interner, Label, LabelId, LegsRole, Canonical, proof::{Source, Refusal}}, footprint::EnvironmentRead};
+use law::{Block, BlockPos, PlayerState, World, codec::{self, Interner, LabelId, LegsRole, Canonical, proof::{Source, Refusal}}, footprint::EnvironmentRead};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct ReadCost { pub blocks:u64, pub loaded:u64, pub corridors:u64, pub scars:u64 }
@@ -9,6 +9,9 @@ pub struct CorridorProof { pub label:LabelId, pub min:BlockPos, pub max:BlockPos
 #[derive(Clone, Debug)]
 pub enum CorridorResult { Clear(CorridorProof), Exception { first_pos:BlockPos, exceptions:usize }, Unknown(Refusal) }
 pub trait CorridorSource: World + Source {
+    fn entry_label(&self,codec:&mut Interner,state:&PlayerState)->Result<LabelId,Refusal> where Self:Sized {
+        label(codec,self,state)
+    }
     fn corridor_query(&self, codec:&mut Interner, label:LabelId, min:BlockPos, max:BlockPos)->CorridorResult;
 }
 
@@ -52,12 +55,16 @@ impl<W:Source> Source for MeteredWorld<'_,W> {
     fn environment(&self,t:u64,q:&EnvironmentRead)->Result<Canonical,Refusal> {self.world.environment(t,q)}
 }
 impl<W:CorridorSource> CorridorSource for MeteredWorld<'_,W> {
+    fn entry_label(&self,c:&mut Interner,s:&PlayerState)->Result<LabelId,Refusal> {self.world.entry_label(c,s)}
     fn corridor_query(&self,c:&mut Interner,l:LabelId,lo:BlockPos,hi:BlockPos)->CorridorResult {self.world.corridor_query(c,l,lo,hi)}
 }
 
 pub fn label(codec:&mut Interner, world:&impl World, state:&PlayerState)->Result<LabelId,Refusal> {
     let feet=[state.position.x.floor() as i32,state.position.y.floor() as i32,state.position.z.floor() as i32];
     let support=state.main_supporting_block.unwrap_or([feet[0],feet[1]-1,feet[2]]);
+    label_roles(codec,world,feet,support)
+}
+fn label_roles(codec:&mut Interner,world:&impl World,feet:BlockPos,support:BlockPos)->Result<LabelId,Refusal> {
     let mut classes=[None;4];
     for (i,(p,role)) in [(support,LegsRole::Support02),(support,LegsRole::Support05),(feet,LegsRole::BodyFeet),(feet,LegsRole::Inside)].into_iter().enumerate() {
         let loaded=world.loaded(p);
@@ -65,7 +72,7 @@ pub fn label(codec:&mut Interner, world:&impl World, state:&PlayerState)->Result
         classes[i]=Some(codec.legs(world.block(p),loaded,role).map_err(Refusal::Law)?);
     }
     let classes=classes.map(Option::unwrap);
-    codec.label(Label {law_schema:codec::SCHEMA,body_kit:b"bare",support:&classes[..2],medium:&classes[2..]}).ok_or(Refusal::Schema)
+    codec.bare_legs_label(classes).ok_or(Refusal::Schema)
 }
 
 pub struct GeneratorSuperflatSource {
@@ -130,6 +137,14 @@ impl Source for GeneratorSuperflatSource {
     fn environment(&self,_tick:u64,q:&EnvironmentRead)->Result<Canonical,Refusal> {codec::environment(self,q).map_err(Refusal::Law)}
 }
 impl CorridorSource for GeneratorSuperflatSource {
+    fn entry_label(&self,codec:&mut Interner,state:&PlayerState)->Result<LabelId,Refusal> {
+        let p=state.position;
+        let feet=[p.x.floor() as i32,p.y.floor() as i32,p.z.floor() as i32];
+        // The generator supplies the support surface even during the airborne
+        // phase. The corridor query still qualifies its entire read footprint.
+        let support=state.main_supporting_block.unwrap_or([feet[0],self.floor_y,feet[2]]);
+        label_roles(codec,self,feet,support)
+    }
     fn corridor_query(&self,codec:&mut Interner,expected:LabelId,min:BlockPos,max:BlockPos)->CorridorResult {
         let mut c=self.costs.get();c.corridors+=1;self.costs.set(c);
         if !self.covered(min) || !self.covered(max) {return CorridorResult::Unknown(Refusal::Loaded);}

@@ -1,7 +1,7 @@
 //! Exact binary64 event maps, promoted from the judged P2 kernel.
 use law::{PlayerState,Vec3};
 use crate::Goal;
-use std::{cell::RefCell,collections::HashMap,sync::Arc};
+use std::cell::OnceCell;
 const HIDDEN: i128 = 1i128 << 52;
 const LIMIT: i128 = 1i128 << 53;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +148,7 @@ fn walk_map(map:&Map,start:f64,ticks:u64,mut emit:impl FnMut(Piece))->(f64,usize
         }
         assert!(progressed>0);t+=progressed as u64;
     }
+    #[cfg(feature="solve-counters")] crate::solve_meter::walk(map.axis,start,p);
     (p,segments)
 }
 #[cfg(test)]
@@ -158,19 +159,26 @@ fn fold_map(map:&Map,start:f64,ticks:u64)->Fold {
 /// A generator's exact maps are shared across all coordinates, commands and
 /// counts in the same binade/parity regime. No position or goal is a cache key.
 #[derive(Clone,Debug)]
-pub struct Map {ds:Vec<f64>,graphs:RefCell<HashMap<(i32,usize,u8),Option<Arc<Graph>>>>}
+pub struct Map {#[cfg(feature="solve-counters")] axis:Option<usize>, ds:Vec<f64>, graphs:OnceCell<Box<[ExponentPage;32]>>}
+// IEEE binary64 has 2046 distinct finite spacing exponents. Allocate only
+// visited pages and phase rows. OnceCell keeps references stable when another
+// read of this map initializes a neighbouring row in a streaming callback.
+type ExponentPage = OnceCell<Box<[PhaseRows;64]>>;
+type PhaseRows = OnceCell<Box<[[OnceCell<Option<Graph>>;2]]>>;
 impl Map {
-    pub fn new(ds:Vec<f64>)->Self {Self {ds,graphs:RefCell::default()}}
+    pub fn new(ds:Vec<f64>)->Self {Self {#[cfg(feature="solve-counters")] axis:None,ds,graphs:OnceCell::new()}}
+    pub(crate) fn axis(_axis:usize,ds:Vec<f64>)->Self {
+        let map=Self::new(ds);
+        #[cfg(feature="solve-counters")] let map=Self {axis:Some(_axis),..map};
+        map
+    }
     pub fn len(&self)->usize {self.ds.len()}
-    fn graph(&self,phase:usize,region:Region,k:i128)->Option<Arc<Graph>> {
-        let key=(region.exp,phase,(k&1) as u8);
-        if !self.graphs.borrow().contains_key(&key) {
-            let graph=Graph::new(&self.ds,phase,region,k,false).map(Arc::new);self.graphs.borrow_mut().insert(key,graph);
-        }
-        // A streamed family's consumer can query this same map at another
-        // coordinate. Hold immutable graph ownership, not a cache borrow,
-        // across that callback, so a missing binade may be compiled there.
-        self.graphs.borrow().get(&key).unwrap().clone()
+    fn graph(&self,phase:usize,region:Region,k:i128)->Option<&Graph> {
+        let exponent=(region.exp+1074) as usize;
+        let pages=self.graphs.get_or_init(||Box::new(std::array::from_fn(|_|OnceCell::new())));
+        let page=pages[exponent/64].get_or_init(||Box::new(std::array::from_fn(|_|OnceCell::new())));
+        let rows=page[exponent%64].get_or_init(||(0..self.len()).map(|_|Default::default()).collect());
+        rows[phase][(k&1) as usize].get_or_init(||Graph::new(&self.ds,phase,region,k,false)).as_ref()
     }
     #[cfg(test)]
     pub(crate) fn fold(&self,start:f64,ticks:u64)->Fold {fold_map(self,start,ticks)}
@@ -189,6 +197,9 @@ impl Map {
     pub fn first_cross(&self,start:f64,target:f64,horizon:u64)->Option<u64> {
         let sign=if self.ds.iter().all(|d|*d>=0.0) {1.0} else if self.ds.iter().all(|d|*d<=0.0) {-1.0} else {return None;};
         let reached=|p:f64|sign*p>=sign*target;
+        self.first_reached(start,horizon,reached)
+    }
+    fn first_reached(&self,start:f64,horizon:u64,reached:impl Fn(f64)->bool)->Option<u64> {
         if reached(start) {return Some(0);}
         if self.ds.is_empty() || self.ds.iter().all(|d|*d==0.0) {return None;}
         let (mut p,mut tick)=(start,0u64);let period=self.ds.len() as u64;
@@ -208,10 +219,109 @@ impl Map {
                 }
             }
             for _ in 0..period.min(horizon-tick) {
-                p+=self.ds[(tick%period) as usize];tick+=1;if reached(p) {return Some(tick);}
+                p+=self.ds[(tick%period) as usize];tick+=1;if reached(p) {
+                    #[cfg(feature="solve-counters")] crate::solve_meter::walk(self.axis,start,p);
+                    return Some(tick);
+                }
                 let (next,_)=Region::at(p);if next.exp!=region.exp || next.lo!=region.lo || next.hi!=region.hi {break;}
             }
-        }None
+        }
+        #[cfg(feature="solve-counters")] crate::solve_meter::walk(self.axis,start,p);
+        None
+    }
+}
+/// A crossing table for one cyclic word and entry coordinate. A row owns
+/// the interval up to the next boundary addition. Endpoints are carried in
+/// native precision, including the low bit transferred into the next binade.
+pub(crate) struct AxisTable<'m> {
+    map:&'m Map, starts:crate::inline::List<(u64,f64),32>, ticks:u64, end:f64, fixed:Option<u64>,
+}
+impl<'m> AxisTable<'m> {
+    pub(crate) fn new(map:&'m Map,start:f64,ticks:u64)->Self {
+        let period=map.len() as u64;
+        let mut out=Self {map,starts:Default::default(),ticks,end:start,fixed:None};
+        if ticks==0 {return out;}
+        if map.ds.iter().all(|&d|d==0.0) {
+            out.starts.push((0,start));out.end=map.advance(start,ticks);
+            return out;
+        }
+        let mut t=0;
+        while t<ticks {
+            out.starts.push((t,out.end));
+            let (region,k)=Region::at(out.end);
+            let phase=(t%period) as usize;
+            if map.ds.iter().all(|&d|(out.end+d).to_bits()==out.end.to_bits()) {out.fixed=Some(t);break;}
+            if let Some(g)=map.graph(phase,region,k) {
+                let n=g.safe_cycles(region,k,(ticks-t)/period);
+                if n>0 {out.end=region.value(k+g.displacement(n));t+=n*period;}
+            }
+            for _ in 0..period.min(ticks-t) {
+                out.end+=map.ds[(t%period) as usize];t+=1;
+                let (next,_)=Region::at(out.end);
+                if next.exp!=region.exp || next.lo!=region.lo || next.hi!=region.hi
+                    || out.end==region.value(region.lo) || out.end==region.value(region.hi) {break;}
+            }
+        }
+        #[cfg(feature="solve-counters")] crate::solve_meter::walk(map.axis,start,out.end);
+        out
+    }
+    pub(crate) fn at(&self,t:u64)->f64 {
+        assert!(t<=self.ticks);
+        if t==self.ticks || self.fixed.is_some_and(|first|t>=first) {return self.end;}
+        let i=self.starts.partition_point(|&(tick,_)|tick<=t)-1;
+        let (tick,start)=self.starts[i];
+        let n=t-tick;
+        if n==0 {return start;}
+        if self.map.ds.iter().all(|&d|d==0.0) {
+            return self.map.ds.iter().take(n.min(self.map.len() as u64) as usize).fold(start,|p,&d|p+d);
+        }
+        let period=self.map.len() as u64;
+        let phase=(tick%period) as usize;
+        let (region,k)=Region::at(start);
+        if let Some(graph)=self.map.graph(phase,region,k) {
+            let base=k+graph.displacement(n/period);
+            let offset=graph.nodes[(base&1) as usize].offset[(n%period) as usize];
+            return region.value(base+offset);
+        }
+        // A nonrepresentable increment necessarily leaves this chart. There
+        // is at most one word of native additions before that boundary.
+        (0..n).fold(start,|p,j|p+self.map.ds[((tick+j)%period) as usize])
+    }
+    fn entry(&self,axis:usize,height:f32,goal:Goal)->Option<u64> {
+        let sides=|p| {
+            let b=law::Aabb::player(Vec3::new(p,0.0,p),height);
+            goal.axis_sides(b,b,axis)
+        };
+        let (lower,upper)=sides(self.at(0));
+        if lower && upper {return Some(0);}
+        let reached=|p|if !lower {sides(p).0} else {sides(p).1};
+        if !reached(self.end) {return None;}
+        let next=self.starts.partition_point(|&(_,p)|!reached(p));
+        let mut lo=self.starts[next-1].0;
+        let mut hi=self.starts.get(next).map_or(self.ticks,|s|s.0);
+        while lo+1<hi {
+            let mid=lo+(hi-lo)/2;
+            if reached(self.at(mid)) {hi=mid;} else {lo=mid;}
+        }
+        Some(hi)
+    }
+}
+pub(crate) struct Approach<'a> {pub axes:[AxisTable<'a>;2]}
+impl<'a> Approach<'a> {
+    pub(crate) fn new(maps:&'a [Map;2],start:Vec3,horizon:u64)->Self {
+        Self {axes:[AxisTable::new(&maps[0],start.x,horizon),AxisTable::new(&maps[1],start.z,horizon)]}
+    }
+    pub(crate) fn touch(&self,position:Vec3,phases:&impl PhaseGeometry,goal:Goal)->Option<u64> {
+        let [x,z]=&self.axes;
+        if x.ticks==0 {return None;}
+        if [x,z].iter().any(|axis|axis.map.ds.iter().any(|&v|v<0.0) && axis.map.ds.iter().any(|&v|v>0.0)) {
+            return first_touch_readout(position,x.map,z.map,phases,goal,x.ticks,true);
+        }
+        let height=phases.body(0).1.height();
+        let t=x.entry(0,height,goal)?.max(z.entry(2,height,goal)?).max(1);
+        let phase=((t-1)%x.map.len() as u64) as usize;
+        let (a,b)=phase_pair(phases,phase,(x.at(t-1),x.at(t)),(z.at(t-1),z.at(t)),goal,true);
+        goal.touched_boxes(a,b).then_some(t)
     }
 }
 fn ceil_div(n:i128,d:i128)->i128 {-(-n).div_euclid(d)}
@@ -245,6 +355,8 @@ fn advance_map(map:&Map,start:f64,ticks:u64)->f64 {
     if ticks==0 {return start;}
     let ds=&map.ds;
     assert!(!ds.is_empty());
+    // A prefix shorter than one word cannot skip a complete cycle.
+    if ticks<=ds.len() as u64 {return ds[..ticks as usize].iter().fold(start,|x,&d|x+d);}
     if ds.iter().all(|&d|d==0.0) {return start+ds[0];}
     let mut p=start;let mut t=0;
     while t<ticks {
@@ -260,7 +372,9 @@ fn advance_map(map:&Map,start:f64,ticks:u64)->f64 {
             let (next,_)=Region::at(p);
             if next.exp!=region.exp || next.lo!=region.lo || next.hi!=region.hi {break;}
         }
-    }p
+    }
+    #[cfg(feature="solve-counters")] crate::solve_meter::walk(map.axis,start,p);
+    p
 }
 
 #[derive(Clone,Debug,PartialEq,Eq)]
@@ -408,6 +522,10 @@ mod fold_checks {
         for ds in [vec![0.0,-0.0],vec![0.25+2.0f64.powi(-47)],vec![0.3,0.2,-0.01],vec![-0.4,-0.3],vec![f64::from_bits(1)]] {
             let map=Map::new(ds.clone());
             for start in [-1000.0,-0.0,0.0,0.5,100.0,1023.75] {for ticks in [1,2,17,263,10003] {
+                let table=AxisTable::new(&map,start,ticks);
+                for t in [0,ticks/2,ticks-1,ticks] {
+                    assert_eq!(table.at(t).to_bits(),map.advance(start,t).to_bits(),"table {ds:?} start={start} t={t}");
+                }
                 let folded=map.fold(start,ticks);let mut native=start;
                 for t in 0..ticks {native+=ds[t as usize%ds.len()];}
                 assert_eq!(folded.value.to_bits(),native.to_bits());

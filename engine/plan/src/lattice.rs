@@ -23,30 +23,75 @@ impl Dyadic {
     }
     fn normal(mut self)->Self {if self.n!=0 {let z=self.n.trailing_zeros();self.n>>=z;self.e+=z as i32;} else {self.e=0;}self}
 }
-fn shifted_wide(n:u128,shift:u32)->[u64;4] {
-    let mut out=[0;4];
-    for i in 0..128 {if n&(1u128<<i)!=0 {let bit=i+shift;assert!(bit<256);out[(bit/64) as usize]|=1u64<<(bit%64);}}
-    out
+// Four little-endian limbs. Bounds on the answer come from the word count's
+// width, so division visits at most that many quotient bits.
+#[derive(Clone,Copy,Default)]
+struct Magnitude([u64;4]);
+impl Magnitude {
+    fn of(n:u128)->Self {Self([n as u64,(n>>64) as u64,0,0])}
+    fn bits(self)->u32 {
+        self.0.iter().enumerate().rev().find(|(_,v)|**v!=0)
+            .map_or(0,|(i,v)|64*(i as u32+1)-v.leading_zeros())
+    }
+    fn cmp(self,other:Self)->Ordering {self.0.iter().rev().cmp(other.0.iter().rev())}
+    fn shl(self,n:u32)->Self {
+        debug_assert!(self.bits()+n<=256);
+        let mut out=[0;4];let words=(n/64) as usize;let shift=n%64;
+        for i in words..4 {
+            out[i]=self.0[i-words]<<shift;
+            if shift!=0 && i>words {out[i]|=self.0[i-words-1]>>(64-shift);}
+        }
+        Self(out)
+    }
+    fn sub(self,b:Self)->Self {
+        let mut out=[0;4];let mut borrow=false;
+        for (i,v) in out.iter_mut().enumerate() {
+            let (x,b1)=self.0[i].overflowing_sub(b.0[i]);
+            let (y,b2)=x.overflowing_sub(u64::from(borrow));
+            *v=y;borrow=b1||b2;
+        }
+        debug_assert!(!borrow);Self(out)
+    }
+    fn add(self,b:Self)->Self {
+        let mut out=[0;4];let mut carry=0;
+        for (i,v) in out.iter_mut().enumerate() {
+            let sum=self.0[i] as u128+b.0[i] as u128+carry;
+            *v=sum as u64;carry=sum>>64;
+        }
+        debug_assert_eq!(carry,0);Self(out)
+    }
+    // (integer part, nonzero remainder). Values beyond cap need no more bits.
+    fn divide(mut self,d:Self,cap:u64)->(u64,bool) {
+        debug_assert!(d.bits()>0);
+        if self.cmp(d).is_lt() {return (0,self.bits()!=0);}
+        let shift=self.bits()-d.bits();
+        if shift>64-cap.leading_zeros() {return (cap,true);}
+        let mut q=0u64;
+        for i in (0..=shift).rev() {
+            let part=d.shl(i);
+            if !self.cmp(part).is_lt() {self=self.sub(part);q|=1u64<<i;}
+        }
+        (q.min(cap),self.bits()!=0 || q>cap)
+    }
 }
 fn ratio_floor(a:Dyadic,b:Dyadic)->i128 {
-    assert!(b.n!=0);
-    let negative=(a.n<0)!=(b.n<0);let a=Dyadic {n:a.n.abs(),e:a.e};let b=Dyadic {n:b.n.abs(),e:b.e};
-    let e=a.e.min(b.e);let shift=(a.e-e) as u32;let other=(b.e-e) as u32;
-    if shift<127 && other<127 {
-        if let (Some(n),Some(d))=(a.n.checked_mul(1i128<<shift),b.n.checked_mul(1i128<<other)) {
-            return if negative {(-n).div_euclid(d)} else {n/d};
-        }
-    }
-    let n=shifted_wide(a.n as u128,shift);
-    let denominator=|q:u32| {
-        let p=wide_product(b.n as u128,q as u128);let mut d=[0;4];
-        for i in 0..256u32 {if p[(i/64) as usize]&(1u64<<(i%64))!=0 {assert!(i+other<256);d[((i+other)/64) as usize]|=1u64<<((i+other)%64);}}
-        d
-    };
-    let (mut lo,mut hi)=(0u32,words::Arguments::MAX_COUNT);
-    while lo<hi {let m=lo+((hi as u64-lo as u64+1)/2) as u32;
-        if denominator(m).iter().rev().cmp(n.iter().rev()).is_le() {lo=m;} else {hi=m-1;}}
-    if negative {-(lo as i128)-i128::from(denominator(lo)!=n)} else {lo as i128}
+    assert_ne!(b.n,0);
+    if a.n==0 {return 0;}
+    let negative=(a.n<0)!=(b.n<0);
+    let cap=words::Arguments::MAX_COUNT as u64;
+    let n=Magnitude::of(a.n.unsigned_abs());let d=Magnitude::of(b.n.unsigned_abs());
+    let exponent=a.e-b.e;
+    let width=n.bits() as i32+exponent-d.bits() as i32;
+    let (q,remainder)=if width<0 {(0,true)} else if width>32 {(cap,true)}
+        else {
+            let n=n.shl(exponent.max(0) as u32);let d=d.shl((-exponent).max(0) as u32);
+            if n.0[2..]==[0,0] && d.0[2..]==[0,0] {
+                let n=n.0[0] as u128|((n.0[1] as u128)<<64);
+                let d=d.0[0] as u128|((d.0[1] as u128)<<64);
+                ((n/d).min(cap as u128) as u64,n%d!=0)
+            } else {n.divide(d,cap)}
+        };
+    if negative {-(q as i128)-i128::from(remainder)} else {q as i128}
 }
 /// Euclidean remainders in the two-vector basis retain a complete phase cell
 /// before the goal. The terminal preimage, rather than these counts, stops it.
@@ -184,27 +229,44 @@ pub fn counts(d1:Vec3,d2:Vec3,lo:Vec3,hi:Vec3,cap:u32)->Option<([u32;2],LatticeC
 /// strips need not contain an integer neighbour: those retain the existing
 /// Euclidean/floor-sum proof, rather than discarding a feasible lattice point.
 fn closed_counts(rows:&[[i128;4];2],cap:u32)->Option<Option<([u32;2],LatticeCost)>> {
-    let [x,z]=*rows;
-    let constraints=[[-x[0],-x[1],-x[2]],[x[0],x[1],x[3]],[-z[0],-z[1],-z[2]],[z[0],z[1],z[3]],[-1,0,0],[0,-1,0]];
-    let cross=|a:i128,b:i128,c:i128,d:i128|a.checked_mul(b)?.checked_sub(c.checked_mul(d)?);
-    let mut lower=None;let mut vertices=0;
-    for (i,&[a,b,c]) in constraints.iter().enumerate() {for &[d,e,f] in &constraints[i+1..] {
-        let mut denominator=cross(a,e,d,b)?;if denominator==0 {continue;}
-        let mut nx=cross(c,e,f,b)?;let mut ny=cross(a,f,d,c)?;
-        if denominator<0 {denominator=denominator.checked_neg()?;nx=nx.checked_neg()?;ny=ny.checked_neg()?;}
-        if nx<0 || ny<0 {continue;}
-        // Cancel the common scale before products with other half-planes.
-        // Dyadic rows can carry very different ulp units on X and Z.
-        let gcd=|mut a:i128,mut b:i128| {while b!=0 {let r=a%b;a=b;b=r;}a};
-        let divisor=gcd(gcd(nx,ny),denominator);
-        nx/=divisor;ny/=divisor;denominator/=divisor;
-        let mut valid=true;
-        for &[aa,bb,cc] in &constraints {if aa.checked_mul(nx)?.checked_add(bb.checked_mul(ny)?)?>cc.checked_mul(denominator)? {valid=false;break;}}
-        if !valid {continue;}vertices+=1;
-        let sum=nx.checked_add(ny)?;let ceil=sum/denominator+i128::from(sum%denominator!=0);
-        lower=Some(lower.map_or(ceil,|old:i128|old.min(ceil)));
-    }}
-    let Some(total)=lower else {return Some(None);};if total>cap as i128 {return Some(None);}
+    // Set s=q1+q2. Each original inequality is A*s+D*q2<=C.
+    // Eliminate q2 by pairing every lower half-plane with every upper one.
+    // Each pair gives a necessary scalar bound K*s<=B. At the strongest
+    // integer lower bound the slice below either proves the optimum or sends
+    // a genuinely thin strip to the floor-sum proof.
+    let mut planes=crate::list![[0,-1,0],[-1,1,0]];
+    for &[a,b,l,h] in rows {
+        let delta=b.checked_sub(a)?;
+        planes.push([a,delta,h]);planes.push([-a,-delta,-l]);
+    }
+    let planes:crate::inline::List<[i128;3],6>=planes;
+    let mut total=0i128;
+    let mut bounds=0;
+    let mut bound=|a:i128,b:i128,c:i128,d:i128,e:i128,f:i128,g:i128,h:i128| {
+        bounds+=1;
+        // Only a negative right side can raise s above zero.
+        if product_cmp(e,f,g,h)!=Ordering::Less {return;}
+        if product_cmp(a,b,c,d)!=Ordering::Less {total=cap as i128+1;return;}
+        let positive_difference=|x:i128,y:i128,u:i128,v:i128| {
+            let p=Magnitude(wide_product(x.unsigned_abs(),y.unsigned_abs()));
+            let q=Magnitude(wide_product(u.unsigned_abs(),v.unsigned_abs()));
+            if x.signum()*y.signum()<0 {q.sub(p)}
+            else if u.signum()*v.signum()<0 {p.add(q)} else {p.sub(q)}
+        };
+        let n=positive_difference(g,h,e,f);
+        let divisor=positive_difference(c,d,a,b);
+        let (q,r)=n.divide(divisor,cap as u64+1);
+        total=total.max(q as i128+i128::from(r));
+    };
+    for &[a,d,c] in &planes {
+        if d==0 {bound(a,1,0,0,c,1,0,0);}
+        if d<0 {
+            for &[aa,dd,cc] in &planes {
+                if dd>0 {bound(a,dd,aa,d,c,dd,cc,d);}
+            }
+        }
+    }
+    if total>cap as i128 {return Some(None);}
     let (mut low,mut high)=(0,total);
     for &[a,b,l,h] in rows {
         let delta=b.checked_sub(a)?;let l=l.checked_sub(a.checked_mul(total)?)?;let h=h.checked_sub(a.checked_mul(total)?)?;
@@ -213,7 +275,7 @@ fn closed_counts(rows:&[[i128;4];2],cap:u32)->Option<Option<([u32;2],LatticeCost
         low=low.max(-(-l).div_euclid(d));high=high.min(h.div_euclid(d));
     }
     if low>high {return None;}
-    Some(Some(([u32::try_from(total-high).ok()?,u32::try_from(high).ok()?],LatticeCost {envelope_intervals:vertices,quotient_queries:1})))
+    Some(Some(([u32::try_from(total-high).ok()?,u32::try_from(high).ok()?],LatticeCost {envelope_intervals:bounds,quotient_queries:1})))
 }
 
 #[cfg(test)]

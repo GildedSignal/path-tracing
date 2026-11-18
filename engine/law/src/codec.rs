@@ -1,5 +1,5 @@
 //! Canonical answers are interned by bytes; a digest only selects a bucket.
-use std::collections::HashMap;
+use crate::solve_meter::HashMap;
 use crate::{Block, FluidKind, Inside, footprint::Query, pattern::{self, PatternError}};
 #[path = "codec_state.rs"]
 mod state;
@@ -146,7 +146,7 @@ pub struct ProjectionTable {
 }
 impl ProjectionTable {
     pub fn new(registry: &[u8], kit: &[u8]) -> Self {
-        Self { owner: None, registry: registry.into(), kit: kit.into(), legs: HashMap::new(), verbs: HashMap::new() }
+        Self { owner: None, registry: registry.into(), kit: kit.into(), legs: HashMap::default(), verbs: HashMap::default() }
     }
     fn bind(&mut self, codec: &Interner) -> bool {
         if let Some(owner) = &self.owner { std::sync::Arc::ptr_eq(owner, &codec.owner) }
@@ -189,6 +189,7 @@ pub struct Interner {
     buckets: HashMap<u128, Vec<ClassId>>,
     labels: Vec<Box<[u8]>>,
     label_buckets: HashMap<u128, Vec<LabelId>>,
+    bare_labels: HashMap<[ClassId;4],LabelId>,
     states: HashMap<Vec<u8>,StateClassId>,
     legs_cache:Vec<(Block,bool,LegsRole,ClassId)>,label_scratch:Vec<u8>,
 }
@@ -202,7 +203,7 @@ pub fn digest(bytes: &[u8]) -> u128 {
 impl Interner {
     /// Alternate bucket function for qualification, including forced collisions.
     pub fn with_digest(hash: fn(&[u8]) -> u128) -> Self {
-        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::new(), labels: Vec::new(), label_buckets: HashMap::new(),states:HashMap::new(),legs_cache:Vec::new(),label_scratch:Vec::new() }
+        Self { owner: std::sync::Arc::new(()), hash, classes: Vec::new(), digests: Vec::new(), buckets: HashMap::default(), labels: Vec::new(), label_buckets: HashMap::default(),bare_labels:HashMap::default(),states:HashMap::default(),legs_cache:Vec::new(),label_scratch:Vec::new() }
     }
     pub fn intern_state(&mut self,bytes:&[u8])->Option<StateClassId> {
         if let Some(&id)=self.states.get(bytes) {return Some(id);}
@@ -242,6 +243,13 @@ impl Interner {
         bytes.push(sample.correct_tool as u8);
         bytes.extend(sample.progress().to_bits().to_le_bytes());
         self.intern(&bytes).map(Projection::Known)
+    }
+    pub fn identity(&self)->&std::sync::Arc<()> {&self.owner}
+    pub fn bare_legs_label(&mut self,classes:[ClassId;4])->Option<LabelId> {
+        if let Some(&id)=self.bare_labels.get(&classes) {return Some(id);}
+        let id=self.label(Label {law_schema:SCHEMA,body_kit:b"bare",support:&classes[..2],medium:&classes[2..]})?;
+        self.bare_labels.insert(classes,id);
+        Some(id)
     }
     pub fn label(&mut self, label: Label<'_>) -> Option<LabelId> {
         let mut bytes = std::mem::take(&mut self.label_scratch);bytes.clear();

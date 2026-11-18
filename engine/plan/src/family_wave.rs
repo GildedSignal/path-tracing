@@ -53,7 +53,7 @@ impl JointStore {
             let mut points=Vec::new();if let Image::Points(p)=&image.image {for state in p {points.push(self.node(state));}}
             let exit=if points.is_empty() {ExitImage::Map(image.clone())}else {ExitImage::Points(points)};
             let cells=self.certificates.cells(certificate).unwrap();let min=std::array::from_fn(|a|cells.iter().map(|c|c.position[a]).min().unwrap());let max=std::array::from_fn(|a|cells.iter().map(|c|c.position[a]).max().unwrap());
-            let step=WordStep {program,args,ticks:(end.t-start.t).try_into().unwrap(),expected_end_t:end.t,events:List::new(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:StateAt::shared(self.states[to].clone()),map_segments:0};
+            let step=WordStep {program,args,ticks:(end.t-start.t).try_into().unwrap(),expected_end_t:end.t,events:Default::default(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:StateAt::shared(self.states[to].clone())};
             let positions=xyz(end.position).map(f64::to_bits);
             let item=Piece {lo:image.lo,hi:image.hi,status:Status::Found,ticks:step.ticks,tick_range:image.ticks,exit_lo:positions,exit_hi:xyz(image.predict(image.hi)[0].position).map(f64::to_bits),witness:Witness {s_bits:unordered(image.lo).to_bits(),end_digest:codec::digest(&end.bits().iter().flat_map(|w|w.to_le_bytes()).collect::<Vec<_>>())},signature:image.signature.clone(),grounded:start.on_ground,uses:image.uses.clone(),resource_guard:entry.resources,exit,binding,certificate,from,to,step,last_before:end.clone()};
             let id=EdgeId(self.edges.len()+pieces.len());ids.push(id);pieces.push(item);

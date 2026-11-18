@@ -1,5 +1,6 @@
 //! The shared generator store. Learning and acting use exactly the same preparation.
-use std::{cell::{Cell,RefCell},collections::{HashMap,HashSet},sync::{Arc,atomic::{AtomicU64,Ordering}}};
+use std::{cell::{Cell,RefCell},collections::HashSet,sync::Arc};
+use law::solve_meter::HashMap;
 use law::{PlayerState,Vec3,World,codec::{self,LabelId,StateQuestion},footprint::{Footprint,RecordingWorld},state_reads::{StateField as F,StateReads}};
 use words::Arguments;
 use crate::{events,lattice};
@@ -48,6 +49,22 @@ impl VerticalWord {
         self.at(p,(n%period as u64) as usize,anchor)
     }
 }
+/// Hot readout for one tick. Full law states remain available to materialize
+/// a word at execution and to the frozen native replay.
+#[derive(Clone,Copy,Debug)]
+pub(crate) struct PhaseRecord {
+    pub y:f64,
+    pub velocity:Vec3,
+    pub pose:law::Pose,
+    pub supported:bool,
+}
+impl From<&PlayerState> for PhaseRecord {
+    fn from(s:&PlayerState)->Self {
+        Self {y:s.position.y,velocity:s.velocity,pose:s.pose,supported:s.main_supporting_block.is_some()}
+    }
+}
+const _:()=assert!(std::mem::size_of::<PhaseRecord>()<=40);
+
 #[derive(Clone,Debug)]
 pub struct WordKernel {
     pub(crate) id:u64,motor:MotorKeyId,entry_words:Vec<u64>,
@@ -57,6 +74,8 @@ pub struct WordKernel {
     pub cycle_period:u32,pub cycle_increments:Vec<Vec3>,pub cycle_clamped:Vec<[bool;3]>,pub cycle_level:Vec<f64>,
     pub cycle_displacement:Vec3,pub cycle_states:Vec<PlayerState>,pub cycle_reads_relative:[[i32;2];3],
     pub(crate) transient_increments:Vec<Vec3>,
+    transient_phases:Vec<PhaseRecord>,cycle_phases:Vec<PhaseRecord>,
+    transient_heights:[f64;2],cycle_heights:[f64;2],
     pub(crate) cycle_maps:[events::Map;2],pub(crate) transient_maps:[events::Map;2],
     transient_y:VerticalWord,cycle_y:VerticalWord,pub max_body_step:f64,
     transient_turns:Vec<u64>,cycle_turns:Vec<u64>,
@@ -146,27 +165,37 @@ impl WordKernel {
     pub fn phase(&self,phase:usize)->PlayerState {self.cycle_states[phase%self.cycle_states.len()].clone()}
 
 }
+/// The bundle stores dense kernel indices. The generator store owns each
+/// immutable kernel once, including kernels shared by several phase rows.
+const WORDS_PER_LABEL:usize=3;
+pub struct StopWords([Option<std::num::NonZeroU32>;WORDS_PER_LABEL]);
+impl StopWords {
+    pub(crate) fn new(kernels:&[Arc<WordKernel>])->Self {
+        assert!(kernels.len()<=WORDS_PER_LABEL);
+        Self(std::array::from_fn(|i|kernels.get(i).map(|k|{
+            let id=u32::try_from(k.id).expect("kernel index capacity");
+            std::num::NonZeroU32::new(id.checked_add(1).expect("kernel index capacity")).unwrap()
+        })))
+    }
+}
 pub struct WordBundle {
     pub first:Arc<WordKernel>,pub second:Arc<WordKernel>,
-    pub incumbents:Vec<Arc<WordKernel>>,pub terminals:Vec<Vec<Arc<WordKernel>>>,pub incumbent_terminals:Vec<Vec<Vec<Arc<WordKernel>>>>,
+    pub incumbents:Vec<Arc<WordKernel>>,pub terminals:Vec<StopWords>,pub incumbent_terminals:Vec<Vec<StopWords>>,
 }
 type Bucket=(LabelId,u16,u16,u32);
 #[derive(Default)]
-struct Inner {motors:HashMap<Vec<u8>,MotorKeyId>,entries:HashMap<Bucket,Vec<(MotorKeyId,Arc<WordKernel>)>>,prepared:HashSet<(LabelId,u16,u16)>,bundles:HashMap<(LabelId,MotorKeyId,u16,u16,u16),Arc<WordBundle>>,scratch_words:Vec<u64>}
-pub struct GeneratorStore {pub joints:RefCell<crate::joints::JointStore>,inner:RefCell<Inner>,ticks:Cell<u64>,serial:Cell<u64>,reads:Cell<StoreReads>,codec_key:Vec<u8>,codec_binding:Cell<Option<codec::StateClassId>>}
+struct Inner {kernels:Vec<Arc<WordKernel>>,motors:HashMap<Vec<u8>,MotorKeyId>,entries:HashMap<Bucket,Vec<(MotorKeyId,Arc<WordKernel>)>>,prepared:HashSet<(LabelId,u16,u16)>,bundles:HashMap<(LabelId,MotorKeyId,u16,u16,u16),Arc<WordBundle>>,scratch_words:Vec<u64>}
+pub struct GeneratorStore {pub joints:RefCell<crate::joints::JointStore>,inner:RefCell<Inner>,ticks:Cell<u64>,serial:Cell<u64>,reads:Cell<StoreReads>,codec_binding:std::cell::OnceCell<Arc<()>>}
 impl Default for GeneratorStore {
     fn default()->Self {
-        static NEXT:AtomicU64=AtomicU64::new(0);
-        let mut key=b"generator-store-owner/1".to_vec();key.extend(NEXT.fetch_add(1,Ordering::Relaxed).to_le_bytes());
-        Self {joints:RefCell::default(),inner:RefCell::default(),ticks:Cell::new(0),serial:Cell::new(0),reads:Cell::default(),codec_key:key,codec_binding:Cell::new(None)}
+        Self {joints:RefCell::default(),inner:RefCell::default(),ticks:Cell::new(0),serial:Cell::new(0),reads:Cell::default(),codec_binding:Default::default()}
     }
 }
 impl GeneratorStore {
     /// LabelId and ClassId are local to one codec. One owner marker (not one
     /// class per motor key) prevents accidental reuse in another ID namespace.
     pub fn bind_codec(&self,codec:&mut codec::Interner)->bool {
-        if let Some(id)=self.codec_binding.get() {return codec.find_state(&self.codec_key)==Some(id);}
-        let Some(id)=codec.intern_state(&self.codec_key) else {return false;};self.codec_binding.set(Some(id));true
+        Arc::ptr_eq(self.codec_binding.get_or_init(||codec.identity().clone()),codec.identity())
     }
     pub fn bundle(&self,label:LabelId,from:&PlayerState,program:u16,pair:[u16;2])->Option<Arc<WordBundle>> {
         let mut reads=self.reads.get();reads.bundles+=1;self.reads.set(reads);
@@ -180,9 +209,22 @@ impl GeneratorStore {
         let motor=self.intern_motor(&motor_words(from,bundle.first.reads,from.position.y.floor()));let bundle=Arc::new(bundle);
         self.inner.borrow_mut().bundles.insert((label,motor,program,pair[0],pair[1]),bundle.clone());bundle
     }
+    pub(crate) fn stop_words(&self,row:&StopWords)->crate::inline::List<Arc<WordKernel>,3> {
+        let inner=self.inner.borrow();
+        row.0.iter().flatten().map(|i|inner.kernels[(i.get()-1) as usize].clone()).collect()
+    }
     pub fn preparation_ticks(&self)->u64 {self.ticks.get()}
     pub fn reads(&self)->StoreReads {self.reads.get()}
     pub fn reset_reads(&self) {self.reads.set(StoreReads::default());}
+    #[cfg(feature="solve-counters")]
+    pub fn max_bundle_bytes(&self)->usize {
+        use std::mem::size_of;
+        let rows=|v:&Vec<StopWords>|v.capacity()*size_of::<StopWords>();
+        self.inner.borrow().bundles.values().map(|b|size_of::<WordBundle>()+
+            b.incumbents.capacity()*size_of::<Arc<WordKernel>>()+rows(&b.terminals)+
+            b.incumbent_terminals.capacity()*size_of::<Vec<StopWords>>()+
+            b.incumbent_terminals.iter().map(rows).sum::<usize>()).max().unwrap_or(0)
+    }
     pub fn motor_count(&self)->usize {self.inner.borrow().motors.len()}
     pub fn intern_motor(&self,words:&[u64])->MotorKeyId {
         let bytes=codec::state_key(StateQuestion::Recurrence,words);let mut inner=self.inner.borrow_mut();
@@ -209,7 +251,7 @@ impl GeneratorStore {
         let arguments=Arguments {refined_yaw:Some(lattice::yaw(yaw)),..Default::default()};
         let anchor=from.position.y.floor();
         let mut state=from.clone();let mut states=vec![state.clone()];let mut moved=Vec::new();let mut clamps=Vec::new();
-        let mut seen=HashMap::new();seen.insert(cycle_words(&state,anchor),0);
+        let mut seen=HashMap::<_,_>::default();seen.insert(cycle_words(&state,anchor),0);
         let metered=crate::source::MeteredWorld::new(world);
         let recording=RecordingWorld::new(&metered);let mut footprint=Footprint::default();
         let mut bounds=[[0,0];3];
@@ -242,27 +284,47 @@ impl GeneratorStore {
         };
         let id=self.serial.get();self.serial.set(id+1);
         let entry_words=motor_words(from,reads,anchor);let motor=self.intern_motor(&entry_words);
+        let heights=|states:&[PlayerState]|states.iter().map(|s|s.position.y)
+            .fold([f64::INFINITY,f64::NEG_INFINITY],|[lo,hi],y|[lo.min(y),hi.max(y)]);
         let k=Arc::new(WordKernel {id,motor,entry_words,program,yaw_index:yaw,arguments,start:from.clone(),anchor_y:anchor,reads,
             transient_ticks:first as u32,transient_states:states[..=first].to_vec(),transient_endpoint:states[first].clone(),transient_reads:footprint,
             cycle_period:period as u32,cycle_increments:increments.clone(),cycle_clamped:clamps[first..first+period].to_vec(),
             cycle_level:states[first..first+period].iter().map(|s|s.position.y-anchor).collect(),cycle_displacement:displacement,
             cycle_states:states[first..first+period].to_vec(),cycle_reads_relative:bounds,
             transient_increments:moved[..first].to_vec(),
-            cycle_maps:[events::Map::new(increments.iter().map(|v|v.x).collect()),events::Map::new(increments.iter().map(|v|v.z).collect())],
-            transient_maps:[events::Map::new(moved[..first].iter().map(|v|v.x).collect()),events::Map::new(moved[..first].iter().map(|v|v.z).collect())],
+            transient_heights:heights(&states[..=first]),cycle_heights:heights(&states[first..first+period]),
+            transient_phases:states[..=first].iter().map(PhaseRecord::from).collect(),
+            cycle_phases:states[first..first+period].iter().map(PhaseRecord::from).collect(),
+            cycle_maps:[events::Map::axis(0,increments.iter().map(|v|v.x).collect()),events::Map::axis(1,increments.iter().map(|v|v.z).collect())],
+            transient_maps:[events::Map::axis(0,moved[..first].iter().map(|v|v.x).collect()),events::Map::axis(1,moved[..first].iter().map(|v|v.z).collect())],
             transient_y:VerticalWord::new(&moved[..first],&clamps[..first],&states[..=first],anchor),
             cycle_y:VerticalWord::new(&moved[first..first+period],&clamps[first..first+period],&states[first..=first+period],anchor),max_body_step,
             transient_turns:turns(&moved[..first]),cycle_turns:turns(&increments),
             });
         let id=self.intern_motor(&motor_words(from,reads,anchor));
-        let mut inner=self.inner.borrow_mut();inner.entries.entry((label,program,yaw,arguments.pitch.to_bits())).or_default().push((id,k.clone()));
+        let mut inner=self.inner.borrow_mut();inner.kernels.push(k.clone());inner.entries.entry((label,program,yaw,arguments.pitch.to_bits())).or_default().push((id,k.clone()));
         inner.prepared.insert((label,program,yaw));Ok(k)
     }
-    pub fn words(&self)->[u16;3] {[SPRINT_JUMP,SPRINT,WALK]}
+    pub fn words(&self)->[u16;WORDS_PER_LABEL] {[SPRINT_JUMP,SPRINT,WALK]}
 }
 
 use crate::state_view::{StateSource,StateAt};
 impl WordKernel {
+    pub(crate) fn phase_record(&self,prefix:bool,index:usize)->&PhaseRecord {
+        let record=if prefix {&self.transient_phases[index]} else {&self.cycle_phases[index]};
+        #[cfg(feature="solve-counters")] crate::solve_meter::phase(record);
+        record
+    }
+    pub(crate) fn axis_step(&self,axis:usize,start:f64,tick:u64)->(f64,f64) {
+        let before=tick-1;
+        let head=before.min(self.transient_ticks as u64);
+        let entry=self.transient_maps[axis].advance(start,head);
+        let rest=before-head;
+        let at=self.cycle_maps[axis].advance(entry,rest);
+        let increment=if before<self.transient_ticks as u64 {self.transient_increments[head as usize]}
+            else {self.cycle_increments[(rest%self.cycle_period as u64) as usize]};
+        (at,at+[increment.x,increment.z][axis])
+    }
     pub fn readout(self:&Arc<Self>,from:&impl StateSource,ticks:u64,cycle_only:bool)->StateAt {
         let v=from.view();let head=if cycle_only {0} else {ticks.min(self.transient_ticks as u64)};let rest=ticks-head;
         let x=self.transient_maps[0].advance(v.position.x,head);let z=self.transient_maps[1].advance(v.position.z,head);
@@ -282,25 +344,36 @@ impl WordKernel {
         let head=if cycle_only {0} else {ticks.min(self.transient_ticks as u64)};include(read(ticks));include(read(head));
         if head>0 {
             for &t in &self.transient_turns {if t<head {include(read(t));}}
-            let g=self.prefix_geometry(from);for i in 0..crate::events::PhaseGeometry::len(&g) {include(Vec3::new(v.position.x,crate::events::PhaseGeometry::body(&g,i).0,v.position.z));}
+            for y in self.prefix_geometry(from).heights() {include(Vec3::new(v.position.x,y,v.position.z));}
         }
         let rest=ticks-head;
         if rest>0 {
             for &phase in &self.cycle_turns {if phase<=rest {include(read(head+phase));include(read(head+(rest-phase)/self.cycle_period as u64*self.cycle_period as u64+phase));}}
-            let base=self.readout(from,head,cycle_only);let g=self.cycle_geometry(&base);
-            for i in 0..crate::events::PhaseGeometry::len(&g) {include(Vec3::new(v.position.x,crate::events::PhaseGeometry::body(&g,i).0,v.position.z));}
+            let base=self.readout(from,head,cycle_only);
+            for y in self.cycle_geometry(&base).heights() {include(Vec3::new(v.position.x,y,v.position.z));}
         }(lo,hi)
     }
     pub(crate) fn prefix_geometry<'a>(&'a self,from:&impl StateSource)->PhaseSet<'a> {PhaseSet {kernel:self,y:from.view().position.y,cycle:false}}
     pub(crate) fn cycle_geometry<'a>(&'a self,from:&impl StateSource)->PhaseSet<'a> {PhaseSet {kernel:self,y:from.view().position.y,cycle:true}}
 }
 pub(crate) struct PhaseSet<'a> {kernel:&'a WordKernel,y:f64,cycle:bool}
+impl PhaseSet<'_> {
+    fn heights(&self)->[f64;2] {
+        use crate::events::PhaseGeometry;
+        let k=self.kernel;
+        let anchor=if self.cycle {self.y.floor()+k.anchor_y-k.cycle_phases[0].y.floor()} else {self.y.floor()};
+        if anchor.to_bits()==k.anchor_y.to_bits() {
+            return if self.cycle {k.cycle_heights} else {k.transient_heights};
+        }
+        (0..self.len()).map(|i|self.body(i).0).fold([f64::INFINITY,f64::NEG_INFINITY],|[lo,hi],y|[lo.min(y),hi.max(y)])
+    }
+}
 impl crate::events::PhaseGeometry for PhaseSet<'_> {
     fn len(&self)->usize {if self.cycle {self.kernel.cycle_states.len()} else {self.kernel.transient_states.len()}}
     fn body(&self,i:usize)->(f64,law::Pose) {
-        let k=self.kernel;let state=if self.cycle {&k.cycle_states[i]} else {&k.transient_states[i]};
-        let anchor=if self.cycle {self.y.floor()+k.anchor_y-k.cycle_states[0].position.y.floor()} else {self.y.floor()};
-        let y=if anchor.to_bits()==k.anchor_y.to_bits() {state.position.y} else if self.cycle {k.cycle_y.repeated(self.y,i as u64,anchor)} else {k.transient_y.at(self.y,i,anchor)};
+        let k=self.kernel;let state=k.phase_record(!self.cycle,i);
+        let anchor=if self.cycle {self.y.floor()+k.anchor_y-k.cycle_phases[0].y.floor()} else {self.y.floor()};
+        let y=if anchor.to_bits()==k.anchor_y.to_bits() {state.y} else if self.cycle {k.cycle_y.repeated(self.y,i as u64,anchor)} else {k.transient_y.at(self.y,i,anchor)};
         (y,state.pose)
     }
 }

@@ -1,6 +1,7 @@
 //! Goal-free joint facts and a goal-bound backward wave. Native replay belongs
 //! only to learn(); acting consumes certificates and never chooses inputs.
-use std::{cmp::Reverse,collections::{BinaryHeap,HashMap,VecDeque}};
+use std::{cmp::Reverse,collections::{BinaryHeap,VecDeque}};
+use law::solve_meter::HashMap;
 use law::{BlockPos,PlayerState,Vec3,World,codec::{self,Interner,StateClassId,JointPatternId,
     proof::{Answer,Binding,ReadCertificates,Refusal,Source}},footprint::{Footprint,RecordingWorld}};
 use words::{Arguments,Program};
@@ -86,7 +87,7 @@ pub struct Demand {pub entry:Vec<u64>,pub resource_guard:Option<Resources>,pub f
 #[derive(Clone,Debug)]
 pub struct Attempt {pub entry:EntryTemplate,pub program:u16,pub args:Arguments,pub status:Status,pub witness:Witness,pub reads:Vec<(u64,Footprint)>}
 #[derive(Default,Clone,Copy,Debug)]
-pub struct Work {pub waves:u64,pub edge_reads:u64,pub settled:u64,pub law_ticks:u64,pub terminal_builds:u64,pub terminal_lookups:u64}
+pub struct Work {pub waves:u64,pub edge_reads:u64,pub settled:u64,pub law_ticks:u64,pub terminal_builds:u64,pub terminal_lookups:u64,#[cfg(feature="solve-counters")] pub terminal_build_ns:u128}
 #[derive(Clone,Debug)]
 pub struct Route {pub words:List<WordStep,12>,pub ticks:u64,pub end:StateAt}
 /// The field's partition is separate from the goal-free pattern partition.
@@ -125,7 +126,7 @@ fn backward(n:usize,edges:&[(usize,usize,u64,EdgeId)],terminals:impl Iterator<It
         }
     }
     work.settled+=count;
-    Field {goal,t,via,alternate,partitions:Vec::new(),families:Vec::new(),prices:HashMap::new()}
+    Field {goal,t,via,alternate,partitions:Vec::new(),families:Vec::new(),prices:HashMap::default()}
 }
 
 /// Uniform generator chains and learned joint edges use this same min-plus
@@ -143,17 +144,29 @@ pub struct JointStore {
     templates:HashMap<Vec<u64>,StateClassId>,template_bytes:usize,
     states:Vec<std::sync::Arc<PlayerState>>,state_ids:HashMap<Vec<u64>,usize>,edges:Vec<(usize,usize)>,
     point_entries:HashMap<Vec<u64>,Vec<usize>>,point_scratch:Vec<u64>,
-    certificates:ReadCertificates,field:Option<Field>,terminal_sets:HashMap<crate::terminal::Key,crate::terminal::Set>,family_entries:HashMap<usize,EntryTemplate>,
+    certificates:ReadCertificates,field:Option<Field>,terminal_sets:Vec<Vec<Vec<crate::terminal::Set>>>,family_entries:HashMap<usize,EntryTemplate>,
 }
 impl JointStore {
-    pub fn terminal_count(&self)->usize {self.terminal_sets.len()}
+    pub fn terminal_count(&self)->usize {self.terminal_sets.iter().flatten().map(Vec::len).sum()}
     pub fn terminal(&mut self,label:law::codec::LabelId,gait:&crate::store::WordKernel,phase:u32,words:&[std::sync::Arc<crate::store::WordKernel>],from:&impl crate::state_view::StateSource,goal:Goal)->Result<Option<(std::sync::Arc<crate::store::WordKernel>,u64)>,String> {
         self.work.terminal_lookups+=1;
         let request=crate::terminal::Request::new(label,gait,phase,words,from,goal);
-        if !self.terminal_sets.contains_key(&request.key) {
-            let set=crate::terminal::Set::build(&request,words,from)?;self.terminal_sets.insert(request.key,set);self.work.terminal_builds+=1;
-        }
-        Ok(self.terminal_sets[&request.key].lookup(from,goal))
+        let slot=usize::try_from(gait.id).map_err(|_|"terminal gait index exceeds address space")?;
+        if self.terminal_sets.len()<=slot {self.terminal_sets.resize_with(slot+1,Vec::new);}
+        let phases=&mut self.terminal_sets[slot];
+        if phases.len()<=phase as usize {phases.resize_with(phase as usize+1,Vec::new);}
+        let sets=&mut phases[phase as usize];
+        let index=match sets.binary_search_by_key(&request.key,|s|s.key) {
+            Ok(i)=>i,
+            Err(i)=>{
+                #[cfg(feature="solve-counters")] let since=std::time::Instant::now();
+                let set=crate::terminal::Set::build(&request,words,from)?;
+                #[cfg(feature="solve-counters")] {self.work.terminal_build_ns+=since.elapsed().as_nanos();}
+                if set.law_hash!=law::LAW_HASH {return Err("terminal store law hash differs".into());}
+                sets.insert(i,set);self.work.terminal_builds+=1;i
+            }
+        };
+        Ok(sets[index].lookup(from,goal))
     }
     pub fn template_bytes(&self)->usize {self.template_bytes}
     pub fn cold_state_bytes(&self)->usize {self.states.iter().map(|s|s.bits().len()*std::mem::size_of::<u64>()).sum()}
@@ -250,7 +263,7 @@ impl JointStore {
         let cells=self.certificates.cells(certificate).unwrap();
         let mut min=[i32::MAX;3];let mut max=[i32::MIN;3];
         for c in cells {for a in 0..3 {min[a]=min[a].min(c.position[a]);max[a]=max[a].max(c.position[a]);}}
-        let step=WordStep {program,args,ticks,expected_end_t:end.t,events:List::new(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:StateAt::shared(self.states[to].clone()),map_segments:0};
+        let step=WordStep {program,args,ticks,expected_end_t:end.t,events:Default::default(),certificate:crate::source::CorridorProof {label,min,max,version:law::LAW_HASH},end:StateAt::shared(self.states[to].clone())};
         let witness=Witness {s_bits:entry.s.to_bits(),end_digest:codec::digest(&codec::state_key(codec::StateQuestion::Exact,&end.bits()))};
         let uses=crate::families::UseInterval::witness(start,&end);
         let plateau=Piece {lo:entry.lattice,hi:entry.lattice,status:Status::Found,ticks,tick_range:(ticks,ticks),exit_lo:positions,exit_hi:positions,witness,signature,grounded:start.on_ground,uses,resource_guard:entry.resources,exit:ExitImage::Points(vec![to]),binding,certificate,from,to,step,last_before};

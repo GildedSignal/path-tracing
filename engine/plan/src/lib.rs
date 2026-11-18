@@ -29,3 +29,6 @@ pub mod families;
 pub mod inline;
 pub mod state_view;
 pub mod terminal;
+
+#[cfg(feature="solve-counters")]
+pub mod solve_meter;
