@@ -6,7 +6,7 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 
 - **T, per mission** (S46): server ticks from the tick in which the server receives the command to the tick in which the mission is complete, including its cleanup: every edit restored, every temporary item back in an inventory, no item left lying. A trip is a mission of one bot, so for a trip T ends when the bot stands in the goal cell with everything restored. Planning time counts.
 - **Deviation rate** (from Phase 2): mismatches per thousand predicted server-owned outcomes, per capability. It must trend down, and an unexplained anomaly blocks only the claims that depend on it.
-- **Phases and flights:** the rungs below are grouped by the roadmap in [HANDOFF](../now.md). Every phase ends in a flight Julien uses in the game, and has a kill criterion that is evaluated and logged either way.
+- **Phases and flights:** the rungs below are grouped by the roadmap in [now.md](../now.md). Every phase ends in a flight Julien uses in the game, and has a kill criterion that is evaluated and logged either way.
 - **The bracket:**
   - LB is the light cone's lower bound for the trip. It is admissible: no run may ever beat it.
   - UB is the best T found by an independent offline search over raw tick controls, never over the planner's own moves.
@@ -34,10 +34,10 @@ This file holds the scoreboard and the rungs. Each rung is frozen before its fir
 - **Server:** the lab server runs on port 25566 (RCON on 25576).
 - **Courses:** built on those worlds through RCON.
 - **No superflat:** every superflat chunk is the same, so the memo, repair and scale tests could not fail there.
-- **Isolation:** gates take the rig lock and run under `/tick rate`, so each test stays under 60 seconds. **Caveat, read in the 26.2 client (5 November):** the client's clock is `max(50 ms, the server's ms per tick)`, so it follows a slower server but never a faster one. Under `/tick rate 100` the server runs 5× while the bot, whose movement the client computes, stays at 20 ticks per second. Job 1.8 lets the bot's client follow a faster rate, gated by recordings that are bit-identical at 20 and 100 ticks per second. Julien's player stays away from the bot, because players push each other.
+- **Isolation:** gates take the rig lock and run under `/tick rate`, so each test stays under 60 seconds. **Caveat, in the 26.2 client:** the client's clock is `max(50 ms, the server's ms per tick)`, so it follows a slower server but never a faster one. Under `/tick rate 100` the server runs 5× while the bot, whose movement the client computes, stays at 20 ticks per second. Job 1.8 lets the bot's client follow a faster rate, gated by recordings that are bit-identical at 20 and 100 ticks per second. Julien's player stays away from the bot, because players push each other.
 - **The fast loop** (S32): once L0 passes, most trips run offline in the Rust law against the fixture worlds' region files, far faster than any server. The live server and the bot's client audit a sampled fraction of them, under `/tick rate`, because a planner and a simulator that share one law can agree on the same mistake. An offline result counts only while its audits agree.
 
-## How we test (from ES, adopted 5 November, S19)
+## How we test (from ES, S19)
 
 Julien, in ES: "test like a spartan would train, harder than for the war"; "extremes inform the mean"; "even baby spartans started 'small' yet harshly". Sources: ES `docs/test-ladder.md`, `docs/method.md`, PRINCIPLES 10 and 20.
 
@@ -87,7 +87,7 @@ When a rung below is frozen, it is frozen as a ladder: its extreme tracks, each 
 | Rung | Phase | What it stresses | Status |
 |---|---|---|---|
 | L0 | 1 | **The law.** Fixtures for each terrain class: full blocks, slabs and stairs, step-ups, ceilings, ladders and vines, water, ice and blue ice, slime, soul sand, honey, cobweb, powder snow, and edges for the sneak back-off. Many random input sequences each. **Pass:** bit-identical positions and velocities on every tick; damage and exhaustion equal the server's; server corrections are recorded server events (the replay applies the teleport and continues), counted per course and reported as the veto rate, never a law mismatch (Julien, S62; a correction depends on packet timing against the server's tick); every mutant caught (axis tie order, step-up, the sneak back-off at edges, ceiling bonks) | to freeze before 1.5 runs |
-| L0-x | 1 | **The law at its extremes**, a second rung beside L0, which was frozen before this method arrived: coordinates at 10⁴, 10⁶ and 3×10⁷; exact axis-order ties; grazing corners at the body's width; step-ups on edges and corners; elytra-scale speeds into walls; chunk borders. Same pass line as L0, with a red-team-chosen mutant. It is climbed beside the first flight and never blocks it | to freeze before L0's first run |
+| L0-x | 1 | **The law at its extremes**, a second rung beside L0: coordinates at 10⁴, 10⁶ and 3×10⁷; exact axis-order ties; grazing corners at the body's width; step-ups on edges and corners; elytra-scale speeds into walls; chunk borders. Same pass line as L0, with a red-team-chosen mutant. It is climbed beside the first flight and never blocks it | to freeze before L0's first run |
 | Legs ladder | 2 | Frames R1 to R-scale as one ladder. **Extreme tracks:** trip length, maze depth, gap width up to the sprint-jump limit, corner precision, distance from the origin. **Chaotic track:** default terrain from fixed seeds with re-targets. The tracks and their rungs are frozen with R1 to R-scale | to freeze before Phase 2 runs |
 | R1 | 2 | Flat trips, straight and diagonal, 10 to 200 blocks | to freeze before Phase 2 runs |
 | R2 | 2 | Walls and mazes on legs alone: detours | to freeze before Phase 2 runs |

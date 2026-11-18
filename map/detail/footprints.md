@@ -3,7 +3,6 @@
 The word's footprint makes it a certificate, a cache entry and a worldtube
 ([representation.md](representation.md), section 3). This spec says what the
 law reports it read, what makes a run repeat bit for bit, and the pattern key.
-The Designer red-teamed the key (FREEZE WITH CHANGES); this is the changed key.
 Code: `engine/law/src/footprint.rs`, `engine/law/src/pattern.rs`.
 
 ## 1. The adapter
@@ -81,10 +80,9 @@ MinY enters relative to the start block; the law reads it only when the block
 below the body is unloaded.
 
 **Every read is relative to the body.** The fluid check (`update_fluid`,
-Level.hasChunksAt) used to ask `loaded` at absolute chunk corners, so a shift
-not a multiple of 16 could hit while the law tested other chunks. It now asks
-each cell of the same columns: a chunk is loaded exactly when its cells are, so
-the law is bit-identical and the read is keyed like any other. Test:
+`Level.hasChunksAt`) asks `loaded` at each cell of the fluid columns rather than
+at absolute chunk corners, so a chunk is loaded exactly when its cells are, the
+law is bit-identical across shifts, and the read is keyed like any other. Test:
 `a_shift_across_a_chunk_edge_cannot_hit_when_the_law_sees_it`.
 
 **Ids.** Each digest (cells and environment) is interned to a dense `u16`; the
@@ -149,7 +147,7 @@ Symmetry stays found by hashing, for a later key that replays turned words.
 
 - **`swept`**: the worldtube, for coordination; the key needs only what was read.
 - **Answers no query asked for**: a Shape-only cell accepts any model with those resolved shapes;
-  the reach visit (job 1.6) leaves 78–92% of cells Shape-only (judged: 193,668 such edits, bit-equal).
+  the reach visit leaves 78–92% of cells Shape-only (193,668 such edits, bit-equal).
 - **`HasFluid` and `HasInsideEffects`**: forcing both true leaves every tick
   bit-identical (`speed_differential.rs`); keying them would split a pattern by
   water a kilometre away.
@@ -176,13 +174,12 @@ The shift gate replays a 20-tick sprint-jump cycle at 14 shifts. The 6 in scope
 are bit-exact; of the 8 out of scope (crossing 1024, 2048, 2^20, y = 64 and
 y = 128), 7 differ. The scope is needed, and not too tight.
 
-Cost on Julien's tracks (`key_cost.rs`, release; v1 by `jobs/1.2-footprints/v1-cost.rs`
-at commit 8801299; v2 is commit 8711ead, digests memoized per call), per entry:
+Cost on Julien's tracks (`key_cost.rs`, release), per entry:
 
-| Word | Read cells | v1 bytes | Bytes now, own + shared | µs to key: v1, v2, now cold, now warm | µs to look up: v2, now |
-|---|---|---|---|---|---|
-| 1 tick (32 words) | 90 | 30,028 | 301 + 1,144 | 161, 25, 18, 3.2 | 20, 2.2 |
-| 10 ticks (26 words) | 174 | 57,736 | 471 + 2,813 | 230, 30, 23, 6.0 | 25, 4.4 |
+| Word | Read cells | Bytes, own + shared | µs to key (cold, warm) | µs to look up |
+|---|---|---|---|---|
+| 1 tick (32 words) | 90 | 301 + 1,144 | 18, 3.2 | 2.2 |
+| 10 ticks (26 words) | 174 | 471 + 2,813 | 23, 6.0 | 4.4 |
 
 Cold is a fresh table, where each (model, mask, loaded) slot is digested once;
 warm re-keys the same words. Most of the shared bytes are start states (about 90

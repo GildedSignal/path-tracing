@@ -1,10 +1,10 @@
 # One mind in the server (the bots' server side, spec, draft)
 
-Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door. The Designer red-teamed it on 9 November ("freeze with changes"); those changes are folded in below, with Julien's rulings (S52). It freezes after the packet-path Swarm 0 re-measure.
+Bots are real players on Julien's server (S46), driven by one engine. This spec fixes the boundary between the server and the engine. It is a one-way door; Julien's rulings (S52) apply. It freezes after the packet-path Swarm 0 re-measure.
 
 ## What the numbers say, and what they don't
 
-Swarm 0 (9 November, `D:\path-tracing-evidence\swarm-0-20261109-d`): server-side `ServerPlayer` bots on an in-process sink connection, packed together.
+Swarm 0 (`D:\path-tracing-evidence\swarm-0-20261109-d`): server-side `ServerPlayer` bots on an in-process sink connection, packed together.
 
 | Bots | Server ms per tick at 20 TPS (median / p99) |
 |---:|---|
@@ -37,7 +37,7 @@ The Fermi floor (representation.md) is about 3 ms per tick at 10⁴ bots, with o
 - **The server is a weak judge** (it accepts errors up to 0.25 blocks). **The judge stays the client:** the lab client audits sampled words at 100×.
 - **Every server `teleport()` of a bot enters the deviation stream.** A correction is an anomaly with a witness.
 - **Server-owned outcomes are nature:** damage, food, block updates, fluids, entities, pickups. The engine predicts them every tick for active bots, and each mismatch is an anomaly (engine.md, "How the law grows").
-- **The alternative,** the server running Mojang's movement for bots, was rejected. The client-only parts (input conversion, the sprint latch, push-out) would differ from the real client, and then nothing judges movement.
+- **Running Mojang's movement for bots on the server is rejected:** the client-only parts (input conversion, the sprint latch, push-out) would differ from the real client, and then nothing judges movement.
 
 ## The self channel (server → engine, per bot)
 
@@ -61,17 +61,15 @@ A bot executing a certified word skips the server's tick, and its state is the w
 ## Hosting the engine: a separate process
 
 **The engine runs as its own process,** over shared memory, pipelined one tick ahead (the engine is anytime). If it disconnects, the bots drop to scripted idle.
-- **Why not in-process** (the 9 November draft): a fault `catch_unwind` can't catch (abort, stack overflow, out of memory, a double panic, an access violation in unsafe, SIMD or GPU-driver code) would kill the JVM mid-save. Region writes aren't atomic, so Julien's world could be lost: that is ruin, not a price. And Windows locks a loaded DLL, so every engine rebuild would mean a server restart, which slows the feedback loop.
-- **It costs little:** the engine keeps its own world either way, so in-process bought only simplicity.
+- **Why not in-process:** a fault `catch_unwind` can't catch (abort, stack overflow, out of memory, a double panic, an access violation in unsafe, SIMD or GPU-driver code) would kill the JVM mid-save. Region writes aren't atomic, so Julien's world could be lost: that is ruin, not a price. And Windows locks a loaded DLL, so every engine rebuild would mean a server restart, which slows the feedback loop.
+- **It costs little:** the engine keeps its own world either way, so in-process buys only simplicity.
 - **What would flip it back:** a measured handoff at 2,000 TPS that can't be pipelined and costs more than about 5% of the 0.5 ms tick.
-
-This keeps the 4 November default ("the engine as a separate Rust process").
 
 ## Interfaces (frozen with the spec)
 
 - **Server → engine, each tick:** the tick number; world deltas; the self channel per bot; per bot, the server-owned outcomes (for the deviation stream); per real player, position and every visibility range; commands.
 - **Engine → server, each tick:** per active bot, its serverbound packet sequence; per lazy bot, its position only; per bot, its chunk tickets (chunk, level, from tick, to tick) and its presence level (below).
-- **Determinism:** the server's randomness is recorded and enters the engine as input (job 1.2).
+- **Determinism:** the server's randomness is recorded and enters the engine as input ([footprints.md](footprints.md)).
 
 ## Bots are players (Julien, S52)
 
@@ -96,7 +94,7 @@ This keeps the 4 November default ("the engine as a separate Rust process").
   2. **The 184-chunk ring between simulation distance (10) and view distance (12) doesn't tick.** It's held only to be sent to clients, and bots aren't sent chunks (they don't observe). A bot could load to simulation distance plus a one-chunk border, which is 29% less per lone bot. Nothing in that ring is simulated, but vanilla's behaviour at the edge (fluids or mobs reaching an unloaded chunk instead of a loaded, frozen one) could differ. So it ships only after a differential gate shows no change at the edge.
   3. **Lowering `simulation-distance` in server.properties** is vanilla, but it also changes what ticks around Julien. It's his call, and not proposed.
 - **What doesn't help:** a smaller render distance requested by the bot's client (it changes only what's sent).
-- **CPU, not memory, binds lone bots** (Fermi, 9 November):
+- **CPU, not memory, binds lone bots** (Fermi):
   - A ticking chunk costs about 2–5 µs per tick: random ticks in its few reactive sections, a spawn attempt, and the weather checks.
   - 441 chunks is then about 1–2 ms per tick for each lone bot, so roughly 25–50 lone bots fit in the 50 ms tick at 20 TPS. Dense bots share their chunks.
   - The dispersed Swarm 0 cells test this. The floor is event-driven world ticking: each reactive block's next change drawn once, the same distribution at a cost per event, not per chunk. It's an idea for Julien, not yet a plan.

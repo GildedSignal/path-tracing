@@ -8,23 +8,23 @@ This file covers what the engine is for, the contract it keeps, and how Emergent
 
 The planner has to know what the bot's inputs will do, far faster than the game's 20 ticks a second, and exactly wherever a decision depends on it. That is all the engine is.
 
-**Speed.** The law costs about 0.6–0.95 µs per player tick on one core of the 7800X3D: median 590–940 ns across walking, sprint-jumping, under a ceiling and bumpy ground (job 1.1, 9 November; regenerate with `cargo run --release --bin bench` from `engine/`). That's about 5×10⁴ real time, bit-identical, against a Fermi floor of about 0.1–0.3 µs. Before job 1.1 it was 26–59 µs, all of it allocation. Choosing what to simulate stays the larger lever.
+**Speed.** The law costs about 0.6–0.95 µs per player tick on one core of the 7800X3D: median 590–940 ns across walking, sprint-jumping, under a ceiling and bumpy ground (regenerate with `cargo run --release --bin bench` from `engine/`). That's about 5×10⁴ real time, bit-identical, against a Fermi floor of about 0.1–0.3 µs. Choosing what to simulate stays the larger lever.
 
-## The law
+## The law ([architecture.md](../architecture.md) section 1)
 
-- **Nature and the judge** are Mojang's 26.2 code and the server. **The law** is the generative structure we write to reproduce them (S46), at three grains: the tick recurrence, words and the medium ([representation.md](representation.md)). The engine is the Rust law (his choice, S11).
+- **Nature and the judge** are Mojang's 26.2 code and the server; **the law** is the Rust structure reproducing them (S46) at three grains: tick, word and medium ([representation.md](representation.md)).
 - **The judge is the game itself.** The bot's client runs Mojang's code with no game-logic mods: Lithium and C2ME are removed from it and from the server. The other performance mods stay, because they only render, cache or network.
 - **Seal only what can't be corrected (SR-71).** The law may be loose where the server corrects for free (walking across a field; a cow treated as the cone of where it might be). It must be bit-exact, behind frozen gates, where nothing can correct it afterwards (narrow words: a gap at the jump limit, a clutch).
 
 ## How the law grows (S46)
 
-The port covers everything the bot can interact with, and everything that can interact with the bot. Rendering, sound and textures are out. It grows from three sources:
+The port covers everything the bot can interact with, and everything that can interact with the bot. Rendering, sound and textures are out. It grows from three sources ([architecture.md](../architecture.md) section 1):
 1. **The ground layer.** The obvious mechanical laws (shapes for every block state, fluids, placement, breaking, item use, entity hitboxes and pushing, damage, effects, boats, elytra). GLM lanes write them, one rule each, read from the bytecode with a witness. An independent GLM checks each, and Terra integrates them in batches.
 2. **Deviations.** Inside the server, every prediction of a server-owned outcome is compared with what the server did. Each mismatch becomes an anomaly with a minimal witness, then a law delta and a regression test.
 3. **Demand.** A new word needs a law that isn't there yet.
 
 Deviations only catch the law's false positives. A law that wrongly says "impossible" never shows up, because the planner never tries it. So the ground layer is checked against the jar directly, and R&D runs candidate words on a sandbox copy of the server.
-- **Arithmetic copies Java exactly.** That means Java's float and double semantics (strict IEEE), `Mth.sin` and `Mth.cos` (a 65,536-entry table), the same order of operations, and never a fused multiply-add.
+- **Arithmetic copies Java exactly** (never a fused multiply-add; [architecture.md](../architecture.md) section 1).
 
 Exactness classes:
 
@@ -34,7 +34,7 @@ Exactness classes:
 | server-exact | health, food, saturation, exhaustion, fall damage, breaking progress | the server (read over RCON) |
 | behaviour-exact | fluids, falling blocks, mobs, redstone | replays, at the resolution the decisions need |
 | advisory | floats on the GPU, learned estimates, forecasts | nothing: a wrong value may only cost speed, never change T |
-| server-driven | state the server computes and the client only receives: speed modifiers by attribute packet (powder-snow frost, effects), `ticksFrozen` decay; entity data the server echoes to its own player (the sprint flag, pose, the swimming flag: `ServerEntity.sendDirtyEntityData`, applied without the client's setters, 9 November) | recorded per tick and read by the law as input, never simulated, because the packet's arrival tick is network timing. Found in the 26.2 jar on 5 November: freezing runs only in `ServerLevel` |
+| server-driven | state the server computes and the client only receives: speed modifiers by attribute packet (powder-snow frost, effects), `ticksFrozen` decay (freezing runs only in `ServerLevel`); entity data the server echoes to its own player (the sprint flag, pose, the swimming flag: `ServerEntity.sendDirtyEntityData`, applied without the client's setters) | recorded per tick and read by the law as input, never simulated, because the packet's arrival tick is network timing |
 
 There is one known exception. Elytra flight (`LivingEntity.updateFallFlyingMovement`) calls `Math.cos` and `Math.sqrt`. `Math.cos` goes through HotSpot's own implementation, so the port must reproduce it bit for bit or give it a class of its own (Phase 11).
 
@@ -99,7 +99,7 @@ Between events, motion is a closed-form recurrence: velocity is a geometric seri
 - the toolkit;
 - goals.
 
-**Outputs** (changed with the unified plan, S165):
+**Outputs** (S165):
 - a plan of words: for each, the program, its arguments with its `count`, its stop and event predicates, the certificate with its worldtube, and its obligations. No per-tick array of inputs or positions: the client runs the words (move, strafe, jump, sneak, sprint, yaw, pitch, hotbar, use, attack);
 - the predicted T, and the bracket it sits in.
 
