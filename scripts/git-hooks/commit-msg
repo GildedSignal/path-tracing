@@ -5,3 +5,9 @@ files=$(git diff --cached --name-only)
 if echo "$files" | grep -q '^engine/' && ! echo "$files" | grep -q '^map/' && ! grep -q '^Map: unchanged' "$1"; then
   echo "commit-msg: this commit changes engine/ but not map/. Update the map, or add a line 'Map: unchanged, because ...'." >&2; exit 1
 fi
+# Less code (S239): every commit prints its net lines of code; growth in engine/ or bot/ needs a "Bought:" line.
+net=$(git diff --cached --numstat -- engine bot | awk '$1 != "-" {s += $1 - $2} END {print s+0}')
+echo "net lines of code (engine/, bot/): $net" >&2
+if [ "$net" -gt 0 ] && ! grep -q '^Bought:' "$1"; then
+  echo "commit-msg: this commit adds $net lines of code. Add a line 'Bought: <what it buys>', or delete as much as you add." >&2; exit 1
+fi
