@@ -31,7 +31,7 @@ Each row is shown beside its Fermi floor, with the gap in orders of magnitude.
 
 ## Floors (Fermi, inputs in `detail/representation.md`)
 
-| Case | Floor | Measured (18 November) | Gap |
+| Case | Floor | Measured | Gap |
 |---|---|---|---|
 | a new command on flat ground | ~1–10 µs | 68 ms standing, 55 ms moving | ~4 orders |
 | the same command asked again | ~1 µs | 19 µs | ~1 order |

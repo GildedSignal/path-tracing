@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The map's checks (the overhaul's C6). Installed into .git/hooks by scripts/install-hooks.sh.
+cd "$(git rev-parse --show-toplevel)" || exit 0
+git diff --cached --name-only | grep -q '^map/' || exit 0
+fail=0
+size=$(cat map/*.md | wc -c); if [ "$size" -gt 40000 ]; then echo "pre-commit: map/*.md is $size bytes, over the 40,000 cap" >&2; fail=1; fi
+if grep -nEi '\b[0-9]{1,2} (October|November|December|January)\b|superseded|previously|no longer|used to be' map/*.md; then echo "pre-commit: history wording in map/ (rewrite it in the present tense; history lives in git and archive/)" >&2; fail=1; fi
+for f in map/*.md map/detail/*.md; do d=$(dirname "$f"); grep -oE '\]\([^)#: ]+\)' "$f" | sed -E 's/^\]\(|\)$//g' | while read -r l; do [ -e "$d/$l" ] || echo "pre-commit: broken link in $f: $l" >&2; done; done 2>&1 | grep . >&2 && fail=1
+exit $fail

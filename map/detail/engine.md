@@ -168,7 +168,7 @@ Every other effect is a code hook. In `net.minecraft.world.level.block`, 25 clas
 - gravity 0.03; drag 0.99 per tick (0.8 in water);
 - 5 damage on landing, a 20-tick cooldown, and a random spread drawn from the server's RNG.
 
-**Derived by [Speeds.java](../lab/numbers/Speeds.java)** (run it with `java lab/numbers/Speeds.java`). All figures are steady speeds in m/s.
+**Derived by [Speeds.java](../../lab/numbers/Speeds.java)** (run it with `java lab/numbers/Speeds.java`). All figures are steady speeds in m/s.
 
 Horizontal:
 - walking 4.317;

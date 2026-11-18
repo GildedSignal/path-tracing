@@ -40,7 +40,7 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Haiku | Anthropic | Checked | runs, log digests, completeness |
 | Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209) |
 | Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended; backfills the leftover ~20% of the Codex window (S209) |
-| GLM | Z.ai | Checked (wide) | the port only (S173): jar-backed port deltas, each reproduced by a second session ([lab/glm.md](../lab/glm.md)) |
+| GLM | Z.ai | Checked (wide) | the port only (S173): jar-backed port deltas, each reproduced by a second session ([lab/glm.md](../../lab/glm.md)) |
 | **Argon** | **Google** | **claimed: corpus traversal; untrusted reading; primary sources** | **builds tooling and lints our docs against his words (S211); it also walks the corpus and says what contradicts what; it reads the channel where our exposure is measured and worst; and it is the mind for his primary sources** |
 | **Hydrogen** | **Google** | **claimed: Checked (wide)** | **premise checks, digests and builds (S173, S197, S210), reporting to the integrator, never writing for a bigger model. Run at `high`: its terminal score is identical at `xhigh`, so `xhigh` is pure waste** |
 

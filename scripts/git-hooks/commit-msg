@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# The map leads, the code catches up (the overhaul's C6): an engine/ change touches map/ or says why not.
+cd "$(git rev-parse --show-toplevel)" || exit 0
+files=$(git diff --cached --name-only)
+if echo "$files" | grep -q '^engine/' && ! echo "$files" | grep -q '^map/' && ! grep -q '^Map: unchanged' "$1"; then
+  echo "commit-msg: this commit changes engine/ but not map/. Update the map, or add a line 'Map: unchanged, because ...'." >&2; exit 1
+fi

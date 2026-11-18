@@ -8,7 +8,42 @@
             "type": "command",
             "command": "bash scripts/load-docs.sh",
             "timeout": 30,
-            "statusMessage": "Loading the living docs"
+            "statusMessage": "Loading the map"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hooks/prompt.ps1",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hooks/launch.ps1 -Phase pre",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hooks/launch.ps1 -Phase post",
+            "asyncRewake": true
           }
         ]
       }
