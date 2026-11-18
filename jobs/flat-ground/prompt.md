@@ -25,6 +25,14 @@ Today a new command on flat ground costs 68 ms (55 ms while moving; 22 of 60 ret
 
 On ground without horizontal contact, each horizontal axis is its own scalar recurrence: `v ← (v + input(yaw)) × f × drag` (`:438`, `:452-455`), plus `−sin(yaw)·0.2` / `+cos(yaw)·0.2` on a sprint-jump tick (`:379`), with `sin` and `cos` from the law's table (`math.rs`). The vertical motion, the on-ground flag and so `f` per tick are yaw-free on uniform ground. The axes meet only at `aiStep`'s zeroing (`:168`, h² < 9×10⁻⁶), which merges near-rest starts (rule 1). There is no horizontal collision, so no minor-collision test.
 
+## Part 0, first: the new core flies in his game (S239: "always test in game that's the only kind of test that matters")
+
+Today only the old stack reaches his game: `engine/plan/src/bin/plan-track.rs` calls the old planner (`flight::fly_with_budget`, modes 3/5/b) and writes a tick-by-tick input script (the writer at `engine/plan/src/flight.rs:62-69`: a start line, then one line per tick with keys, yaw, pitch and state bits), which `scripts/play-track.ps1` hands to the bot's mod. `solve` has never been in the game.
+- Add `--mode solve` to `plan-track`: same track loading and settled start as today, then `solve` (one living store, as `real_time.rs` uses it), then expand its words × counts into that same tick script by running the law (each tick's input from the word's program, as the replay in `real_time.rs` does). Same file format, so the mod plays it unchanged. Print `SENTENCE <predicted ticks> thinking <µs>` as today.
+- Add `solve` to `play-track.ps1`'s `-Mode` choices.
+- Gate (offline, yours): for `straight100`, `straight300`, `straight800` and `stonesimple`, the exported script replayed through `law::try_tick` touches B on the predicted tick.
+- The integrator then flies it in his game (you cannot run the game): the track clock's T must equal the predicted T with no deviation. That flight is the gate of this whole job.
+
 ## What to build
 
 1. **A gait is stored once per (ground's generator parameters, program):** the yaw-free per-tick coefficients (the multiplier, which ticks carry the jump term, the vertical cycle and flags), found by running the law once on the first command on that ground. Never per yaw, never per start velocity.
