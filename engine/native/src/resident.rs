@@ -183,10 +183,12 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return refusal(requested,"missing/invalid body-kit context"); }
     if meta[2] != 0 { return refusal(requested,"unsupported input phase"); }
     let Some((lo,hi)) = source.bounds() else { return refusal(requested,"no received sections"); };
-    let Some(a) = state.main_supporting_block else { return refusal(requested,"the bot is not standing on a block"); };
     // The corridor between the bot and the goal, from the bottom of the world to a little above both.
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
-    let near = [p[0].min(goal[0])-8, lo[1], p[2].min(goal[2])-8]; let far = [p[0].max(goal[0])+8, p[1].max(goal[1])+8, p[2].max(goal[2])+8];
+    // The ground: the block it stands on, or mid-jump the first solid block below it.
+    let below = (1..=8).map(|d| [p[0],p[1]-d,p[2]]).find(|&c| source.loaded(c) && !source.block(c).air);
+    let Some(a) = state.main_supporting_block.or(below) else { return refusal(requested,"no ground under the bot within 8 blocks"); };
+    let near = [p[0].min(goal[0])-2, lo[1], p[2].min(goal[2])-2]; let far = [p[0].max(goal[0])+2, p[1].max(goal[1])+8, p[2].max(goal[2])+2];
     let (cl, ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
     if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
     let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };

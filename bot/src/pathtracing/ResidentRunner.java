@@ -60,7 +60,7 @@ final class ResidentRunner {
             HopCapture.hop("request-context",version,issue,received,meta);
             BlockPos goal = pending; pending = null;
             BlockPos at = mc.player.blockPosition();
-            corridor = new int[]{Math.min(at.getX(),goal.getX())-8,Math.min(at.getZ(),goal.getZ())-8,Math.max(at.getX(),goal.getX())+8,Math.max(at.getZ(),goal.getZ())+8};
+            corridor = new int[]{Math.min(at.getX(),goal.getX())-2,Math.min(at.getZ(),goal.getZ())-2,Math.max(at.getX(),goal.getX())+2,Math.max(at.getZ(),goal.getZ())+2};
             long[] answer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,
                 new long[]{goal.getX(),goal.getY()-1,goal.getZ()},issue,version);
             HopCapture.hop("mod-request",version,issue,received,answer);
@@ -83,6 +83,8 @@ final class ResidentRunner {
         if (changed >= 0) {
             Bot.reply(mc,"Native plan refused: observed start changed while planning at word " + changed + "."); return;
         }
+        // T = 0: the body already touches the goal.
+        if (count == 0) { Bot.reply(mc,"Already there."); return; }
         ArrayList<TickInput> inputs = new ArrayList<>(count);
         for (int i=9+n;i<answer.length;i+=3) {
             long keys=answer[i];
