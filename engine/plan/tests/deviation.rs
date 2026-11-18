@@ -1,5 +1,33 @@
-﻿mod replay {
+mod replay {
     include!("../../law/tests/replay.rs");
+    #[test]
+    fn solve_scripts_reach_the_saved_track_finish() {
+        for line in include_str!("../../world/tests/fixtures/tracks.txt").lines().filter(|s|
+            matches!(s.split_whitespace().next(),Some("straight100"|"straight300"|"straight800"|"stonesimple"))) {
+            let track=plan::flight::track(line).unwrap();
+            let file=std::env::temp_dir().join(format!("solve-{}-{}.jsonl",std::process::id(),track.name));
+            let (predicted,_)=plan::flight::solve_track(&track,&file).unwrap();
+            let script=std::fs::read_to_string(&file).unwrap();
+            std::fs::remove_file(file).unwrap();
+            let mut lines=script.lines();
+            let header=Object::parse(lines.next().unwrap());
+            let bits:Vec<u64>=array(header.required("start_bits")).iter().map(|s|s.parse().unwrap()).collect();
+            let mut state=PlayerState::from_bits(&bits).unwrap();
+            let goal=plan::Goal {cell:track.b};
+            let mut first=None;let mut last_on_a=state.t;
+            for (index,line) in lines.enumerate() {
+                let row=Object::parse(line);
+                assert_eq!(row.required("t").parse::<usize>().unwrap(),index);
+                if state.on_ground && state.main_supporting_block==Some(track.a) {last_on_a=state.t;}
+                let before=state.bounding_box();
+                law::try_tick(&mut state,&track.world,&input(&row)).unwrap();
+                if goal.touched_boxes(before,state.bounding_box()) {first.get_or_insert(state.t);}
+            }
+            println!("SCRIPT {} predicted={predicted} first_touch={first:?} last_on_a={last_on_a}",track.name);
+            assert_eq!(first,Some(u64::from(predicted)));
+            assert_eq!(state.t-last_on_a,u64::from(predicted));
+        }
+    }
     #[test]
     fn l0_deviation_matches_law_and_catches_edited_input() {
         use std::fmt::Write;

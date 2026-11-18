@@ -56,13 +56,12 @@ public final class Recorder {
             JsonObject head = JsonParser.parseString(first).getAsJsonObject();
             JsonArray origin = head.getAsJsonArray("start");
             if (origin == null || origin.size() != 5) throw new IllegalArgumentException("Invalid plan start.");
-            JsonArray bits = head.getAsJsonArray("start_bits");
-            if (bits == null || bits.size() < 69) throw new IllegalArgumentException("Missing plan start bits.");
+            if (head.getAsJsonArray("start_bits") == null) throw new IllegalArgumentException("Missing plan start bits.");
+            // The start's doubles are written exactly (shortest round-trip), so they are compared to the bot
+            // directly; the bits' layout belongs to the law and is not read here.
             double[] position = {mc.player.getX(), mc.player.getY(), mc.player.getZ()};
             for (int i = 0; i < 3; i++) {
-                long expected = Long.parseUnsignedLong(bits.get(66 + i).getAsString());
-                if (Double.doubleToRawLongBits(origin.get(i).getAsDouble()) != expected) throw new IllegalArgumentException("Inconsistent plan start bits.");
-                if (expected != Double.doubleToRawLongBits(position[i])) throw new IllegalArgumentException("Plan start position differs from bot in axis " + i + ".");
+                if (Double.doubleToRawLongBits(origin.get(i).getAsDouble()) != Double.doubleToRawLongBits(position[i])) throw new IllegalArgumentException("Plan start position differs from bot in axis " + i + ".");
             }
             String line;
             while ((line = reader.readLine()) != null) {

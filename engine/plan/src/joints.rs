@@ -144,30 +144,9 @@ pub struct JointStore {
     templates:HashMap<Vec<u64>,StateClassId>,template_bytes:usize,
     states:Vec<std::sync::Arc<PlayerState>>,state_ids:HashMap<Vec<u64>,usize>,edges:Vec<(usize,usize)>,
     point_entries:HashMap<Vec<u64>,Vec<usize>>,point_scratch:Vec<u64>,
-    certificates:ReadCertificates,field:Option<Field>,terminal_sets:Vec<Vec<Vec<crate::terminal::Set>>>,family_entries:HashMap<usize,EntryTemplate>,
+    certificates:ReadCertificates,field:Option<Field>,family_entries:HashMap<usize,EntryTemplate>,
 }
 impl JointStore {
-    pub fn terminal_count(&self)->usize {self.terminal_sets.iter().flatten().map(Vec::len).sum()}
-    pub fn terminal(&mut self,label:law::codec::LabelId,gait:&crate::store::WordKernel,phase:u32,words:&[std::sync::Arc<crate::store::WordKernel>],from:&impl crate::state_view::StateSource,goal:Goal)->Result<Option<(std::sync::Arc<crate::store::WordKernel>,u64)>,String> {
-        self.work.terminal_lookups+=1;
-        let request=crate::terminal::Request::new(label,gait,phase,words,from,goal);
-        let slot=usize::try_from(gait.id).map_err(|_|"terminal gait index exceeds address space")?;
-        if self.terminal_sets.len()<=slot {self.terminal_sets.resize_with(slot+1,Vec::new);}
-        let phases=&mut self.terminal_sets[slot];
-        if phases.len()<=phase as usize {phases.resize_with(phase as usize+1,Vec::new);}
-        let sets=&mut phases[phase as usize];
-        let index=match sets.binary_search_by_key(&request.key,|s|s.key) {
-            Ok(i)=>i,
-            Err(i)=>{
-                #[cfg(feature="solve-counters")] let since=std::time::Instant::now();
-                let set=crate::terminal::Set::build(&request,words,from)?;
-                #[cfg(feature="solve-counters")] {self.work.terminal_build_ns+=since.elapsed().as_nanos();}
-                if set.law_hash!=law::LAW_HASH {return Err("terminal store law hash differs".into());}
-                sets.insert(i,set);self.work.terminal_builds+=1;i
-            }
-        };
-        Ok(sets[index].lookup(from,goal))
-    }
     pub fn template_bytes(&self)->usize {self.template_bytes}
     pub fn cold_state_bytes(&self)->usize {self.states.iter().map(|s|s.bits().len()*std::mem::size_of::<u64>()).sum()}
     pub fn edge_count(&self)->usize {self.edges.len()}

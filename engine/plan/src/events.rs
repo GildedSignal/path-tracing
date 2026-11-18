@@ -351,6 +351,40 @@ pub fn horizon(from:&impl crate::state_view::StateSource,goal:Goal,increments:im
 pub fn advance(start:f64,ds:&[f64],ticks:u64)->f64 {
     Map::new(ds.to_vec()).advance(start,ticks)
 }
+
+/// A sign-definite cycle stays within its binade whenever both ends do.
+/// Sample its two mantissa parities with native additions, then translate in
+/// the same integer coordinates used by Map. A tie fixes parity; without a
+/// tie the cycle translates both parities equally.
+pub(crate) fn advance_cycles(axis:usize,start:f64,ds:&[f64],mut count:u64)->f64 {
+    let cycle=|p|ds.iter().fold(p,|p,d|p+d);
+    let mut p=start;
+    while count>0 {
+        let first=cycle(p);
+        count-=1;
+        if count==0 {p=first;break;}
+        let second=cycle(first);
+        count-=1;
+        let (region,k)=Region::at(second);
+        let chart=|x:f64| x.to_bits()>>52;
+        let step=if chart(first)==chart(second) && (first.to_bits()^second.to_bits())&1==0 {
+            Some((1,k-Region::at(first).1))
+        } else if chart(p)==chart(second) && (p.to_bits()^second.to_bits())&1==0 {
+            Some((2,k-Region::at(p).1))
+        } else {None};
+        p=second;
+        if let Some((period,delta))=step {
+            if delta==0 {if period==2 && count%2!=0 {p=cycle(p);}break;}
+            let room=if delta>0 {region.hi-1-k} else {k-region.lo-1};
+            let n=(count/period).min((room.max(0)/delta.abs()) as u64);
+            p=region.value(k+i128::from(n)*delta);
+            count-=n*period;
+        }
+    }
+    #[cfg(feature="solve-counters")] crate::solve_meter::walk(Some(axis),start,p);
+    let _=axis;
+    p
+}
 fn advance_map(map:&Map,start:f64,ticks:u64)->f64 {
     if ticks==0 {return start;}
     let ds=&map.ds;

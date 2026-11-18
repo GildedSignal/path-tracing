@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][ValidatePattern('\A[a-z0-9_-]+\z', Options=0)][string]$Track,
-  [ValidateSet('3','5','b')][string]$Mode = '5',
+  [ValidateSet('3','5','b','solve')][string]$Mode = '5',
   [string]$Rig,
   [switch]$DryRun
 )
@@ -78,7 +78,7 @@ try {
   $row = Get-Content -LiteralPath $runs | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.plan -ceq $plan } | Select-Object -Last 1
   if (!$row) { throw 'Finished reply did not produce a matching run row.' }
   $definition = Get-Content -LiteralPath (Join-Path $Rig "lab/tracks/$Track.json") -Raw | ConvertFrom-Json
-  $human = Get-Content -LiteralPath $runs | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.player -eq $PlayerName -and $_.trackCreated -eq $definition.created } | Sort-Object T | Select-Object -First 1
+  $human = Get-Content -LiteralPath $runs | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.player -eq $PlayerName -and $_.trackCreated -eq $definition.created } | ForEach-Object { if ($_.clockOrigin -ne 'lastOnA') { $_.T += 1 }; $_ } | Sort-Object T | Select-Object -First 1
   $best = if ($human) { "$($human.T) ticks" } else { 'unavailable' }
   $recording = if ($row.recording) { Join-Path $Rig $row.recording } else { "unavailable: $($row.recordingNote)" }
   Write-Output "Predicted T: $predicted ticks; clock T: $($row.T) ticks; Julien's best: $best; thinking: $($clock.Elapsed.TotalMilliseconds.ToString('F0')) ms; recording: $recording"

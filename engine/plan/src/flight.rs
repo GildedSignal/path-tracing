@@ -29,7 +29,8 @@ pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -
     let mut items = String::new();
     for run in runs.lines() {
         let Some(at) = run.find("\"T\":") else { continue };
-        let t: u32 = run[at + 4..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap();
+        if !run.contains("\"player\":\"Brain_Forge\"") { continue; }
+        let t: u32 = run[at + 4..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u32>().unwrap() + u32::from(!run.contains("\"clockOrigin\":\"lastOnA\""));
         if his.iter().all(|&known| t < known) { items = run.find("\"itemsUsed\":").map(|at| run[at + 12..run[at..].find('}').unwrap() + at + 1].to_owned()).unwrap_or_default(); }
         his.push(t);
     }
@@ -44,6 +45,13 @@ pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -
         }
     }
     Err(last)
+}
+impl Track {
+    fn settled_start(&self) -> Result<law::PlayerState,String> {
+    let context = CollisionContext { feet_y: self.a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
+    let top = self.world.collision_shape(self.a, context).coords[1].last().copied().unwrap_or(1.0);
+        settle(&Still(&self.world), [self.a[0] as f64 + 0.5, self.a[1] as f64 + top, self.a[2] as f64 + 0.5], 0)
+    }
 }
 pub fn spread(values: &[f64]) -> String {
     if values.is_empty() { return "n=0".to_owned(); }
@@ -63,27 +71,51 @@ fn say(steps: &[Step]) -> String {
     steps.iter().map(|s| format!("{}@{}x{}{}", label(s.program), s.args.yaw_index, s.ticks, match s.lane { Lane::Replay => "", Lane::Arc => "~", Lane::Gait => "*", Lane::Cut => "|" })).collect::<Vec<_>>().join(" ")
 }
 // The recorder's input JSONL, extended with the law's raw start and prediction bits.
-fn write_script(path: &std::path::Path, timeline: &Still<'_, world::WorldSnapshot>, programs: &[Program], start: &law::PlayerState, certificate: &Certificate) -> Result<PathBuf, String> {
+fn write_script(path: &std::path::Path, timeline: &Still<'_, world::WorldSnapshot>, programs: &[Program], start: &law::PlayerState, steps: impl Iterator<Item=(u16, words::Arguments, u32)>, predicted: u32, goal: Goal, expected_bits: Option<Vec<u64>>) -> Result<PathBuf, String> {
     let mut out = Vec::new();
     let mut state = start.clone();
     writeln!(out, "{{\"start\":[{},{},{},{},{}],\"start_bits\":{:?}}}", state.position.x, state.position.y, state.position.z, state.yaw, state.pitch, state.bits()).map_err(|e| e.to_string())?;
     let mut tick = 0;
-    for step in &certificate.steps {
-        for elapsed in 0..step.ticks {
+    let mut touch = goal.touched(start,start).then_some(0);
+    for (program,args,count) in steps {
+        for elapsed in 0..count {
             let world = timeline.at(state.t);
-            let (_, input) = programs[step.program as usize].select(world, &state, elapsed, step.args).ok_or("no row matches")?;
+            let (_, input) = programs[program as usize].select(world, &state, elapsed, args).ok_or("no row matches")?;
+            let before = state.bounding_box();
             law::try_tick(&mut state, world, &input).map_err(|e| e.0)?;
+            if goal.touched_boxes(before,state.bounding_box()) { touch.get_or_insert(tick+1); }
             writeln!(out, "{{\"t\":{},\"forward\":{},\"back\":{},\"left\":{},\"right\":{},\"jump\":{},\"sneak\":{},\"sprint\":{},\"yaw\":{},\"pitch\":{},\"yaw_bits\":{},\"pitch_bits\":{},\"position_bits\":[{},{},{}],\"velocity_bits\":[{},{},{}],\"onGround\":{},\"state_bits\":{:?}}}",
                 tick, input.forward, input.back, input.left, input.right, input.jump, input.sneak, input.sprint, input.yaw, input.pitch, input.yaw.to_bits(), input.pitch.to_bits(), state.position.x.to_bits(), state.position.y.to_bits(), state.position.z.to_bits(), state.velocity.x.to_bits(), state.velocity.y.to_bits(), state.velocity.z.to_bits(), state.on_ground, state.bits()).map_err(|e| e.to_string())?;
             tick += 1;
         }
     }
-    if tick != certificate.ticks || state.bits() != certificate.end.bits() {
+    if touch != Some(predicted) || tick != predicted {
+        return Err(format!("B {:?}: predicted {predicted}, replay first touch {touch:?}, length {tick}",goal.cell));
+    }
+    if expected_bits.is_some_and(|bits| state.bits() != bits) {
         return Err("script replay differs from certificate".into());
     }
     std::fs::write(&path, out).map_err(|e| e.to_string())?;
     Ok(path.to_path_buf())
 }
+pub fn solve_track(track:&Track,path:&std::path::Path)->Result<(u32,u128),String> {
+    let start=track.settled_start()?;
+    let goal=Goal {cell:track.b};
+    let source=source::GeneratorSuperflatSource::snapshot(&track.world,track.a)?;
+    let store=store::GeneratorStore::default();
+    let mut codec=law::codec::Interner::default();
+    let clock=Instant::now();
+    let result=solve(&start,goal,Kit::BareLegs,&source,&store,&mut codec,u64::MAX);
+    let micros=clock.elapsed().as_micros();
+    let PlanOutcome::Ready(plan)=result.outcome else {
+        return Err(format!("{:?} {:?}",result.outcome,result.explanation));
+    };
+    let ticks=plan.ticks.try_into().map_err(|_|"script tick width")?;
+    write_script(path,&Still(&track.world),&words::tiny_programs(),&start,
+        plan.words.iter().map(|w|(w.program,w.args,w.ticks)),ticks,goal,None)?;
+    Ok((ticks,micros))
+}
+
 #[derive(Default)]
 #[allow(dead_code)]
 pub struct Row { pub found: bool, pub ticks: u32, pub clock: Option<u32>, pub thinking: f64, pub first: Option<f64> }
@@ -96,9 +128,7 @@ pub fn fly_with_budget(track: &Track, mode: char, programs: &[Program], reaches:
     let name = &track.name;
     let tag = format!("[{name}] {mode}");
     let timeline = Still(&track.world);
-    let context = CollisionContext { feet_y: track.a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
-    let top = track.world.collision_shape(track.a, context).coords[1].last().copied().unwrap_or(1.0);
-    let start = match settle(&timeline, [track.a[0] as f64 + 0.5, track.a[1] as f64 + top, track.a[2] as f64 + 0.5], 0) {
+    let start = match track.settled_start() {
         Ok(start) => start,
         Err(why) => { writeln!(out, "{tag} NO SENTENCE: no start: {why}").unwrap(); return Row::default(); }
     };
@@ -197,7 +227,7 @@ pub fn fly_with_budget(track: &Track, mode: char, programs: &[Program], reaches:
         Some((steps, certificate)) => {
             let record_path = std::env::var_os("PLAN_RECORD").map(|dir| PathBuf::from(dir).join(format!("{}-{}.jsonl", track.name, mode)));
             if let Some(path) = script.or(record_path.as_deref()) {
-                match write_script(path, &timeline, programs, &start, certificate) {
+                match write_script(path, &timeline, programs, &start, certificate.steps.iter().map(|s|(s.program,s.args,s.ticks)), certificate.ticks, goal, Some(certificate.end.bits())) {
                     Ok(path) => writeln!(out, "{tag} script: {}", path.display()).unwrap(),
                     Err(error) => panic!("{tag} script failed: {error}"),
                 }

@@ -284,6 +284,7 @@ public final class Tracks {
                 || (botAttempt && run != null && DETECTOR.running() && DETECTOR.ticks() + 1 >= botLimit);
             event = DETECTOR.sample(onA(mc, selected), touchesB(mc, selected), abandoned, clock, mc.level.getGameTime());
         }
+        if (selected != null && onA(mc, selected)) startNanos = sampleNanos;
         previousBox = mc.player.getBoundingBox();
         switch (event) {
             case ARMED -> say(mc, selected.name() + " armed. Leave A to start.");
@@ -345,7 +346,6 @@ public final class Tracks {
     }
 
     private static void begin(Minecraft mc) {
-        startNanos = sampleNanos;
         run = TickInput.settings(mc);
         run.addProperty("player", mc.player.getName().getString());
         run.addProperty("gameMode", mc.gameMode.getPlayerMode().getName());
@@ -370,6 +370,7 @@ public final class Tracks {
     private static void finish(Minecraft mc) {
         long ticks = DETECTOR.ticks();
         long gameTicks = DETECTOR.gameTicks();
+        run.addProperty("clockOrigin", "lastOnA");
         run.addProperty("T", ticks);
         run.addProperty("gameTimeDifference", gameTicks);
         run.addProperty("wallStartNanos", startNanos);
@@ -516,6 +517,7 @@ public final class Tracks {
             && mc.gameMode.getPlayerMode().getName().equals(botMode) ? settled + 1 : 0;
         if (settled == 5) {
             settling = false;
+            startNanos = sampleNanos;
             DETECTOR.sample(true, false, false, clock, mc.level.getGameTime());
             previousBox = mc.player.getBoundingBox();
             if (playAttempt) say(mc, "Armed " + selected.name() + "; waiting for a plan.");

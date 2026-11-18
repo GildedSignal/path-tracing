@@ -130,10 +130,14 @@ fn angle_cmp(a:(f64,f64),b:(f64,f64))->Ordering {
 }
 pub fn bracket(dx:f64,dz:f64)->[u16;2] {
     if dx==0.0 && dz==0.0 {return [0,1];}
-    let target=(dx,dz);let mut lo=0u32;let mut hi=65536;
-    while lo<hi {let mid=(lo+hi)/2;if angle_cmp(direction(mid as u16),target)==Ordering::Less {lo=mid+1;} else {hi=mid;}}
-    let next=lo as u16;
-    if lo<65536 && angle_cmp(direction(next),target)==Ordering::Equal {[next,next.wrapping_add(1)]}
+    // atan2 locates a table cell. Its actual dyadic directions decide ownership.
+    let turns=(-dx).atan2(dz)/std::f64::consts::TAU;
+    let mut i=(turns.rem_euclid(1.0)*65536.0).floor() as u32;
+    let target=(dx,dz);
+    while i>0 && angle_cmp(direction((i-1) as u16),target)!=Ordering::Less {i-=1;}
+    while i<65536 && angle_cmp(direction(i as u16),target)==Ordering::Less {i+=1;}
+    let next=i as u16;
+    if i<65536 && angle_cmp(direction(next),target)==Ordering::Equal {[next,next.wrapping_add(1)]}
     else {[next.wrapping_sub(1),next]}
 }
 
