@@ -27,10 +27,16 @@ A clear goal, the conditions, the gate (a flight in his game whenever the work r
 | If | Then | Code |
 |---|---|---|
 | a session starts, resumes, clears or compacts | this map loads whole | `SessionStart` hook, `scripts/load-docs.sh` |
+| he sends a message | the heuristics card is injected; his words go verbatim to `archive/turns/inbox.md` | `UserPromptSubmit` hook, `scripts/hooks/prompt.ps1` |
+| any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `scripts/gemini.ps1` |
+| a launch of Astra, Sol, Opus or an Argon build | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
+| a launch succeeds | a watcher wakes the integrator when the job ends | `PostToolUse` hook (async, wakes the model) |
+| a commit touches `map/` | 40 KB cap, no history wording, links resolve | `.git/hooks/pre-commit` (`scripts/install-hooks.sh`) |
+| a commit touches `engine/` | it touches `map/` or carries `Map: unchanged, because …` | `.git/hooks/commit-msg` |
 | a push | refused if it carries his private email or an Antigravity log | `.git/hooks/pre-push` |
 | a meter passes 80% | it is reported | `scripts/meters.ps1 -WatchAt 80` |
 
-Being built (the overhaul, `jobs/overhaul/plan.md`): the heuristics card on every message; the map appended to every launch and the judges' map question; the big-model launch guard; the job watcher that wakes the integrator; the scoreboard script; the commit checks on `map/` and `engine/`; net lines on every merge.
+Being built: the scoreboard script; net lines on every merge.
 
 An edge that never fires or never catches anything is deleted. A new failure changes an edge, never adds prose.
 
