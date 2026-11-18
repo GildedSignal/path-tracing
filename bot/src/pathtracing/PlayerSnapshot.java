@@ -48,9 +48,9 @@ final class PlayerSnapshot {
             out.addProperty("useItemSpeedMultiplierAbsent",true);
             out.addProperty("useItemCanSprintAbsent",true);
         }
-        // Local FoodData is not the dedicated server's exhaustion/timer.
-        out.remove("exhaustionBits"); out.remove("foodTickTimer");
-        // The server's independent hurt cooldown is not the hurt animation.
+        // Local FoodData and the hurt animation are not the server's exhaustion, food timer and hurt cooldown:
+        // they go as projections (precision only where a decision can flip; the server corrects the rest).
+        for (String key : new String[]{"exhaustion","foodTickTimer","hurtRemainingTicks","lastRawHit"}) out.addProperty(key + "Projected",true);
         return StateBits.encode(out);
     }
 

@@ -12,13 +12,15 @@ final class StateBits {
     private void word(long value, boolean present, int owner) {
         bits.add(value); known.add(present ? 1L : 0L); provenance.add(present ? (long) owner : 0L);
     }
-    private void integer(JsonObject in, String key) { word(in.has(key) ? in.get(key).getAsLong() : 0, in.has(key), 1); }
+    // A key marked <key>Projected is the client's estimate of a server-owned value (provenance 3): the server corrects it.
+    private static int owner(JsonObject in, String key) { return in.has(key + "Projected") ? 3 : 1; }
+    private void integer(JsonObject in, String key) { word(in.has(key) ? in.get(key).getAsLong() : 0, in.has(key), owner(in,key)); }
     private void bool(JsonObject in, String key) { word(in.has(key) && in.get(key).getAsBoolean() ? 1 : 0, in.has(key), 1); }
     private void floating(JsonObject in, String key, boolean wide) {
         boolean present = in.has(key + "Bits");
         long value = present ? Long.parseUnsignedLong(in.get(key + "Bits").getAsString(),16) : 0;
         if (!wide && (value & ~0xffffffffL) != 0) throw new IllegalArgumentException("f32 bits " + key);
-        word(value,present,1);
+        word(value,present,owner(in,key));
     }
     private void vector(JsonObject in, String key) {
         JsonObject v = in.has(key) ? in.getAsJsonObject(key) : new JsonObject();
