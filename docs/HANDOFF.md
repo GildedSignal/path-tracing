@@ -13,7 +13,13 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 `.\scripts\launch.ps1 <job> <terra|astra|sonnet|opus|argon|hydrogen> [-Worktree D:\path-tracing-wt\<name>] [-ReadDir <dir>]` starts any companion detached, makes a GPT worktree if missing, and **refuses** to exceed a slot: four GPT (one beside Astra, S15); on Antigravity (S105) one Argon or two Hydrogen, and two Sonnet (S115: Opus is native). A job is a folder: `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out. GLM: `scripts\glm-queue.ps1 -Queue lab\queue.txt` (re-reads the file before each batch), or `scripts\glm-local.ps1 -Lenses "<a b>"` for a lane now. Capacities and the usage protocol: [clan.md](clan.md) section 4, measured 14 November.
 
-## Start here (17 November, 22:00)
+## Start here (18 November, 10:20)
+
+- **The PC was off overnight: nothing armed for 00:33/00:35 ran** (no Astra `warm-floor`, no Sol `loop-tracks`; both still to launch, unchanged). GLM's runner died at 23:25; relaunched 10:12 (19 lenses left; `glm-queue.ps1` now honours its own requeues on restart, `8d7d654`).
+- **Antigravity is fully fresh** (raw `/usage` 10:10: Gemini, Claude+GPT and Argon all 100% remaining, weekly resets 25 November): **Sonnet judges need not wait for Thursday.**
+- **Hydrogen on the port** (S228): `jobs/port-build-a` (mining speed, boat on land and mount/dismount, elytra boost, ender pearl; `wt/port-build-a` from `wt/u2b-astra`, commands on) and `jobs/port-digest-3` (last night's nine results, wiki drafts, builder batches). **The refuge is parked** (S228).
+
+## Earlier (17 November, 22:00)
 
 - **The plan is [plan.md](plan.md).** After every compaction re-read the docs (S164). Rules from 17 November, all in AGENTS.md, PRINCIPLES' register or memory:
   - a smaller model never writes for a bigger one (S210); Astra resumes only to build, never for sweeps (S210);
