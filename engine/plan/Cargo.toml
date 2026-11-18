@@ -11,9 +11,5 @@ law = { path = "../law" }
 words = { path = "../words" }
 world = { path = "../world" }
 
-[[test]]
-name = "zones_prereqs"
-path = "tests/zones_prereqs/main.rs"
-
 [dev-dependencies]
 law = { path = "../law", features = ["count-state-copies"] }
