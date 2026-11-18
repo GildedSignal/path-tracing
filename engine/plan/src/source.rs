@@ -97,8 +97,9 @@ impl GeneratorSuperflatSource {
     }
     /// Factor the saved cells into A's supporting layers and sparse differences.
     /// This is ingestion, before the command clock. Playback reads the original snapshot.
-    pub fn snapshot(world:&world::WorldSnapshot,a:BlockPos)->Result<Self,String> {
-        let (lo,hi)=world.bounds();
+    pub fn snapshot(world:&world::WorldSnapshot,a:BlockPos)->Result<Self,String> {Self::from_world(world,world.bounds(),a)}
+    /// The same factoring over any world and box: the saved track, or the chunks the bot has received.
+    pub fn from_world(world:&impl World,(lo,hi):(BlockPos,BlockPos),a:BlockPos)->Result<Self,String> {
         let mut source=Self::new(a[1],world.block(a).clone(),lo,hi);
         source.air_block=world::model(&world::BlockState {name:"minecraft:air".into(),properties:Vec::new()})?.clone();
         source.difficulty=world.difficulty();
@@ -108,7 +109,8 @@ impl GeneratorSuperflatSource {
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {for x in lo[0]..=hi[0] {
                 let p=[x,y,z];
-                let id=world.model_id(p).ok_or("snapshot lacks a block model")?;
+                // A model's id where the world has one, else its address: equal keys, equal blocks.
+                let id=world.model_id(p).map_or(world.block(p) as *const law::Block as usize,usize::from);
                 let differs=match differences.entry((y,id)) {
                     std::collections::hash_map::Entry::Occupied(e)=>*e.get(),
                     std::collections::hash_map::Entry::Vacant(e)=>{

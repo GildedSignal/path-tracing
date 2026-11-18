@@ -1,7 +1,7 @@
 //! R0 worker. Existing F search only; no zone/store/search implementation here.
 use std::{collections::BTreeMap, sync::{Arc, Mutex, OnceLock, atomic::{AtomicU64, Ordering}, mpsc}};
 use law::{Block, BlockPos, PlayerState, World};
-use plan::{Goal, Options, Order, Planner, Problem, Still};
+use plan::Goal;
 
 pub const READY: u64 = 0;
 pub const WORD_PLAN: u64 = 1;
@@ -123,17 +123,18 @@ fn resident() -> &'static Resident {
         let version = Arc::new(AtomicU64::new(0)); let source_revision = Arc::new(AtomicU64::new(0));
         let (v, r) = (version.clone(), source_revision.clone());
         std::thread::Builder::new().name("pathtracing-F".into()).spawn(move || {
-            let mut source = Source::default(); let mut table = words::ProposalTable::default();
+            // One living store for the bot's whole session: a gait learned once is never relearned (S230).
+            let mut source = Source::default(); let mut store = plan::store::GeneratorStore::default(); let mut codec = law::codec::Interner::default();
             while let Ok(work) = recv.recv() {
                 match work {
                     Work::Delta(data) => {
                         let reset = data.first() == Some(&0);
                         if let Err(why) = delta(&mut source, &data) { source.error = Some(why.clone()); let _ = done.send(refusal(0,why)); }
-                        if reset { table = words::ProposalTable::default(); }
+                        if reset { store = plan::store::GeneratorStore::default(); codec = law::codec::Interner::default(); }
                     }
                     Work::Goal(request) => {
                         let version = request.version;
-                        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(&source, &mut table, request, &v, &r)))
+                        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(&source, &store, &mut codec, request, &v, &r)))
                             .unwrap_or_else(|_| refusal(version,"unknown/unsupported source or planner panic; no sentence dispatched"));
                         let _ = done.send(answer);
                     }
@@ -167,7 +168,7 @@ pub fn observe(event: &[u64],bits: Vec<u64>,known: Vec<u64>,provenance: Vec<u64>
 }
 pub fn observation() -> Vec<u64> { resident().observation.lock().unwrap().clone() }
 
-fn plan(source: &Source, table: &mut words::ProposalTable, request: Request, version: &AtomicU64, revision: &AtomicU64) -> Vec<u64> {
+fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> Vec<u64> {
     let Request { state, meta, goal, issue, version: requested } = request;
     let entered = crate::qpc().0 as u64;
     if let Some(why) = &source.error { return refusal(requested,format!("source publication failed: {why}")); }
@@ -175,15 +176,18 @@ fn plan(source: &Source, table: &mut words::ProposalTable, request: Request, ver
     if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return refusal(requested,"missing/invalid body-kit context"); }
     if meta[2] != 0 { return refusal(requested,"unsupported input phase"); }
     let Some((lo,hi)) = source.bounds() else { return refusal(requested,"no received sections"); };
-    let timeline = Still(source);
+    let Some(a) = state.main_supporting_block else { return refusal(requested,"the bot is not standing on a block"); };
+    // The corridor between the bot and the goal, from the bottom of the world to a little above both.
+    let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
+    let near = [p[0].min(goal[0])-8, lo[1], p[2].min(goal[2])-8]; let far = [p[0].max(goal[0])+8, p[1].max(goal[1])+8, p[2].max(goal[2])+8];
+    let (cl, ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
+    if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
+    let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
+    let result = plan::solve(&state, Goal { cell: goal }, plan::Kit::BareLegs, &corridor, store, codec, u64::MAX);
+    if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
+    let plan::PlanOutcome::Ready(found) = result.outcome else { return refusal(requested,format!("{:?} {}",result.outcome,result.explanation.unwrap_or_default())); };
     let programs = words::tiny_programs();
-    let problem = Problem { timeline: &timeline, start: state.clone(), goal: Goal { cell: goal }, body: (lo,hi), read: (lo,hi), a: None };
-    let options = Options { order: Order::Admissible, arcs: true, gaits: true, audit: false, improve: false, nodes: 1_500_000 };
-    let mut planner = Planner::new(problem, programs.clone(), table, None, options);
-    let outcome = planner.run(&mut |_,_,_| version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision);
-    if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed during search"); }
-    let Some((_,certificate)) = outcome.sentence else { return vec![HARD,requested]; };
-    match legacy_sentence_adapter(source, &programs, &state, &certificate) {
+    match inputs(source, &programs, &state, found.words.iter().map(|w| (w.program,w.args,w.ticks))) {
         Ok(inputs) => {
             let mut out = vec![WORD_PLAN,requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
             let bits = state.bits(); out.push(bits.len() as u64); out.extend(bits); out.extend(inputs); out
@@ -191,11 +195,11 @@ fn plan(source: &Source, table: &mut words::ProposalTable, request: Request, ver
         Err(why) => refusal(requested,why),
     }
 }
-/// Temporary A-only memory adapter. F replaces this entire tick materialization.
-fn legacy_sentence_adapter(source: &Source, programs: &[words::Program], start: &PlayerState, certificate: &plan::Certificate) -> Result<Vec<u64>,String> {
+/// The plan's words × counts as tick inputs, each tick's input from the word's program, run through the law.
+fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, words: impl Iterator<Item=(u16,words::Arguments,u32)>) -> Result<Vec<u64>,String> {
     let mut state = start.clone(); let mut inputs = Vec::new();
-    for step in &certificate.steps { for elapsed in 0..step.ticks {
-        let (_,input) = programs[step.program as usize].select(source,&state,elapsed,step.args).ok_or("legacy adapter row unavailable")?;
+    for (program,args,ticks) in words { for elapsed in 0..ticks {
+        let (_,input) = programs[program as usize].select(source,&state,elapsed,args).ok_or("a word's program has no row here")?;
         let keys = [input.forward,input.back,input.left,input.right,input.jump,input.sneak,input.sprint].iter().enumerate().fold(0,|n,(i,b)| n | ((*b as u64)<<i));
         inputs.extend([keys,input.yaw.to_bits() as u64,input.pitch.to_bits() as u64]);
         law::try_tick(&mut state,source,&input).map_err(|e| e.0)?;
@@ -229,8 +233,8 @@ mod tests {
         } } }
         let state = PlayerState { t:77,position:law::Vec3::new(8.5,1.0,8.5),on_ground:true,main_supporting_block:Some([8,0,8]),food_level:11,saturation:2.5,exhaustion:1.25,..PlayerState::default() };
         let bits = state.bits();
-        let request = Request { state,meta:vec![7,1,0,0,0,1,2,123,125],goal:[8,0,8],issue:123,version:3 };
-        let answer = plan(&source,&mut words::ProposalTable::default(),request,&AtomicU64::new(3),&AtomicU64::new(1));
+        let request = Request { state,meta:vec![7,1,0,0,0,1,2,123,125],goal:[8,0,12],issue:123,version:3 };
+        let answer = plan(&source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),request,&AtomicU64::new(3),&AtomicU64::new(1));
         assert_eq!(answer[0],WORD_PLAN,"{answer:?}"); assert_eq!(answer[2],123);
         let n = answer[8] as usize; assert_eq!(answer[9..9+n],bits); assert!(answer[7]>0); assert_eq!(answer.len(),9+n+answer[7] as usize*3);
     }
