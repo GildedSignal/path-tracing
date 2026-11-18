@@ -14,7 +14,7 @@ function Check($name, [scriptblock]$test) { try { if (& $test) { "PASS  $name" }
 function Refuses([scriptblock]$s, [string]$because) { try { & $s *> $null; $false } catch { $_.Exception.Message -match $because } }
 
 # Offline: every script parses, and Opus is refused at both doors before any model is called.
-foreach ($f in 'gemini.ps1','launch.ps1','gpt.ps1','glm-queue.ps1','follow-up.ps1') {
+foreach ($f in 'gemini.ps1','launch.ps1','gpt.ps1','follow-up.ps1') {
   Check "$f parses" { $e = $null; [Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\$f", [ref]$null, [ref]$e) | Out-Null; -not $e }
 }
 Check 'launch.ps1 refuses opus' { Refuses { & "$PSScriptRoot\launch.ps1" anomaly-1-stepup opus -DryRun } 'Opus does not run on Antigravity' }
@@ -29,14 +29,14 @@ if (-not $Offline -and -not $fail) {
   Remove-Item (Join-Path $dir '*') -Exclude 'passed.txt' -Force -ErrorAction SilentlyContinue
   $wt = (Get-ChildItem 'D:\path-tracing-wt' -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'AGENTS.md') } | Select-Object -First 1).FullName
   $forms = [ordered]@{
-    'backslash'  = (Join-Path $Root 'docs\clan.md')
+    'backslash'  = (Join-Path $Root 'map\work.md')
     'slash'      = ($Root -replace '\\','/') + '/AGENTS.md'
     'no drive'   = (($Root -replace '\\','/') -replace '^[A-Za-z]:','') + '/map/now.md'
     'relative'   = 'map/principles.md'
     'worktree'   = (Join-Path $wt 'README.md')
     'file url'   = 'file:///' + (($Root -replace '\\','/') -replace ' ','%20') + '/README.md'
   }
-  $first = @{ backslash = 'docs\clan.md'; slash = 'AGENTS.md'; 'no drive' = 'docs\HANDOFF.md'; 'file url' = 'README.md'; relative = 'docs\PRINCIPLES.md' }
+  $first = @{ backslash = 'map\work.md'; slash = 'AGENTS.md'; 'no drive' = 'map\now.md'; 'file url' = 'README.md'; relative = 'map\principles.md' }
   $lines = foreach ($k in $forms.Keys) { "- $k`: ``$($forms[$k])``" }
   $prompt = "# Probe: read six files by the exact paths given`n`nRead each file below. Some are given as a relative path (relative to C:\Users\PASCAL\Desktop\path tracing) or as a file:/// link: follow your instructions on paths. For each, write one line to your report: the label, a colon, then the file's first line verbatim. Nothing else.`n`n$($lines -join "`n")`n`nEnd your final message with the line PROBE DONE."
   [IO.File]::WriteAllText((Join-Path $dir 'prompt.md'), $prompt, [Text.UTF8Encoding]::new($false))
