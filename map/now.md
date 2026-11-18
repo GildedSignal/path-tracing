@@ -11,6 +11,8 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 Built and on `main`: the map (this folder; 22 KB loaded whole, history in `archive/`), AGENTS.md and the README rewritten, the hooks of `work.md` (card and his words on every message, the launch guard, the job watcher, the map and net-line commit checks, the push guard), the scoreboard (`scripts/scoreboard.ps1`), companion agency in `gpt.ps1` and `gemini.ps1`, GLM without its checker or lenses, tests cut to what the game judges, memory cut to 11 files, 220 dead worktrees and 51 branches archived (`D:\path-tracing-archive`, `archive/*` tags), history stripped from `map/detail/`. The meters: `/meters` opens a pane in the app (a mod in `C:\Users\PASCAL\.claude\dev-mods\…\meters-band`; the app's own Context panel takes no mod content).
 
+Checks against these fixes: `jobs/overhaul/checks.md`.
+
 Left: delete the old A\* planner (`plan/src/flight.rs` modes 3/5/b, `planner.rs`) and dead `words` code, after Astra's job; Argon lints `map/` against his verbatim turns once.
 
 ## Next, in order
