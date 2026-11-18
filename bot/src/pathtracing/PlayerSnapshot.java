@@ -93,6 +93,8 @@ final class PlayerSnapshot {
         out.addProperty("noJumpDelay", ((LivingStateAccess) p).pathtracing$noJumpDelay());
         out.addProperty("foodLevel", p.getFoodData().getFoodLevel());
         out.addProperty("foodTickTimer", food.pathtracing$foodTickTimer());
+        out.addProperty("hurtRemainingTicks", p.invulnerableTime);
+        TraceJson.number(out, "lastRawHit", ((LivingStateAccess) p).pathtracing$lastRawHit());
         TraceJson.number(out, "health", p.getHealth());
         TraceJson.number(out, "saturationLevel", p.getFoodData().getSaturationLevel());
         TraceJson.number(out, "exhaustion", food.pathtracing$exhaustion());
