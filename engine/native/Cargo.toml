@@ -1,0 +1,13 @@
+[package]
+name = "pathtracing_native"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+law = { path = "../law" }
+world = { path = "../world" }
+words = { path = "../words" }
+plan = { path = "../plan" }

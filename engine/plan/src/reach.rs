@@ -142,7 +142,7 @@ pub struct Cell {
     /// Its premises (Julien, 13 November): every cell its own standing and its hop's run-up,
     /// tube and landing read, with the content read. They were read in the world as it stands
     /// over `Field::ticks`. The set is matched by the forward pass only where they hold.
-    pub premises: Vec<(BlockPos, u128)>,
+    pub premises: Vec<(BlockPos, Option<law::codec::Canonical>)>,
     /// The ticks over which the world it read stands: from, and until (None: for ever).
     pub ticks: (u64, Option<u64>),
 }
@@ -161,11 +161,11 @@ pub struct Field {
     pub joins: u64,
     pub broken: u64,
 }
-/// What a cell answers, whole: its content's digest (footprints.md section 3).
-fn content<W: World>(world: &W, p: BlockPos, known: &mut HashMap<usize, u128>) -> u128 {
+/// Exact cell answers; an unsupported answer cannot establish a premise.
+fn content<W: World>(world: &W, p: BlockPos, known: &mut HashMap<(usize, bool), Option<law::codec::Canonical>>) -> Option<law::codec::Canonical> {
     let block = world.block(p);
-    let digest = *known.entry(block as *const Block as usize).or_insert_with(|| law::pattern::cell_digest(block, true, 1 | 16).unwrap_or(u128::MAX));
-    if world.loaded(p) { digest } else { !digest }
+    let loaded = world.loaded(p);
+    known.entry((block as *const Block as usize, loaded)).or_insert_with(|| law::pattern::cell_digest(block, loaded, 1 | 16).ok()).clone()
 }
 /// The cells a body's box at `p` makes the collision scan read: its cells and one around.
 fn scanned(p: Vec3, into: &mut std::collections::BTreeSet<BlockPos>) {
@@ -198,11 +198,11 @@ impl Field {
         let own: Vec<usize> = cells.iter().map(|cell| cell.premises.len()).collect();
         let mut field = Field { cells: HashMap::new(), standable: cells.len(), reached: 0, goals: 0, checks: 0, build_us: 0.0, asked: HashMap::new(), unreached: Vec::new(), joins: 0, broken: 0 };
         // The goal's own set: the cells where a standing body's box meets the region.
-        let zone = goal.zone();
         let mut open = BinaryHeap::new();
         for (id, cell) in cells.iter_mut().enumerate() {
             let [x, _, z] = cell.support;
-            if (x - goal.cell[0]).abs() <= 1 && (z - goal.cell[2]).abs() <= 1 && cell.y < zone.max.y && cell.y + PlayerState::default().pose.height() as f64 > zone.min.y {
+            let body=Aabb::player(Vec3::new(x as f64+0.5,cell.y,z as f64+0.5),PlayerState::default().pose.height());
+            if goal.touched_boxes(body,body) {
                 cell.t = 0;
                 field.goals += 1;
                 open.push(Reverse((0u32, id as u32)));
@@ -295,7 +295,7 @@ impl Field {
         let Some(cell) = self.cells.get(&support) else { return false };
         let (from, until) = cell.ticks;
         let mut known = HashMap::new();
-        let holds = until.is_none_or(|until| tick < until) && (tick < from || cell.premises.iter().all(|&(p, digest)| content(world, p, &mut known) == digest));
+        let holds = until.is_none_or(|until| tick < until) && (tick < from || cell.premises.iter().all(|(p, expected)| expected.is_some() && content(world, *p, &mut known) == *expected));
         self.joins += 1;
         self.broken += !holds as u64;
         self.asked.insert((support, epoch), holds);

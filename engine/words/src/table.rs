@@ -3,7 +3,7 @@
 //! lookup is by class alone (job 3.2b): a proposal keeps the cells its learning replay read for
 //! one purpose, saying when its certificate is broken (`holds`). Nothing is filed by its exact start.
 use std::collections::{HashMap, HashSet};
-use law::{PlayerState, World, pattern::{Key, PatternError, PatternTable}, state_reads::StateReads};
+use law::{PlayerState, World, codec::{StateClassId, Interner, state_bytes}, pattern::{Key, PatternError, PatternTable}, state_reads::StateReads};
 use crate::{Arguments, Exit, Program, Segment, SegmentError, class::{self, ClassOf}, run_segment};
 
 /// How a replay ended.
@@ -145,7 +145,7 @@ pub struct ProposalTable {
     programs: Vec<Program>,
     /// The read masks seen: a state has one class under each.
     masks: Vec<StateReads>,
-    ids: HashMap<Box<[u64]>, u32>,
+    ids: HashMap<StateClassId, u32>,
     classes: Vec<ClassRecord>,
     proposals: Vec<Proposal>,
     /// Class and cells -> the proposals whose world part that is.
@@ -159,6 +159,8 @@ pub struct ProposalTable {
 }
 impl Default for ProposalTable { fn default() -> Self { Self::new(class::class) } }
 impl ProposalTable {
+    pub fn codec(&self) -> &Interner { self.worlds.codec() }
+    pub fn codec_mut(&mut self) -> &mut Interner { self.worlds.codec_mut() }
     pub fn new(class_of: ClassOf) -> Self {
         Self { class_of, programs: Vec::new(), masks: Vec::new(), ids: HashMap::new(), classes: Vec::new(), proposals: Vec::new(),
             worlds: PatternTable::default(), stamps: 0, counters: Counters::default(), growth: Vec::new(), witnesses: Vec::new() }
@@ -195,7 +197,8 @@ impl ProposalTable {
         }) as u32;
         let reads = segment.footprint.state_reads;
         let words = (self.class_of)(state, reads);
-        let class = self.ids.get(&words).copied();
+        let answer = self.worlds.codec_mut().intern_state(&state_bytes(&words)).ok_or(PatternError::TableFull)?;
+        let class = self.ids.get(&answer).copied();
         let known = class.and_then(|class| self.classes[class as usize].proposals.iter().copied()
             .find(|&id| (self.proposals[id as usize].program, self.proposals[id as usize].arguments) == (program, arguments)));
         let id = known.unwrap_or(self.proposals.len() as u32);
@@ -209,7 +212,7 @@ impl ProposalTable {
         }
         let class = class.unwrap_or_else(|| {
             self.classes.push(ClassRecord { words: words.clone(), ..ClassRecord::default() });
-            self.ids.insert(words, self.classes.len() as u32 - 1);
+            self.ids.insert(answer, self.classes.len() as u32 - 1);
             self.classes.len() as u32 - 1
         });
         self.classes[class as usize].proposals.push(id);
@@ -227,7 +230,8 @@ impl ProposalTable {
         let mut found = Vec::new();
         for index in 0..self.masks.len() {
             let words = (self.class_of)(state, self.masks[index]);
-            let Some(&class) = self.ids.get(&words) else { continue };
+            let Some(answer) = self.worlds.codec().find_state(&state_bytes(&words)) else { continue };
+            let Some(&class) = self.ids.get(&answer) else { continue };
             let record = &mut self.classes[class as usize];
             record.decisions += 1;
             found.extend(record.proposals.iter().map(|&id| Found { id }));

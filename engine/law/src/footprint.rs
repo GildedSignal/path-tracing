@@ -16,6 +16,7 @@ pub enum Query {
     Hooks = 8,
     Loaded = 16,
 }
+impl Query { pub const ALL: [Self; 5] = [Self::Block, Self::Shape, Self::Fluid, Self::Hooks, Self::Loaded]; }
 
 #[derive(Clone, Debug)]
 pub enum EnvironmentRead {
@@ -46,6 +47,21 @@ pub struct Footprint {
 }
 
 impl Footprint {
+    /// Compatibility view over the common codec; addresses/tick never enter a class.
+    pub fn answers(&self, world: &impl World, state: &PlayerState, codec: &mut crate::codec::Interner) -> Result<Vec<AnswerRef>, crate::pattern::PatternError> {
+        let mut answers = Vec::new();
+        if self.state_reads.0 != 0 {
+            let words = crate::codec::state_answers(state, self.state_reads);
+            let answer = ReadAnswer::State(codec.intern_state(&crate::codec::state_bytes(&words)).ok_or(crate::pattern::PatternError::TableFull)?);
+            answers.push(AnswerRef { tick: state.t, source: ReadSource::State(self.state_reads), answer });
+        }
+        for (&position, &mask) in &self.reads {
+            let bytes = crate::codec::cell(world.block(position), world.loaded(position), mask)?;
+            let answer = codec.intern(bytes.bytes()).ok_or(crate::pattern::PatternError::TableFull)?;
+            answers.push(AnswerRef { tick: state.t, source: ReadSource::Cell { position, mask }, answer:ReadAnswer::Cell(answer) });
+        }
+        Ok(answers)
+    }
     pub fn contains(&self, position: BlockPos) -> bool {
         self.reads.contains_key(&position) || self.swept.contains(&position)
     }
@@ -59,6 +75,13 @@ impl Footprint {
         self.state_reads.0 |= other.state_reads.0;
     }
 }
+
+#[derive(Clone, Debug)]
+pub enum ReadSource { Cell { position: BlockPos, mask: u8 }, State(StateReads) }
+#[derive(Clone, Debug)]
+pub struct AnswerRef { pub tick: u64, pub source: ReadSource, pub answer: ReadAnswer }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum ReadAnswer {Cell(crate::codec::ClassId),State(crate::codec::StateClassId)}
 
 #[derive(Clone, Debug)]
 pub struct TickRecord {
@@ -182,10 +205,18 @@ impl<'a, W: World> RecordingWorld<'a, W> {
     }
 
     pub fn take(&self) -> Footprint {
+        let footprint = self.take_world();
+        self.state_reads.set(0);
+        self.written.set(0);
+        footprint
+    }
+
+    /// Drain world reads at a tick boundary without forgetting which state fields
+    /// this word already overwrote. Used by the timed certificate adapter.
+    pub fn take_world(&self) -> Footprint {
         let mut tape = self.tape.borrow_mut();
         let environment = std::mem::take(&mut tape.environment);
-        let footprint = tape.footprint(StateReads(self.state_reads.replace(0)), environment);
-        self.written.set(0);
+        let footprint = tape.footprint(StateReads(self.state_reads.get()), environment);
         tape.corner = None;
         tape.window.fill(0);
         tape.beyond.clear();
@@ -241,13 +272,17 @@ fn cells(lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)) {
 }
 
 impl<W: World> World for RecordingWorld<'_, W> {
+    fn observe_axis_contact(&self,c:crate::contact::AxisContact) {self.world.observe_axis_contact(c);}
+    fn observe_tick(&self) {self.world.observe_tick();}
     #[inline]
     fn read_state(&self, field: StateField) {
         self.state_reads.set(self.state_reads.get() | (1 << field as u8) & !self.written.get());
+          self.world.read_state(field);
     }
     #[inline]
     fn write_state(&self, field: StateField) {
         self.written.set(self.written.get() | 1 << field as u8);
+          self.world.write_state(field);
     }
 
     fn block(&self, p: BlockPos) -> &Block {

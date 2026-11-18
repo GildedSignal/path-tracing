@@ -98,6 +98,12 @@ impl StateField {
         matches!(self, Self::health | Self::food_level | Self::saturation | Self::exhaustion | Self::food_tick_timer)
     }
 }
+/// Predicates whose rounded evaluation is not monotone in the free spatial
+/// coordinate. The set compiler carries both outcomes at a pin instead of
+/// cutting its input interval on these fields. Covered by LAW_HASH.
+pub const NON_MONOTONE_FIELDS: &[(StateField, &str)] = &[
+    (StateField::minor_horizontal_collision, "movement.rs:818, minor_collision (LocalPlayer.isHorizontalCollisionMinor; acos of rounded cosine)"),
+];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StateReads(pub u128);
 impl StateReads {

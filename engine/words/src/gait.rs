@@ -43,7 +43,7 @@ impl Discovery {
     pub fn gaits_at(&mut self, world: &impl World, state: &PlayerState, elapsed: u32) -> Vec<&Gait> {
         let mut full = state.clone();
         fed(&mut full);
-        let start = Start { origin: body_block(state), words: recurrence(&full, elapsed), context: CollisionContext::of(state) };
+        let start = Start { question: law::codec::StateQuestion::Recurrence, origin: body_block(state), words: recurrence(&full, elapsed), context: CollisionContext::of(state) };
         let found: Vec<usize> = self.memo.lookup_at(world, &start).iter().flat_map(|hit| hit.entry.value.iter().copied()).collect();
         found.into_iter().map(|index| &self.gaits[index]).collect()
     }
@@ -69,6 +69,7 @@ fn orbit<T: Ord + Clone>(mut beats: Vec<T>) -> Vec<T> {
     beats
 }
 /// Discovery runs on a full stomach: resources are guards, not part of a gait.
+#[deprecated(note="Legacy discovery only: the U1 GeneratorStore uses observed law guards")]
 fn fed(state: &mut PlayerState) {
     state.food_level = 20;
     state.saturation = 20.0;
@@ -113,7 +114,7 @@ pub fn discover_gaits(world: &impl World, seed: &PlayerState, programs: &[Progra
                     increments.push(moved);
                 }
                 if !orbits.insert(orbit(cycle)) { report.repeats.push(index); continue 'programs; }
-                let filed = Start { origin: body_block(&start), words, context: CollisionContext::of(&start) };
+                let filed = Start { question: law::codec::StateQuestion::Recurrence, origin: body_block(&start), words, context: CollisionContext::of(&start) };
                 let gait = report.gaits.len();
                 if let Err(error) = report.memo.insert_at(world, &recording.take(), filed, |known| known.into_iter().flatten().chain([gait]).collect()) { report.refusals.push((index, error.into())); continue 'programs; }
                 let displacement = replay.position.minus(start.position);

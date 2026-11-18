@@ -2,6 +2,8 @@
   "required": true,
   "package": "pathtracing.mixin",
   "compatibilityLevel": "JAVA_25",
-  "client": ["MinecraftClockMixin", "ClientPacketListenerMixin", "LandingMoveMixin", "SprintDiagnosticMixin", "SprintTravelDiagnosticMixin", "BlockBehaviourAccess", "EntityStateAccess", "LivingStateAccess", "FoodStateAccess", "EntityCollisionMixin", "TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin"],
+  "mixins": ["HopConnectionMixin", "HopConnectionAccess", "FoodStateAccess", "LivingStateAccess"],
+  "server": ["HopServerMixin", "HopInputMixin", "HopRconMixin"],
+  "client": ["MinecraftClockMixin", "ClientPacketListenerMixin", "LandingMoveMixin", "SprintDiagnosticMixin", "SprintTravelDiagnosticMixin", "BlockBehaviourAccess", "EntityStateAccess", "EntityCollisionMixin", "TrackInteractionMixin", "TrackPlayerMixin", "TrackAttackMixin", "TrackItemMixin", "TrackProjectileMixin", "TrackBreakMixin"],
   "injectors": { "defaultRequire": 1 }
 }

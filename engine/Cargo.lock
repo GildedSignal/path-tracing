@@ -7,6 +7,16 @@ name = "law"
 version = "0.1.0"
 
 [[package]]
+name = "pathtracing_native"
+version = "0.1.0"
+dependencies = [
+ "law",
+ "plan",
+ "words",
+ "world",
+]
+
+[[package]]
 name = "plan"
 version = "0.1.0"
 dependencies = [

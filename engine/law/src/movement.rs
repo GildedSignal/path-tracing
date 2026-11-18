@@ -118,6 +118,7 @@ mod swimming_witness {
 fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Result<(Option<(Vec3, Vec3)>, Option<ContactDamage>), Refusal> {
+    world.observe_tick();
     if read_state!(world, state.effects) {
         refuse!("LivingEntity: status effects other than none");
     }
@@ -592,7 +593,7 @@ fn back_off(state: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
 }
 
 // Entity.collide; Entity.collectCandidateStepUpHeights
-fn collide_in_world(world: &impl World, bounds: Aabb, context: CollisionContext, wanted: Vec3, b: Aabb) -> Vec3 {
+fn collide_in_world(world: &impl World, bounds: Aabb, context: CollisionContext, wanted: Vec3, b: Aabb) -> crate::contact::Pass {
     // Inline storage is independent of terrain complexity. If it fills, stream
     // the arbitrary-size query instead; no shape or result allocation is needed.
     let mut colliders: [Option<crate::shapes::SharedCollider>;32] = std::array::from_fn(|_|None);
@@ -602,45 +603,48 @@ fn collide_in_world(world: &impl World, bounds: Aabb, context: CollisionContext,
         colliders[len]=Some(shape.shared()); len+=1; true
     });
     if complete {
-        if len==0 { return wanted; }
+        if len==0 { return crate::contact::Pass::free(bounds,b,wanted); }
         let mut result=Vec3::default();
+        let mut report=crate::contact::Pass::free(bounds,b,wanted);
         for axis in axis_step_order(wanted) {
             let mut d=wanted.get(axis);
             if d==0.0 { continue; }
             let moved=b.moved(result);
             for shape in colliders[..len].iter().flatten() {
-                if d.abs()<1.0e-7 { d=0.0; break; }
-                d=shape.view().collide(axis,moved,d);
+                if d.abs()<1.0e-7 { report.axes[axis as usize].outcome=crate::contact::Outcome::Hold {plane:report.axes[axis as usize].outcome.plane(),remainder:d};d=0.0; break; }
+                d=shape.view().collide_report(axis,moved,d,&mut report.axes[axis as usize].outcome);
             }
-            result=result.with(axis,d);
+            result=result.with(axis,d);report.axes[axis as usize].body=moved;report.axes[axis as usize].moved=d;
         }
-        return result;
+        report.moved=result;return report;
     }
     let mut result = Vec3::default();
     let mut any = false;
+    let mut report=crate::contact::Pass::free(bounds,b,wanted);
     for axis in axis_step_order(wanted) {
         let mut d = wanted.get(axis);
         if d == 0.0 { continue; }
         let moved = b.moved(result);
         world.visit_collisions(bounds, context, |shape| {
             any = true;
-            if d.abs() < 1.0e-7 { d=0.0; return false; }
-            d = shape.collide(axis, moved, d);
+            if d.abs() < 1.0e-7 { report.axes[axis as usize].outcome=crate::contact::Outcome::Hold {plane:report.axes[axis as usize].outcome.plane(),remainder:d};d=0.0; return false; }
+            d = shape.collide_report(axis, moved, d,&mut report.axes[axis as usize].outcome);
             true
         });
-        result = result.with(axis,d);
+        result = result.with(axis,d);report.axes[axis as usize].body=moved;report.axes[axis as usize].moved=d;
     }
-    if any { result } else { wanted }
+    report.moved=if any {result} else {wanted};report
 }
 
 fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
     let b = bounding_box(state, world);
     let context = collision_context(state, world);
-    let result = if v.length_sqr() == 0.0 {
-        v
+    let report = if v.length_sqr() == 0.0 {
+        crate::contact::Pass::free(b,b,v)
     } else {
         collide_in_world(world, b.expand(v), context, v, b)
     };
+    let result=report.moved;
     let landed = v.y != result.y && v.y < 0.0;
     let height = if cfg!(feature="mutant-step-up") {
         f32::from_bits(read_state!(world, state.step_height).to_bits()+1)
@@ -679,13 +683,14 @@ fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
             });
             let Some(candidate) = next else { break; };
             last=Some(candidate);
-            let stepped = collide_in_world(world, bounds, context, Vec3::new(v.x, candidate as f64, v.z), base);
+            let step_report = collide_in_world(world, bounds, context, Vec3::new(v.x, candidate as f64, v.z), base);
+            let stepped=step_report.moved;
             if stepped.horizontal_sqr() > result.horizontal_sqr() {
-                return stepped.minus(Vec3::new(0.0, b.min.y-base.min.y, 0.0));
+                step_report.report(world);return stepped.minus(Vec3::new(0.0, b.min.y-base.min.y, 0.0));
             }
         }
     }
-    result
+    report.report(world);result
 }
 
 // CollisionGetter.findSupportingBlock; Entity.checkSupportingBlock

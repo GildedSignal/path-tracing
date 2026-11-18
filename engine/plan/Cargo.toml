@@ -3,7 +3,13 @@ name = "plan"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+solve-counters = ["law/solve-counters"]
+
 [dependencies]
 law = { path = "../law" }
 words = { path = "../words" }
 world = { path = "../world" }
+
+[dev-dependencies]
+law = { path = "../law", features = ["count-state-copies"] }

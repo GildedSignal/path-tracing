@@ -27,16 +27,23 @@ import pathtracing.LandingClientTrace;
 import pathtracing.Recorder;
 import pathtracing.Tracks;
 import pathtracing.SprintDiagnostic;
+import pathtracing.ResidentSource;
+import pathtracing.ResidentEvents;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
 
 @Mixin(ClientPacketListener.class)
 abstract class ClientPacketListenerMixin {
+    @Inject(method = "handleSetHealth", at = @At("RETURN"))
+    private void ptHealth(ClientboundSetHealthPacket packet, CallbackInfo ci) { ResidentEvents.observe("health-food"); }
     @Inject(method = "handleUpdateAttributes", at = @At("RETURN"))
     private void ptSprintAttributes(ClientboundUpdateAttributesPacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("attributes");
         var p = Minecraft.getInstance().player;
         if (SprintDiagnostic.ENABLED && p != null && packet.getEntityId() == p.getId()) SprintDiagnostic.observe("attributes-packet-return", p);
     }
     @Inject(method = "handleSetEntityData", at = @At("RETURN"))
     private void ptSprintEntityData(ClientboundSetEntityDataPacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("entity-data");
         var p = Minecraft.getInstance().player;
         if (SprintDiagnostic.ENABLED && p != null && packet.id() == p.getId()) SprintDiagnostic.observe("entity-data-packet-return", p);
     }
@@ -48,12 +55,14 @@ abstract class ClientPacketListenerMixin {
     // RETURN runs after vanilla's main-thread check; HEAD would see each queued packet twice.
     @Inject(method = "handleMovePlayer", at = @At("RETURN"))
     private void pathtracing$position(ClientboundPlayerPositionPacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("position");
         LandingClientTrace.unexpected("ClientboundPlayerPositionPacket");
         Recorder.positionPacket(packet);
     }
 
     @Inject(method = "handleSetEntityMotion", at = @At("RETURN"))
     private void pathtracing$motion(ClientboundSetEntityMotionPacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("motion");
         Recorder.motionPacket(packet);
     }
 
@@ -78,12 +87,14 @@ abstract class ClientPacketListenerMixin {
 
     @Inject(method = "handleRotatePlayer", at = @At("RETURN"))
     private void pathtracing$rotation(ClientboundPlayerRotationPacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("rotation");
         LandingClientTrace.unexpected("ClientboundPlayerRotationPacket");
         Recorder.rotationPacket(packet);
     }
 
     @Inject(method = "handleExplosion", at = @At("RETURN"))
     private void pathtracing$explosion(ClientboundExplodePacket packet, CallbackInfo ci) {
+        ResidentEvents.observe("explosion");
         if (packet.playerKnockback().isPresent()) LandingClientTrace.unexpected("ClientboundExplodePacket");
         Recorder.explosionPacket(packet);
     }
@@ -100,26 +111,31 @@ abstract class ClientPacketListenerMixin {
 
     @Inject(method = "handleRespawn", at = @At("RETURN"))
     private void ptRespawn(ClientboundRespawnPacket packet, CallbackInfo ci) {
+        if (System.getProperty("pathtracing.role","").equals("bot")) ResidentSource.resetWorld();
         LandingClientTrace.unexpected("ClientboundRespawnPacket");
     }
 
     @Inject(method = "handleBlockUpdate", at = @At("RETURN"))
     private void ptBlockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo ci) {
+        ResidentSource.block(packet.getPos(),packet.getBlockState());
         if (LandingClientTrace.CORPUS) LandingClientTrace.blockUpdate(packet.getPos());
     }
 
     @Inject(method = "handleChunkBlocksUpdate", at = @At("RETURN"))
     private void ptSectionUpdate(ClientboundSectionBlocksUpdatePacket packet, CallbackInfo ci) {
+        packet.runUpdates(ResidentSource::block);
         if (LandingClientTrace.CORPUS) packet.runUpdates((pos, state) -> LandingClientTrace.blockUpdate(pos));
     }
 
     @Inject(method = "handleLevelChunkWithLight", at = @At("RETURN"))
     private void ptChunkLoad(ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
+        ResidentSource.chunk(packet.getX(),packet.getZ());
         if (LandingClientTrace.CORPUS) LandingClientTrace.chunkUpdate(packet.getX(), packet.getZ());
     }
 
     @Inject(method = "handleForgetLevelChunk", at = @At("RETURN"))
     private void ptChunkUnload(ClientboundForgetLevelChunkPacket packet, CallbackInfo ci) {
+        ResidentSource.unload(packet.pos().x(),packet.pos().z());
         if (LandingClientTrace.CORPUS) LandingClientTrace.chunkUpdate(packet.pos().x(), packet.pos().z());
     }
 }
