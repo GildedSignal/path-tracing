@@ -4,7 +4,7 @@ set -euo pipefail
 
 die() { echo "$*" >&2; exit 2; }
 preamble() {
-  sed -n '/^## The goal\r*$/,/^## From Emergent Space\r*$/{ /^## From Emergent Space\r*$/d; p; }' docs/PRINCIPLES.md
+  cat map/goal.md map/principles.md map/architecture.md
   printf '\n'; cat lab/glm.md; printf '\n'
 }
 restore_tree() {

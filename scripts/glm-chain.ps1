@@ -21,6 +21,8 @@ while ($true) {
     Start-Sleep $wait
     continue
   }
+  # A job leaves the list only when its run finished with a dossier; a broken run stops the chain to be fixed.
+  if (-not $out -or -not (Test-Path (Join-Path $out.FullName 'dossier.md'))) { Write-Log "failed: $job -> $($out.Name); chain stopped"; break }
   Write-Log "end: $job -> $($out.Name)"
   Set-Content -Encoding utf8 $list ($jobs | Select-Object -Skip 1)
 }
