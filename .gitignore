@@ -29,3 +29,6 @@ docs/reference/private.md
 # Generated build commands (regenerate with gen.rs and jobs/three-builds/buildc.rs)
 jobs/build-*/build.txt
 jobs/build-*/place.txt
+
+# Antigravity logs record the signed-in account (its email); never committed (18 November).
+jobs/*/agy.log
