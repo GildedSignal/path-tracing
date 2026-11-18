@@ -5,7 +5,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 ## In flight
 
 - **Astra 6.2, `jobs/flat-ground`** (worktree `D:\path-tracing-wt\flat-ground`, at `main`): the new core flies in his game, then flat ground in microseconds. The clock is decided by the map (T from the click): the track detector's origin is the last tick on A, for his runs and the bot's alike. Codex week at 89%: the last Astra run before its reset.
-- **Sonnet judges** (Antigravity, two at a time): `hard-track-2-judge` and `track-face-judge` running; `freeze-damage-judge` and `build-preview-judge` written, launched when a slot frees. Each gives MERGE, MERGE PART or ARCHIVE.
+- **Sonnet judges on Antigravity: stopped by the budget guard.** Two at once took the Claude+GPT weekly meter from 87% to 74% left in about 10 minutes, before either reached a verdict; their sandbox cannot run commands ("non-absolute file path"). The hard-track judge's notes so far: the branch is ~450 lines of offline certificate the game does not judge plus ~56k lines of generated CSVs, and the witness T rose from 579 to 939 race ticks. The four prompts (`jobs/*-judge`) wait for his choice of judge.
 - **Argon, `jobs/map-lint`:** the map against his verbatim turns, once.
 - **Hydrogen's port build A** (`wt/port-build-a`, `055e7b7`: mining speed, boat, elytra boost, ender pearl in the law, not wired into `movement.rs` or the planner): no flight can show it yet, because nothing plays these mechanics; it merges when step 5 (mining) or step 8 (boat, elytra, pearl) consumes it. One judge finding open: `break_ticks` is `ceil(1/p)` in f64, the game breaks at `p·n ≥ 1` in f32 (obsidian by hand 5000, not 5001).
 
