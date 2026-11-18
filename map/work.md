@@ -36,7 +36,8 @@ A clear goal, the conditions, the gate (a flight in his game whenever the work r
 | a push | refused if it carries his private email or an Antigravity log | `.git/hooks/pre-push` |
 | a meter passes 80% | it is reported | `scripts/meters.ps1 -WatchAt 80` |
 
-Being built: the scoreboard script; net lines on every merge.
+| a number is reported as progress | it comes from the scoreboard, beside its floor | `scripts/scoreboard.ps1` |
+| a commit changes code | its net lines print; growth in `engine/` or `bot/` needs a `Bought:` line | `.git/hooks/commit-msg` |
 
 An edge that never fires or never catches anything is deleted. A new failure changes an edge, never adds prose.
 
