@@ -1,48 +1,8 @@
-# GLM: many cheap minds, no authority
+# GLM
 
-Julien, 5 November (S20): "leverage good intelligence massively BUT without creating busy work, destroying things and taking your thinking away they need to be autonomous to some degree"; "Be very careful with no creating fake work". It follows ES's GLM lab (`lab/README.md` and `lab/heuristics.md` there), cut down to what paid off.
+GLM 5.3 (Z.ai, through omp) writes port code against Mojang's jar: one prompt the integrator writes (`jobs/<id>/prompt.md`), one author session, results in `lab/results/<run>/` with its `dossier.md`, `reproduce.sh` and `work.patch`. There is no checker session, no lens library and no wiki (S234, S235): the work is judged in the game and by the integrator, and a delta is fixed when seen.
 
-## The one rule that prevents fake work
-
-**A GLM result counts only if a machine can check it.** It must come with:
-- a command that reproduces it, run by a separate GLM session that never saw the author's reasoning;
-- a failing case, a measured number that a committed script regenerates, or bytecode cited by class, method and offset.
-
-Prose, surveys, plans and "ideas" are not results. "I looked here and found nothing, and this is why" is a legitimate result, and costs one line.
-
-## What GLM does here
-
-**The port only** (S173: "glm is not very strong"; AGENTS.md): jar-backed port deltas and `javap` extractions, each with a machine-checked witness, written against the differential harness once it exists (S208). Questions, probes and premise tests go to Hydrogen or Terra. The lenses below are kept for port work only.
-
-Each run has a lens: a question family where a found answer is checkable.
-
-| Lens | It looks for | A result is |
-|---|---|---|
-| **Breaker** | where the Rust law and the bot's client disagree; where a plan beats the light-cone bound (impossible) or loses to the offline search or Julien's time | a recording or seed that fails the replay harness or the bracket, reproduced |
-| **Worst cases** | inputs for the extreme tracks of a ladder: ties, grazes, far coordinates, gap limits | a fixture that breaks something, or survives with its margin measured |
-| **Jar reader** | precise questions about Mojang's code that a spec needs | the answer with `javap` evidence, re-derived by the checker |
-| **Pre-freeze red-team** | how a gate could pass while the thing is wrong | a concrete passing-but-wrong case, before the gate freezes |
-| **Probe** | a measurement the plan needs (border states per chunk, table sizes) | numbers plus the script that regenerates them |
-
-GLM writes port code only against the harness (S208), never designs (Opus does), and never writes docs.
-
-## Autonomy of inquiry, no authority
-
-- Inside its lens, a run picks its own question and does real work: code, experiments, derivations.
-- It writes only in its own run folder (`lab/results/<run>/`) on its own branch. It never touches `main`, `docs/`, `engine/`, `bot/`, the gates or the fixtures.
-- An independent GLM checker reproduces each claimed result. A result that doesn't reproduce is graded **lead** and kept, never deleted.
-
-## The integrator's attention is the scarce resource
-
-- The integrator reads verdict lines only, plus the reproduced results, ranked by what they unblock.
-- A lens that produces no reproduced result in five runs is paused, and its prompt rewritten or retired.
-- Canaries: now and then a checker gets a dossier with a known answer, some subtly wrong. A checker that passes a bad one is rewritten before its grades count.
-- The lab itself is on the scoreboard: reproduced results per window, and what each one changed.
-
-## Pacing and the key
-
-- **GLM's binding limit is its 5-hour token window.** On 9 November, about 18 lanes (each an author plus a checker) used one window. The usage bar lags, so a checker that dies on HTTP 429 leaves a "lead" grade that means nothing: read `checker.log` before trusting one.
-- **Launch:** `scripts\glm-local.ps1 -Lenses "<space-separated>" -Minutes 60`. Results go to `lab\results\local-*`, which git ignores. Z.ai refuses GitHub's machines, so the workflow was removed.
-- **The key** is stored by `scripts\set-glm-key.ps1` (one click, a Windows dialog, encrypted for Julien's account). It goes only into an omp process's environment, and runners delete any output file that contains it.
-- **No lens library, no queue** (S235): a GLM run is a prompt the integrator writes, `jobs/<id>/prompt.md`; deltas against the game are fixed when seen, not prevented.
-- **No wiki** (S234, 18 November): a result lives in its run folder (`dossier.md`, `check.md`) until it is ported; the code is the record.
+- **Launch:** `scripts\glm-local.ps1 -Lenses "<job-id>" -Minutes 60`. Commit the prompt first: lanes run from a checkout of HEAD. Results go to `lab\results\local-*`, which git ignores.
+- **Its limit** is Zai's 5-hour token window (`scripts\meters.ps1`).
+- **The key** is stored by `scripts\set-glm-key.ps1`, encrypted for Julien's account; it only enters an omp process's environment, and runners delete any output file that contains it.
+- **It is weak** (S173) and reads untrusted bytecode: its patches are read by the integrator before they are merged.
