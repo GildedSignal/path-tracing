@@ -28,7 +28,6 @@ Write-Host "$(Get-Date -Format HH:mm) GLM run $env:GITHUB_RUN_ID started: $Lense
 try {
   & $bash lab/actions.sh
   $batchExit = $LASTEXITCODE
-  & "$PSScriptRoot\lab-wiki.ps1" -Results (Join-Path $Root 'lab\results')
-  if ($batchExit -ne 0) { throw "GLM batch exited $batchExit; available results were compiled." }
+  if ($batchExit -ne 0) { throw "GLM batch exited $batchExit." }
 } finally { Remove-Item Env:ZAI_API_KEY -ErrorAction SilentlyContinue }
 Write-Host "$(Get-Date -Format HH:mm) Finished. Results: lab\results\$env:GITHUB_RUN_ID-*"

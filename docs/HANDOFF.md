@@ -7,7 +7,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 1. **Read, in order:** [AGENTS.md](../AGENTS.md); [PRINCIPLES.md](PRINCIPLES.md) (the goal, his philosophy, the register of his turns); this file; **[plan.md](plan.md), the plan**; **[clan.md](clan.md) before giving anyone a job**; [learning.md](learning.md) (the unified idea, approved 12 November); [vocabulary.md](vocabulary.md); [representation.md](representation.md) and [scales.md](scales.md); [engine.md](engine.md), [footprints.md](footprints.md), [ladder.md](ladder.md), [server.md](server.md) as the task needs.
 2. **His words:** [reference/julien-2026-11-10.md](reference/julien-2026-11-10.md) (S64–S211, X7–X16; S103 was never recorded verbatim). New turns go there verbatim, with a register row in PRINCIPLES.
 3. **The whole plan:** `C:\Users\PASCAL\.claude\plans\wiggly-questing-lemur.md` (outside the repo; the roadmap below is its summary).
-4. **Run** `.\scripts\status.ps1` (every lane, both queues, every report not yet committed) and `.\scripts\meters.ps1` (each meter's %). Start `.\scripts\meters.ps1 -WatchAt 80` in the background: it exits, and so wakes you, when any meter reaches 80% (S106). `git log -8 --oneline`; `lab/wiki/index.md` for what GLM has settled.
+4. **Run** `.\scripts\status.ps1` (every lane, both queues, every report not yet committed) and `.\scripts\meters.ps1` (each meter's %). Start `.\scripts\meters.ps1 -WatchAt 80` in the background: it exits, and so wakes you, when any meter reaches 80% (S106). `git log -8 --oneline`.
 
 ## The clan in three commands (S104)
 
