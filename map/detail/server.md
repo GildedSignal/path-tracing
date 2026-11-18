@@ -82,6 +82,22 @@ A bot on an in-process sink connection receives no network stream; after a `tele
 - **Separate Rust process over shared memory, pipelined one tick ahead:** an uncatchable fault (`abort`, stack overflow, OOM, unsafe/SIMD/GPU crash) inside the server JVM would kill the server mid-region-save and risk corrupting Julien's world (ruin, not a price), and Windows locks loaded JNI DLLs so every rebuild would force a server restart. Out-of-process IPC gives zero world-ruin risk and ~1 s Rust hot-reloads while the server and his client stay live. On disconnect, materialized bots drop to scripted idle. Only flips back to in-process if a measured handoff at 2,000 TPS cannot be pipelined and exceeds ~5% of the 0.5 ms tick.
 - **Perf-mod policy:** `FerriteCore`, `Krypton`, and `ScalableLux` run in both the server and lab rig (strict vanilla parity). `Lithium` and `C2ME` run on the live swarm server (strict vanilla logic parity, parallel chunk loading/I/O) and stay out of the bare law-verification judge rig so the judge stays pure Mojang bytecode ([engine.md](engine.md)). `Alternate Current` is excluded because it alters vanilla redstone dust update order.
 
+## Live server runtime and Stage 2 flights
+
+`server-mod/` (`ServerMindMod`, `WorldBridge`, `SwarmManager`, `SwarmBot`, `ShmBridge`, plus 6 mixins) connects dedicated Mojang 26.2 directly to out-of-process Rust `engine/mind/` (`mind.exe`, `WorldMirror`, `protocol`, `shm`) over Windows memory-mapped lock-free SPSC rings (`s2e` 16 MiB, `e2s` 4 MiB):
+
+- **World delta stream:** initial/reconnected chunks stream via RLE sections (`MSG_SECTION_AIR` / `MSG_SECTION_RLE`), stale chunk entries are pruned on reconnect so `loaded_chunks × 24` sections stay exact, and `LevelChunkMixin` on `LevelChunk.setBlockState` queues live `MSG_BLOCK_DELTA` updates each tick.
+- **Per-bot self-channel and control:** `/swarm spawn|goto|stop|remove|formation|stick|status|profile reset` and `/msg PathBot goto|stop` drive observer-filtered `SwarmBot`s. `solve_bot` sizes the `GeneratorSuperflatSource` corridor with a `±8` horizontal margin and `+8` vertical headroom (clamped to loaded Y) so `Crossing::run`'s speculative jump probe stays inside loaded bounds before `corridor_query` inspects `scars`. On `mind.exe` reconnect, `engine_epoch` increments, `WorldBridge.syncAll` snapshots loaded chunks, and active `SwarmBot`s resync cleanly.
+
+Stage 2 live verification (`server-mod/verify-stage2.ps1`, evidence in `D:\path-tracing-evidence\stage2-flight-20261118-b`): **0 teleports** and **0 `"moved wrongly"`** across all 4 flights:
+
+| Flight | Bots | Goal | Solve (µs, min/med/max) | Predicted / Actual T | Exact T | Server tick ms (min/med/p90/p99/max) | Outcome |
+|---|---:|---|---|---|---|---|---|
+| 1. Single bot flat | 1 | `50 -60 0` | `141.4 / 141.4 / 141.4` | `144 / 144` | `1/1` | `0.902 / 2.024 / 4.961 / 18.016 / 43.465 (n=152)` | `ready:1`, settled |
+| 2. 50-bot shared store | 50 | `80 -60 0` (grid) | `4.8 / 7.5 / 11.1` | `228 / 228` | `50/50` | `2.751 / 4.392 / 6.866 / 32.170 / 45.672 (n=236)` | `ready:50`, settled |
+| 3. Hot-reload + return | 50 | kill/restart → `10 -60 0` | `4.0 / 4.1 / 139.7` | `204 / 204` | `50/50` | `2.814 / 3.614 / 4.582 / 11.100 / 26.582 (n=212)` | `engine_epoch=2`, `20,184` sections (`841` chunks), settled |
+| 4. Live `oak_fence` delta | 1 | `setblock 20 -60 0` → `30 -60 0` | `28.4 / 28.4 / 28.4` | `—` | `—` | `n/a` (refused) | `joints:1`, `NeedsJoints at [20, -60, 0]` |
+
 ## Interfaces and gates
 
 - **Server → engine, each tick:** tick number; world deltas (block edits, chunk loads/unloads, entity deltas); per-materialized-bot self channel and server-owned outcomes (for the deviation stream); per real player, position and view distance; stick/overseer commands.

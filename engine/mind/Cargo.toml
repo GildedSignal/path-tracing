@@ -1,0 +1,10 @@
+[package]
+name = "mind"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+law = { path = "../law" }
+world = { path = "../world" }
+words = { path = "../words" }
+plan = { path = "../plan" }
