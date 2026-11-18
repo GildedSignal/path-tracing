@@ -20,7 +20,15 @@ public final class ResidentSource {
         session++; revision = 1; sections.clear();
         if (NativeChannel.loadFailure() != null) { Bot.reply(mc,"Native channel refused: " + NativeChannel.loadFailure()); return; }
         // Natural regeneration is not sent to a remote client; 2 means Unknown.
-        send(new long[]{0,session,revision,mc.level.getDifficulty().getId(),2});
+        sentDifficulty = mc.level.getDifficulty().getId();
+        send(new long[]{0,session,revision,sentDifficulty,2});
+    }
+    private static long sentDifficulty;
+    /** The server's difficulty packet comes after the join: publish it when it differs from what was sent. */
+    static void difficulty(Minecraft mc) {
+        if (session == 0 || mc.level == null || mc.level.getDifficulty().getId() == sentDifficulty) return;
+        sentDifficulty = mc.level.getDifficulty().getId();
+        send(new long[]{4,session,++revision,sentDifficulty});
     }
     private static void send(long[] data) {
         long[] answer = NativeChannel.PublishSourceDelta(data);

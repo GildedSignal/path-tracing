@@ -28,7 +28,8 @@ final class ResidentRunner {
         HopCapture.hop("observation-bits-"+kind,version,issue,at,observation.bits());
         HopCapture.hop("observation-known-"+kind,version,issue,at,observation.known());
         HopCapture.hop("observation-provenance-"+kind,version,issue,at,observation.provenance());
-        if (executing) {
+        // Only events that move the body stop playback; data echoes (entity data, attributes, health and food) are recorded above.
+        if (executing && java.util.Set.of("explosion","motion","position","rotation").contains(kind)) {
             cancel(mc); TickInput.release(mc);
             Bot.reply(mc,"Native legacy playback stopped on observed "+kind+"; event comparison belongs to F.");
         }
@@ -47,6 +48,7 @@ final class ResidentRunner {
     static void tick(Minecraft mc) {
         if (mc.player == null || mc.level == null || NativeChannel.loadFailure() != null) return;
         if (pending != null) {
+            ResidentSource.difficulty(mc);
             long received = NativeChannel.clock()[0];
             StateBits.Observation observation = PlayerSnapshot.observed(mc);
             HopCapture.hop("request-observation-bits",version,issue,received,observation.bits());
@@ -71,8 +73,11 @@ final class ResidentRunner {
         if (answer.length < 9 || answer[5] != ResidentSource.revision) { Bot.reply(mc,"Native plan refused: source changed."); return; }
         int count = Math.toIntExact(answer[7]), n = Math.toIntExact(answer[8]);
         StateBits.Observation now = PlayerSnapshot.observed(mc);
-        if (answer.length != 9+n+count*3 || !Arrays.equals(Arrays.copyOfRange(answer,9,9+n),now.bits())) {
-            Bot.reply(mc,"Native plan refused: observed start changed while planning; event re-anchor belongs to F."); return;
+        // Word 0 is the tick counter, which moves while the plan is thought; every other word must still hold.
+        int changed = answer.length != 9+n+count*3 || now.bits().length != n ? 0 : -1;
+        for (int i = 1; changed < 0 && i < n; i++) if (answer[9+i] != now.bits()[i]) changed = i;
+        if (changed >= 0) {
+            Bot.reply(mc,"Native plan refused: observed start changed while planning at word " + changed + "."); return;
         }
         ArrayList<TickInput> inputs = new ArrayList<>(count);
         for (int i=9+n;i<answer.length;i+=3) {

@@ -46,7 +46,8 @@ impl World for Source {
     }
     fn loaded(&self, p: BlockPos) -> bool { self.sections.contains_key(&p.map(|v| v.div_euclid(16))) }
     fn difficulty(&self) -> u8 { self.difficulty }
-    fn natural_regeneration(&self) -> bool { self.regeneration.expect("unknown server natural-regeneration rule") }
+    // The rule is not sent to a remote client: projected as vanilla's default; it changes health, never a walk, and the server corrects it.
+    fn natural_regeneration(&self) -> bool { self.regeneration.unwrap_or(true) }
     fn has_fluid(&self) -> bool { true }
     fn has_inside_effects(&self) -> bool { true }
 }
@@ -85,6 +86,12 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
         world::model_table(); // Parse once at world join, on this worker.
     } else {
         if source.session != session || revision <= source.revision { return Err("stale source session/revision".into()); }
+        // The server's difficulty arrives after the world is joined: kind 4 updates it in place.
+        if kind == 4 {
+            let difficulty = u8::try_from(c.word()?).map_err(|_| "difficulty")?;
+            if difficulty > 3 || c.at != data.len() { return Err("difficulty delta".into()); }
+            source.difficulty = difficulty; source.revision = revision; return Ok(());
+        }
         let p = c.pos()?;
         match kind {
             1 => {
