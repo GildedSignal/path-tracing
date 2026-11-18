@@ -20,7 +20,10 @@ $running = @()
 # previous runner left running count against -Lanes.
 $previousLog = @(Get-Content $log -ErrorAction SilentlyContinue)
 $from = [Array]::FindLastIndex([string[]]$previousLog, [Predicate[string]]{ param($l) $l -match 'queue started' })
-if ($from -ge 0) { $previousLog[$from..($previousLog.Count - 1)] | ForEach-Object { if ($_ -match 'start: (\S+)$') { $started[$Matches[1]] = $true } } }
+# A lens the previous runner requeued after Zai's limit ("queued again") is not counted as started.
+if ($from -ge 0) { $previousLog[$from..($previousLog.Count - 1)] | ForEach-Object {
+  if ($_ -match 'start: (\S+)$') { $started[$Matches[1]] = $true }
+  elseif ($_ -match 'zai limit hit by (\S+): queued again') { $started.Remove($Matches[1]) } } }
 # Paced to the meter (S123): Zai's 5-hour window should be spent by its reset, not before. A lane above
 # -Lanes may start while the share used is below the share of the window elapsed (minus one lane's ~10%
 # of headroom); at or above the line no lane starts, so running lanes drain. -MaxLanes caps it.
