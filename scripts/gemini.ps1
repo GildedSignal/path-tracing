@@ -79,6 +79,7 @@ $contract = "`n`n---`n`n**Read files only by absolute Windows paths with the dri
 if ($Commands) {
   $contract += "`n`n**You can run commands, inside a sandbox.** They may write only in ``$Write`` (your worktree), ``$dir`` (your job folder), ``D:\path-tracing-target\agy-$Job`` (build output) and ``D:\rust`` (the toolchain); any other write is refused. Your working directory may not be the worktree: start each command with ``cd $Write;`` or pass absolute paths, and build with ``--target-dir D:\path-tracing-target\agy-$Job``. Edit files with your file tools or with commands, inside the worktree only."
 }
+$contract += "`n`n**How you work (S237: a clear job, and you fulfil it however you judge best).** Read anything in the repository you need (``map\`` is the truth, ``map\detail\`` the detail) and choose your own path to the goal. When the prompt leaves a choice open, decide, write the decision and its reason in your report, and keep going: an open question never stops you."
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$body$contract", $utf8)
 
 # In headless mode there is no approval prompt: an action the permissions do not allow is denied and the

@@ -39,7 +39,9 @@ $contract = @'
 
 ---
 
-**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you: a missing input file, a denied permission, or a contradiction inside the spec (quote both sides). Running out of time, turns or effort is never BLOCKED: write what you did and end without a STATUS line, and you will be resumed in this same session to continue. Read the code you need to change and what it calls; for the project's documentation, read only the documents the spec names.
+**How you work (S237: a clear job, and you fulfil it however you judge best).** Read anything in the repository (`map/` is the truth; `map/detail/` holds the detail), run any command, build and test in your worktree, and choose your own path to the goal. When the spec leaves a choice open, decide, write the decision and its reason in your report, and keep going: an open question never stops you. Closed, because it cannot be undone: pushing, git history and other branches, his world and server, secrets.
+
+**Your final message must end with exactly one of these lines:** `STATUS: DONE` when every item of "Done means" holds, or `STATUS: BLOCKED: <the one thing you cannot do, and why>` when something outside your control stops you: a missing input, a denied permission, or a contradiction between the spec and the map (quote both sides). Running out of time, turns or effort is never BLOCKED: write what you did and end without a STATUS line, and you will be resumed in this same session to continue.
 '@
 [IO.File]::WriteAllText($full, "$guard`n`n---`n`n$job$contract", $utf8)
 
