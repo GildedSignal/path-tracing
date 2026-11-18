@@ -5,11 +5,17 @@
 param([ValidateSet('pre','post')][string]$Phase)
 try { $in = [Console]::In.ReadToEnd() | ConvertFrom-Json } catch { exit 0 }
 $cmd = [string]$in.tool_input.command
-$m = [regex]::Match($cmd, 'launch\.ps1\s+(\S+)\s+(\S+)')
+$m = [regex]::Match($cmd, 'scripts[\\/]launch\.ps1\s+(\S+)\s+(\S+)')
 if (-not $m.Success -or $cmd -match '-DryRun') { exit 0 }
 $job = $m.Groups[1].Value; $who = $m.Groups[2].Value
 $root = Split-Path (Split-Path $PSScriptRoot)
 if ($Phase -eq 'pre') {
+  # Every prompt opens with its title, then the goal in one line, so he can review it at a glance.
+  $lines = @(Get-Content -Encoding UTF8 (Join-Path $root "jobs\$job\prompt.md") -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
+  if ($lines.Count -lt 2 -or $lines[0] -notmatch '^# ' -or $lines[1] -notmatch '^\*\*Goal:\*\* \S') {
+    [Console]::Error.WriteLine("Refused: jobs\$job\prompt.md must open with '# <title>' and then one line '**Goal:** <the goal>'.")
+    exit 2
+  }
   $big = $who -in 'astra','sol','opus' -or ($who -eq 'argon' -and $cmd -match '-Commands')
   if ($big -and -not (Test-Path (Join-Path $root "jobs\$job\shown.txt"))) {
     [Console]::Error.WriteLine("Refused: $who is a big-model launch and jobs\$job\shown.txt does not exist. Show Julien the full prompt in chat first (S230), then create shown.txt.")

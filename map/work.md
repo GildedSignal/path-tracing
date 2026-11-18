@@ -18,7 +18,7 @@ A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/
 
 ## A companion's job
 
-A clear goal, the conditions, the gate (a flight in his game whenever the work reaches the game), and this map. How it gets there is its own (S237): it reads the whole repository, runs anything in its worktree, and writes a decision down instead of stopping on it.
+A clear goal, in one line under the prompt's title, the conditions, the gate (a flight in his game whenever the work reaches the game), and this map. How it gets there is its own (S237): it reads the whole repository, runs anything in its worktree, and writes a decision down instead of stopping on it.
 
 **Closed, because it cannot be undone:** pushing; his world and server while he plays; secrets; git history; other branches; launching paid runs.
 
@@ -29,6 +29,7 @@ A clear goal, the conditions, the gate (a flight in his game whenever the work r
 | a session starts, resumes, clears or compacts | this map loads whole | `SessionStart` hook, `scripts/load-docs.sh` |
 | he sends a message | the heuristics card is injected; his words go verbatim to `archive/turns/inbox.md` | `UserPromptSubmit` hook, `scripts/hooks/prompt.ps1` |
 | any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `scripts/gemini.ps1` |
+| any launch | refused unless the prompt opens with its title, then `**Goal:**` in one line | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
 | a launch of Astra, Sol, Opus or an Argon build | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
 | a launch succeeds | a watcher wakes the integrator when the job ends | `PostToolUse` hook (async, wakes the model) |
 | a commit touches `map/` | 40 KB cap, no history wording, links resolve | `.git/hooks/pre-commit` (`scripts/install-hooks.sh`) |

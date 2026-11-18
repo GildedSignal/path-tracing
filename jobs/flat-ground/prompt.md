@@ -1,4 +1,6 @@
-# The new core flies in his game, then flat ground as the map says: the gait stored once, the yaw put in
+# Flat ground in his game
+
+**Goal:** a new command on flat ground is thought in microseconds and flies in his game with the track clock's T equal to the predicted T.
 
 Builder: Astra 6.2. Worktree `D:\path-tracing-wt\flat-ground`, branch `wt/flat-ground`, at `main`. The map (`map/`, above and in `map/detail/`) is the truth; this job is one step of it. The integrator commits and flies; you never run `git commit`, `launch.ps1` or `gpt.ps1`, and use no network, game, server or client.
 
