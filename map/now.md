@@ -4,14 +4,19 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## In flight
 
-- **Astra 6.2, `jobs/flat-ground`** (worktree `D:\path-tracing-wt\flat-ground`, from `75b2b90`): first the new core flies in his game (`plan-track --mode solve` writes the tick script the mod plays), then flat ground as the map says: the gait stored once, the yaw put in, nothing relearned per command. A waiter wakes the integrator when it ends. Codex week at 87%: about one run left before its reset.
-- **The overhaul** (`jobs/overhaul/plan.md`, approved S240): the map (this folder), the if-then graph in code, agency, less code, `main` merged often, the meters band in the app.
-- **Hydrogen's port build A** (`wt/port-build-a`: mining speed, boat, elytra boost, ender pearl): builds and passes; its Sonnet judge could not run commands and judged by reading. Merge after a flight or a running judge.
+- **Astra 6.2, `jobs/flat-ground`** (worktree `D:\path-tracing-wt\flat-ground`, from `75b2b90`, launched 15:40): first the new core flies in his game (`plan-track --mode solve` writes the tick script the mod plays), then flat ground as the map says: the gait stored once, the yaw put in, nothing relearned per command. She was launched before the job-watcher hook existed, so a background Bash waiter wakes the integrator; if it is gone, check `jobs\flat-ground\last.md` and the worktree. Codex week at 89%: this is the last Astra run before its reset.
+- **Hydrogen's port build A** (`wt/port-build-a`: mining speed, boat, elytra boost, ender pearl): builds and passes; its Sonnet judge could not run commands and judged by reading. Merge after a flight.
+
+## The overhaul (`jobs/overhaul/plan.md`, approved S240): state
+
+Built and on `main`: the map (this folder; 22 KB loaded whole, history in `archive/`), AGENTS.md and the README rewritten, the hooks of `work.md` (card and his words on every message, the launch guard, the job watcher, the map and net-line commit checks, the push guard), the scoreboard (`scripts/scoreboard.ps1`), companion agency in `gpt.ps1` and `gemini.ps1`, GLM without its checker or lenses, tests cut to what the game judges, memory cut to 11 files, 220 dead worktrees and 51 branches archived (`D:\path-tracing-archive`, `archive/*` tags), history stripped from `map/detail/`. The meters: `/meters` opens a pane in the app (a mod in `C:\Users\PASCAL\.claude\dev-mods\…\meters-band`; the app's own Context panel takes no mod content).
+
+Left: delete the old A\* planner (`plan/src/flight.rs` modes 3/5/b, `planner.rs`) and dead `words` code, after Astra's job; Argon lints `map/` against his verbatim turns once.
 
 ## Next, in order
 
-1. Fly the new core in his game once Astra's export builds: `straight100/300/800`, `stonesimple`, ten new flat goals. The clock's T must equal the predicted T, with no deviation.
-2. Finish the overhaul: the hooks, the commit checks, the scoreboard, the companion contracts (`gpt.ps1`, `gemini.ps1`), memory cut to what is about him, delete the old A\* planner and dead `words` code.
+1. Fly the new core in his game once Astra's export builds: `straight100/300/800`, `stonesimple`, ten new flat goals. The clock's T must equal the predicted T, with no deviation. `scripts/scoreboard.ps1` reads the flight log.
+2. Judge and merge Astra's work; then delete the dead planner code.
 3. His tracks as inputs (Sol, `jobs/loop-tracks`), held until Astra's work is in.
 4. The bot's runner: words × count in the client, re-anchoring at events, the goal changed mid-run (R-retarget).
 
