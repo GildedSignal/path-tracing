@@ -15,7 +15,7 @@ The state of the build, what is in flight and what comes next. Rewritten in plac
 
 ## Start here (18 November, 10:20)
 
-- **The PC was off overnight: nothing armed for 00:33/00:35 ran** (no Astra `warm-floor`, no Sol `loop-tracks`; both still to launch, unchanged). GLM's runner died at 23:25; relaunched 10:12 (19 lenses left; `glm-queue.ps1` now honours its own requeues on restart, `8d7d654`).
+- **The PC was off overnight: nothing armed for 00:33/00:35 ran.** **Astra 6.2 runs `jobs/warm-floor` from 10:20** (`D:path-tracing-wtwarm-floor`, from `wt/u2b-astra`, with `real_time.rs` copied in; S229: the whole per-command cost against its Fermi floor). **Sol's `loop-tracks` is held** until Astra's work is in, since it can change what Sol builds on (S229). GLM's runner died at 23:25; relaunched 10:12 (19 lenses left; `glm-queue.ps1` now honours its own requeues on restart, `8d7d654`).
 - **Antigravity is fully fresh** (raw `/usage` 10:10: Gemini, Claude+GPT and Argon all 100% remaining, weekly resets 25 November): **Sonnet judges need not wait for Thursday.**
 - **Hydrogen on the port** (S228): `jobs/port-build-a` (mining speed, boat on land and mount/dismount, elytra boost, ender pearl; `wt/port-build-a` from `wt/u2b-astra`, commands on) and `jobs/port-digest-3` (last night's nine results, wiki drafts, builder batches). **The refuge is parked** (S228).
 
