@@ -4,7 +4,8 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## In flight
 
-- **Flat ground, `jobs/flat-ground`** (`wt/flat-ground`, checkpoint `fbecfe0`, net −254 lines): Astra waits for the Codex week reset (Codex resets on the 23rd, 20:34). Hers: `solve` exported to the tick script for `straight100/300/800` and `stonesimple` (law replay touches B at 288, 845, 2,248, 85), the clock from the last tick on A (his 97 times each +1), the yaw kernels and terminal bundles cut, 60 of 60 moving retargets returned. Measured by the integrator on the checkpoint: the whole law and plan suite green (the 158 shortcut included); `real_time.rs` per new command, 60 each, every plan replayed by `law::try_tick` onto B at the predicted tick: from standing min 6.2 / median 13.5 / p90 18.6 / max 28.8 µs, while moving 7.0 / 12.7 / 16.1 / 23.1 µs, 0 refused, 0 law ticks prepared after the first command (the first: 119 µs, 15 law ticks); the same goal again 4.5 µs. Her law lines are two no-op observation hooks. Left: the flight in his game, then merge.
+- **Flat ground: on `main`, flown in his game.** `plan-track --mode solve` writes the tick script the mod plays. The flights: `straight100` 288 predicted / 288 on the track clock, `straight300` 845 / 845, `straight800` 2,248 / 2,248, `stonesimple` 85 / 85 (his best 86). Per new command (`real_time.rs`, 60 each, every plan replayed by `law::try_tick` onto B at the predicted tick): from standing min 6.2 / median 13.5 / p90 18.6 / max 28.8 µs, while moving 7.0 / 12.7 / 16.1 / 23.1 µs, 0 refused, 0 law ticks prepared after the first command on a ground (119 µs, 15 law ticks). The track clock counts from the last tick on A (his 97 recorded times each +1).
+- **Deltas the flights show (expected against seen):** (1) the click costs 1.8–2.3 s of wall time before the first input, about 40 ticks of T, because `plan-track` starts per click and reads the world from disk: the living store belongs in the server beside the bot (the native channel), and this is the bottleneck now. (2) The planner's settled start has saturation 5.0, the bot has 20.0 (first deviation at tick 0 on every flight; T unaffected on these lengths, the food guard is not). (3) Ten new flat goals are not flown yet. Astra is back on the 23rd (Codex week reset, 20:34).
 - **Sonnet judges on Antigravity: stopped by the budget guard.** Two at once took the Claude+GPT weekly meter from 87% to 74% left in about 10 minutes, before either reached a verdict; their sandbox cannot run commands ("non-absolute file path"). The hard-track judge's notes so far: the branch is ~450 lines of offline certificate the game does not judge plus ~56k lines of generated CSVs, and the witness T rose from 579 to 939 race ticks. The four prompts (`jobs/*-judge`) wait for his choice of judge.
 - **Argon, `jobs/map-lint`:** the map against his verbatim turns, once.
 - **GLM, `scripts/glm-chain.ps1`:** the 15 port prompts without a result (`jobs/glm-chain.txt`; entity push first, then boats, pearls, portals for step 8, then the rest), one at a time.
@@ -21,8 +22,8 @@ Left: delete the old A\* planner (`plan/src/flight.rs` modes 3/5/b, `planner.rs`
 
 ## Next, in order
 
-1. Fly the new core in his game once Astra's export builds: `straight100/300/800`, `stonesimple`, ten new flat goals. The clock's T must equal the predicted T, with no deviation. `scripts/scoreboard.ps1` reads the flight log.
-2. Judge and merge Astra's work; then delete the dead planner code.
+1. The click in microseconds in his game: the living store in the server beside the bot, so a click costs ticks, not 1.8–2.3 s.
+2. Delete the dead planner code (`flight.rs` modes 3/5/b, `planner.rs`) now that `solve` flies.
 3. His tracks as inputs (Sol, `jobs/loop-tracks`), held until Astra's work is in.
 4. The bot's runner: words × count in the client, re-anchoring at events, the goal changed mid-run (R-retarget).
 
@@ -33,7 +34,7 @@ Left: delete the old A\* planner (`plan/src/flight.rs` modes 3/5/b, `planner.rs`
 | 1. the core: `solve`, words with counts, the word store | built, on `main` |
 | 2. joints and sets | built, on `main` |
 | 2b. the simplest case right | built, on `main`; per new command 68 ms against a ~10 µs floor |
-| 3. the loop on his tracks | Astra's job, then Sol's track inputs |
+| 3. the loop on his tracks | flat ground flies (T = predicted); his tracks as inputs next |
 | 4. the bot's runner | next |
 | 5. editing the world (place, break, interact; the ledger) | the port feeds it |
 | 6. the far map | after 4 |

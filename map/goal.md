@@ -33,8 +33,9 @@ Each row is shown beside its Fermi floor, with the gap in orders of magnitude.
 
 | Case | Floor | Measured | Gap |
 |---|---|---|---|
-| a new command on flat ground | ~1–10 µs | 68 ms standing, 55 ms moving | ~4 orders |
-| the same command asked again | ~1 µs | 19 µs | ~1 order |
+| a new command on flat ground | ~1–10 µs | 13.5 µs standing, 12.7 µs moving (median); the first on a ground 119 µs | ~0.1 order |
+| the same command asked again | ~1 µs | 4.5 µs | ~0.65 order |
+| a click to the bot's first input, in his game | ~1 tick | 1.8–2.3 s (`plan-track` started per click, the world read from disk) | ~1.5 orders |
 | a law tick | 0.1–0.3 µs | 0.6–0.95 µs | ~0.5 order |
 | a new joint pattern | ~12 ms, once | — | — |
 | 10⁴ bots deciding | ~0.03 core | — | — |
