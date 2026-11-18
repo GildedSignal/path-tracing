@@ -135,7 +135,7 @@ fn resident() -> &'static Resident {
                     Work::Goal(request) => {
                         let version = request.version;
                         let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(&source, &store, &mut codec, request, &v, &r)))
-                            .unwrap_or_else(|_| refusal(version,"unknown/unsupported source or planner panic; no sentence dispatched"));
+                            .unwrap_or_else(|p| refusal(version,format!("planner panic: {}",p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())));
                         let _ = done.send(answer);
                     }
                 }
