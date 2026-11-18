@@ -4,7 +4,7 @@
 
 | Who | For |
 |---|---|
-| the integrator (main Claude session) | specs and prompts, merges, the map, talking with him |
+| the integrator (main orchestrator session) | specs and prompts, merges, the map, talking with him |
 | Astra (`gpt-6.2-astra`, Codex) | the core and the hard builds; the Codex window is hers |
 | Sol (`gpt-6.2-sol`, Codex) | strong builds beside the core |
 | Terra (`gpt-6.1-terra`, Codex) | builds from a closed spec, the leftover window |
@@ -12,7 +12,7 @@
 | Sonnet (Antigravity, or native) | judges GPT's and Google's work |
 | Argon (Antigravity) | tooling builds, reading primary sources, linting the map against his words |
 | Hydrogen (Antigravity) | builds, digests, premise checks |
-| GLM (Z.ai, omp) | port code against the jar, from a prompt the integrator writes |
+| GLM (Z.ai, omp) | port code against the jar (`scripts/glm-chain.ps1` / `scripts/glm-local.ps1`) |
 
 A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/launch.ps1 <job> <who> [-Worktree D:\path-tracing-wt\<name>] [-Base <ref>]`; a job is `jobs/<id>/prompt.md` in, `last.md` out. Meters: `scripts/meters.ps1`.
 
@@ -26,20 +26,15 @@ A clear goal, in one line under the prompt's title, the conditions, the gate (a 
 
 | If | Then | Code |
 |---|---|---|
-| a session starts, resumes, clears or compacts | this map loads whole | `SessionStart` hook, `scripts/load-docs.sh` |
-| he sends a message | the heuristics card is injected; his words go verbatim to `archive/turns/inbox.md` | `UserPromptSubmit` hook, `scripts/hooks/prompt.ps1` |
-| any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `scripts/gemini.ps1` |
-| any launch | refused unless the prompt opens with its title, then `**Goal:**` in one line | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
-| a launch of Astra, Sol, Opus or an Argon build | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
-| a launch succeeds | a watcher wakes the integrator when the job ends | `PostToolUse` hook (async, wakes the model) |
 | a commit touches `map/` | 40 KB cap, no history wording, links resolve | `.git/hooks/pre-commit` (`scripts/install-hooks.sh`) |
 | a commit touches `engine/` | it touches `map/` or carries `Map: unchanged, because …` | `.git/hooks/commit-msg` |
+| a commit changes code | its net lines print; growth in `engine/` or `bot/` needs a `Bought:` line | `.git/hooks/commit-msg` |
 | a push | refused if it carries his private email or an Antigravity log | `.git/hooks/pre-push` |
 | a meter passes 80% | it is reported | `scripts/meters.ps1 -WatchAt 80` |
 | a number is reported as progress | it comes from the scoreboard, beside its floor | `scripts/scoreboard.ps1` |
-| a commit changes code | its net lines print; growth in `engine/` or `bot/` needs a `Bought:` line | `.git/hooks/commit-msg` |
+| a companion launches via scripts | goal, principles, architecture and map question prepend; title/`**Goal:**` and `shown.txt` guards apply inside Claude Code | `scripts/gpt.ps1`, `scripts/gemini.ps1`, `scripts/hooks/launch.ps1` |
 
-An edge that never fires or never catches anything is deleted. A new failure changes an edge, never adds prose.
+Claude Code session hooks (`SessionStart` map load, `UserPromptSubmit` card + `archive/turns/inbox.md`, `PreToolUse` launch gate, `PostToolUse` job watcher) fire inside Claude Code sessions; outside Claude Code, the integrator loads `map/` and appends his turns verbatim to `archive/turns/inbox.md` directly. An edge that never fires or never catches anything is deleted. A new failure changes an edge, never adds prose.
 
 ## Rules no code enforces yet
 

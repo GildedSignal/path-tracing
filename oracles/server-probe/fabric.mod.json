@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "pathtracing_server_probe",
+  "version": "0.1.0",
+  "name": "Server Probe (packet, lazy, virtual)",
+  "environment": "server",
+  "entrypoints": {
+    "server": ["pathtracing.probe.ServerProbe"]
+  },
+  "mixins": ["server-probe.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "26.2",
+    "java": ">=25"
+  }
+}

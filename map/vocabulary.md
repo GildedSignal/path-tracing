@@ -23,7 +23,7 @@ Speak in these words, never invented codes or names (S75, S179). Plain names for
 | **site**, **label**, **field** | joints close together; T to hubs; T-to-go for one goal |
 | **defect** | where the ground stops giving the same answers to the kit's verbs |
 | **corridor query** / **presence query** | one question over a worldtube: is anything different, and where first |
-| **the slide** | moving a joint inside its set when a neighbour has a smaller T-to-go |
+| **the wiggle** | moving a joint inside its set when a neighbour has a smaller T-to-go |
 | **generator** | the recurrence and its parameters, stored once; outputs derived when looked at |
 | **wormhole** | an edge not bounded by legs: pearl, portal |
 | **toll with a debt** | an edit priced in T plus its undo |
@@ -36,4 +36,4 @@ Speak in these words, never invented codes or names (S75, S179). Plain names for
 | **SR-71** | seal only what cannot be corrected |
 | **ES** | Emergent Space, his engine: worldtubes, certificates, generators, light cones |
 | **one mechanism** | no terrain kind gets its own path |
-| **the integrator** | the main Claude session: specs, merges, the map |
+| **the integrator** | the main orchestrator session: specs, merges, the map |

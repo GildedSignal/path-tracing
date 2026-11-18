@@ -35,10 +35,11 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Companion | Family | Band claimed | Claim and launch notes |
 |---|---|---|---|
 | Opus | Anthropic | Frozen, Judged | taste: finds the one-way door and the wrong abstraction before either freezes. Native sub-agent (never on Antigravity, S115); one at a time |
-| Fable | Anthropic | Orchestration | holds the whole project; writes the specs; decides the merges |
+| **the integrator** | — | Orchestration | holds the whole project; writes the specs; decides the merges |
 | Sonnet | Anthropic | Judged | adversarial reading of a diff against a spec, fresh context. Native sub-agent (batch judges into one) or Antigravity (`-ReadDir <worktree>`, ≤ 2 Sonnet, weekly meter, inline the diff) |
 | Haiku | Anthropic | Checked | runs, log digests, completeness |
 | Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209). Effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's with `Built-by:`. Copy git-ignored `engine/world/tests/fixtures/world` into a new worktree |
+| **Sol** | OpenAI | Checked / strong builds | strong builds beside the core (`gpt-6.2-sol`, Codex) |
 | Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended; backfills the leftover ~20% of the Codex window (S209). ≤ 4 GPT; with Astra, one GPT job beside her (S15); same launch rules as Astra |
 | GLM | Z.ai | Checked (wide) | the port only (S173): jar-backed port deltas, each reproduced by a second session ([lab/glm.md](../../lab/glm.md)). `.\scripts\glm-local.ps1 -Lenses "<job-id>"` (reads `jobs\<id>\prompt.md`): commit the prompt first, because lanes run from a checkout of HEAD |
 | **Argon** | **Google** | **claimed: corpus traversal; untrusted reading; primary sources** | builds tooling and lints our docs against his words (S211); walks the corpus and says what contradicts what; reads untrusted artefacts (decompiled Mojang bytecode, scraped wiki pages); reads primary sources directly and mines his book list and Readwise (S86–S89). ≤ 1 Argon |
@@ -96,7 +97,7 @@ A job is `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out ([work.md](../work.md
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`; Antigravity `report.md` every few files). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
 4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM writes port code paced by `glm-queue`. Hydrogen and Argon read and build on their own Google meters. A smaller model never writes for a bigger one (S210; [work.md](../work.md)).
-5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM, Antigravity) in the same message, before every launch** (S168). Launch no native sub-agent above 80% of the native 5-hour window.
+5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Sonnet/Opus weekly) and `meters.ps1` (Codex, GLM, Antigravity) in the same message, before every launch** (S168). Launch no native sub-agent above 80% of the native 5-hour window.
 6. Read-only companions get their evidence made for them (failure lines, block dumps, logs). **Argon and Hydrogen run commands with `launch.ps1 <id> argon|hydrogen -Commands -Worktree D:\path-tracing-wt\<id>`** (S210): agy's `--sandbox`, `command(*)`, drive-letter path forms only, and writable mounts for the worktree, the job folder, `D:\path-tracing-target\agy-<id>` and `D:\rust`. Every other write is refused. `test-antigravity.ps1` builds and runs a ten-line Rust program this way before any Antigravity job may start.
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
