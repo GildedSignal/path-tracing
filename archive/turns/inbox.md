@@ -148,3 +148,9 @@ what is so different from the far away bots than the close by ones?
 ### 2026-11-19 15:57
 
 they are real bots far away too right? they are subjegated to the same physics and all right? we just need one renderer that's adaptative simple as that server physics i king and source of truth, we may adapt the ES concepts to it to improve compute but all the behaviors shall be perfectly vanilla
+
+
+### 2026-11-19 16:21
+
+i think we're good now you can update the doc i validate for now
+

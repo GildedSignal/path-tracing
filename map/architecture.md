@@ -59,7 +59,7 @@ Learning opens where no set arrives or a bracket stays open: search in the law, 
 
 ## 6. Many bots: one mind in the server (detail/scales.md, detail/server.md)
 
-Bots are real players, driven by one engine in the server. Fields are shared, particles (bots, items, tasks) are individual; coupling only where footprints meet; a bot on a certified path is not ticked until something can touch it. Building is the same problem in (max, +).
+Bots are real players whose single physics truth is the server (`the law` in `engine/mind` for virtual travel, promoted to full Mojang `ServerPlayer`s inside causal reach). Fields are shared, particles (bots, items, tasks) are individual; coupling only where footprints meet; a bot on a certified path steps lazily on its stored trajectory curve until something can touch it. On the client, one adaptive Mojang-baked GPU renderer draws all bots (near, far, hurt, and dying). Building is the same problem in (max, +).
 
 ## 7. The machine
 
@@ -74,4 +74,7 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 | `engine/world` | region files, block table, the world interface |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |
+| `engine/mind` | out-of-process swarm engine over shared memory (`WorkerPool`, `StepCurve`, `WorldMirror`, `DiskWorld`) |
 | `bot/` | the Fabric mod: the bot, the stick, tracks, recording, playback |
+| `server-mod/` | dedicated server swarm mod (`SwarmManager`, `WorldBridge`, `SwarmBot`, `ShmBridge`, mixins) |
+| `server-mod/client/` | companion client mod: unified Mojang-baked 18-skin Blaze3D GPU instancer for all bots |
