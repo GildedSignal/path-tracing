@@ -133,3 +133,18 @@ continue
 ### 2026-11-19 15:44
 
 there's a small bug when i stoped them they are mid air floating right now which makes no sense since we're supposed to follow server's physics
+
+
+### 2026-11-19 15:47
+
+there's also some problems with the alignement and when they die the models are not the same i'm not sure you're doing the right method
+
+
+### 2026-11-19 15:55
+
+what is so different from the far away bots than the close by ones?
+
+
+### 2026-11-19 15:57
+
+they are real bots far away too right? they are subjegated to the same physics and all right? we just need one renderer that's adaptative simple as that server physics i king and source of truth, we may adapt the ES concepts to it to improve compute but all the behaviors shall be perfectly vanilla

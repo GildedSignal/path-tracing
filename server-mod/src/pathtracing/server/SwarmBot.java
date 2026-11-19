@@ -17,6 +17,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.phys.Vec3;
 
 /** Real-player bot in the server driven by `mind.exe` over shared memory. */
@@ -38,6 +39,9 @@ public final class SwarmBot extends ServerPlayer {
     public String lastMsg = "";
     public String lastRequester;
     public long lastTickedSeq = -1L;
+    public boolean pendingDamageSync = false;
+    public boolean deadNotified = false;
+    public int deadTicks = 0;
 
     public SwarmBot(
         MinecraftServer server,
@@ -53,6 +57,27 @@ public final class SwarmBot extends ServerPlayer {
         this.sink = sink;
         this.relX = relX;
         this.relZ = relZ;
+    }
+
+    @Override
+    public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
+        boolean hit = super.hurtServer(level, source, amount);
+        if (hit) {
+            this.pendingDamageSync = true;
+        }
+        return hit;
+    }
+
+    @Override
+    public void die(DamageSource source) {
+        super.die(source);
+        this.pendingDamageSync = true;
+        this.executing = false;
+        this.settling = false;
+        SwarmManager manager = ServerMindMod.manager();
+        if (manager != null) {
+            manager.onBotDied(this);
+        }
     }
 
     @Override

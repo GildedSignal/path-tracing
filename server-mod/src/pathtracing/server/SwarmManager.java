@@ -93,6 +93,7 @@ public final class SwarmManager {
 
     private final List<SwarmBot> matBots = new ArrayList<>();
     private final Map<Integer, SwarmBot> matById = new HashMap<>();
+    private final List<SwarmBot> dyingBots = new ArrayList<>();
     private final List<PendingGoal> pendingGoals = new ArrayList<>();
     private final Map<String, SyntheticObserver> syntheticObservers = new LinkedHashMap<>();
     private final VisualProjector visualProjector = new VisualProjector();
@@ -164,6 +165,7 @@ public final class SwarmManager {
     private boolean renderStreamEnabled = false;
     private boolean lastSentModdedOnly = false;
     private long renderFramesSent = 0L;
+    private byte[] pendingRenderFrame = null;
 
     private boolean pendingClear = false;
     private boolean pendingStopAll = false;
@@ -177,7 +179,7 @@ public final class SwarmManager {
     private int formationAnchorY = -60;
     private int formationAnchorZ = 0;
     private int formationCols = 1;
-    private float formationSpacing = 1.5f;
+    private float formationSpacing = 2.0f;
 
     private boolean paradeActive = false;
     private ParadeMode paradeMode = ParadeMode.IMPERIAL;
@@ -227,7 +229,7 @@ public final class SwarmManager {
                 .then(Commands.argument("count", IntegerArgumentType.integer(1, 10000))
                     .executes(ctx -> {
                         int count = IntegerArgumentType.getInteger(ctx, "count");
-                        return cmdSpawn(ctx.getSource(), count, 1.5f, defaultModeName(count), null, -1);
+                        return cmdSpawn(ctx.getSource(), count, 2.0f, defaultModeName(count), null, -1);
                     })
                     .then(Commands.argument("spacing", FloatArgumentType.floatArg(0.5f, 64.0f))
                         .executes(ctx -> {
@@ -508,6 +510,8 @@ public final class SwarmManager {
         }
         bot.connection.handleAcceptPlayerLoad(new ServerboundPlayerLoadedPacket());
         bot.snapTo(x, y, z, yaw, pitch);
+        bot.setYHeadRot(yaw);
+        bot.setYBodyRot(yaw);
         bot.setDeltaMovement(vx, vy, vz);
         bot.setOnGround(onGround);
         bot.setSprinting(sprinting);
@@ -521,6 +525,30 @@ public final class SwarmManager {
             sendBotSync(ShmBridge.MSG_BOT_SPAWN, bot, 0);
         }
         return bot;
+    }
+
+    public void onBotDied(SwarmBot bot) {
+        if (bot == null || bot.deadNotified) {
+            return;
+        }
+        bot.deadNotified = true;
+        bot.deadTicks = 0;
+        bot.executing = false;
+        bot.settling = false;
+        bot.lastStatus = "dead";
+        matById.remove(bot.botId);
+        matBots.remove(bot);
+        if (!dyingBots.contains(bot)) {
+            dyingBots.add(bot);
+        }
+        if (bridge != null && bridge.isEngineAlive()) {
+            pw.reset();
+            pw.u32(bot.botId);
+            pw.send(bridge, ShmBridge.MSG_BOT_REMOVE);
+        }
+        if (swarmTotalCount > 0) {
+            swarmTotalCount--;
+        }
     }
 
     private void demoteMaterialized(int botId) {
@@ -542,6 +570,7 @@ public final class SwarmManager {
         pendingBatchGoal = null;
         pendingSpawnBatch = null;
         pendingStopAll = false;
+        pendingRenderFrame = null;
         paradeActive = false;
         followPlayerUuid = null;
         followHasLast = false;
@@ -557,11 +586,15 @@ public final class SwarmManager {
                 }
                 server.getPlayerList().remove(bot);
             }
+            for (int i = 0; i < dyingBots.size(); i++) {
+                server.getPlayerList().remove(dyingBots.get(i));
+            }
         } finally {
             suppressJoinChat = false;
         }
         matBots.clear();
         matById.clear();
+        dyingBots.clear();
         visualProjector.clear(server);
         swarmTotalCount = 0;
         engineTotalBots = 0;
@@ -1052,10 +1085,10 @@ public final class SwarmManager {
             for (int i = 0; i < matBots.size(); i++) {
                 SwarmBot b = matBots.get(i);
                 int tx = (useFormation && formation == Formation.GRID && matBots.size() > 1)
-                    ? gx + (int) Math.floor(b.relX)
+                    ? gx + (int) Math.round(b.relX)
                     : gx;
                 int tz = (useFormation && formation == Formation.GRID && matBots.size() > 1)
-                    ? gz + (int) Math.floor(b.relZ)
+                    ? gz + (int) Math.round(b.relZ)
                     : gz;
                 resetBotPlanFields(b, requester);
                 pendingGoals.add(new PendingGoal(b.botId, tx, gy, tz, issueQpc, requester));
@@ -1434,8 +1467,27 @@ public final class SwarmManager {
             heavyWorkThisTick = true;
         }
 
+        for (int i = dyingBots.size() - 1; i >= 0; i--) {
+            SwarmBot deadBot = dyingBots.get(i);
+            deadBot.connection.tick();
+            if (++deadBot.deadTicks >= 20) {
+                dyingBots.remove(i);
+                try {
+                    suppressJoinChat = true;
+                    srv.getPlayerList().remove(deadBot);
+                } finally {
+                    suppressJoinChat = false;
+                }
+            }
+        }
+
         for (int i = 0; i < matBots.size(); i++) {
             SwarmBot b = matBots.get(i);
+            if (b.isDeadOrDying()) {
+                onBotDied(b);
+                i--;
+                continue;
+            }
             if (b.sink.pendingTpId >= 0) {
                 int id = b.sink.pendingTpId;
                 b.sink.pendingTpId = -1;
@@ -1447,7 +1499,8 @@ public final class SwarmManager {
                 b.executing = false;
                 b.settling = false;
                 sendBotSync(ShmBridge.MSG_BOT_SELF_SYNC, b, 1);
-            } else if (b.hurtMarked) {
+            } else if (b.pendingDamageSync || b.hurtMarked) {
+                b.pendingDamageSync = false;
                 b.executing = false;
                 b.settling = false;
                 sendBotSync(ShmBridge.MSG_BOT_SELF_SYNC, b, 2);
@@ -1651,6 +1704,22 @@ public final class SwarmManager {
     }
 
     public void onServerTickEnd() {
+        byte[] frame = pendingRenderFrame;
+        pendingRenderFrame = null;
+        if (frame != null && server != null) {
+            SwarmFramePayload payload = new SwarmFramePayload(frame);
+            boolean sentAny = false;
+            for (ServerPlayer p : server.overworld().players()) {
+                if (!(p instanceof SwarmBot) && ServerPlayNetworking.canSend(p, SwarmFramePayload.TYPE)) {
+                    ServerPlayNetworking.send(p, payload);
+                    sentAny = true;
+                }
+            }
+            if (sentAny) {
+                renderFramesSent++;
+            }
+        }
+
         if (currentTickStartNs == 0L) {
             return;
         }
@@ -1866,19 +1935,7 @@ public final class SwarmManager {
             case ShmBridge.MSG_RENDER_FRAME -> {
                 byte[] frame = new byte[bb.remaining()];
                 bb.get(frame);
-                if (server != null) {
-                    SwarmFramePayload payload = new SwarmFramePayload(frame);
-                    boolean sentAny = false;
-                    for (ServerPlayer p : server.overworld().players()) {
-                        if (!(p instanceof SwarmBot) && ServerPlayNetworking.canSend(p, SwarmFramePayload.TYPE)) {
-                            ServerPlayNetworking.send(p, payload);
-                            sentAny = true;
-                        }
-                    }
-                    if (sentAny) {
-                        renderFramesSent++;
-                    }
-                }
+                this.pendingRenderFrame = frame;
             }
             case ShmBridge.MSG_TICK_END -> {
                 bb.getLong(); // server_tick

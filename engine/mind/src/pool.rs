@@ -1525,17 +1525,17 @@ fn goal_for_bot(bot: &BotSlot, spec: &SolveGoalSpec) -> BlockPos {
     let row = bot.bot_index / cols;
     match spec.formation_mode {
         FORM_GRID => [
-            spec.gx + bot.rel_x.floor() as i32,
+            spec.gx + bot.rel_x.round() as i32,
             spec.gy,
-            spec.gz + bot.rel_z.floor() as i32,
+            spec.gz + bot.rel_z.round() as i32,
         ],
         FORM_WEDGE => {
             let half_c = (f64::from(cols) - 1.0) * 0.5;
             let wedge_back = ((f64::from(col) - half_c).abs() * 0.65).round() as i32;
             [
-                spec.gx + bot.rel_x.floor() as i32 - wedge_back,
+                spec.gx + bot.rel_x.round() as i32 - wedge_back,
                 spec.gy,
-                spec.gz + bot.rel_z.floor() as i32,
+                spec.gz + bot.rel_z.round() as i32,
             ]
         }
         FORM_QUAD => {
@@ -1543,9 +1543,9 @@ fn goal_for_bot(bot: &BotSlot, spec: &SolveGoalSpec) -> BlockPos {
             let sx = if col < cols / 2 { -gap } else { gap };
             let sz = if row < rows / 2 { -gap } else { gap };
             [
-                spec.gx + bot.rel_x.floor() as i32 + sx,
+                spec.gx + bot.rel_x.round() as i32 + sx,
                 spec.gy,
-                spec.gz + bot.rel_z.floor() as i32 + sz,
+                spec.gz + bot.rel_z.round() as i32 + sz,
             ]
         }
         FORM_CITADEL => {
@@ -1562,10 +1562,10 @@ fn goal_for_bot(bot: &BotSlot, spec: &SolveGoalSpec) -> BlockPos {
             let depth = k / len;
             let half_span = (f64::from(len) * spx * 0.5).round() as i32;
             let pad = spec.param.max(0);
-            let along_x = (f64::from(along) * spx).floor() as i32;
-            let along_z = (f64::from(along) * spz).floor() as i32;
-            let depth_x = (f64::from(depth) * spx).floor() as i32;
-            let depth_z = (f64::from(depth) * spz).floor() as i32;
+            let along_x = (f64::from(along) * spx).round() as i32;
+            let along_z = (f64::from(along) * spz).round() as i32;
+            let depth_x = (f64::from(depth) * spx).round() as i32;
+            let depth_z = (f64::from(depth) * spz).round() as i32;
             match side {
                 0 => [cx - half_span + along_x, spec.gy, cz - half_span - pad - depth_z],
                 1 => [cx - half_span + along_x, spec.gy, cz + half_span + pad + depth_z],
@@ -1577,9 +1577,9 @@ fn goal_for_bot(bot: &BotSlot, spec: &SolveGoalSpec) -> BlockPos {
             let gap = spec.param.max(8);
             let sz = if row < rows / 2 { -gap } else { gap };
             [
-                spec.gx + bot.rel_x.floor() as i32,
+                spec.gx + bot.rel_x.round() as i32,
                 spec.gy,
-                spec.gz + bot.rel_z.floor() as i32 + sz,
+                spec.gz + bot.rel_z.round() as i32 + sz,
             ]
         }
         _ => [spec.gx, spec.gy, spec.gz],

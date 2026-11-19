@@ -1129,4 +1129,71 @@ mod tests {
         }
         panic!("stopped airborne bots did not settle within 60 ticks");
     }
+
+    #[test]
+    fn remove_bot_drops_from_pool_and_knockback_self_sync_settles() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=4, -1..=2)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world, progs);
+        let base_state = PlayerState {
+            position: Vec3::new(0.5, -60.0, 0.5),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, 0]),
+            health: 20.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        pool.spawn_one(1, protocol::MODE_MATERIALIZED, base_state.clone());
+        pool.spawn_one(2, protocol::MODE_MATERIALIZED, PlayerState {
+            position: Vec3::new(0.5, -60.0, 2.5),
+            ..base_state
+        });
+        assert_eq!(pool.total_bots(), 2);
+
+        // Simulate knockback synced from server (`reason = 2`).
+        let kb_state = PlayerState {
+            position: Vec3::new(0.5, -60.0, 2.5),
+            velocity: Vec3::new(0.0, 0.36, 0.4),
+            on_ground: false,
+            health: 12.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        pool.self_sync(2, kb_state, 2);
+
+        // Remove bot 1 (slain).
+        pool.remove_one(1);
+        assert_eq!(pool.total_bots(), 1);
+
+        let cfg = SwarmConfig {
+            canary_count: 0,
+            ..SwarmConfig::default()
+        };
+        let mut last_sent = FxHashMap::default();
+        let mut saw_airborne = false;
+        let mut landed_cmd = None;
+        for tick in 1..=60u64 {
+            let (out, _) = pool.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut last_sent, true, tick == 1);
+            if tick == 1 {
+                assert_eq!(out.render_bots.len(), 1);
+            } else {
+                assert!(out.render_bots.len() <= 1);
+            }
+            if let Some(cmd) = out.tick_cmds.iter().find(|c| c.bot_id == 2) {
+                if cmd.y > -59.8 {
+                    saw_airborne = true;
+                }
+                if (cmd.flags & protocol::FLAG_SETTLED) != 0 {
+                    landed_cmd = Some((cmd.y, (cmd.flags & protocol::FLAG_ON_GROUND) != 0));
+                }
+            } else if saw_airborne && out.stats.active_bots == 0 {
+                let (my, mg) = landed_cmd.expect("settled tick_cmd");
+                assert!((my - (-60.0)).abs() < 1e-6 && mg, "y={my}, ground={mg}");
+                return;
+            }
+        }
+        panic!("knockback self_sync bot did not arc and settle cleanly");
+    }
 }
