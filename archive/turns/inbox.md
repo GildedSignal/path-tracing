@@ -74,3 +74,19 @@ are you ready to compact?
 
 main. whatever the option i don't really care, what matters is having ported to our engine the highest leverage most fundamental things to port that are not yet and having them efficient
 
+### 2026-11-19 17:16
+
+how far are we from the final port?
+
+### 2026-11-19 17:20
+
+help me understand the work needed behind this port
+
+### 2026-11-19 17:25
+
+never thought of that but thanks to that couldn't i just make a swap of the engine for my client and having it run better and behave like a normal client?
+
+### 2026-11-19 17:28
+
+alright you're at 5% of your 5hr window so update the doc if not already done
+
