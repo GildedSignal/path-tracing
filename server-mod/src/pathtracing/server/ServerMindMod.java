@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -41,6 +42,11 @@ public final class ServerMindMod implements DedicatedServerModInitializer {
     @Override
     public void onInitializeServer() {
         instance = this;
+        PayloadTypeRegistry.clientboundPlay().registerLarge(
+            SwarmFramePayload.TYPE,
+            SwarmFramePayload.CODEC,
+            SwarmFramePayload.MAX_BYTES
+        );
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             swarmManager.registerCommands(dispatcher)

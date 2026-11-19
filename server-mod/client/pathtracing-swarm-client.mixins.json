@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "pathtracing.swarmclient.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "LevelRendererAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

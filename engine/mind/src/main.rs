@@ -12,17 +12,28 @@ use std::{
 };
 
 use law::{PlayerState, Vec3};
-use pool::{Observer, PlanStatusOut, SolveSummary, SwarmConfig, TierChangeOut, TickCmdOut, VisualOut, WorkerPool};
+use pool::{
+    Observer, PlanStatusOut, RenderBotOut, SolveSummary, SwarmConfig, TierChangeOut, TickCmdOut,
+    VisualOut, WorkerPool,
+};
 use protocol::{
     BotSyncPayload, MODE_MATERIALIZED, MSG_BLOCK_DELTA, MSG_BOT_GOAL, MSG_BOT_PLAN_STATUS,
     MSG_BOT_REMOVE, MSG_BOT_SELF_SYNC, MSG_BOT_SPAWN, MSG_BOT_STOP, MSG_BOT_TICK_CMD,
-    MSG_BOT_TIER_CHANGE, MSG_CHUNK_TICKET, MSG_CHUNK_UNLOAD, MSG_OBSERVERS, MSG_SECTION_AIR,
-    MSG_SECTION_RLE, MSG_SWARM_CLEAR, MSG_SWARM_CONFIG, MSG_SWARM_GOAL_BATCH, MSG_SWARM_PLAN_SUMMARY,
-    MSG_SWARM_SPAWN_BATCH, MSG_SWARM_STOP_ALL, MSG_TICK_BEGIN, MSG_TICK_END, MSG_VISUAL_BATCH,
-    MSG_WORLD_RESET, MSG_WORLD_RULES, Reader, Writer,
+    MSG_BOT_TIER_CHANGE, MSG_CHUNK_TICKET, MSG_CHUNK_UNLOAD, MSG_OBSERVERS, MSG_RENDER_FRAME,
+    MSG_RENDER_STREAM, MSG_SECTION_AIR, MSG_SECTION_RLE, MSG_SWARM_CLEAR, MSG_SWARM_CONFIG,
+    MSG_SWARM_GOAL_BATCH, MSG_SWARM_PLAN_SUMMARY, MSG_SWARM_SPAWN_BATCH, MSG_SWARM_STOP_ALL,
+    MSG_TICK_BEGIN, MSG_TICK_END, MSG_VISUAL_BATCH, MSG_WORLD_RESET, MSG_WORLD_RULES, Reader,
+    Writer,
 };
 use shm::Shm;
 use world_mirror::{FxHashMap, WorldMirror};
+
+#[derive(Default)]
+struct RenderStreamState {
+    enabled: bool,
+    force_full: bool,
+    dirty: bool,
+}
 
 #[derive(Default)]
 struct TickTotals {
@@ -171,6 +182,41 @@ fn send_plan_summary(shm: &Shm, w: &mut Writer, sum: &mut SolveSummary, total: u
     let _ = shm.push_e2s(MSG_SWARM_PLAN_SUMMARY, &w.buf);
 }
 
+fn encode_render_frame(w: &mut Writer, tick: u32, bots: &[RenderBotOut]) {
+    w.clear();
+    if bots.is_empty() {
+        w.u32(tick);
+        w.u32(0);
+        w.f64(0.0);
+        w.f64(0.0);
+        w.f64(0.0);
+        return;
+    }
+    let ox = bots[0].x.floor();
+    let oy = bots[0].y.floor();
+    let oz = bots[0].z.floor();
+    w.u32(tick);
+    w.u32(bots.len() as u32);
+    w.f64(ox);
+    w.f64(oy);
+    w.f64(oz);
+    w.buf.reserve(bots.len() * 20);
+    for b in bots {
+        w.f32((b.x - ox) as f32);
+        w.f32((b.y - oy) as f32);
+        w.f32((b.z - oz) as f32);
+        let yaw_q = ((b.yaw.rem_euclid(360.0) / 360.0) * 65536.0)
+            .round()
+            .clamp(0.0, 65535.0) as u16;
+        let pitch_q = ((b.pitch.clamp(-90.0, 90.0) / 90.0) * 32767.0).round() as i16;
+        w.u16(yaw_q);
+        w.i16(pitch_q);
+        w.u16(b.bot_index);
+        w.u8(b.speed_q);
+        w.u8(b.flags);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_message(
     msg_type: u16,
@@ -181,6 +227,7 @@ fn handle_message(
     observers: &mut Vec<Observer>,
     ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
     totals: &mut TickTotals,
+    render_stream: &mut RenderStreamState,
     shm: &Shm,
     w: &mut Writer,
 ) -> Result<(), String> {
@@ -201,6 +248,7 @@ fn handle_message(
             pool.reset_stores();
             ticket_last_sent.clear();
             totals.reset();
+            render_stream.dirty = true;
         }
         MSG_WORLD_RULES => {
             let difficulty = r.u8()?;
@@ -252,10 +300,12 @@ fn handle_message(
         MSG_BOT_SPAWN => {
             let sync = BotSyncPayload::read(&mut r)?;
             pool.spawn_one(sync.bot_id, MODE_MATERIALIZED, state_from_sync(&sync));
+            render_stream.dirty = true;
         }
         MSG_BOT_REMOVE => {
             let bot_id = r.u32()?;
             pool.remove_one(bot_id);
+            render_stream.dirty = true;
         }
         MSG_BOT_SELF_SYNC => {
             let sync = BotSyncPayload::read(&mut r)?;
@@ -299,11 +349,13 @@ fn handle_message(
                 spacing_x,
                 spacing_z,
             );
+            render_stream.dirty = true;
         }
         MSG_SWARM_CLEAR => {
             pool.clear();
             ticket_last_sent.clear();
             totals.reset();
+            render_stream.dirty = true;
         }
         MSG_SWARM_GOAL_BATCH => {
             let gx = r.i32()?;
@@ -347,10 +399,24 @@ fn handle_message(
             config.canary_count = r.u32()?;
             config.canary_period = r.u32()?;
         }
+        MSG_RENDER_STREAM => {
+            let enabled = r.u8()? != 0;
+            let force_full = r.u8()? != 0;
+            render_stream.enabled = enabled;
+            if force_full {
+                render_stream.force_full = true;
+            }
+        }
         MSG_TICK_BEGIN => {
             let server_tick = r.u64()?;
             let tick_t0 = Instant::now();
-            let (outputs, tickets) = pool.step_tick(server_tick, *config, observers, ticket_last_sent);
+            let (outputs, tickets) = pool.step_tick(
+                server_tick,
+                *config,
+                observers,
+                ticket_last_sent,
+                render_stream.enabled,
+            );
 
             for (coord, level) in tickets {
                 send_chunk_ticket(shm, w, coord[0], coord[1], level);
@@ -366,6 +432,17 @@ fn handle_message(
             }
             if !outputs.visuals.is_empty() {
                 send_visual_batch(shm, w, &outputs.visuals);
+            }
+            if render_stream.enabled
+                && (render_stream.force_full
+                    || render_stream.dirty
+                    || outputs.stats.active_bots > 0
+                    || !outputs.tier_changes.is_empty())
+            {
+                encode_render_frame(w, server_tick as u32, &outputs.render_bots);
+                let _ = shm.push_e2s(MSG_RENDER_FRAME, &w.buf);
+                render_stream.force_full = false;
+                render_stream.dirty = false;
             }
 
             totals.promotions += outputs.stats.promotions;
@@ -420,6 +497,7 @@ fn main() {
     let mut observers = Vec::new();
     let mut ticket_last_sent = FxHashMap::default();
     let mut totals = TickTotals::default();
+    let mut render_stream = RenderStreamState::default();
 
     eprintln!(
         "mind ready on {} (server_epoch={}, engine_epoch={})",
@@ -443,6 +521,7 @@ fn main() {
             observers.clear();
             ticket_last_sent.clear();
             totals.reset();
+            render_stream = RenderStreamState::default();
         }
 
         let mut processed = false;
@@ -457,6 +536,7 @@ fn main() {
                 &mut observers,
                 &mut ticket_last_sent,
                 &mut totals,
+                &mut render_stream,
                 &shm,
                 &mut writer,
             ) {
@@ -624,7 +704,7 @@ mod tests {
         let mut tick_ms = Vec::new();
         for tick in 1..=5u64 {
             let t0 = Instant::now();
-            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent);
+            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent, false);
             tick_ms.push(t0.elapsed().as_secs_f64() * 1e3);
             assert_eq!(out.stats.active_bots, 10_000);
             assert_eq!(out.stats.virt_count, 10_000);
@@ -633,5 +713,36 @@ mod tests {
             "10k virtual test: solve_ms={:.2} tick_ms={:?}",
             solve_ms, tick_ms
         );
+    }
+
+    #[test]
+    fn render_frame_packs_10000_bots_compactly() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-14..=3, -14..=-1)));
+        let programs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::new(world, programs);
+        pool.spawn_batch(
+            10_000,
+            1,
+            0,
+            protocol::MODE_VIRTUAL,
+            100,
+            -200.5,
+            -60.0,
+            -200.5,
+            1.5,
+            1.5,
+        );
+        let sum = pool.goal_batch(-120, -60, -200, true);
+        assert_eq!(sum.ready, 10_000);
+
+        let mut last_sent = FxHashMap::default();
+        let (out, _) = pool.step_tick(1, SwarmConfig::default(), &[], &mut last_sent, true);
+        assert_eq!(out.render_bots.len(), 10_000);
+
+        let mut w = Writer::new();
+        encode_render_frame(&mut w, 42, &out.render_bots);
+        assert_eq!(w.buf.len(), 32 + 10_000 * 20);
+        assert_eq!(u32::from_le_bytes(w.buf[0..4].try_into().unwrap()), 42);
+        assert_eq!(u32::from_le_bytes(w.buf[4..8].try_into().unwrap()), 10_000);
     }
 }

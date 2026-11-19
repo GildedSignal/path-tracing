@@ -19,6 +19,7 @@ pub const MSG_SWARM_STOP_ALL: u16 = 18;
 pub const MSG_OBSERVERS: u16 = 19;
 pub const MSG_TICK_BEGIN: u16 = 20;
 pub const MSG_SWARM_CONFIG: u16 = 21;
+pub const MSG_RENDER_STREAM: u16 = 22;
 
 pub const MSG_BOT_PLAN_STATUS: u16 = 100;
 pub const MSG_BOT_TICK_CMD: u16 = 101;
@@ -26,6 +27,7 @@ pub const MSG_BOT_TIER_CHANGE: u16 = 102;
 pub const MSG_VISUAL_BATCH: u16 = 103;
 pub const MSG_CHUNK_TICKET: u16 = 104;
 pub const MSG_SWARM_PLAN_SUMMARY: u16 = 105;
+pub const MSG_RENDER_FRAME: u16 = 106;
 pub const MSG_TICK_END: u16 = 120;
 
 pub const PLAN_STATUS_READY: u32 = 0;
@@ -182,6 +184,10 @@ impl Writer {
     }
 
     pub fn u16(&mut self, v: u16) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    pub fn i16(&mut self, v: i16) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 

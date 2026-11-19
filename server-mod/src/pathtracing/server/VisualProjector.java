@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.Vec3i;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -223,7 +224,7 @@ public final class VisualProjector {
             return;
         }
         for (ServerPlayer p : server.overworld().players()) {
-            if (p instanceof SwarmBot) {
+            if (!isVanillaHuman(p)) {
                 continue;
             }
             Set<Integer> seen = visibleByHuman.get(p.getUUID());
@@ -256,7 +257,7 @@ public final class VisualProjector {
 
         if (server != null) {
             for (ServerPlayer p : server.overworld().players()) {
-                if (p instanceof SwarmBot) {
+                if (!isVanillaHuman(p)) {
                     continue;
                 }
                 p.connection.send(rmEnts);
@@ -274,6 +275,10 @@ public final class VisualProjector {
         void send(ServerPlayer human);
     }
 
+    private static boolean isVanillaHuman(ServerPlayer p) {
+        return !(p instanceof SwarmBot) && !ServerPlayNetworking.canSend(p, SwarmFramePayload.TYPE);
+    }
+
     private void sendToOverworldHumans(MinecraftServer server, double x, double z, HumanConsumer fn) {
         if (server == null) {
             return;
@@ -281,7 +286,7 @@ public final class VisualProjector {
         double maxDist = (server.getPlayerList().getViewDistance() + 1) * 16.0;
         double maxDistSq = maxDist * maxDist;
         for (ServerPlayer p : server.overworld().players()) {
-            if (p instanceof SwarmBot) {
+            if (!isVanillaHuman(p)) {
                 continue;
             }
             double dx = p.getX() - x;

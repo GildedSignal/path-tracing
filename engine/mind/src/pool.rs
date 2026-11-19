@@ -120,6 +120,17 @@ pub struct VisualOut {
     pub flags: u8,
 }
 
+pub struct RenderBotOut {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub bot_index: u16,
+    pub speed_q: u8,
+    pub flags: u8,
+}
+
 pub struct TicketNeed {
     pub bot_id: u32,
     pub cx: i32,
@@ -184,6 +195,7 @@ pub struct StepOutputs {
     pub tier_changes: Vec<TierChangeOut>,
     pub tick_cmds: Vec<TickCmdOut>,
     pub visuals: Vec<VisualOut>,
+    pub render_bots: Vec<RenderBotOut>,
     pub stats: WorkerStepStats,
 }
 
@@ -260,6 +272,7 @@ enum WorkerTask {
         vis_allowed: Arc<FxHashSet<u32>>,
         promote_allowed: Arc<FxHashSet<u32>>,
         emit_statuses: bool,
+        emit_render_bots: bool,
     },
 }
 
@@ -553,7 +566,9 @@ impl WorkerState {
             } => {
                 let mut candidates = Vec::new();
                 let mut ticket_needs = Vec::new();
-                let mat_rad_sq = f64::from(cfg.materialize_radius) * f64::from(cfg.materialize_radius);
+                let mat_rad_enter_sq = f64::from(cfg.materialize_radius) * f64::from(cfg.materialize_radius);
+                let mat_rad_stay = f64::from(cfg.materialize_radius + 2.0);
+                let mat_rad_stay_sq = mat_rad_stay * mat_rad_stay;
 
                 for bot in &self.bots {
                     let hooked = bot_wants_hooked(bot);
@@ -573,6 +588,11 @@ impl WorkerState {
                             already_mat: bot.tier == TIER_MATERIALIZED,
                         });
                     } else if bot.mode == MODE_AUTO && !observers.is_empty() {
+                        let mat_rad_sq = if bot.tier == TIER_MATERIALIZED {
+                            mat_rad_stay_sq
+                        } else {
+                            mat_rad_enter_sq
+                        };
                         if let Some((dist_sq, within_mat)) =
                             nearest_observer_dist(bot, &observers, mat_rad_sq)
                         {
@@ -604,10 +624,14 @@ impl WorkerState {
                 vis_allowed,
                 promote_allowed,
                 emit_statuses,
+                emit_render_bots,
             } => {
                 let world = self.world.read().unwrap();
                 let mut out = StepOutputs::default();
                 out.stats.min_act_t = u32::MAX;
+                if emit_render_bots {
+                    out.render_bots.reserve(self.bots.len());
+                }
 
                 for bot in &mut self.bots {
                     if let Some(goal_air) = bot.pending_replan.take() {
@@ -708,6 +732,24 @@ impl WorkerState {
                     }
                     if bot.settled {
                         out.stats.settled_count += 1;
+                    }
+                    if emit_render_bots {
+                        let speed = bot.state.velocity.x.hypot(bot.state.velocity.z);
+                        let speed_q = (speed * 200.0).clamp(0.0, 255.0).round() as u8;
+                        let flags = (bot.state.on_ground as u8)
+                            | ((bot.state.sprinting as u8) << 1)
+                            | ((bot.state.crouching as u8) << 2)
+                            | (((bot.tier == TIER_MATERIALIZED) as u8) << 3);
+                        out.render_bots.push(RenderBotOut {
+                            x: bot.state.position.x,
+                            y: bot.state.position.y,
+                            z: bot.state.position.z,
+                            yaw: bot.state.yaw,
+                            pitch: bot.state.pitch,
+                            bot_index: (bot.bot_index & 0xFFFF) as u16,
+                            speed_q,
+                            flags,
+                        });
                     }
                 }
                 WorkerReply::StepDone(out)
@@ -1024,6 +1066,7 @@ impl WorkerPool {
         cfg: SwarmConfig,
         observers: &[Observer],
         ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
+        emit_render_bots: bool,
     ) -> (StepOutputs, Vec<([i32; 2], u8)>) {
         let total_bots = self.bot_owner.len();
         let obs_arc = Arc::new(observers.to_vec());
@@ -1132,17 +1175,22 @@ impl WorkerPool {
                 vis_allowed: vis_arc.clone(),
                 promote_allowed: promote_arc.clone(),
                 emit_statuses,
+                emit_render_bots,
             });
         }
 
         let mut total = StepOutputs::default();
         total.stats.min_act_t = u32::MAX;
+        if emit_render_bots {
+            total.render_bots.reserve(total_bots);
+        }
         for w in &self.workers {
             if let Ok(WorkerReply::StepDone(mut part)) = w.rx.recv() {
                 total.plan_statuses.append(&mut part.plan_statuses);
                 total.tier_changes.append(&mut part.tier_changes);
                 total.tick_cmds.append(&mut part.tick_cmds);
                 total.visuals.append(&mut part.visuals);
+                total.render_bots.append(&mut part.render_bots);
                 total.stats.active_bots += part.stats.active_bots;
                 total.stats.virt_count += part.stats.virt_count;
                 total.stats.vis_count += part.stats.vis_count;

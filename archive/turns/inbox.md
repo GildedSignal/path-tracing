@@ -93,3 +93,11 @@ proceed with stage 2
 ### 2026-11-18 23:49
 
 next phase
+
+### 2026-11-19 00:45
+
+can you run the server right now with 10k bots and my client running seeing them?
+
+### 2026-11-19 01:04
+
+this is beautiful , i did had a crash but it was beautiful for now just focus on making it possible to see all of them at once

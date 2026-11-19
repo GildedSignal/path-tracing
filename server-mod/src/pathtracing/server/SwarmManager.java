@@ -10,11 +10,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
@@ -142,6 +145,12 @@ public final class SwarmManager {
     private int cfgCanaryPeriod = 100;
     private boolean configDirty = true;
 
+    private static volatile boolean suppressJoinChat = false;
+    private final Set<UUID> knownModdedHumans = new HashSet<>();
+    private boolean renderStreamEnabled = false;
+    private boolean lastSentModdedOnly = false;
+    private long renderFramesSent = 0L;
+
     private boolean pendingClear = false;
     private boolean pendingStopAll = false;
     private PendingSpawnBatch pendingSpawnBatch;
@@ -160,6 +169,10 @@ public final class SwarmManager {
 
     public SwarmManager(WorldBridge worldBridge) {
         this.worldBridge = worldBridge;
+    }
+
+    public static boolean isSuppressingJoinChat() {
+        return suppressJoinChat;
     }
 
     public static String botName(int botIndex) {
@@ -233,7 +246,7 @@ public final class SwarmManager {
                 .then(Commands.argument("mode", StringArgumentType.word())
                     .executes(ctx -> cmdStick(ctx.getSource(), StringArgumentType.getString(ctx, "mode")))))
             .then(Commands.literal("config")
-                .then(Commands.argument("maxVisual", IntegerArgumentType.integer(0, 4096))
+                .then(Commands.argument("maxVisual", IntegerArgumentType.integer(0, 10000))
                     .then(Commands.argument("maxMaterialized", IntegerArgumentType.integer(0, 128))
                         .then(Commands.argument("materializeRadius", FloatArgumentType.floatArg(0.0f, 512.0f))
                             .then(Commands.argument("canaryCount", IntegerArgumentType.integer(0, 128))
@@ -414,7 +427,12 @@ public final class SwarmManager {
         SwarmBot.SinkConnection sink = new SwarmBot.SinkConnection();
         SwarmBot bot = new SwarmBot(server, level, profile, botId, sink, relX, relZ);
 
-        server.getPlayerList().placeNewPlayer(sink, bot, CommonListenerCookie.createInitial(profile, false));
+        try {
+            suppressJoinChat = true;
+            server.getPlayerList().placeNewPlayer(sink, bot, CommonListenerCookie.createInitial(profile, false));
+        } finally {
+            suppressJoinChat = false;
+        }
         bot.setGameMode(GameType.SURVIVAL);
 
         AttributeInstance receiveRange = bot.getAttribute(Attributes.WAYPOINT_RECEIVE_RANGE);
@@ -451,7 +469,12 @@ public final class SwarmManager {
             return;
         }
         matBots.remove(bot);
-        server.getPlayerList().remove(bot);
+        try {
+            suppressJoinChat = true;
+            server.getPlayerList().remove(bot);
+        } finally {
+            suppressJoinChat = false;
+        }
     }
 
     private void clearAllState(boolean sendClearImmediately) {
@@ -459,14 +482,19 @@ public final class SwarmManager {
         pendingBatchGoal = null;
         pendingSpawnBatch = null;
         pendingStopAll = false;
-        for (int i = 0; i < matBots.size(); i++) {
-            SwarmBot bot = matBots.get(i);
-            if (sendClearImmediately && bridge != null && bridge.isEngineAlive()) {
-                pw.reset();
-                pw.u32(bot.botId);
-                pw.send(bridge, ShmBridge.MSG_BOT_REMOVE);
+        try {
+            suppressJoinChat = true;
+            for (int i = 0; i < matBots.size(); i++) {
+                SwarmBot bot = matBots.get(i);
+                if (sendClearImmediately && bridge != null && bridge.isEngineAlive()) {
+                    pw.reset();
+                    pw.u32(bot.botId);
+                    pw.send(bridge, ShmBridge.MSG_BOT_REMOVE);
+                }
+                server.getPlayerList().remove(bot);
             }
-            server.getPlayerList().remove(bot);
+        } finally {
+            suppressJoinChat = false;
         }
         matBots.clear();
         matById.clear();
@@ -508,7 +536,10 @@ public final class SwarmManager {
         switch (kind.toLowerCase(Locale.ROOT)) {
             case "grid" -> formation = Formation.GRID;
             case "point" -> formation = Formation.POINT;
-            default -> throw new IllegalArgumentException("Expected grid or point");
+            default -> {
+                source.sendFailure(Component.literal("Expected grid or point, got '" + kind + "'"));
+                return 0;
+            }
         }
         return reply(source, "Formation: " + formation.name().toLowerCase(Locale.ROOT));
     }
@@ -517,7 +548,10 @@ public final class SwarmManager {
         switch (modeArg.toLowerCase(Locale.ROOT)) {
             case "all" -> stickMode = StickMode.ALL;
             case "one" -> stickMode = StickMode.ONE;
-            default -> throw new IllegalArgumentException("Expected all or one");
+            default -> {
+                source.sendFailure(Component.literal("Expected all or one, got '" + modeArg + "'"));
+                return 0;
+            }
         }
         return reply(source, "Stick mode: " + stickMode.name().toLowerCase(Locale.ROOT));
     }
@@ -593,6 +627,7 @@ public final class SwarmManager {
         mindFlightSampleCount = 0;
         visualProjector.resetPacketCount();
         worldBridge.resetTicketsIssued();
+        renderFramesSent = 0L;
         return reply(source, "Tick profile reset.");
     }
 
@@ -805,6 +840,7 @@ public final class SwarmManager {
           .append(" dem=").append(engineDemotions)
           .append(" hook_prom=").append(engineHookedPromotions)
           .append(" vis_pkts=").append(visualProjector.packetsBuilt())
+          .append(" render_frames=").append(renderFramesSent)
           .append(" tickets=").append(worldBridge.ticketsIssued());
         if (!matBots.isEmpty()) {
             SwarmBot b0 = matBots.getFirst();
@@ -976,6 +1012,9 @@ public final class SwarmManager {
         if (bridge.checkEngineReconnect()) {
             worldBridge.syncAll(srv, bridge);
             configDirty = true;
+            knownModdedHumans.clear();
+            renderStreamEnabled = false;
+            lastSentModdedOnly = false;
             for (int i = 0; i < matBots.size(); i++) {
                 SwarmBot b = matBots.get(i);
                 b.executing = false;
@@ -993,10 +1032,12 @@ public final class SwarmManager {
             pw.send(bridge, ShmBridge.MSG_SWARM_CLEAR);
         }
 
+        sendObserversIfNeeded(srv);
+
         if (configDirty) {
             configDirty = false;
             pw.reset();
-            pw.u32(cfgMaxVisual);
+            pw.u32(lastSentModdedOnly ? 0 : cfgMaxVisual);
             pw.u32(cfgMaxMaterialized);
             pw.f32(cfgMaterializeRadius);
             pw.u32(cfgCanaryCount);
@@ -1041,8 +1082,6 @@ public final class SwarmManager {
                 sendBotSync(ShmBridge.MSG_BOT_SELF_SYNC, b, 2);
             }
         }
-
-        sendObserversIfNeeded(srv);
 
         if (pendingStopAll) {
             pendingStopAll = false;
@@ -1095,12 +1134,43 @@ public final class SwarmManager {
 
     private void sendObserversIfNeeded(MinecraftServer srv) {
         int realCount = 0;
+        boolean hasVanilla = false;
+        Set<UUID> currentModded = new HashSet<>();
         List<ServerPlayer> players = srv.overworld().players();
         for (int i = 0; i < players.size(); i++) {
-            if (!(players.get(i) instanceof SwarmBot)) {
+            ServerPlayer p = players.get(i);
+            if (!(p instanceof SwarmBot)) {
                 realCount++;
+                if (ServerPlayNetworking.canSend(p, SwarmFramePayload.TYPE)) {
+                    currentModded.add(p.getUUID());
+                } else {
+                    hasVanilla = true;
+                }
             }
         }
+        boolean hasModded = !currentModded.isEmpty();
+        boolean newModdedJoined = false;
+        for (UUID u : currentModded) {
+            if (!knownModdedHumans.contains(u)) {
+                newModdedJoined = true;
+                break;
+            }
+        }
+        if (hasModded != renderStreamEnabled || newModdedJoined) {
+            renderStreamEnabled = hasModded;
+            pw.reset();
+            pw.u8(hasModded ? 1 : 0);
+            pw.u8(newModdedJoined ? 1 : 0);
+            pw.send(bridge, ShmBridge.MSG_RENDER_STREAM);
+        }
+        knownModdedHumans.clear();
+        knownModdedHumans.addAll(currentModded);
+        boolean moddedOnly = hasModded && !hasVanilla && syntheticObservers.isEmpty();
+        if (moddedOnly != lastSentModdedOnly) {
+            lastSentModdedOnly = moddedOnly;
+            configDirty = true;
+        }
+
         int totalObs = realCount + syntheticObservers.size();
         if (totalObs == 0 && lastObserverCountSent == 0) {
             return;
@@ -1342,6 +1412,23 @@ public final class SwarmManager {
                 if ((flags & ShmBridge.FLAG_SETTLED) != 0) {
                     bot.settling = false;
                     bot.settled = true;
+                }
+            }
+            case ShmBridge.MSG_RENDER_FRAME -> {
+                byte[] frame = new byte[bb.remaining()];
+                bb.get(frame);
+                if (server != null) {
+                    SwarmFramePayload payload = new SwarmFramePayload(frame);
+                    boolean sentAny = false;
+                    for (ServerPlayer p : server.overworld().players()) {
+                        if (!(p instanceof SwarmBot) && ServerPlayNetworking.canSend(p, SwarmFramePayload.TYPE)) {
+                            ServerPlayNetworking.send(p, payload);
+                            sentAny = true;
+                        }
+                    }
+                    if (sentAny) {
+                        renderFramesSent++;
+                    }
                 }
             }
             case ShmBridge.MSG_TICK_END -> {

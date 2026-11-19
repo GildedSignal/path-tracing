@@ -61,6 +61,7 @@ public final class ShmBridge implements AutoCloseable {
     public static final short MSG_OBSERVERS = 19;
     public static final short MSG_TICK_BEGIN = 20;
     public static final short MSG_SWARM_CONFIG = 21;
+    public static final short MSG_RENDER_STREAM = 22;
 
     public static final int MSG_BOT_PLAN_STATUS = 100;
     public static final int MSG_BOT_TICK_CMD = 101;
@@ -68,6 +69,7 @@ public final class ShmBridge implements AutoCloseable {
     public static final int MSG_VISUAL_BATCH = 103;
     public static final int MSG_CHUNK_TICKET = 104;
     public static final int MSG_SWARM_PLAN_SUMMARY = 105;
+    public static final int MSG_RENDER_FRAME = 106;
     public static final int MSG_TICK_END = 120;
 
     public static final int TIER_VIRTUAL = 0;
