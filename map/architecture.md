@@ -71,6 +71,7 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 |---|---|
 | `engine/law` | the tick law (`movement.rs`, `shapes.rs`, `state.rs`), boats, mining, the sine table |
 | `engine/plan` | `solve`, the gait store, joints and sets, lattice, events; `bin/plan-track` (to the game), `bin/deviation` |
+| `engine/build` | the 4D reverse-demolition & Bernstein footprint causal DAG compiler for blueprints; `bin/plan-build` |
 | `engine/world` | region files, block table, the world interface |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |
