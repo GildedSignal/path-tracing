@@ -10,6 +10,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 - **Argon, `jobs/map-lint`:** the map against his verbatim turns, once.
 - **GLM, `scripts/glm-chain.ps1`:** the 15 port prompts without a result (`jobs/glm-chain.txt`; entity push first, then boats, pearls, portals for step 8, then the rest), one at a time.
 - **Hydrogen, port build B** (`wt/port-build-b`, on build A): twelve reproduced port results into the law (place, break, interact for step 5; sprint, lava, game mode, flying; elytra start and stop, the portal's base height), and build A's `break_ticks` fix.
+- **Core world, crowd and impulse laws (`wt/port-core`, on `main`):** eight unported 26.2 subsystems (`neighbor`, `ticks`, `entity_contact` crowd loop + O(N) `SpatialCrowdIndex`, `fluid`, `piston`, `falling`, `combat`, `explosion`) plus the unloaded-chunk server gravity fix in `movement.rs` (`cargo test -p law`: 48 unit + 9 jar + 29 replay + 2 doc passed, 8/8 mutants killed; 10,000-entity crowd push runs in 1.00 ms/tick release). Not yet wired into `movement.rs` or the planner; orthogonal to `port-build-a`, `port-build-b` and `glm-chain.txt`.
 - **Hydrogen's port build A** (`wt/port-build-a`, `055e7b7`: mining speed, boat, elytra boost, ender pearl in the law, not wired into `movement.rs` or the planner): no flight can show it yet, because nothing plays these mechanics; it merges when step 5 (mining) or step 8 (boat, elytra, pearl) consumes it. One judge finding open: `break_ticks` is `ceil(1/p)` in f64, the game breaks at `p·n ≥ 1` in f32 (obsidian by hand 5000, not 5001).
 
 ## The overhaul (`jobs/overhaul/plan.md`, approved S240): state
@@ -49,6 +50,6 @@ Left: delete the old A\* planner (`plan/src/flight.rs` modes 3/5/b, `planner.rs`
 
 ## Known anomalies (each blocks only what depends on it)
 
-- Entity push has no producer in the law (five bots on one crossing).
+- Entity push has its crowd/spatial law on `wt/port-core` (`entity_contact::push_entities` and `SpatialCrowdIndex`), not wired into `movement.rs` or `main` yet (five bots on one crossing).
 - Sprint at an exactly axis-aligned wall depends on rounding in Mojang's own `acos` (`movement.rs:818`), ported faithfully.
 - His bug S38: a track run deletes a sulfur spike from his inventory; never traced.

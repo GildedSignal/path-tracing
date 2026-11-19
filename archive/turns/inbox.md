@@ -69,3 +69,8 @@ ah that's just distracting, ok a / meters shall suffice, remove the one under wh
 ### 2026-11-18 16:25
 
 are you ready to compact?
+
+### 2026-11-19 16:29
+
+main. whatever the option i don't really care, what matters is having ported to our engine the highest leverage most fundamental things to port that are not yet and having them efficient
+

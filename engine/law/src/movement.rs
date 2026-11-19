@@ -443,13 +443,10 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
     if (read_state!(world, state.horizontal_collision) || read_state!(world, state.input).jump) && (climbable(state, world) || read_state!(world, state.was_in_powder_snow) && read_state!(world, state.leather_boots)) {
         velocity.y = 0.2;
     }
-    let vy = if world.loaded(below) {
-        velocity.y - read_state!(world, state.gravity)
-    } else if read_state!(world, state.position).y > world.min_y() as f64 {
-        -0.1
-    } else {
-        0.0
-    };
+    // LivingEntity.travelInAir @101-131: unloaded-chunk -0.1/0.0 fallback is client-only
+    // (`isClientSide() == false` jumps directly to gravity) and dead even on 26.2 client
+    // (`ClientLevel.hasChunk` returns constant true).
+    let vy = velocity.y - read_state!(world, state.gravity);
     let drag = math::modified_friction(0.91, read_state!(world, state.air_drag_modifier));
     let horizontal = f*drag;
     world.observe_air_travel(movement.z * acceleration as f64, horizontal);

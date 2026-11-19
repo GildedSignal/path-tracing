@@ -184,3 +184,15 @@ Vertical:
 Falls and pearls:
 - A 23-block fall does 20 damage, enough to kill from full health.
 - A pearl flies about 52 blocks in 59 ticks.
+
+## Ported world, crowd and impulse laws (`wt/port-core`)
+
+Beside `movement.rs`, `engine/law` carries eight 26.2 subsystems verified bit-exact against `server-26.2.jar` and 8 falsifying mutants (`perf_core`, 7800X3D release):
+- `neighbor.rs`: `Level.setBlock` flag semantics, `UPDATE_ORDER` / `UPDATE_SHAPE_ORDER`, synchronous `CollectingNeighborUpdater` cascade (132.0 ns per 8-wire + door cascade), redstone wire strength and ladder support-loss pop.
+- `ticks.rs`: `LevelTicks` global `(priority, sub_tick_order)` merge with 65,536 cap/deferral and first-wins `LevelChunkTicks` dedup (65,536 ticks in 2.84 ms schedule / 8.69 ms drain).
+- `entity_contact.rs`: `LivingEntity.pushEntities`, `EntitySelector.pushableBy`, `AbstractBoat` Y-gates, solid colliders (`AbstractBoat`, `Shulker`, grown `HappyGhast`), cramming (`>= 24`), and O(N) `SpatialCrowdIndex` in exact section order (1.00 ms/tick for 10,000 entities on a 2-block stride; 2.37 ms/tick in dense 8-entity clusters).
+- `fluid.rs`: 121-byte stack-memoized `FlowingFluid` slope-find (1.06 µs/op), falling priority (`>= 3` sources), wash-away, lava-water stone/cobblestone/obsidian/basalt rules and `*4` lava spread delay.
+- `piston.rs`: stack-only 12-block `PistonStructureResolver` (991.6 ns/op branched), 26.2 `setBlock` flags (67/276/324/18/82/340/2), `triggerEvent`, and `PistonMovingBlockEntity` progress/slime/honey push.
+- `falling.rs`: flight recurrence (`3.72 ns/op`), timeout discard, grounded two-conjunct placement gate and anvil/stalactite damage.
+- `combat.rs`: `Player.attack`, `causeExtraKnockback`, cooldown scaling and `LivingEntity.knockback` (`10.76 ns/op`).
+- `explosion.rs`: `ServerExplosion` exposure/damage/knockback (`29.6 ns/op`) and `WindCharge` flight/explosion.
