@@ -101,3 +101,15 @@ can you run the server right now with 10k bots and my client running seeing them
 ### 2026-11-19 01:04
 
 this is beautiful , i did had a crash but it was beautiful for now just focus on making it possible to see all of them at once
+
+### 2026-11-19 10:01
+
+ok i hoped into the game and it is unplayable, we need way more optimizatoin than this, based on how i think in the doc what do you think should be done first principle style given the fermi floor and bottlenecks?
+
+### 2026-11-19 10:08
+
+this is why my screens are odd please find out what's wrong with my gpu this is worrisome
+
+### 2026-11-19 10:14
+
+looks good just did a reboot. you can proceed with the plan

@@ -4,17 +4,27 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
+import org.joml.Matrix4f;
+import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
 
-/** Thread-safe double buffer translating 20B/bot SwarmFramePayloads into 56B GPU instance data. */
+/**
+ * Thread-safe buffer ingesting full & delta SwarmFramePayloads, running frustum culling + 3-tier LOD
+ * binning on CPU, and outputting precomputed-trig 32B/bot GPU instance data sorted front-to-back by LOD.
+ */
 public final class SwarmBuffer {
-    public static final int INSTANCE_FLOATS = 14;
+    public static final int INSTANCE_FLOATS = 8;
     public static final int INSTANCE_BYTES = INSTANCE_FLOATS * 4;
+    private static final int DELTA_FLAG = 0x8000_0000;
     private static final int MAX_INDEX = 65536;
     private static final float TWO_PI = (float) (Math.PI * 2.0);
     private static final float PI = (float) Math.PI;
+    private static final float LOD0_MAX_DIST_SQ = 32.0f * 32.0f;
+    private static final float LOD1_MAX_DIST_SQ = 96.0f * 96.0f;
+    private static final float BOT_BOUNDING_RADIUS = 1.6f;
 
     private final int[] prevSlotByIndex = new int[MAX_INDEX];
+    private final int[] currSlotByIndex = new int[MAX_INDEX];
     private final float[] prevPhaseByIndex = new float[MAX_INDEX];
     private final float[] currPhaseByIndex = new float[MAX_INDEX];
 
@@ -27,31 +37,55 @@ public final class SwarmBuffer {
 
     private int currCount = 0;
     private double currOriginX, currOriginY, currOriginZ;
+    private float[] currPrevRx = new float[0];
+    private float[] currPrevRy = new float[0];
+    private float[] currPrevRz = new float[0];
     private float[] currRx = new float[0];
     private float[] currRy = new float[0];
     private float[] currRz = new float[0];
     private float[] currYaw = new float[0];
+    private float[] currPrevYaw = new float[0];
+    private float[] currUnwrappedYaw = new float[0];
+    private float[] currPitch = new float[0];
+    private float[] currSwingAmp = new float[0];
+    private float[] currPrevPhase = new float[0];
+    private float[] currCurrPhase = new float[0];
+    private float[] currSkinLayer = new float[0];
+    private int[] currFlags = new int[0];
     private int[] currIndices = new int[0];
+
+    private int[] bucket0 = new int[1024];
+    private int[] bucket1 = new int[1024];
+    private int[] bucket2 = new int[1024];
 
     private ByteBuffer gpuBytes = MemoryUtil.memAlloc(1024 * INSTANCE_BYTES).order(ByteOrder.LITTLE_ENDIAN);
     private FloatBuffer gpuBuf = gpuBytes.asFloatBuffer();
     private int gpuCapacityBots = 1024;
     private long lastFrameNanos = 0L;
-    private long version = 0L;
-    private long uploadedVersion = -1L;
+
+    private final Vector4f pLeft = new Vector4f();
+    private final Vector4f pRight = new Vector4f();
+    private final Vector4f pBottom = new Vector4f();
+    private final Vector4f pTop = new Vector4f();
+    private final Vector4f pNear = new Vector4f();
 
     public SwarmBuffer() {
         Arrays.fill(prevSlotByIndex, -1);
+        Arrays.fill(currSlotByIndex, -1);
     }
 
     public synchronized void clear() {
         Arrays.fill(prevSlotByIndex, -1);
+        Arrays.fill(currSlotByIndex, -1);
         Arrays.fill(prevPhaseByIndex, 0.0f);
         Arrays.fill(currPhaseByIndex, 0.0f);
         prevCount = 0;
         currCount = 0;
         lastFrameNanos = 0L;
-        version++;
+    }
+
+    public synchronized int totalBots() {
+        return currCount;
     }
 
     public synchronized void ingest(byte[] frame) {
@@ -60,11 +94,38 @@ public final class SwarmBuffer {
         }
         ByteBuffer bb = ByteBuffer.wrap(frame).order(ByteOrder.LITTLE_ENDIAN);
         bb.getInt(); // tick
-        int count = Math.max(0, Math.min(MAX_INDEX, bb.getInt()));
+        int countWord = bb.getInt();
+        boolean isDelta = (countWord & DELTA_FLAG) != 0;
+        int count = Math.max(0, Math.min(MAX_INDEX, countWord & 0x7FFF_FFFF));
         double ox = bb.getDouble();
         double oy = bb.getDouble();
         double oz = bb.getDouble();
         if (frame.length < 32 + count * 20) {
+            return;
+        }
+
+        if (isDelta) {
+            float deltaOriginShiftX = (float) (ox - currOriginX);
+            float deltaOriginShiftY = (float) (oy - currOriginY);
+            float deltaOriginShiftZ = (float) (oz - currOriginZ);
+            for (int i = 0; i < count; i++) {
+                float rx = bb.getFloat() + deltaOriginShiftX;
+                float ry = bb.getFloat() + deltaOriginShiftY;
+                float rz = bb.getFloat() + deltaOriginShiftZ;
+                int yawQ = Short.toUnsignedInt(bb.getShort());
+                int pitchQ = bb.getShort();
+                int botIndex = Short.toUnsignedInt(bb.getShort());
+                int speedQ = Byte.toUnsignedInt(bb.get());
+                int flags = Byte.toUnsignedInt(bb.get());
+
+                int slot = botIndex < MAX_INDEX ? currSlotByIndex[botIndex] : -1;
+                if (slot < 0 || slot >= currCount) {
+                    continue;
+                }
+                updateSlot(slot, botIndex, rx, ry, rz, yawQ, pitchQ, speedQ, flags,
+                    currRx[slot], currRy[slot], currRz[slot], currYaw[slot]);
+            }
+            lastFrameNanos = System.nanoTime();
             return;
         }
 
@@ -92,21 +153,8 @@ public final class SwarmBuffer {
             }
         }
 
-        if (currRx.length < count) {
-            int cap = Math.max(count, 1024);
-            currRx = new float[cap];
-            currRy = new float[cap];
-            currRz = new float[cap];
-            currYaw = new float[cap];
-            currIndices = new int[cap];
-        }
-        if (gpuCapacityBots < count) {
-            int newCap = Math.max(count, gpuCapacityBots * 2);
-            MemoryUtil.memFree(gpuBytes);
-            gpuBytes = MemoryUtil.memAlloc(newCap * INSTANCE_BYTES).order(ByteOrder.LITTLE_ENDIAN);
-            gpuBuf = gpuBytes.asFloatBuffer();
-            gpuCapacityBots = newCap;
-        }
+        ensureCurrCapacity(count);
+        Arrays.fill(currSlotByIndex, -1);
 
         float originShiftX = prevCount > 0 ? (float) (prevOriginX - ox) : 0.0f;
         float originShiftY = prevCount > 0 ? (float) (prevOriginY - oy) : 0.0f;
@@ -117,7 +165,6 @@ public final class SwarmBuffer {
         currOriginZ = oz;
         currCount = count;
 
-        gpuBuf.clear();
         for (int i = 0; i < count; i++) {
             float rx = bb.getFloat();
             float ry = bb.getFloat();
@@ -128,15 +175,10 @@ public final class SwarmBuffer {
             int speedQ = Byte.toUnsignedInt(bb.get());
             int flags = Byte.toUnsignedInt(bb.get());
 
-            float yawRad = (yawQ / 65536.0f) * TWO_PI;
-            float pitchRad = (pitchQ / 32767.0f) * (PI * 0.5f);
-            float speed = speedQ * (1.0f / 200.0f);
-            boolean onGround = (flags & 1) != 0;
-
             float pxPos = rx;
             float pyPos = ry;
             float pzPos = rz;
-            float pYaw = yawRad;
+            float pYaw = (yawQ / 65536.0f) * TWO_PI;
             int prevSlot = botIndex < MAX_INDEX ? prevSlotByIndex[botIndex] : -1;
             if (prevSlot >= 0) {
                 pxPos = prevRx[prevSlot] + originShiftX;
@@ -144,82 +186,222 @@ public final class SwarmBuffer {
                 pzPos = prevRz[prevSlot] + originShiftZ;
                 pYaw = prevYaw[prevSlot];
             }
-
-            float diff = yawRad - pYaw;
-            while (diff > PI) diff -= TWO_PI;
-            while (diff < -PI) diff += TWO_PI;
-            float unwrappedYaw = pYaw + diff;
-
-            float pPhase = botIndex < MAX_INDEX ? currPhaseByIndex[botIndex] : 0.0f;
-            float cPhase = pPhase + speed * 2.6f;
-            while (pPhase >= TWO_PI && cPhase >= TWO_PI) {
-                pPhase -= TWO_PI;
-                cPhase -= TWO_PI;
-            }
             if (botIndex < MAX_INDEX) {
-                prevPhaseByIndex[botIndex] = pPhase;
-                currPhaseByIndex[botIndex] = cPhase;
+                currSlotByIndex[botIndex] = i;
             }
-
-            float swingAmp = (speed < 0.01f && onGround)
-                ? 0.0f
-                : (onGround ? Math.min(1.0f, speed * 3.8f) : Math.min(0.6f, speed * 2.2f));
-            int skinLayer = botIndex % 9;
-
-            currRx[i] = rx;
-            currRy[i] = ry;
-            currRz[i] = rz;
-            currYaw[i] = yawRad;
             currIndices[i] = botIndex;
-
-            int base = i * INSTANCE_FLOATS;
-            gpuBuf.put(base, pxPos);
-            gpuBuf.put(base + 1, pyPos);
-            gpuBuf.put(base + 2, pzPos);
-            gpuBuf.put(base + 3, rx);
-            gpuBuf.put(base + 4, ry);
-            gpuBuf.put(base + 5, rz);
-            gpuBuf.put(base + 6, pYaw);
-            gpuBuf.put(base + 7, unwrappedYaw);
-            gpuBuf.put(base + 8, pitchRad);
-            gpuBuf.put(base + 9, swingAmp);
-            gpuBuf.put(base + 10, pPhase);
-            gpuBuf.put(base + 11, cPhase);
-            gpuBuf.put(base + 12, (float) skinLayer);
-            gpuBuf.put(base + 13, (float) flags);
+            updateSlot(i, botIndex, rx, ry, rz, yawQ, pitchQ, speedQ, flags, pxPos, pyPos, pzPos, pYaw);
         }
-        gpuBuf.position(0);
-        gpuBuf.limit(count * INSTANCE_FLOATS);
         lastFrameNanos = System.nanoTime();
-        version++;
     }
 
-    public synchronized int prepareDraw(
+    private void updateSlot(
+        int slot, int botIndex,
+        float rx, float ry, float rz,
+        int yawQ, int pitchQ, int speedQ, int flags,
+        float pxPos, float pyPos, float pzPos, float pYaw
+    ) {
+        float yawRad = (yawQ / 65536.0f) * TWO_PI;
+        float pitchRad = (pitchQ / 32767.0f) * (PI * 0.5f);
+        float speed = speedQ * (1.0f / 200.0f);
+        boolean onGround = (flags & 1) != 0;
+
+        float diff = yawRad - pYaw;
+        while (diff > PI) diff -= TWO_PI;
+        while (diff < -PI) diff += TWO_PI;
+        float unwrappedYaw = pYaw + diff;
+
+        float pPhase = botIndex < MAX_INDEX ? currPhaseByIndex[botIndex] : 0.0f;
+        float cPhase = pPhase + speed * 2.6f;
+        while (pPhase >= TWO_PI && cPhase >= TWO_PI) {
+            pPhase -= TWO_PI;
+            cPhase -= TWO_PI;
+        }
+        if (botIndex < MAX_INDEX) {
+            prevPhaseByIndex[botIndex] = pPhase;
+            currPhaseByIndex[botIndex] = cPhase;
+        }
+
+        float swingAmp = (speed < 0.01f && onGround)
+            ? 0.0f
+            : (onGround ? Math.min(1.0f, speed * 3.8f) : Math.min(0.6f, speed * 2.2f));
+
+        currPrevRx[slot] = pxPos;
+        currPrevRy[slot] = pyPos;
+        currPrevRz[slot] = pzPos;
+        currRx[slot] = rx;
+        currRy[slot] = ry;
+        currRz[slot] = rz;
+        currYaw[slot] = yawRad;
+        currPrevYaw[slot] = pYaw;
+        currUnwrappedYaw[slot] = unwrappedYaw;
+        currPitch[slot] = pitchRad;
+        currSwingAmp[slot] = swingAmp;
+        currPrevPhase[slot] = pPhase;
+        currCurrPhase[slot] = cPhase;
+        currSkinLayer[slot] = (float) (botIndex % 9);
+        currFlags[slot] = flags;
+    }
+
+    private void ensureCurrCapacity(int count) {
+        if (currRx.length >= count) {
+            return;
+        }
+        int cap = Math.max(count, 1024);
+        currPrevRx = new float[cap];
+        currPrevRy = new float[cap];
+        currPrevRz = new float[cap];
+        currRx = new float[cap];
+        currRy = new float[cap];
+        currRz = new float[cap];
+        currYaw = new float[cap];
+        currPrevYaw = new float[cap];
+        currUnwrappedYaw = new float[cap];
+        currPitch = new float[cap];
+        currSwingAmp = new float[cap];
+        currPrevPhase = new float[cap];
+        currCurrPhase = new float[cap];
+        currSkinLayer = new float[cap];
+        currFlags = new int[cap];
+        currIndices = new int[cap];
+        bucket0 = new int[cap];
+        bucket1 = new int[cap];
+        bucket2 = new int[cap];
+    }
+
+    private void ensureGpuCapacity(int count) {
+        if (gpuCapacityBots >= count) {
+            return;
+        }
+        int newCap = Math.max(count, gpuCapacityBots * 2);
+        MemoryUtil.memFree(gpuBytes);
+        gpuBytes = MemoryUtil.memAlloc(newCap * INSTANCE_BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        gpuBuf = gpuBytes.asFloatBuffer();
+        gpuCapacityBots = newCap;
+    }
+
+    /**
+     * Culls against the camera frustum, bins into 3 distance LODs, and writes 32 B/bot sorted
+     * front-to-back into a reusable native ByteBuffer.
+     */
+    public synchronized int buildVisibleInstances(
         double camX,
         double camY,
         double camZ,
-        float[] outRelOriginAndAlpha,
-        UploadFn upload
+        Matrix4f viewProj,
+        float[] outOriginRelCam,
+        int[] outLodCounts,
+        ByteBuffer[] outBufRef
     ) {
+        outLodCounts[0] = 0;
+        outLodCounts[1] = 0;
+        outLodCounts[2] = 0;
         if (currCount <= 0) {
             return 0;
         }
-        outRelOriginAndAlpha[0] = (float) (currOriginX - camX);
-        outRelOriginAndAlpha[1] = (float) (currOriginY - camY);
-        outRelOriginAndAlpha[2] = (float) (currOriginZ - camZ);
-        float alpha = (System.nanoTime() - lastFrameNanos) * (1.0f / 50_000_000.0f);
-        outRelOriginAndAlpha[3] = alpha < 0.0f ? 0.0f : Math.min(1.0f, alpha);
 
-        if (uploadedVersion != version) {
-            gpuBytes.position(0);
-            gpuBytes.limit(currCount * INSTANCE_BYTES);
-            upload.upload(gpuBytes, currCount);
-            uploadedVersion = version;
+        float originX = (float) (currOriginX - camX);
+        float originY = (float) (currOriginY - camY);
+        float originZ = (float) (currOriginZ - camZ);
+        outOriginRelCam[0] = originX;
+        outOriginRelCam[1] = originY;
+        outOriginRelCam[2] = originZ;
+
+        float rawAlpha = (System.nanoTime() - lastFrameNanos) * (1.0f / 50_000_000.0f);
+        float alpha = rawAlpha < 0.0f ? 0.0f : Math.min(1.0f, rawAlpha);
+
+        viewProj.frustumPlane(Matrix4f.PLANE_NX, pLeft);
+        viewProj.frustumPlane(Matrix4f.PLANE_PX, pRight);
+        viewProj.frustumPlane(Matrix4f.PLANE_NY, pBottom);
+        viewProj.frustumPlane(Matrix4f.PLANE_PY, pTop);
+        pNear.set(viewProj.m03(), viewProj.m13(), viewProj.m23(), viewProj.m33()).normalize3();
+
+        int c0 = 0, c1 = 0, c2 = 0;
+        for (int i = 0; i < currCount; i++) {
+            if ((currFlags[i] & 8) != 0) {
+                continue;
+            }
+            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * alpha;
+            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * alpha;
+            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * alpha;
+
+            float rcx = originX + bx;
+            float rcy = originY + by + 0.9f;
+            float rcz = originZ + bz;
+
+            if (pNear.x * rcx + pNear.y * rcy + pNear.z * rcz + pNear.w < -BOT_BOUNDING_RADIUS) continue;
+            if (pLeft.x * rcx + pLeft.y * rcy + pLeft.z * rcz + pLeft.w < -BOT_BOUNDING_RADIUS) continue;
+            if (pRight.x * rcx + pRight.y * rcy + pRight.z * rcz + pRight.w < -BOT_BOUNDING_RADIUS) continue;
+            if (pBottom.x * rcx + pBottom.y * rcy + pBottom.z * rcz + pBottom.w < -BOT_BOUNDING_RADIUS) continue;
+            if (pTop.x * rcx + pTop.y * rcy + pTop.z * rcz + pTop.w < -BOT_BOUNDING_RADIUS) continue;
+
+            float distSq = rcx * rcx + rcy * rcy + rcz * rcz;
+            if (distSq < LOD0_MAX_DIST_SQ) {
+                bucket0[c0++] = i;
+            } else if (distSq < LOD1_MAX_DIST_SQ) {
+                bucket1[c1++] = i;
+            } else {
+                bucket2[c2++] = i;
+            }
         }
-        return currCount;
+
+        int totalDrawn = c0 + c1 + c2;
+        if (totalDrawn == 0) {
+            return 0;
+        }
+        ensureGpuCapacity(totalDrawn);
+        gpuBuf.clear();
+
+        int cursor = 0;
+        cursor = writeBucket(bucket0, c0, alpha, true, cursor);
+        cursor = writeBucket(bucket1, c1, alpha, false, cursor);
+        cursor = writeBucket(bucket2, c2, alpha, false, cursor);
+
+        gpuBytes.position(0);
+        gpuBytes.limit(totalDrawn * INSTANCE_BYTES);
+        outLodCounts[0] = c0;
+        outLodCounts[1] = c1;
+        outLodCounts[2] = c2;
+        outBufRef[0] = gpuBytes;
+        return totalDrawn;
     }
 
-    public interface UploadFn {
-        void upload(ByteBuffer buf, int count);
+    private int writeBucket(int[] bucket, int count, float alpha, boolean articulated, int cursor) {
+        for (int k = 0; k < count; k++) {
+            int i = bucket[k];
+            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * alpha;
+            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * alpha;
+            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * alpha;
+            boolean sneaking = (currFlags[i] & 4) != 0;
+            float byAdj = sneaking ? (by - 0.125f) : by;
+            float skinMeta = currSkinLayer[i] + (sneaking ? 16.0f : 0.0f);
+
+            float yaw = currPrevYaw[i] + (currUnwrappedYaw[i] - currPrevYaw[i]) * alpha;
+            float cosYaw = (float) Math.cos(yaw);
+            float sinYaw = (float) Math.sin(yaw);
+
+            float headPitch = 0.0f;
+            float legSwing = 0.0f;
+            if (articulated) {
+                headPitch = currPitch[i];
+                float amp = currSwingAmp[i];
+                if (amp > 0.001f) {
+                    float phase = currPrevPhase[i] + (currCurrPhase[i] - currPrevPhase[i]) * alpha;
+                    legSwing = (float) Math.sin(phase) * 0.72f * amp;
+                }
+            }
+
+            int base = cursor * INSTANCE_FLOATS;
+            gpuBuf.put(base, bx);
+            gpuBuf.put(base + 1, byAdj);
+            gpuBuf.put(base + 2, bz);
+            gpuBuf.put(base + 3, skinMeta);
+            gpuBuf.put(base + 4, cosYaw);
+            gpuBuf.put(base + 5, sinYaw);
+            gpuBuf.put(base + 6, headPitch);
+            gpuBuf.put(base + 7, legSwing);
+            cursor++;
+        }
+        return cursor;
     }
 }

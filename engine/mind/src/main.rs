@@ -182,11 +182,13 @@ fn send_plan_summary(shm: &Shm, w: &mut Writer, sum: &mut SolveSummary, total: u
     let _ = shm.push_e2s(MSG_SWARM_PLAN_SUMMARY, &w.buf);
 }
 
-fn encode_render_frame(w: &mut Writer, tick: u32, bots: &[RenderBotOut]) {
+const RENDER_FRAME_DELTA_FLAG: u32 = 0x8000_0000;
+
+fn encode_render_frame(w: &mut Writer, tick: u32, bots: &[RenderBotOut], is_delta: bool) {
     w.clear();
     if bots.is_empty() {
         w.u32(tick);
-        w.u32(0);
+        w.u32(if is_delta { RENDER_FRAME_DELTA_FLAG } else { 0 });
         w.f64(0.0);
         w.f64(0.0);
         w.f64(0.0);
@@ -195,8 +197,9 @@ fn encode_render_frame(w: &mut Writer, tick: u32, bots: &[RenderBotOut]) {
     let ox = bots[0].x.floor();
     let oy = bots[0].y.floor();
     let oz = bots[0].z.floor();
+    let count_word = (bots.len() as u32) | if is_delta { RENDER_FRAME_DELTA_FLAG } else { 0 };
     w.u32(tick);
-    w.u32(bots.len() as u32);
+    w.u32(count_word);
     w.f64(ox);
     w.f64(oy);
     w.f64(oz);
@@ -410,12 +413,14 @@ fn handle_message(
         MSG_TICK_BEGIN => {
             let server_tick = r.u64()?;
             let tick_t0 = Instant::now();
+            let emit_full_render = render_stream.enabled && (render_stream.force_full || render_stream.dirty);
             let (outputs, tickets) = pool.step_tick(
                 server_tick,
                 *config,
                 observers,
                 ticket_last_sent,
                 render_stream.enabled,
+                emit_full_render,
             );
 
             for (coord, level) in tickets {
@@ -433,16 +438,19 @@ fn handle_message(
             if !outputs.visuals.is_empty() {
                 send_visual_batch(shm, w, &outputs.visuals);
             }
-            if render_stream.enabled
-                && (render_stream.force_full
-                    || render_stream.dirty
-                    || outputs.stats.active_bots > 0
-                    || !outputs.tier_changes.is_empty())
-            {
-                encode_render_frame(w, server_tick as u32, &outputs.render_bots);
-                let _ = shm.push_e2s(MSG_RENDER_FRAME, &w.buf);
-                render_stream.force_full = false;
-                render_stream.dirty = false;
+            if render_stream.enabled {
+                let total_bots = pool.total_bots();
+                if emit_full_render
+                    || (!outputs.render_bots.is_empty() && outputs.render_bots.len() == total_bots)
+                {
+                    encode_render_frame(w, server_tick as u32, &outputs.render_bots, false);
+                    let _ = shm.push_e2s(MSG_RENDER_FRAME, &w.buf);
+                    render_stream.force_full = false;
+                    render_stream.dirty = false;
+                } else if !outputs.render_bots.is_empty() {
+                    encode_render_frame(w, server_tick as u32, &outputs.render_bots, true);
+                    let _ = shm.push_e2s(MSG_RENDER_FRAME, &w.buf);
+                }
             }
 
             totals.promotions += outputs.stats.promotions;
@@ -704,7 +712,7 @@ mod tests {
         let mut tick_ms = Vec::new();
         for tick in 1..=5u64 {
             let t0 = Instant::now();
-            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent, false);
+            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent, false, false);
             tick_ms.push(t0.elapsed().as_secs_f64() * 1e3);
             assert_eq!(out.stats.active_bots, 10_000);
             assert_eq!(out.stats.virt_count, 10_000);
@@ -736,13 +744,170 @@ mod tests {
         assert_eq!(sum.ready, 10_000);
 
         let mut last_sent = FxHashMap::default();
-        let (out, _) = pool.step_tick(1, SwarmConfig::default(), &[], &mut last_sent, true);
+        let (out, _) = pool.step_tick(1, SwarmConfig::default(), &[], &mut last_sent, true, true);
         assert_eq!(out.render_bots.len(), 10_000);
 
         let mut w = Writer::new();
-        encode_render_frame(&mut w, 42, &out.render_bots);
+        encode_render_frame(&mut w, 42, &out.render_bots, false);
         assert_eq!(w.buf.len(), 32 + 10_000 * 20);
         assert_eq!(u32::from_le_bytes(w.buf[0..4].try_into().unwrap()), 42);
         assert_eq!(u32::from_le_bytes(w.buf[4..8].try_into().unwrap()), 10_000);
+    }
+
+    #[test]
+    fn lazy_virtual_matches_eager_and_midflight_promotion() {
+        let make_state = |z: f64| PlayerState {
+            position: Vec3::new(0.5, -60.0, z),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, z.floor() as i32]),
+            health: 20.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+
+        // (a) Eager MODE_MATERIALIZED across all ticks.
+        let world_eager = Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool_eager = WorkerPool::with_workers(1, world_eager, progs.clone());
+        pool_eager.spawn_one(1, protocol::MODE_MATERIALIZED, make_state(0.5));
+        let st_a = pool_eager.goal_one(1, [80, -60, 0]);
+        assert_eq!(st_a[0].status, protocol::PLAN_STATUS_READY);
+        let pred_t = st_a[0].predicted_ticks;
+        let mut sent_a = FxHashMap::default();
+        let mut final_a = None;
+        for tick in 1..=(pred_t as u64 + 10) {
+            let (out, _) = pool_eager.step_tick(tick, SwarmConfig::default(), &[], &mut sent_a, false, false);
+            if let Some(cmd) = out.tick_cmds.first() {
+                if (cmd.flags & protocol::FLAG_SETTLED) != 0 {
+                    final_a = Some((cmd.x, cmd.y, cmd.z, out.stats.min_act_t));
+                    break;
+                }
+            }
+        }
+        let final_a = final_a.expect("eager bot settles");
+
+        // (b) Lazy MODE_VIRTUAL across all 228+ ticks + settle.
+        let world_lazy = Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1)));
+        let mut pool_lazy = WorkerPool::with_workers(1, world_lazy, progs.clone());
+        pool_lazy.spawn_one(1, protocol::MODE_VIRTUAL, make_state(0.5));
+        let st_b = pool_lazy.goal_one(1, [80, -60, 0]);
+        assert_eq!(st_b[0].predicted_ticks, pred_t);
+        let mut sent_b = FxHashMap::default();
+        let mut final_b = None;
+        for tick in 1..=(pred_t as u64 + 10) {
+            let (out, _) = pool_lazy.step_tick(tick, SwarmConfig::default(), &[], &mut sent_b, true, false);
+            if out.stats.settled_count == 1 {
+                let rb = out.render_bots.first().expect("active virtual bot emitted");
+                final_b = Some((rb.x, rb.y, rb.z, out.stats.min_act_t));
+                break;
+            }
+        }
+        let final_b = final_b.expect("lazy virtual bot settles");
+
+        // (c) Lazy MODE_AUTO promoted mid-flight at tick 113 via an observer + stepped eagerly.
+        let world_prom = Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1)));
+        for cx in -1..=6 {
+            for cz in -1..=1 {
+                // Ensure server-loaded status doesn't depend on extra messages; mark loaded via section air isn't set,
+                // wait: tier change emits VISUAL without server-loaded, or promote via MODE -> actually let's test Observer->Visual (still eager!).
+                let _ = (cx, cz);
+            }
+        }
+        let mut pool_prom = WorkerPool::with_workers(1, world_prom, progs);
+        pool_prom.spawn_one(1, protocol::MODE_AUTO, make_state(0.5));
+        let st_c = pool_prom.goal_one(1, [80, -60, 0]);
+        assert_eq!(st_c[0].predicted_ticks, pred_t);
+        let mut sent_c = FxHashMap::default();
+        let cfg_prom = SwarmConfig {
+            max_visual: 4,
+            max_materialized: 0,
+            materialize_radius: 0.0,
+            canary_count: 0,
+            canary_period: 100,
+        };
+        let mut final_c = None;
+        let mut saw_midflight_promote = false;
+        for tick in 1..=(pred_t as u64 + 10) {
+            let obs = if tick >= 113 {
+                vec![pool::Observer {
+                    x: 40.0,
+                    y: -60.0,
+                    z: 0.5,
+                    view_dist: 128.0,
+                }]
+            } else {
+                Vec::new()
+            };
+            let (out, _) = pool_prom.step_tick(tick, cfg_prom, &obs, &mut sent_c, true, false);
+            if tick == 113 {
+                assert!(
+                    out.tier_changes.iter().any(|tc| tc.new_tier == protocol::TIER_VISUAL),
+                    "expected mid-flight promotion to VISUAL at tick 113"
+                );
+                saw_midflight_promote = true;
+            }
+            if out.stats.settled_count == 1 {
+                let rb = out.render_bots.first().expect("promoted bot emitted");
+                final_c = Some((rb.x, rb.y, rb.z, out.stats.min_act_t));
+                break;
+            }
+        }
+        assert!(saw_midflight_promote);
+        let final_c = final_c.expect("mid-flight promoted bot settles");
+
+        assert_eq!(final_a.3, pred_t);
+        assert_eq!(final_b.3, pred_t);
+        assert_eq!(final_c.3, pred_t);
+        assert!((final_a.0 - final_b.0).abs() < 1e-9, "x mismatch a={} b={}", final_a.0, final_b.0);
+        assert!((final_a.1 - final_b.1).abs() < 1e-9, "y mismatch a={} b={}", final_a.1, final_b.1);
+        assert!((final_a.2 - final_b.2).abs() < 1e-9, "z mismatch a={} b={}", final_a.2, final_b.2);
+        assert!((final_a.0 - final_c.0).abs() < 1e-9, "x mismatch a={} c={}", final_a.0, final_c.0);
+        assert!((final_a.1 - final_c.1).abs() < 1e-9, "y mismatch a={} c={}", final_a.1, final_c.1);
+        assert!((final_a.2 - final_c.2).abs() < 1e-9, "z mismatch a={} c={}", final_a.2, final_c.2);
+    }
+
+    #[test]
+    fn render_frame_delta_packs_only_changed_bot() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=3, -1..=1)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world, progs);
+        pool.spawn_batch(4, 1, 0, protocol::MODE_AUTO, 2, 0.5, -60.0, 0.5, 50.0, 50.0);
+
+        let cfg = SwarmConfig {
+            max_visual: 4,
+            max_materialized: 0,
+            materialize_radius: 0.0,
+            canary_count: 0,
+            canary_period: 100,
+        };
+        let mut last_sent = FxHashMap::default();
+        // Tick 1: initial full emit (simulate dirty).
+        let (out1, _) = pool.step_tick(1, cfg, &[], &mut last_sent, true, true);
+        assert_eq!(out1.render_bots.len(), 4);
+        let mut w = Writer::new();
+        encode_render_frame(&mut w, 1, &out1.render_bots, false);
+        assert_eq!(u32::from_le_bytes(w.buf[4..8].try_into().unwrap()), 4);
+
+        // Tick 2: idle with no observer -> 0 bots emitted.
+        let (out2, _) = pool.step_tick(2, cfg, &[], &mut last_sent, true, false);
+        assert!(out2.render_bots.is_empty());
+
+        // Tick 3: observer sees only bot 1 -> tier change for 1 bot -> 1 entry delta (52 bytes, bit 31 set).
+        let obs = [pool::Observer {
+            x: 0.5,
+            y: -60.0,
+            z: 0.5,
+            view_dist: 10.0,
+        }];
+        let (out3, _) = pool.step_tick(3, cfg, &obs, &mut last_sent, true, false);
+        assert_eq!(out3.render_bots.len(), 1);
+        assert_eq!(out3.render_bots[0].bot_index, 0);
+        encode_render_frame(&mut w, 3, &out3.render_bots, true);
+        assert_eq!(w.buf.len(), 32 + 20);
+        assert_eq!(
+            u32::from_le_bytes(w.buf[4..8].try_into().unwrap()),
+            1 | RENDER_FRAME_DELTA_FLAG
+        );
     }
 }

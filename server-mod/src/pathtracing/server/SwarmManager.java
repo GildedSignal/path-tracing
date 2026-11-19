@@ -139,8 +139,8 @@ public final class SwarmManager {
     private boolean hasBatchSummary = false;
 
     private int cfgMaxVisual = 128;
-    private int cfgMaxMaterialized = 32;
-    private float cfgMaterializeRadius = 16.0f;
+    private int cfgMaxMaterialized = 8;
+    private float cfgMaterializeRadius = 5.0f;
     private int cfgCanaryCount = 8;
     private int cfgCanaryPeriod = 100;
     private boolean configDirty = true;

@@ -51,12 +51,37 @@ impl Default for SwarmConfig {
     }
 }
 
+pub struct CertifiedStep {
+    pub program: u16,
+    pub args: Arguments,
+    pub ticks: u32,
+    pub start_pos: Vec3,
+    pub end: plan::state_view::StateAt,
+}
+
+const JUMP_ARC_Y: [f64; 12] = [
+    0.0,
+    0.42,
+    0.7532,
+    1.001336,
+    1.166109,
+    1.249187,
+    1.252203,
+    1.176759,
+    1.024424,
+    0.796736,
+    0.495201,
+    0.121297,
+];
+
 pub enum BotPhase {
     Idle,
     Executing {
-        steps: Vec<(u16, Arguments, u32)>,
+        steps: Vec<CertifiedStep>,
         idx: usize,
         elapsed: u32,
+        lazy_ticks: u32,
+        step_start_state: PlayerState,
         goal_air: BlockPos,
         corridor: (BlockPos, BlockPos),
     },
@@ -78,6 +103,50 @@ pub struct BotSlot {
     pub arrived: bool,
     pub settled: bool,
     pub hooked_corridor: Option<(BlockPos, BlockPos)>,
+    pub dirty_render: bool,
+}
+
+impl BotSlot {
+    fn approx_pose(&self) -> (Vec3, f32, f32, f32, bool, bool) {
+        if let BotPhase::Executing {
+            steps,
+            idx,
+            elapsed,
+            lazy_ticks,
+            step_start_state,
+            ..
+        } = &self.phase
+            && *lazy_ticks > 0
+            && let Some(step) = steps.get(*idx)
+        {
+            let ticks = step.ticks.max(1);
+            let frac = f64::from(*elapsed) / f64::from(ticks);
+            let dx = step.end.position.x - step.start_pos.x;
+            let dz = step.end.position.z - step.start_pos.z;
+            let x = step.start_pos.x + dx * frac;
+            let z = step.start_pos.z + dz * frac;
+            let base_y = step.start_pos.y + (step.end.position.y - step.start_pos.y) * frac;
+            let (y, on_ground) = if step.program == plan::store::SPRINT_JUMP && step_start_state.on_ground {
+                let phase = (*elapsed as usize) % JUMP_ARC_Y.len();
+                (step.start_pos.y.min(step.end.position.y) + JUMP_ARC_Y[phase], phase == 0)
+            } else {
+                (base_y, self.state.on_ground)
+            };
+            let yaw = step.args.refined_yaw.unwrap_or(self.state.yaw);
+            let speed = (dx.hypot(dz) / f64::from(ticks)) as f32;
+            let sprinting = step.program != plan::store::WALK;
+            return (Vec3::new(x, y, z), yaw, self.state.pitch, speed, on_ground, sprinting);
+        }
+        let speed = self.state.velocity.x.hypot(self.state.velocity.z) as f32;
+        (
+            self.state.position,
+            self.state.yaw,
+            self.state.pitch,
+            speed,
+            self.state.on_ground,
+            self.state.sprinting,
+        )
+    }
 }
 
 pub struct PlanStatusOut {
@@ -273,6 +342,7 @@ enum WorkerTask {
         promote_allowed: Arc<FxHashSet<u32>>,
         emit_statuses: bool,
         emit_render_bots: bool,
+        force_full_render: bool,
     },
 }
 
@@ -368,6 +438,7 @@ impl WorkerState {
                     arrived: false,
                     settled: false,
                     hooked_corridor: None,
+                    dirty_render: true,
                 });
                 WorkerReply::Ack
             }
@@ -425,6 +496,7 @@ impl WorkerState {
                             arrived: false,
                             settled: false,
                             hooked_corridor: None,
+                            dirty_render: true,
                         });
                     }
                 }
@@ -444,6 +516,7 @@ impl WorkerState {
             } => {
                 if let Some(bot) = self.get_bot_mut(bot_id) {
                     bot.state = state;
+                    bot.dirty_render = true;
                     if reason != 0 {
                         bot.phase = BotPhase::Idle;
                         bot.pending_replan = None;
@@ -464,21 +537,29 @@ impl WorkerState {
                         arrived: false,
                         settled: false,
                         hooked_corridor: None,
+                        dirty_render: true,
                     });
                 }
                 WorkerReply::Ack
             }
             WorkerTask::StopOne { bot_id } => {
-                if let Some(bot) = self.get_bot_mut(bot_id) {
+                let world = self.world.read().unwrap();
+                if let Some(&idx) = self.by_id.get(&bot_id) {
+                    let bot = &mut self.bots[idx];
+                    materialize_lazy_state(bot, &world, &self.programs);
                     bot.phase = BotPhase::Idle;
                     bot.pending_replan = None;
+                    bot.dirty_render = true;
                 }
                 WorkerReply::Ack
             }
             WorkerTask::StopAll => {
+                let world = self.world.read().unwrap();
                 for bot in &mut self.bots {
+                    materialize_lazy_state(bot, &world, &self.programs);
                     bot.phase = BotPhase::Idle;
                     bot.pending_replan = None;
+                    bot.dirty_render = true;
                 }
                 WorkerReply::Ack
             }
@@ -509,6 +590,7 @@ impl WorkerState {
                 let mut sum = SolveSummary::default();
                 let world = self.world.read().unwrap();
                 if let Some(&idx) = self.by_id.get(&bot_id) {
+                    materialize_lazy_state(&mut self.bots[idx], &world, &self.programs);
                     let out = solve_slot(
                         &mut self.bots[idx],
                         goal_air,
@@ -531,7 +613,7 @@ impl WorkerState {
             WorkerTask::CollectGoalOneChunks { bot_id, goal_air } => {
                 let mut chunks = FxHashSet::default();
                 if let Some(bot) = self.bots.iter().find(|b| b.bot_id == bot_id) {
-                    insert_corridor_chunks(&mut chunks, bot.state.position, goal_air);
+                    insert_corridor_chunks(&mut chunks, bot.approx_pose().0, goal_air);
                 }
                 WorkerReply::GoalChunks(chunks.into_iter().collect())
             }
@@ -539,7 +621,7 @@ impl WorkerState {
                 let mut chunks = FxHashSet::default();
                 for bot in &self.bots {
                     let goal_air = goal_for_bot(bot, &spec);
-                    insert_corridor_chunks(&mut chunks, bot.state.position, goal_air);
+                    insert_corridor_chunks(&mut chunks, bot.approx_pose().0, goal_air);
                 }
                 WorkerReply::GoalChunks(chunks.into_iter().collect())
             }
@@ -552,6 +634,7 @@ impl WorkerState {
                 let world = self.world.read().unwrap();
                 for bot in &mut self.bots {
                     bot.pending_replan = None;
+                    materialize_lazy_state(bot, &world, &self.programs);
                     let goal_air = goal_for_bot(bot, &spec);
                     let out = solve_slot(bot, goal_air, &world, &self.store, &mut self.codec);
                     record_solve(&mut sum, out, emit_statuses);
@@ -569,6 +652,7 @@ impl WorkerState {
                 let mat_rad_enter_sq = f64::from(cfg.materialize_radius) * f64::from(cfg.materialize_radius);
                 let mat_rad_stay = f64::from(cfg.materialize_radius + 2.0);
                 let mat_rad_stay_sq = mat_rad_stay * mat_rad_stay;
+                let want_vis = cfg.max_visual > 0;
 
                 for bot in &self.bots {
                     let hooked = bot_wants_hooked(bot);
@@ -595,6 +679,7 @@ impl WorkerState {
                         };
                         if let Some((dist_sq, within_mat)) =
                             nearest_observer_dist(bot, &observers, mat_rad_sq)
+                            && (within_mat || want_vis)
                         {
                             let (cx, cz, next_cx, next_cz) = bot_and_next_chunk(bot);
                             candidates.push(CandidateOut {
@@ -625,16 +710,20 @@ impl WorkerState {
                 promote_allowed,
                 emit_statuses,
                 emit_render_bots,
+                force_full_render,
             } => {
                 let world = self.world.read().unwrap();
                 let mut out = StepOutputs::default();
                 out.stats.min_act_t = u32::MAX;
-                if emit_render_bots {
+                if emit_render_bots && force_full_render {
                     out.render_bots.reserve(self.bots.len());
                 }
 
                 for bot in &mut self.bots {
+                    let was_dirty = std::mem::take(&mut bot.dirty_render);
+                    let was_active = !matches!(bot.phase, BotPhase::Idle);
                     if let Some(goal_air) = bot.pending_replan.take() {
+                        materialize_lazy_state(bot, &world, &self.programs);
                         let p = solve_slot(bot, goal_air, &world, &self.store, &mut self.codec);
                         if emit_statuses || p.status == PLAN_STATUS_NEEDS_JOINTS {
                             out.plan_statuses.push(p);
@@ -658,7 +747,7 @@ impl WorkerState {
                         TIER_VIRTUAL
                     };
 
-                    // Observer proximity and canaries require server chunks loaded + paced joins (max 2 non-hooked/tick).
+                    // Observer proximity and canaries require server chunks loaded + paced joins (max 1 non-hooked/tick).
                     let next_tier = if desired == TIER_MATERIALIZED && bot.mode != MODE_MATERIALIZED
                     {
                         let may_materialize = bot.tier == TIER_MATERIALIZED
@@ -696,6 +785,14 @@ impl WorkerState {
                     }
                     bot.tier = next_tier;
 
+                    let stay_lazy = next_tier == TIER_VIRTUAL
+                        && prev_tier == TIER_VIRTUAL
+                        && bot.mode != MODE_MATERIALIZED
+                        && bot.hooked_corridor.is_none();
+                    if !stay_lazy {
+                        materialize_lazy_state(bot, &world, &self.programs);
+                    }
+
                     let prev_state = if next_tier != prev_tier {
                         Some(bot.state.clone())
                     } else {
@@ -708,6 +805,7 @@ impl WorkerState {
                         prev_tier,
                         prev_state.as_ref(),
                         hooked,
+                        stay_lazy,
                         &world,
                         &self.programs,
                         &mut out,
@@ -733,19 +831,23 @@ impl WorkerState {
                     if bot.settled {
                         out.stats.settled_count += 1;
                     }
-                    if emit_render_bots {
-                        let speed = bot.state.velocity.x.hypot(bot.state.velocity.z);
+                    let is_now_active = !matches!(bot.phase, BotPhase::Idle);
+                    let tier_changed = prev_tier != bot.tier;
+                    if emit_render_bots
+                        && (force_full_render || was_dirty || was_active || is_now_active || tier_changed)
+                    {
+                        let (pos, yaw, pitch, speed, on_ground, sprinting) = bot.approx_pose();
                         let speed_q = (speed * 200.0).clamp(0.0, 255.0).round() as u8;
-                        let flags = (bot.state.on_ground as u8)
-                            | ((bot.state.sprinting as u8) << 1)
+                        let flags = (on_ground as u8)
+                            | ((sprinting as u8) << 1)
                             | ((bot.state.crouching as u8) << 2)
                             | (((bot.tier == TIER_MATERIALIZED) as u8) << 3);
                         out.render_bots.push(RenderBotOut {
-                            x: bot.state.position.x,
-                            y: bot.state.position.y,
-                            z: bot.state.position.z,
-                            yaw: bot.state.yaw,
-                            pitch: bot.state.pitch,
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z,
+                            yaw,
+                            pitch,
                             bot_index: (bot.bot_index & 0xFFFF) as u16,
                             speed_q,
                             flags,
@@ -1067,6 +1169,7 @@ impl WorkerPool {
         observers: &[Observer],
         ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
         emit_render_bots: bool,
+        force_full_render: bool,
     ) -> (StepOutputs, Vec<([i32; 2], u8)>) {
         let total_bots = self.bot_owner.len();
         let obs_arc = Arc::new(observers.to_vec());
@@ -1176,12 +1279,13 @@ impl WorkerPool {
                 promote_allowed: promote_arc.clone(),
                 emit_statuses,
                 emit_render_bots,
+                force_full_render,
             });
         }
 
         let mut total = StepOutputs::default();
         total.stats.min_act_t = u32::MAX;
-        if emit_render_bots {
+        if emit_render_bots && force_full_render {
             total.render_bots.reserve(total_bots);
         }
         for w in &self.workers {
@@ -1359,8 +1463,9 @@ fn insert_corridor_chunks(chunks: &mut FxHashSet<[i32; 2]>, pos: Vec3, goal_air:
 }
 
 fn bot_and_next_chunk(bot: &BotSlot) -> (i32, i32, i32, i32) {
-    let bx = bot.state.position.x.floor() as i32;
-    let bz = bot.state.position.z.floor() as i32;
+    let (pos, _, _, _, _, _) = bot.approx_pose();
+    let bx = pos.x.floor() as i32;
+    let bz = pos.z.floor() as i32;
     let cx = bx.div_euclid(16);
     let cz = bz.div_euclid(16);
     let (dx, dz) = match &bot.phase {
@@ -1384,9 +1489,10 @@ fn bot_wants_hooked(bot: &BotSlot) -> bool {
     let Some((hlo, hhi)) = bot.hooked_corridor else {
         return false;
     };
-    let bx = bot.state.position.x;
-    let by = bot.state.position.y;
-    let bz = bot.state.position.z;
+    let pos = bot.approx_pose().0;
+    let bx = pos.x;
+    let by = pos.y;
+    let bz = pos.z;
     let dx = if bx < f64::from(hlo[0]) {
         f64::from(hlo[0]) - bx
     } else if bx > f64::from(hhi[0] + 1) {
@@ -1412,11 +1518,12 @@ fn bot_wants_hooked(bot: &BotSlot) -> bool {
 }
 
 fn nearest_observer_dist(bot: &BotSlot, observers: &[Observer], mat_rad_sq: f64) -> Option<(f64, bool)> {
+    let pos = bot.approx_pose().0;
     let mut best = f64::INFINITY;
     for obs in observers {
-        let dx = bot.state.position.x - obs.x;
-        let dy = bot.state.position.y - obs.y;
-        let dz = bot.state.position.z - obs.z;
+        let dx = pos.x - obs.x;
+        let dy = pos.y - obs.y;
+        let dz = pos.z - obs.z;
         let d2 = dx * dx + dy * dy + dz * dz;
         let vd = f64::from(obs.view_dist);
         if d2 <= vd * vd && d2 < best {
@@ -1427,6 +1534,40 @@ fn nearest_observer_dist(bot: &BotSlot, observers: &[Observer], mat_rad_sq: f64)
         Some((best, best <= mat_rad_sq))
     } else {
         None
+    }
+}
+
+fn materialize_lazy_state(bot: &mut BotSlot, world: &WorldMirror, programs: &[words::Program]) {
+    if let BotPhase::Executing {
+        steps,
+        idx,
+        elapsed,
+        lazy_ticks,
+        step_start_state,
+        ..
+    } = &mut bot.phase
+        && *lazy_ticks > 0
+    {
+        *lazy_ticks = 0;
+        if let Some(step) = steps.get(*idx) {
+            let mut s = step_start_state.clone();
+            let target_t = (*elapsed).min(step.ticks);
+            for t in 0..target_t {
+                let sel = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    programs[step.program as usize].select(world, &s, t, step.args)
+                }));
+                let Ok(Some((_, input))) = sel else {
+                    break;
+                };
+                let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    law::try_tick(&mut s, world, &input)
+                }));
+                if !matches!(ok, Ok(Ok(()))) {
+                    break;
+                }
+            }
+            bot.state = s;
+        }
     }
 }
 
@@ -1561,18 +1702,28 @@ fn solve_slot(
                     msg: "Already there.".into(),
                 }
             } else {
-                let steps: Vec<(u16, Arguments, u32)> = found
-                    .words
-                    .iter()
-                    .map(|step| (step.program, step.args, step.ticks))
-                    .collect();
+                let mut cur_pos = bot.state.position;
+                let mut steps = Vec::with_capacity(found.words.len());
+                for step in &found.words {
+                    steps.push(CertifiedStep {
+                        program: step.program,
+                        args: step.args,
+                        ticks: step.ticks,
+                        start_pos: cur_pos,
+                        end: step.end.clone(),
+                    });
+                    cur_pos = step.end.position;
+                }
                 let ticks = found.ticks.min(u32::MAX as u64) as u32;
                 bot.predicted_ticks = ticks;
                 bot.hooked_corridor = find_hooked_box(world, cl, ch);
+                bot.dirty_render = true;
                 bot.phase = BotPhase::Executing {
                     steps,
                     idx: 0,
                     elapsed: 0,
+                    lazy_ticks: 0,
+                    step_start_state: bot.state.clone(),
                     goal_air,
                     corridor: (cl, ch),
                 };
@@ -1653,6 +1804,7 @@ fn step_bot_physics(
     prev_tier: u8,
     prev_state: Option<&PlayerState>,
     hooked: bool,
+    stay_lazy: bool,
     world: &WorldMirror,
     programs: &[words::Program],
     out: &mut StepOutputs,
@@ -1693,11 +1845,50 @@ fn step_bot_physics(
             steps,
             mut idx,
             mut elapsed,
+            mut lazy_ticks,
+            mut step_start_state,
             goal_air,
             corridor,
         } => {
             out.stats.active_bots += 1;
-            let (prog, args, ticks) = steps[idx];
+            if stay_lazy {
+                let step_ticks = steps[idx].ticks;
+                bot.active_ticks += 1;
+                elapsed += 1;
+                lazy_ticks += 1;
+                if elapsed >= step_ticks {
+                    bot.state = steps[idx].end.materialize();
+                    idx += 1;
+                    elapsed = 0;
+                    lazy_ticks = 0;
+                    step_start_state = bot.state.clone();
+                }
+                let arrived = idx >= steps.len();
+                if arrived {
+                    bot.arrived = true;
+                    if is_settled(&bot.state) {
+                        bot.settled = true;
+                        bot.phase = BotPhase::Idle;
+                        bot.hooked_corridor = None;
+                    } else {
+                        bot.phase = BotPhase::Settling;
+                    }
+                } else {
+                    bot.phase = BotPhase::Executing {
+                        steps,
+                        idx,
+                        elapsed,
+                        lazy_ticks,
+                        step_start_state,
+                        goal_air,
+                        corridor,
+                    };
+                }
+                return;
+            }
+
+            let step = &steps[idx];
+            let (prog, args, ticks) = (step.program, step.args, step.ticks);
             let selected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 programs[prog as usize].select(world, &bot.state, elapsed, args)
             }));
@@ -1754,6 +1945,8 @@ fn step_bot_physics(
             if elapsed >= ticks {
                 idx += 1;
                 elapsed = 0;
+                lazy_ticks = 0;
+                step_start_state = bot.state.clone();
             }
             let arrived = idx >= steps.len();
             let mut settled = false;
@@ -1772,6 +1965,8 @@ fn step_bot_physics(
                     steps,
                     idx,
                     elapsed,
+                    lazy_ticks,
+                    step_start_state,
                     goal_air,
                     corridor,
                 };

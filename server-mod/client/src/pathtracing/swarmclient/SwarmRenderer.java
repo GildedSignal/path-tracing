@@ -1,6 +1,7 @@
 package pathtracing.swarmclient;
 
 import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.Std140Builder;
@@ -27,7 +28,6 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -44,7 +44,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pathtracing.swarmclient.mixin.LevelRendererAccessor;
 
-/** Backend-agnostic Blaze3D instanced renderer drawing up to 10,000 articulated bots in 1 draw call (Vulkan & OpenGL). */
+/** Backend-agnostic Early-Z Blaze3D indexed 3-LOD instanced renderer (OpenGL & Vulkan). */
 public final class SwarmRenderer {
     private static final Logger LOGGER = LoggerFactory.getLogger("pathtracing_swarm_client");
     private static final int UBO_SIZE = 112;
@@ -69,14 +69,12 @@ public final class SwarmRenderer {
         in vec2 UV0;
         in float PartId;
 
-        in vec3 InstPrevPos;
-        in vec3 InstCurrPos;
-        in vec4 InstRotAmp;
-        in vec4 InstPhaseMeta;
+        in vec4 InstPosSkin;
+        in vec4 InstPose;
 
         layout(std140) uniform SwarmUniforms {
             mat4 uViewProj;
-            vec4 uOriginRelCamAndAlpha;
+            vec4 uOriginRelCam;
             vec4 uFogColor;
             vec4 uFogParams;
         };
@@ -100,55 +98,38 @@ public final class SwarmRenderer {
         }
 
         void main() {
-            int flags = int(InstPhaseMeta.w + 0.5);
-            if ((flags & 8) != 0) {
-                gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-                vUv = vec2(0.0);
-                vNormal = vec3(0.0, 1.0, 0.0);
-                vSkinLayer = 0.0;
-                vCamDist = 0.0;
-                return;
-            }
-
-            float partialTick = uOriginRelCamAndAlpha.w;
-            float yaw = mix(InstRotAmp.x, InstRotAmp.y, partialTick);
-            float headPitch = InstRotAmp.z;
-            float swingAmp = InstRotAmp.w;
-            float phase = mix(InstPhaseMeta.x, InstPhaseMeta.y, partialTick);
-            bool sneaking = (flags & 4) != 0;
-
-            float legSwing = sin(phase) * 0.72 * swingAmp;
-            float armSwing = legSwing * 0.85;
-
             int part = int(PartId + 0.5);
             vec3 localP = LocalPos;
             vec3 localN = Normal;
 
-            if (part == 0) {
-                localP = rotXAroundPivot(localP, Pivot, -headPitch);
-                localN = rotNormalX(localN, -headPitch);
-            } else if (part == 2) {
-                float a = -armSwing + (sneaking ? 0.4 : 0.0);
-                localP = rotXAroundPivot(localP, Pivot, a);
-                localN = rotNormalX(localN, a);
-            } else if (part == 3) {
-                float a = armSwing + (sneaking ? 0.4 : 0.0);
-                localP = rotXAroundPivot(localP, Pivot, a);
-                localN = rotNormalX(localN, a);
-            } else if (part == 4) {
-                localP = rotXAroundPivot(localP, Pivot, legSwing);
-                localN = rotNormalX(localN, legSwing);
-            } else if (part == 5) {
-                localP = rotXAroundPivot(localP, Pivot, -legSwing);
-                localN = rotNormalX(localN, -legSwing);
+            if (part != 1) {
+                float headPitch = InstPose.z;
+                float legSwing = InstPose.w;
+                float armSwing = legSwing * 0.85;
+                float sneakArm = InstPosSkin.w >= 15.5 ? 0.4 : 0.0;
+
+                if (part == 0) {
+                    localP = rotXAroundPivot(localP, Pivot, -headPitch);
+                    localN = rotNormalX(localN, -headPitch);
+                } else if (part == 2) {
+                    float a = -armSwing + sneakArm;
+                    localP = rotXAroundPivot(localP, Pivot, a);
+                    localN = rotNormalX(localN, a);
+                } else if (part == 3) {
+                    float a = armSwing + sneakArm;
+                    localP = rotXAroundPivot(localP, Pivot, a);
+                    localN = rotNormalX(localN, a);
+                } else if (part == 4) {
+                    localP = rotXAroundPivot(localP, Pivot, legSwing);
+                    localN = rotNormalX(localN, legSwing);
+                } else if (part == 5) {
+                    localP = rotXAroundPivot(localP, Pivot, -legSwing);
+                    localN = rotNormalX(localN, -legSwing);
+                }
             }
 
-            if (sneaking) {
-                localP.y -= 0.125;
-            }
-
-            float cy = cos(yaw);
-            float sy = sin(yaw);
+            float cy = InstPose.x;
+            float sy = InstPose.y;
             vec3 rotated = vec3(
                 localP.x * cy - localP.z * sy,
                 localP.y,
@@ -160,12 +141,11 @@ public final class SwarmRenderer {
                 localN.x * sy + localN.z * cy
             );
 
-            vec3 botPos = mix(InstPrevPos, InstCurrPos, partialTick);
-            vec3 relCam = uOriginRelCamAndAlpha.xyz + botPos + rotated;
+            vec3 relCam = uOriginRelCam.xyz + InstPosSkin.xyz + rotated;
             gl_Position = uViewProj * vec4(relCam, 1.0);
             vUv = UV0;
             vNormal = worldNorm;
-            vSkinLayer = InstPhaseMeta.z;
+            vSkinLayer = mod(InstPosSkin.w, 16.0);
             vCamDist = length(relCam);
         }
         """;
@@ -179,7 +159,7 @@ public final class SwarmRenderer {
 
         layout(std140) uniform SwarmUniforms {
             mat4 uViewProj;
-            vec4 uOriginRelCamAndAlpha;
+            vec4 uOriginRelCam;
             vec4 uFogColor;
             vec4 uFogParams;
         };
@@ -194,9 +174,6 @@ public final class SwarmRenderer {
                 clamp(vUv.y, 0.001, 0.999)
             );
             vec4 texel = texture(Sampler0, atlasUv);
-            if (texel.a < 0.1) {
-                discard;
-            }
             vec3 n = normalize(vNormal);
             vec3 sunDir = normalize(vec3(0.25, 1.0, 0.35));
             float shade = clamp(0.62 + max(dot(n, sunDir), 0.0) * 0.38 - max(-n.y, 0.0) * 0.10, 0.48, 1.0);
@@ -226,10 +203,8 @@ public final class SwarmRenderer {
         .build();
 
     private static final VertexFormat INSTANCE_FORMAT = VertexFormat.builder(1)
-        .addAttribute("InstPrevPos", GpuFormat.RGB32_FLOAT)
-        .addAttribute("InstCurrPos", GpuFormat.RGB32_FLOAT)
-        .addAttribute("InstRotAmp", GpuFormat.RGBA32_FLOAT)
-        .addAttribute("InstPhaseMeta", GpuFormat.RGBA32_FLOAT)
+        .addAttribute("InstPosSkin", GpuFormat.RGBA32_FLOAT)
+        .addAttribute("InstPose", GpuFormat.RGBA32_FLOAT)
         .build();
 
     private static final BindGroupLayout BIND_GROUP_LAYOUT = BindGroupLayout.builder()
@@ -254,6 +229,7 @@ public final class SwarmRenderer {
     private boolean initialized = false;
     private boolean initFailed = false;
     private GpuBuffer meshGpuBuf;
+    private GpuBuffer indexGpuBuf;
     private GpuBuffer instanceGpuBuf;
     private int instanceCapacityBytes = 0;
     private GpuBuffer uniformGpuBuf;
@@ -261,12 +237,13 @@ public final class SwarmRenderer {
     private GpuTextureView skinTexView;
     private GpuSampler skinSampler;
     private int skinsLoaded = 0;
-    private int meshVertexCount = 0;
 
     private final ByteBuffer uboBytes = MemoryUtil.memAlloc(UBO_SIZE).order(ByteOrder.LITTLE_ENDIAN);
     private final Matrix4f viewProj = new Matrix4f();
-    private final float[] relOriginAndAlpha = new float[4];
-    private int lastLoggedCount = -1;
+    private final float[] relOrigin = new float[3];
+    private final int[] lodCounts = new int[3];
+    private final ByteBuffer[] instanceBufRef = new ByteBuffer[1];
+    private int lastLoggedTotal = -1;
 
     public SwarmRenderer(SwarmBuffer buffer) {
         this.buffer = buffer;
@@ -307,18 +284,22 @@ public final class SwarmRenderer {
         }
 
         long t0 = System.nanoTime();
-        int count = buffer.prepareDraw(
+        viewProj.set(camState.projectionMatrix).mul(camState.viewRotationMatrix);
+        int drawn = buffer.buildVisibleInstances(
             camState.pos.x,
             camState.pos.y,
             camState.pos.z,
-            relOriginAndAlpha,
-            (ByteBuffer data, int botCount) -> uploadInstanceBuffer(device, encoder, data, botCount)
+            viewProj,
+            relOrigin,
+            lodCounts,
+            instanceBufRef
         );
-        if (count <= 0) {
+        if (drawn <= 0) {
             return;
         }
 
-        viewProj.set(camState.projectionMatrix).mul(camState.viewRotationMatrix);
+        uploadInstanceBuffer(device, encoder, instanceBufRef[0], drawn);
+
         float fogR = 0f, fogG = 0f, fogB = 0f, fogA = 0f, fogStart = 0f, fogEnd = 0f;
         FogData fog = camState.fogData;
         if (fog != null && fog.color != null) {
@@ -333,11 +314,21 @@ public final class SwarmRenderer {
         uboBytes.clear();
         ByteBuffer uboSliceData = Std140Builder.intoBuffer(uboBytes)
             .putMat4f(viewProj)
-            .putVec4(relOriginAndAlpha[0], relOriginAndAlpha[1], relOriginAndAlpha[2], relOriginAndAlpha[3])
+            .putVec4(relOrigin[0], relOrigin[1], relOrigin[2], 0f)
             .putVec4(fogR, fogG, fogB, fogA)
             .putVec4(fogStart, fogEnd, 0f, 0f)
             .get();
         encoder.writeToBuffer(uniformGpuBuf.slice(), uboSliceData);
+
+        int c0 = lodCounts[0];
+        int c1 = lodCounts[1];
+        int c2 = lodCounts[2];
+        long off0 = 0L;
+        long bytes0 = (long) c0 * SwarmBuffer.INSTANCE_BYTES;
+        long off1 = bytes0;
+        long bytes1 = (long) c1 * SwarmBuffer.INSTANCE_BYTES;
+        long off2 = off1 + bytes1;
+        long bytes2 = (long) c2 * SwarmBuffer.INSTANCE_BYTES;
 
         try (RenderPass pass = encoder.createRenderPass(
             () -> "swarm_bots",
@@ -350,17 +341,31 @@ public final class SwarmRenderer {
             pass.setUniform("SwarmUniforms", uniformGpuBuf);
             pass.bindTexture("Sampler0", skinTexView, skinSampler);
             pass.setVertexBuffer(0, meshGpuBuf.slice());
-            pass.setVertexBuffer(1, instanceGpuBuf.slice(0L, (long) count * SwarmBuffer.INSTANCE_BYTES));
-            pass.draw(meshVertexCount, count, 0, 0);
+            pass.setIndexBuffer(indexGpuBuf, IndexType.SHORT);
+
+            if (c0 > 0) {
+                pass.setVertexBuffer(1, instanceGpuBuf.slice(off0, bytes0));
+                pass.drawIndexed(PlayerMesh.LOD0_INDEX_COUNT, c0, PlayerMesh.LOD0_FIRST_INDEX, 0, 0);
+            }
+            if (c1 > 0) {
+                pass.setVertexBuffer(1, instanceGpuBuf.slice(off1, bytes1));
+                pass.drawIndexed(PlayerMesh.LOD1_INDEX_COUNT, c1, PlayerMesh.LOD1_FIRST_INDEX, 0, 0);
+            }
+            if (c2 > 0) {
+                pass.setVertexBuffer(1, instanceGpuBuf.slice(off2, bytes2));
+                pass.drawIndexed(PlayerMesh.LOD2_INDEX_COUNT, c2, PlayerMesh.LOD2_FIRST_INDEX, 0, 0);
+            }
         }
 
-        if (lastLoggedCount != count) {
+        int totalBots = buffer.totalBots();
+        if (lastLoggedTotal != totalBots) {
             long cpuUs = (System.nanoTime() - t0) / 1000L;
+            var info = device.getDeviceInfo();
             LOGGER.info(
-                "[SwarmClient] Blaze3D instanced draw active: backend={}, count={}, skins={}, cpuUs={}",
-                device.getDeviceInfo().backendName(), count, skinsLoaded, cpuUs
+                "[SwarmClient] Blaze3D LOD draw active: backend={}, device={}, total={}, drawn={}, lod={}/{}/{}, skins={}, cpuUs={}",
+                info.backendName(), info.name(), totalBots, drawn, c0, c1, c2, skinsLoaded, cpuUs
             );
-            lastLoggedCount = count;
+            lastLoggedTotal = totalBots;
         }
     }
 
@@ -388,15 +393,20 @@ public final class SwarmRenderer {
                 throw new IllegalStateException("Blaze3D pipeline compilation returned invalid pipeline");
             }
 
-            float[] mesh = PlayerMesh.build();
-            meshVertexCount = mesh.length / PlayerMesh.FLOATS_PER_VERTEX;
-            ByteBuffer meshBytes = MemoryUtil.memAlloc(mesh.length * 4).order(ByteOrder.LITTLE_ENDIAN);
-            FloatBuffer meshFloats = meshBytes.asFloatBuffer();
-            meshFloats.put(mesh);
-            meshBytes.position(0);
-            meshBytes.limit(mesh.length * 4);
+            PlayerMesh.MeshData mesh = PlayerMesh.build();
+            int vBytes = mesh.vertices().length * 4;
+            ByteBuffer meshBytes = MemoryUtil.memAlloc(vBytes).order(ByteOrder.LITTLE_ENDIAN);
+            meshBytes.asFloatBuffer().put(mesh.vertices());
+            meshBytes.position(0).limit(vBytes);
             meshGpuBuf = device.createBuffer(() -> "swarm_mesh", GpuBuffer.USAGE_VERTEX, meshBytes);
             MemoryUtil.memFree(meshBytes);
+
+            int iBytes = mesh.indices().length * 2;
+            ByteBuffer idxBytes = MemoryUtil.memAlloc(iBytes).order(ByteOrder.LITTLE_ENDIAN);
+            idxBytes.asShortBuffer().put(mesh.indices());
+            idxBytes.position(0).limit(iBytes);
+            indexGpuBuf = device.createBuffer(() -> "swarm_indices", GpuBuffer.USAGE_INDEX, idxBytes);
+            MemoryUtil.memFree(idxBytes);
 
             instanceCapacityBytes = INITIAL_INSTANCE_CAPACITY_BOTS * SwarmBuffer.INSTANCE_BYTES;
             instanceGpuBuf = device.createBuffer(
@@ -413,9 +423,10 @@ public final class SwarmRenderer {
 
             loadSkinAtlas(device, encoder);
             initialized = true;
+            var info = device.getDeviceInfo();
             LOGGER.info(
-                "[SwarmClient] Initialized Blaze3D swarm renderer (backend={}, verts={}, skins={}/9)",
-                device.getDeviceInfo().backendName(), meshVertexCount, skinsLoaded
+                "[SwarmClient] Initialized Blaze3D LOD swarm renderer (backend={}, device={}, verts={}, indices={}, skins={}/9)",
+                info.backendName(), info.name(), PlayerMesh.VERTEX_COUNT, PlayerMesh.INDEX_COUNT, skinsLoaded
             );
         } catch (Throwable t) {
             initFailed = true;
