@@ -910,4 +910,41 @@ mod tests {
             1 | RENDER_FRAME_DELTA_FLAG
         );
     }
+
+    #[test]
+    fn airborne_goal_snaps_to_ground_and_arrives() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=2, -1..=1)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world, progs);
+        let state = PlayerState {
+            position: Vec3::new(0.5, -60.0, 0.5),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, 0]),
+            health: 20.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        pool.spawn_one(1, protocol::MODE_VIRTUAL, state);
+
+        let sum = pool.goal_batch(10, -47, 0, false);
+        assert_eq!(sum.ready, 1, "ready={}, refused={}, sample={}", sum.ready, sum.refused, sum.sample_msg);
+        assert_eq!(sum.refused, 0);
+
+        let mut last_sent = FxHashMap::default();
+        let cfg = SwarmConfig {
+            canary_count: 0,
+            ..SwarmConfig::default()
+        };
+        for tick in 1..=200u64 {
+            let (out, _) = pool.step_tick(tick, cfg, &[], &mut last_sent, true, false);
+            if out.stats.settled_count == 1 {
+                let rb = out.render_bots.first().expect("settled bot emitted");
+                assert!((rb.y - (-60.0)).abs() < 1e-6, "expected y=-60, got {}", rb.y);
+                assert_eq!(out.stats.arrived_count, 1);
+                return;
+            }
+        }
+        panic!("airborne-snapped bot did not settle within 200 ticks");
+    }
 }

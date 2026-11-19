@@ -4,6 +4,7 @@ import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.IndexType;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
@@ -50,13 +51,13 @@ public final class SwarmRenderer {
     private static final int UBO_SIZE = 112;
     private static final int INITIAL_INSTANCE_CAPACITY_BOTS = 16384;
     private static final String[] WIDE_SKINS = {
-        "textures/entity/player/wide/steve.png",
         "textures/entity/player/wide/alex.png",
         "textures/entity/player/wide/ari.png",
         "textures/entity/player/wide/efe.png",
         "textures/entity/player/wide/kai.png",
         "textures/entity/player/wide/makena.png",
         "textures/entity/player/wide/noor.png",
+        "textures/entity/player/wide/steve.png",
         "textures/entity/player/wide/sunny.png",
         "textures/entity/player/wide/zuri.png"
     };
@@ -72,8 +73,12 @@ public final class SwarmRenderer {
         in vec4 InstPosSkin;
         in vec4 InstPose;
 
+        layout(std140) uniform Projection {
+            mat4 ProjMat;
+        };
+
         layout(std140) uniform SwarmUniforms {
-            mat4 uViewProj;
+            mat4 uViewMat;
             vec4 uOriginRelCam;
             vec4 uFogColor;
             vec4 uFogParams;
@@ -142,7 +147,7 @@ public final class SwarmRenderer {
             );
 
             vec3 relCam = uOriginRelCam.xyz + InstPosSkin.xyz + rotated;
-            gl_Position = uViewProj * vec4(relCam, 1.0);
+            gl_Position = ProjMat * (uViewMat * vec4(relCam, 1.0));
             vUv = UV0;
             vNormal = worldNorm;
             vSkinLayer = mod(InstPosSkin.w, 16.0);
@@ -158,7 +163,7 @@ public final class SwarmRenderer {
         in float vCamDist;
 
         layout(std140) uniform SwarmUniforms {
-            mat4 uViewProj;
+            mat4 uViewMat;
             vec4 uOriginRelCam;
             vec4 uFogColor;
             vec4 uFogParams;
@@ -208,6 +213,7 @@ public final class SwarmRenderer {
         .build();
 
     private static final BindGroupLayout BIND_GROUP_LAYOUT = BindGroupLayout.builder()
+        .withUniform("Projection", UniformType.UNIFORM_BUFFER)
         .withUniform("SwarmUniforms", UniformType.UNIFORM_BUFFER)
         .withSampler("Sampler0")
         .build();
@@ -267,6 +273,10 @@ public final class SwarmRenderer {
         }
 
         GpuDevice device = RenderSystem.getDevice();
+        GpuBufferSlice projBuf = RenderSystem.getProjectionMatrixBuffer();
+        if (projBuf == null) {
+            return;
+        }
         CommandEncoder encoder = device.createCommandEncoder();
 
         if (!initialized) {
@@ -313,7 +323,7 @@ public final class SwarmRenderer {
 
         uboBytes.clear();
         ByteBuffer uboSliceData = Std140Builder.intoBuffer(uboBytes)
-            .putMat4f(viewProj)
+            .putMat4f(camState.viewRotationMatrix)
             .putVec4(relOrigin[0], relOrigin[1], relOrigin[2], 0f)
             .putVec4(fogR, fogG, fogB, fogA)
             .putVec4(fogStart, fogEnd, 0f, 0f)
@@ -338,6 +348,7 @@ public final class SwarmRenderer {
             OptionalDouble.empty()
         )) {
             pass.setPipeline(PIPELINE);
+            pass.setUniform("Projection", projBuf);
             pass.setUniform("SwarmUniforms", uniformGpuBuf);
             pass.bindTexture("Sampler0", skinTexView, skinSampler);
             pass.setVertexBuffer(0, meshGpuBuf.slice());

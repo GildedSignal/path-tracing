@@ -1,6 +1,6 @@
 package pathtracing.swarmclient;
 
-/** Builds an indexed 3-LOD opaque wide Minecraft player mesh (208 vertices, 312 short indices). */
+/** Builds an indexed 3-LOD opaque wide Minecraft player mesh (244 vertices, 366 short indices). */
 public final class PlayerMesh {
     public static final int FLOATS_PER_VERTEX = 12;
     public static final int PART_HEAD = 0;
@@ -13,12 +13,12 @@ public final class PlayerMesh {
     public static final int LOD0_FIRST_INDEX = 0;
     public static final int LOD0_INDEX_COUNT = 216;
     public static final int LOD1_FIRST_INDEX = 216;
-    public static final int LOD1_INDEX_COUNT = 60;
-    public static final int LOD2_FIRST_INDEX = 276;
-    public static final int LOD2_INDEX_COUNT = 36;
+    public static final int LOD1_INDEX_COUNT = 90;
+    public static final int LOD2_FIRST_INDEX = 306;
+    public static final int LOD2_INDEX_COUNT = 60;
 
-    public static final int VERTEX_COUNT = 208;
-    public static final int INDEX_COUNT = 312;
+    public static final int VERTEX_COUNT = 244;
+    public static final int INDEX_COUNT = 366;
 
     private static final float SCALE = 0.9375f / 16.0f;
 
@@ -74,23 +74,6 @@ public final class PlayerMesh {
                 quad(sx0, sy0, sz0, sx1, sy0, sz0, sx1, sy0, sz1, sx0, sy0, sz1,
                     0f, -1f, 0f, u + d + w, v, u + d + 2 * w, v + d, spx, spy, spz, partId);
             }
-        }
-
-        void addProxyBox() {
-            float sx0 = -4f * SCALE, sy0 = 0f, sz0 = -4f * SCALE;
-            float sx1 = 4f * SCALE, sy1 = 32f * SCALE, sz1 = 4f * SCALE;
-            quad(sx0, sy0, sz1, sx1, sy0, sz1, sx1, sy1, sz1, sx0, sy1, sz1,
-                0f, 0f, 1f, 20, 32, 28, 20, 0f, 0f, 0f, PART_TORSO);
-            quad(sx1, sy0, sz0, sx0, sy0, sz0, sx0, sy1, sz0, sx1, sy1, sz0,
-                0f, 0f, -1f, 32, 32, 40, 20, 0f, 0f, 0f, PART_TORSO);
-            quad(sx0, sy0, sz0, sx0, sy0, sz1, sx0, sy1, sz1, sx0, sy1, sz0,
-                -1f, 0f, 0f, 16, 32, 20, 20, 0f, 0f, 0f, PART_TORSO);
-            quad(sx1, sy0, sz1, sx1, sy0, sz0, sx1, sy1, sz0, sx1, sy1, sz1,
-                1f, 0f, 0f, 28, 32, 32, 20, 0f, 0f, 0f, PART_TORSO);
-            quad(sx0, sy1, sz1, sx1, sy1, sz1, sx1, sy1, sz0, sx0, sy1, sz0,
-                0f, 1f, 0f, 8, 8, 16, 0, 0f, 0f, 0f, PART_TORSO);
-            quad(sx0, sy0, sz0, sx1, sy0, sz0, sx1, sy0, sz1, sx0, sy0, sz1,
-                0f, -1f, 0f, 8, 16, 12, 20, 0f, 0f, 0f, PART_TORSO);
         }
 
         private void quad(
@@ -160,15 +143,20 @@ public final class PlayerMesh {
             throw new IllegalStateException("Unexpected LOD0 index count: " + b.iCount);
         }
 
-        // LOD 1: 2 rigid boxes (10 faces = 40 verts, 60 indices: 216..275)
+        // LOD 1: 3 rigid boxes matching silhouette & shirt/pants colors (15 faces = 60 verts, 90 indices: 216..305)
         b.addBox(-4f, 24f, -4f, 4f, 32f, 4f, 0f, 24f, 0f, 0, 0, 8, 8, 8, PART_TORSO, ALL_FACES & ~FACE_BOTTOM);
-        b.addBox(-4f, 0f, -2f, 4f, 24f, 2f, 0f, 24f, 0f, 16, 16, 8, 12, 4, PART_TORSO, ALL_FACES & ~FACE_TOP);
+        b.addBox(-7.5f, 12f, -2f, 7.5f, 24f, 2f, 0f, 24f, 0f, 16, 16, 8, 12, 4, PART_TORSO, ALL_FACES & ~FACE_BOTTOM);
+        b.addBox(-4f, 0f, -2f, 4f, 12f, 2f, 0f, 12f, 0f, 0, 16, 4, 12, 4, PART_TORSO, ALL_FACES & ~FACE_TOP);
         if (b.iCount != LOD0_INDEX_COUNT + LOD1_INDEX_COUNT) {
             throw new IllegalStateException("Unexpected LOD1 index count: " + b.iCount);
         }
 
-        // LOD 2: 1 rigid 6-face proxy box (24 verts, 36 indices: 276..311)
-        b.addProxyBox();
+        // LOD 2: 2 rigid far-silhouette boxes (10 faces = 40 verts, 60 indices: 306..365)
+        b.addBox(-4f, 24f, -4f, 4f, 32f, 4f, 0f, 24f, 0f, 0, 0, 8, 8, 8, PART_TORSO, ALL_FACES & ~FACE_BOTTOM);
+        b.addBox(-6f, 0f, -2f, 6f, 24f, 2f, 0f, 24f, 0f, 16, 16, 8, 12, 4, PART_TORSO, ALL_FACES & ~FACE_TOP);
+        if (b.iCount != LOD0_INDEX_COUNT + LOD1_INDEX_COUNT + LOD2_INDEX_COUNT) {
+            throw new IllegalStateException("Unexpected LOD2 index count: " + b.iCount);
+        }
         if (b.vCount != VERTEX_COUNT || b.iCount != INDEX_COUNT) {
             throw new IllegalStateException("Unexpected mesh totals: verts=" + b.vCount + " indices=" + b.iCount);
         }

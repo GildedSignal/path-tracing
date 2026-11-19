@@ -132,7 +132,13 @@ impl BotSlot {
             } else {
                 (base_y, self.state.on_ground)
             };
-            let yaw = step.args.refined_yaw.unwrap_or(self.state.yaw);
+            let yaw = step.args.refined_yaw.unwrap_or_else(|| {
+                if dx * dx + dz * dz > 1e-8 {
+                    (-dx).atan2(dz).to_degrees() as f32
+                } else {
+                    self.state.yaw
+                }
+            });
             let speed = (dx.hypot(dz) / f64::from(ticks)) as f32;
             let sprinting = step.program != plan::store::WALK;
             return (Vec3::new(x, y, z), yaw, self.state.pitch, speed, on_ground, sprinting);
@@ -1600,6 +1606,33 @@ fn find_hooked_box(world: &WorldMirror, lo: BlockPos, hi: BlockPos) -> Option<(B
     Some((min_p, max_p))
 }
 
+fn snap_airborne_goal(world: &WorldMirror, goal_air: BlockPos) -> BlockPos {
+    let below = [goal_air[0], goal_air[1] - 1, goal_air[2]];
+    if !world.loaded(below) || !world.is_air(below) {
+        return goal_air;
+    }
+    let min_y = world.min_loaded_y();
+    for d in 1..=128 {
+        let y = below[1] - d;
+        if y < min_y {
+            break;
+        }
+        let solid = [goal_air[0], y, goal_air[2]];
+        let air1 = [goal_air[0], y + 1, goal_air[2]];
+        let air2 = [goal_air[0], y + 2, goal_air[2]];
+        if world.loaded(solid)
+            && !world.is_air(solid)
+            && world.loaded(air1)
+            && world.is_air(air1)
+            && world.loaded(air2)
+            && world.is_air(air2)
+        {
+            return air1;
+        }
+    }
+    goal_air
+}
+
 fn solve_slot(
     bot: &mut BotSlot,
     goal_air: BlockPos,
@@ -1608,6 +1641,7 @@ fn solve_slot(
     codec: &mut Interner,
 ) -> PlanStatusOut {
     let bot_id = bot.bot_id;
+    let goal_air = snap_airborne_goal(world, goal_air);
     let goal_solid = [goal_air[0], goal_air[1] - 1, goal_air[2]];
     let p = [
         bot.state.position.x.floor() as i32,

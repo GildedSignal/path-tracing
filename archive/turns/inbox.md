@@ -113,3 +113,8 @@ this is why my screens are odd please find out what's wrong with my gpu this is 
 ### 2026-11-19 10:14
 
 looks good just did a reboot. you can proceed with the plan
+
+
+### 2026-11-19 10:35
+
+ok it's running well but multiple issues maybe i fail the goto command but it did not worked, when i moved around it looks like the floor and bots are wiggling in the some way as if the space got distorted, i want to see them all move like a stromtrooper army in sync, the lod detail jump is way too noticeable, the bots change skins when i get close to them and they are rendered in full, i really want to be abble to see all of them interact and move they are here not statues so we gotta be smart about it

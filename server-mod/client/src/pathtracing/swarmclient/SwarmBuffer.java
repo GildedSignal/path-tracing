@@ -3,7 +3,10 @@ package pathtracing.swarmclient;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Locale;
+import java.util.UUID;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
@@ -19,14 +22,16 @@ public final class SwarmBuffer {
     private static final int MAX_INDEX = 65536;
     private static final float TWO_PI = (float) (Math.PI * 2.0);
     private static final float PI = (float) Math.PI;
-    private static final float LOD0_MAX_DIST_SQ = 32.0f * 32.0f;
-    private static final float LOD1_MAX_DIST_SQ = 96.0f * 96.0f;
-    private static final float BOT_BOUNDING_RADIUS = 1.6f;
+    private static final float LOD0_MAX_DIST_SQ = 96.0f * 96.0f;
+    private static final float LOD1_MAX_DIST_SQ = 220.0f * 220.0f;
+    private static final float BOT_BOUNDING_RADIUS = 2.2f;
 
     private final int[] prevSlotByIndex = new int[MAX_INDEX];
     private final int[] currSlotByIndex = new int[MAX_INDEX];
     private final float[] prevPhaseByIndex = new float[MAX_INDEX];
     private final float[] currPhaseByIndex = new float[MAX_INDEX];
+    private final byte[] skinCache = new byte[MAX_INDEX];
+    private int frameSeq = 0;
 
     private int prevCount = 0;
     private double prevOriginX, prevOriginY, prevOriginZ;
@@ -53,6 +58,7 @@ public final class SwarmBuffer {
     private float[] currSkinLayer = new float[0];
     private int[] currFlags = new int[0];
     private int[] currIndices = new int[0];
+    private int[] currSlotFrameSeq = new int[0];
 
     private int[] bucket0 = new int[1024];
     private int[] bucket1 = new int[1024];
@@ -72,6 +78,7 @@ public final class SwarmBuffer {
     public SwarmBuffer() {
         Arrays.fill(prevSlotByIndex, -1);
         Arrays.fill(currSlotByIndex, -1);
+        Arrays.fill(skinCache, (byte) -1);
     }
 
     public synchronized void clear() {
@@ -81,6 +88,7 @@ public final class SwarmBuffer {
         Arrays.fill(currPhaseByIndex, 0.0f);
         prevCount = 0;
         currCount = 0;
+        frameSeq = 0;
         lastFrameNanos = 0L;
     }
 
@@ -105,6 +113,10 @@ public final class SwarmBuffer {
         }
 
         if (isDelta) {
+            if (count == 0) {
+                return;
+            }
+            int seq = ++frameSeq;
             float deltaOriginShiftX = (float) (ox - currOriginX);
             float deltaOriginShiftY = (float) (oy - currOriginY);
             float deltaOriginShiftZ = (float) (oz - currOriginZ);
@@ -122,6 +134,7 @@ public final class SwarmBuffer {
                 if (slot < 0 || slot >= currCount) {
                     continue;
                 }
+                currSlotFrameSeq[slot] = seq;
                 updateSlot(slot, botIndex, rx, ry, rz, yawQ, pitchQ, speedQ, flags,
                     currRx[slot], currRy[slot], currRz[slot], currYaw[slot]);
             }
@@ -155,6 +168,7 @@ public final class SwarmBuffer {
 
         ensureCurrCapacity(count);
         Arrays.fill(currSlotByIndex, -1);
+        int seq = ++frameSeq;
 
         float originShiftX = prevCount > 0 ? (float) (prevOriginX - ox) : 0.0f;
         float originShiftY = prevCount > 0 ? (float) (prevOriginY - oy) : 0.0f;
@@ -190,6 +204,7 @@ public final class SwarmBuffer {
                 currSlotByIndex[botIndex] = i;
             }
             currIndices[i] = botIndex;
+            currSlotFrameSeq[i] = seq;
             updateSlot(i, botIndex, rx, ry, rz, yawQ, pitchQ, speedQ, flags, pxPos, pyPos, pzPos, pYaw);
         }
         lastFrameNanos = System.nanoTime();
@@ -239,8 +254,23 @@ public final class SwarmBuffer {
         currSwingAmp[slot] = swingAmp;
         currPrevPhase[slot] = pPhase;
         currCurrPhase[slot] = cPhase;
-        currSkinLayer[slot] = (float) (botIndex % 9);
+        currSkinLayer[slot] = skinLayerFor(botIndex);
         currFlags[slot] = flags;
+    }
+
+    private float skinLayerFor(int botIndex) {
+        if (botIndex < 0 || botIndex >= MAX_INDEX) {
+            return 6.0f;
+        }
+        byte cached = skinCache[botIndex];
+        if (cached >= 0) {
+            return (float) cached;
+        }
+        String name = botIndex == 0 ? "PathBot" : String.format(Locale.ROOT, "Swarm%04d", botIndex);
+        UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+        int idx = Math.floorMod(uuid.hashCode(), 18) % 9;
+        skinCache[botIndex] = (byte) idx;
+        return (float) idx;
     }
 
     private void ensureCurrCapacity(int count) {
@@ -264,6 +294,7 @@ public final class SwarmBuffer {
         currSkinLayer = new float[cap];
         currFlags = new int[cap];
         currIndices = new int[cap];
+        currSlotFrameSeq = new int[cap];
         bucket0 = new int[cap];
         bucket1 = new int[cap];
         bucket2 = new int[cap];
@@ -316,14 +347,16 @@ public final class SwarmBuffer {
         viewProj.frustumPlane(Matrix4f.PLANE_PY, pTop);
         pNear.set(viewProj.m03(), viewProj.m13(), viewProj.m23(), viewProj.m33()).normalize3();
 
+        int seq = frameSeq;
         int c0 = 0, c1 = 0, c2 = 0;
         for (int i = 0; i < currCount; i++) {
             if ((currFlags[i] & 8) != 0) {
                 continue;
             }
-            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * alpha;
-            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * alpha;
-            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * alpha;
+            float effAlpha = (currSlotFrameSeq[i] == seq) ? alpha : 1.0f;
+            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * effAlpha;
+            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * effAlpha;
+            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * effAlpha;
 
             float rcx = originX + bx;
             float rcy = originY + by + 0.9f;
@@ -353,9 +386,9 @@ public final class SwarmBuffer {
         gpuBuf.clear();
 
         int cursor = 0;
-        cursor = writeBucket(bucket0, c0, alpha, true, cursor);
-        cursor = writeBucket(bucket1, c1, alpha, false, cursor);
-        cursor = writeBucket(bucket2, c2, alpha, false, cursor);
+        cursor = writeBucket(bucket0, c0, alpha, seq, true, cursor);
+        cursor = writeBucket(bucket1, c1, alpha, seq, false, cursor);
+        cursor = writeBucket(bucket2, c2, alpha, seq, false, cursor);
 
         gpuBytes.position(0);
         gpuBytes.limit(totalDrawn * INSTANCE_BYTES);
@@ -366,17 +399,18 @@ public final class SwarmBuffer {
         return totalDrawn;
     }
 
-    private int writeBucket(int[] bucket, int count, float alpha, boolean articulated, int cursor) {
+    private int writeBucket(int[] bucket, int count, float alpha, int seq, boolean articulated, int cursor) {
         for (int k = 0; k < count; k++) {
             int i = bucket[k];
-            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * alpha;
-            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * alpha;
-            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * alpha;
+            float effAlpha = (currSlotFrameSeq[i] == seq) ? alpha : 1.0f;
+            float bx = currPrevRx[i] + (currRx[i] - currPrevRx[i]) * effAlpha;
+            float by = currPrevRy[i] + (currRy[i] - currPrevRy[i]) * effAlpha;
+            float bz = currPrevRz[i] + (currRz[i] - currPrevRz[i]) * effAlpha;
             boolean sneaking = (currFlags[i] & 4) != 0;
             float byAdj = sneaking ? (by - 0.125f) : by;
             float skinMeta = currSkinLayer[i] + (sneaking ? 16.0f : 0.0f);
 
-            float yaw = currPrevYaw[i] + (currUnwrappedYaw[i] - currPrevYaw[i]) * alpha;
+            float yaw = currPrevYaw[i] + (currUnwrappedYaw[i] - currPrevYaw[i]) * effAlpha;
             float cosYaw = (float) Math.cos(yaw);
             float sinYaw = (float) Math.sin(yaw);
 
@@ -386,7 +420,7 @@ public final class SwarmBuffer {
                 headPitch = currPitch[i];
                 float amp = currSwingAmp[i];
                 if (amp > 0.001f) {
-                    float phase = currPrevPhase[i] + (currCurrPhase[i] - currPrevPhase[i]) * alpha;
+                    float phase = currPrevPhase[i] + (currCurrPhase[i] - currPrevPhase[i]) * effAlpha;
                     legSwing = (float) Math.sin(phase) * 0.72f * amp;
                 }
             }

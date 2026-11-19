@@ -159,6 +159,26 @@ public final class SwarmManager {
 
     private Formation formation = Formation.GRID;
     private StickMode stickMode = StickMode.ALL;
+    private int formationAnchorX = 0;
+    private int formationAnchorY = -60;
+    private int formationAnchorZ = 0;
+    private int formationCols = 1;
+    private float formationSpacing = 1.5f;
+
+    private boolean paradeActive = false;
+    private int paradeOriginX = 0;
+    private int paradeOriginY = -60;
+    private int paradeOriginZ = 0;
+    private int paradeDist = 60;
+    private int paradeLeg = 0;
+    private int paradeWaitTicks = 0;
+
+    private UUID followPlayerUuid = null;
+    private int followLastX = 0;
+    private int followLastZ = 0;
+    private boolean followHasLast = false;
+    private int followCooldownTicks = 0;
+
     private String lastBatchRequester;
     private int expectedBatchReplies = 0;
     private int receivedBatchReplies = 0;
@@ -235,6 +255,18 @@ public final class SwarmManager {
             .then(Commands.literal("goto")
                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
                     .executes(ctx -> cmdGoto(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos")))))
+            .then(Commands.literal("parade")
+                .executes(ctx -> cmdParade(ctx.getSource(), 60))
+                .then(Commands.literal("off")
+                    .executes(ctx -> cmdParadeOff(ctx.getSource())))
+                .then(Commands.argument("distance", IntegerArgumentType.integer(10, 500))
+                    .executes(ctx -> cmdParade(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "distance")))))
+            .then(Commands.literal("come")
+                .executes(ctx -> cmdCome(ctx.getSource())))
+            .then(Commands.literal("follow")
+                .executes(ctx -> cmdFollow(ctx.getSource(), "on"))
+                .then(Commands.argument("mode", StringArgumentType.word())
+                    .executes(ctx -> cmdFollow(ctx.getSource(), StringArgumentType.getString(ctx, "mode")))))
             .then(Commands.literal("stop")
                 .executes(ctx -> cmdStop(ctx.getSource())))
             .then(Commands.literal("remove")
@@ -359,6 +391,14 @@ public final class SwarmManager {
         this.engineTotalBots = count;
         this.totalTeleports = 0L;
         this.pendingClear = false;
+        this.formationCols = cols;
+        this.formationSpacing = spacing;
+        this.formationAnchorX = (int) Math.floor(baseX);
+        this.formationAnchorY = (int) Math.floor(baseY);
+        this.formationAnchorZ = (int) Math.floor(baseZ);
+        this.paradeActive = false;
+        this.followPlayerUuid = null;
+        this.followHasLast = false;
 
         if (mode == ShmBridge.MODE_MATERIALIZED) {
             ServerLevel overworld = server.overworld();
@@ -482,6 +522,9 @@ public final class SwarmManager {
         pendingBatchGoal = null;
         pendingSpawnBatch = null;
         pendingStopAll = false;
+        paradeActive = false;
+        followPlayerUuid = null;
+        followHasLast = false;
         try {
             suppressJoinChat = true;
             for (int i = 0; i < matBots.size(); i++) {
@@ -631,14 +674,169 @@ public final class SwarmManager {
         return reply(source, "Tick profile reset.");
     }
 
+    private BlockPos snapGoalToGround(ServerLevel level, BlockPos pos) {
+        if (!level.isLoaded(pos)) {
+            return pos;
+        }
+        if (!level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()
+            && level.getBlockState(pos.above()).getCollisionShape(level, pos.above()).isEmpty()
+            && level.getBlockState(pos.above(2)).getCollisionShape(level, pos.above(2)).isEmpty()) {
+            return pos.above();
+        }
+        if (level.getBlockState(pos.below()).getCollisionShape(level, pos.below()).isEmpty()) {
+            int minY = Math.max(level.getMinY(), pos.getY() - 128);
+            for (int y = pos.getY() - 1; y >= minY; y--) {
+                BlockPos solid = new BlockPos(pos.getX(), y, pos.getZ());
+                BlockPos air1 = solid.above();
+                BlockPos air2 = solid.above(2);
+                if (!level.getBlockState(solid).getCollisionShape(level, solid).isEmpty()
+                    && level.getBlockState(air1).getCollisionShape(level, air1).isEmpty()
+                    && level.getBlockState(air2).getCollisionShape(level, air2).isEmpty()) {
+                    return air1;
+                }
+            }
+        }
+        return pos;
+    }
+
+    private BlockPos centeredFormationGoal(BlockPos groundPos) {
+        int total = Math.max(swarmTotalCount, matBots.size());
+        if (formation != Formation.GRID || total <= 1) {
+            return groundPos;
+        }
+        int cols = Math.max(1, formationCols);
+        int rows = (total + cols - 1) / cols;
+        int gx = groundPos.getX() - Math.round((cols - 1) * formationSpacing * 0.5f);
+        int gz = groundPos.getZ() - Math.round((rows - 1) * formationSpacing * 0.5f);
+        return new BlockPos(gx, groundPos.getY(), gz);
+    }
+
+    private BlockPos paradeCorner(int leg) {
+        return switch (leg & 3) {
+            case 0 -> new BlockPos(paradeOriginX + paradeDist, paradeOriginY, paradeOriginZ);
+            case 1 -> new BlockPos(paradeOriginX + paradeDist, paradeOriginY, paradeOriginZ + paradeDist);
+            case 2 -> new BlockPos(paradeOriginX, paradeOriginY, paradeOriginZ + paradeDist);
+            default -> new BlockPos(paradeOriginX, paradeOriginY, paradeOriginZ);
+        };
+    }
+
+    private boolean anyBotActive() {
+        if (swarmMode == ShmBridge.MODE_MATERIALIZED) {
+            for (int i = 0; i < matBots.size(); i++) {
+                SwarmBot b = matBots.get(i);
+                if (b.executing || b.settling) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return engineActiveBots > 0;
+    }
+
     private int cmdGoto(CommandSourceStack source, BlockPos goal) {
         int total = Math.max(swarmTotalCount, matBots.size());
         if (total == 0) {
             return reply(source, "No bots spawned.");
         }
+        paradeActive = false;
+        followPlayerUuid = null;
+        followHasLast = false;
+        BlockPos snapped = snapGoalToGround(source.getServer().overworld(), goal);
         String requester = source.getPlayer() != null ? source.getPlayer().getPlainTextName() : null;
-        issueGoal(goal.getX(), goal.getY(), goal.getZ(), 0L, requester, true);
-        return reply(source, "Goal (" + goal.getX() + " " + goal.getY() + " " + goal.getZ() + ") queued for " + total + " bot(s).");
+        issueGoal(snapped.getX(), snapped.getY(), snapped.getZ(), 0L, requester, true);
+        String snapNote = snapped.getY() != goal.getY() ? " (snapped from y=" + goal.getY() + ")" : "";
+        return reply(source, "Goal (" + snapped.getX() + " " + snapped.getY() + " " + snapped.getZ() + ")" + snapNote + " queued for " + total + " bot(s).");
+    }
+
+    private int cmdParade(CommandSourceStack source, int distance) {
+        int total = Math.max(swarmTotalCount, matBots.size());
+        if (total == 0) {
+            return reply(source, "No bots spawned.");
+        }
+        this.server = source.getServer();
+        followPlayerUuid = null;
+        followHasLast = false;
+        BlockPos origin = snapGoalToGround(server.overworld(), new BlockPos(formationAnchorX, formationAnchorY, formationAnchorZ));
+        paradeOriginX = origin.getX();
+        paradeOriginY = origin.getY();
+        paradeOriginZ = origin.getZ();
+        paradeDist = distance;
+        paradeLeg = 0;
+        paradeWaitTicks = 0;
+        paradeActive = true;
+        BlockPos leg0 = paradeCorner(0);
+        String requester = source.getPlayer() != null ? source.getPlayer().getPlainTextName() : null;
+        issueGoal(leg0.getX(), leg0.getY(), leg0.getZ(), 0L, requester, true);
+        return reply(
+            source,
+            String.format(
+                Locale.ROOT,
+                "Stormtrooper parade active for %d bot(s): %d-block square from (%d %d %d).",
+                total, distance, paradeOriginX, paradeOriginY, paradeOriginZ
+            )
+        );
+    }
+
+    private int cmdParadeOff(CommandSourceStack source) {
+        paradeActive = false;
+        stopAll();
+        return reply(source, "Parade stopped (" + Math.max(swarmTotalCount, matBots.size()) + " bot(s)).");
+    }
+
+    private int cmdCome(CommandSourceStack source) {
+        int total = Math.max(swarmTotalCount, matBots.size());
+        if (total == 0) {
+            return reply(source, "No bots spawned.");
+        }
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("/swarm come requires a player caller."));
+            return 0;
+        }
+        paradeActive = false;
+        followPlayerUuid = null;
+        followHasLast = false;
+        BlockPos ground = snapGoalToGround(source.getServer().overworld(), player.blockPosition());
+        BlockPos anchor = centeredFormationGoal(ground);
+        issueGoal(anchor.getX(), anchor.getY(), anchor.getZ(), 0L, player.getPlainTextName(), true);
+        return reply(source, "Marching " + total + " bot(s) around (" + ground.getX() + " " + ground.getY() + " " + ground.getZ() + ").");
+    }
+
+    private int cmdFollow(CommandSourceStack source, String modeArg) {
+        int total = Math.max(swarmTotalCount, matBots.size());
+        if (total == 0) {
+            return reply(source, "No bots spawned.");
+        }
+        switch (modeArg.toLowerCase(Locale.ROOT)) {
+            case "on" -> {
+                ServerPlayer player = source.getPlayer();
+                if (player == null) {
+                    source.sendFailure(Component.literal("/swarm follow on requires a player caller."));
+                    return 0;
+                }
+                paradeActive = false;
+                followPlayerUuid = player.getUUID();
+                followHasLast = false;
+                followCooldownTicks = 0;
+                BlockPos ground = snapGoalToGround(source.getServer().overworld(), player.blockPosition());
+                BlockPos anchor = centeredFormationGoal(ground);
+                followLastX = anchor.getX();
+                followLastZ = anchor.getZ();
+                followHasLast = true;
+                followCooldownTicks = 30;
+                issueGoal(anchor.getX(), anchor.getY(), anchor.getZ(), 0L, player.getPlainTextName(), true);
+                return reply(source, "Swarm following " + player.getPlainTextName() + ".");
+            }
+            case "off" -> {
+                followPlayerUuid = null;
+                followHasLast = false;
+                return reply(source, "Swarm follow disabled.");
+            }
+            default -> {
+                source.sendFailure(Component.literal("Expected on or off, got '" + modeArg + "'"));
+                return 0;
+            }
+        }
     }
 
     private int cmdStop(CommandSourceStack source) {
@@ -702,6 +900,11 @@ public final class SwarmManager {
     private void issueGoal(int gx, int gy, int gz, long issueQpc, String requester, boolean useFormation) {
         pendingGoals.clear();
         pendingBatchGoal = null;
+        if (useFormation && formation == Formation.GRID) {
+            this.formationAnchorX = gx;
+            this.formationAnchorY = gy;
+            this.formationAnchorZ = gz;
+        }
         if (swarmMode == ShmBridge.MODE_MATERIALIZED) {
             resetBatchTelemetry(requester, matBots.size());
             for (int i = 0; i < matBots.size(); i++) {
@@ -758,6 +961,9 @@ public final class SwarmManager {
         pendingGoals.clear();
         pendingBatchGoal = null;
         profilingFlight = false;
+        paradeActive = false;
+        followPlayerUuid = null;
+        followHasLast = false;
         for (int i = 0; i < matBots.size(); i++) {
             SwarmBot b = matBots.get(i);
             b.executing = false;
@@ -1087,6 +1293,44 @@ public final class SwarmManager {
             pendingStopAll = false;
             pw.reset();
             pw.send(bridge, ShmBridge.MSG_SWARM_STOP_ALL);
+        }
+
+        if (paradeActive
+            && pendingBatchGoal == null
+            && pendingSpawnBatch == null
+            && pendingGoals.isEmpty()
+            && Math.max(swarmTotalCount, matBots.size()) > 0
+            && !anyBotActive()) {
+            if (++paradeWaitTicks >= 15) {
+                paradeLeg = (paradeLeg + 1) & 3;
+                paradeWaitTicks = 0;
+                BlockPos corner = paradeCorner(paradeLeg);
+                issueGoal(corner.getX(), corner.getY(), corner.getZ(), 0L, null, true);
+            }
+        } else if (followPlayerUuid != null
+            && pendingBatchGoal == null
+            && pendingSpawnBatch == null
+            && pendingGoals.isEmpty()
+            && Math.max(swarmTotalCount, matBots.size()) > 0
+            && !anyBotActive()) {
+            if (followCooldownTicks > 0) {
+                followCooldownTicks--;
+            } else {
+                ServerPlayer target = srv.getPlayerList().getPlayer(followPlayerUuid);
+                if (target != null) {
+                    BlockPos ground = snapGoalToGround(srv.overworld(), target.blockPosition());
+                    BlockPos anchor = centeredFormationGoal(ground);
+                    int dx = anchor.getX() - followLastX;
+                    int dz = anchor.getZ() - followLastZ;
+                    if (!followHasLast || (dx * dx + dz * dz) >= 16 * 16) {
+                        followLastX = anchor.getX();
+                        followLastZ = anchor.getZ();
+                        followHasLast = true;
+                        followCooldownTicks = 30;
+                        issueGoal(anchor.getX(), anchor.getY(), anchor.getZ(), 0L, null, true);
+                    }
+                }
+            }
         }
 
         if (pendingBatchGoal != null) {
