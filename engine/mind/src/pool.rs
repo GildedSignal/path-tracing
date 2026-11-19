@@ -589,7 +589,11 @@ impl WorkerState {
                     bot.state = state;
                     bot.dirty_render = true;
                     if reason != 0 {
-                        bot.phase = BotPhase::Idle;
+                        bot.phase = if is_settled(&bot.state) {
+                            BotPhase::Idle
+                        } else {
+                            BotPhase::Settling
+                        };
                         bot.pending_replan = None;
                     }
                 } else {
@@ -618,7 +622,11 @@ impl WorkerState {
                 if let Some(&idx) = self.by_id.get(&bot_id) {
                     let bot = &mut self.bots[idx];
                     materialize_lazy_state(bot, &world, &self.programs);
-                    bot.phase = BotPhase::Idle;
+                    bot.phase = if is_settled(&bot.state) {
+                        BotPhase::Idle
+                    } else {
+                        BotPhase::Settling
+                    };
                     bot.pending_replan = None;
                     bot.dirty_render = true;
                 }
@@ -628,7 +636,11 @@ impl WorkerState {
                 let world = self.world.read().unwrap();
                 for bot in &mut self.bots {
                     materialize_lazy_state(bot, &world, &self.programs);
-                    bot.phase = BotPhase::Idle;
+                    bot.phase = if is_settled(&bot.state) {
+                        BotPhase::Idle
+                    } else {
+                        BotPhase::Settling
+                    };
                     bot.pending_replan = None;
                     bot.dirty_render = true;
                 }

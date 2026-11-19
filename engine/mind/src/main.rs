@@ -1063,4 +1063,70 @@ mod tests {
             assert_eq!(sum.joints, 0);
         }
     }
+
+    #[test]
+    fn stop_midair_falls_and_settles_on_ground() {
+        let make_state = |z: f64| PlayerState {
+            position: Vec3::new(0.5, -60.0, z),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, z.floor() as i32]),
+            health: 20.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world, progs);
+        pool.spawn_one(1, protocol::MODE_VIRTUAL, make_state(0.5));
+        pool.spawn_one(2, protocol::MODE_MATERIALIZED, make_state(2.5));
+        assert_eq!(pool.goal_one(1, [80, -60, 0])[0].status, protocol::PLAN_STATUS_READY);
+        assert_eq!(pool.goal_one(2, [80, -60, 2])[0].status, protocol::PLAN_STATUS_READY);
+
+        let cfg = SwarmConfig {
+            canary_count: 0,
+            ..SwarmConfig::default()
+        };
+        let mut last_sent = FxHashMap::default();
+        let mut tick = 0u64;
+        let mut both_airborne = false;
+        for _ in 0..20 {
+            tick += 1;
+            let (out, _) = pool.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut last_sent, true, false);
+            let virt_air = out.render_bots.iter().find(|r| r.bot_index == 0).is_some_and(|r| r.y > -59.5);
+            let mat_air = out.tick_cmds.iter().find(|c| c.bot_id == 2).is_some_and(|c| c.y > -59.5);
+            if virt_air && mat_air {
+                both_airborne = true;
+                break;
+            }
+        }
+        assert!(both_airborne, "bots never became airborne");
+
+        pool.stop_all();
+
+        let mut saw_settling = false;
+        let mut last_virt = None;
+        let mut last_mat = None;
+        for _ in 0..60 {
+            tick += 1;
+            let (out, _) = pool.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut last_sent, true, false);
+            if let Some(r) = out.render_bots.iter().find(|r| r.bot_index == 0) {
+                last_virt = Some((r.y, (r.flags & 1) != 0));
+            }
+            if let Some(c) = out.tick_cmds.iter().find(|c| c.bot_id == 2) {
+                last_mat = Some((c.y, (c.flags & protocol::FLAG_ON_GROUND) != 0));
+            }
+            if out.stats.active_bots > 0 {
+                saw_settling = true;
+            } else {
+                assert!(saw_settling, "airborne bots froze without settling");
+                let (vy, vg) = last_virt.expect("virtual settled pose");
+                let (my, mg) = last_mat.expect("materialized settled pose");
+                assert!((vy - (-60.0)).abs() < 1e-6 && vg, "virtual landed at y={vy}, ground={vg}");
+                assert!((my - (-60.0)).abs() < 1e-6 && mg, "materialized landed at y={my}, ground={mg}");
+                return;
+            }
+        }
+        panic!("stopped airborne bots did not settle within 60 ticks");
+    }
 }

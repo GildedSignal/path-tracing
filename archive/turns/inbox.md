@@ -128,3 +128,8 @@ this is actually hilarious wow good job, i added a gif for an issue in how bots 
 ### 2026-11-19 15:34
 
 continue
+
+
+### 2026-11-19 15:44
+
+there's a small bug when i stoped them they are mid air floating right now which makes no sense since we're supposed to follow server's physics
