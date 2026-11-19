@@ -154,3 +154,9 @@ they are real bots far away too right? they are subjegated to the same physics a
 
 i think we're good now you can update the doc i validate for now
 
+
+### 2026-11-19 16:24
+
+you can close the server. now i want to port what do you think of it? maybe not porting what glm is already set to port
+
+
