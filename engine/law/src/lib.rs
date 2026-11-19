@@ -60,7 +60,11 @@ pub mod state_reads;
 
 pub mod boat;
 pub mod elytra;
+pub mod interact;
 pub mod pearl;
+pub mod place;
+pub mod player;
+pub mod portal;
 
 #[cfg(feature = "count-state-copies")]
 pub use state::player_state_copies;

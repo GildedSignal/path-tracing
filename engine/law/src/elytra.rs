@@ -103,6 +103,198 @@ pub fn fly_into_wall_damage(
     (f7 > 0.0f32 || f7.is_nan()).then_some(f7)
 }
 
+// ============================================================================
+// Part 11: Elytra: when it starts, stops, and breaks
+// ============================================================================
+
+/// Default Mojang 26.2 elytra `MAX_DAMAGE`.
+pub const ELYTRA_MAX_DAMAGE: i32 = 432;
+
+/// `EquipmentSlot.values()` declaration order (`@0-80`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EquipmentSlot {
+    Mainhand = 0,
+    Offhand = 1,
+    Feet = 2,
+    Legs = 3,
+    Chest = 4,
+    Head = 5,
+    Body = 6,
+    Saddle = 7,
+}
+
+impl EquipmentSlot {
+    pub const VALUES: [Self; 8] = [
+        Self::Mainhand,
+        Self::Offhand,
+        Self::Feet,
+        Self::Legs,
+        Self::Chest,
+        Self::Head,
+        Self::Body,
+        Self::Saddle,
+    ];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GliderSlotStack {
+    pub has_glider: bool,
+    pub equippable_slot: Option<EquipmentSlot>,
+    pub damageable: bool,
+    pub damage: i32,
+    pub max_damage: i32,
+}
+
+impl GliderSlotStack {
+    pub const fn elytra(damage: i32) -> Self {
+        Self {
+            has_glider: true,
+            equippable_slot: Some(EquipmentSlot::Chest),
+            damageable: true,
+            damage,
+            max_damage: ELYTRA_MAX_DAMAGE,
+        }
+    }
+}
+
+/// `ItemStack.nextDamageWillBreak()` (`@0-25`).
+pub const fn next_damage_will_break(damageable: bool, damage: i32, max_damage: i32) -> bool {
+    damageable && damage >= max_damage - 1
+}
+
+/// `LivingEntity.canGlideUsing(ItemStack, EquipmentSlot)` (`@0-37`).
+pub fn can_glide_using(stack: &GliderSlotStack, slot: EquipmentSlot) -> bool {
+    stack.has_glider
+        && stack.equippable_slot == Some(slot)
+        && !next_damage_will_break(stack.damageable, stack.damage, stack.max_damage)
+}
+
+/// `LivingEntity.canGlide()` (`@0-68`).
+/// Water (`is_in_water`) and `SLOW_FALLING` do NOT block `canGlide`; only `on_ground`,
+/// `is_passenger`, `MobEffects.LEVITATION`, and needing >= 1 qualifying non-breaking glider do.
+pub fn living_can_glide(
+    on_ground: bool,
+    is_passenger: bool,
+    has_levitation: bool,
+    slots: &[Option<GliderSlotStack>; 8],
+) -> bool {
+    if on_ground || is_passenger || has_levitation {
+        return false;
+    }
+    EquipmentSlot::VALUES.into_iter().any(|slot| {
+        slots[slot as usize]
+            .as_ref()
+            .is_some_and(|stack| can_glide_using(stack, slot))
+    })
+}
+
+/// `Player.canGlide()` (`@0-16`): creative/spectator `abilities.flying` blocks gliding.
+pub fn player_can_glide(
+    abilities_flying: bool,
+    on_ground: bool,
+    is_passenger: bool,
+    has_levitation: bool,
+    slots: &[Option<GliderSlotStack>; 8],
+) -> bool {
+    !abilities_flying && living_can_glide(on_ground, is_passenger, has_levitation, slots)
+}
+
+/// `Player.tryToStartFallFlying()` (`@0-22`): client+server entry gate (sets flag 7 when true).
+/// Note: water (`is_in_water`) blocks starting here, NOT `canGlide()`.
+pub const fn try_to_start_fall_flying(
+    is_fall_flying: bool,
+    can_glide: bool,
+    is_in_water: bool,
+) -> bool {
+    !is_fall_flying && can_glide && !is_in_water
+}
+
+/// `LocalPlayer.aiStep` jump-edge gate (`@875-929`) before `tryToStartFallFlying()`.
+pub const fn ai_step_start_fall_flying(
+    was_jumping: bool,
+    jump_pressed: bool,
+    consumed_by_mayfly_double_tap: bool,
+    on_climbable: bool,
+    can_start_fall_flying: bool,
+) -> bool {
+    !was_jumping
+        && jump_pressed
+        && !consumed_by_mayfly_double_tap
+        && !on_climbable
+        && can_start_fall_flying
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FallFlyingUpdateResult {
+    pub worn_slot: Option<EquipmentSlot>,
+    pub emitted_glide_game_event: bool,
+    pub cleared_fall_flying: bool,
+}
+
+/// `LivingEntity.updateFallFlying()` (`@0-135`).
+/// Called BEFORE `aiStep`'s `++fallFlyTicks` increment; does not mutate `fall_fly_ticks`.
+/// On `!can_glide`: clears `flag7_fall_flying` and returns without wear or gameEvent.
+/// When `can_glide && is_server_level`:
+/// - fires `gameEvent(ELYTRA_GLIDE)` whenever `(fall_fly_ticks + 1) % 10 == 0`;
+/// - wears (`+1` damage) the first `EquipmentSlot::VALUES` glider slot passing `can_glide_using`
+///   whenever `((fall_fly_ticks + 1) / 10) % 2 == 0` (i.e. `fall_fly_ticks = 19, 39, 59, ...`).
+pub fn update_fall_flying(
+    flag7_fall_flying: &mut bool,
+    fall_fly_ticks: i32,
+    abilities_flying: bool,
+    on_ground: bool,
+    is_passenger: bool,
+    has_levitation: bool,
+    is_server_level: bool,
+    slots: &mut [Option<GliderSlotStack>; 8],
+) -> FallFlyingUpdateResult {
+    let can_glide = player_can_glide(
+        abilities_flying,
+        on_ground,
+        is_passenger,
+        has_levitation,
+        slots,
+    );
+    if !can_glide {
+        let was_flying = *flag7_fall_flying;
+        *flag7_fall_flying = false;
+        return FallFlyingUpdateResult {
+            worn_slot: None,
+            emitted_glide_game_event: false,
+            cleared_fall_flying: was_flying,
+        };
+    }
+
+    let mut worn_slot = None;
+    let mut emitted_glide_game_event = false;
+    if *flag7_fall_flying && is_server_level {
+        let i = fall_fly_ticks + 1;
+        if i % 10 == 0 {
+            if (i / 10) % 2 == 0 {
+                for slot in EquipmentSlot::VALUES {
+                    if let Some(stack) = slots[slot as usize].as_mut() {
+                        if can_glide_using(stack, slot) {
+                            if stack.damageable {
+                                stack.damage += 1;
+                            }
+                            worn_slot = Some(slot);
+                            break;
+                        }
+                    }
+                }
+            }
+            emitted_glide_game_event = true;
+        }
+    }
+
+    FallFlyingUpdateResult {
+        worn_slot,
+        emitted_glide_game_event,
+        cleared_fall_flying: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +409,116 @@ mod tests {
         );
         assert_eq!(fly_into_wall_damage(true, -0.0, 0.0), None); // check-adversarial.txt:26
         assert!(fly_into_wall_damage(true, f64::NAN, 0.0).is_some_and(f32::is_nan)); // check-adversarial.txt:27
+    }
+
+    #[test]
+    fn part11_elytra_start_and_stop_witnesses() {
+        // evidence/probe-output.txt:10-25 & check-evidence/check-output.txt:4-16
+        assert!(!next_damage_will_break(true, 429, ELYTRA_MAX_DAMAGE));
+        assert!(!next_damage_will_break(true, 430, ELYTRA_MAX_DAMAGE));
+        assert!(next_damage_will_break(true, 431, ELYTRA_MAX_DAMAGE));
+        assert!(next_damage_will_break(true, 432, ELYTRA_MAX_DAMAGE));
+        // Undamageable glider does not break even at max_damage-1 (check-output.txt:13-15)
+        assert!(!next_damage_will_break(false, 431, ELYTRA_MAX_DAMAGE));
+
+        // canGlideUsing checks stack.has_glider && slot match && !next_damage_will_break
+        assert!(can_glide_using(&GliderSlotStack::elytra(430), EquipmentSlot::Chest));
+        assert!(!can_glide_using(&GliderSlotStack::elytra(431), EquipmentSlot::Chest));
+        for wrong in [
+            EquipmentSlot::Mainhand,
+            EquipmentSlot::Offhand,
+            EquipmentSlot::Feet,
+            EquipmentSlot::Legs,
+            EquipmentSlot::Head,
+            EquipmentSlot::Body,
+            EquipmentSlot::Saddle,
+        ] {
+            assert!(!can_glide_using(&GliderSlotStack::elytra(0), wrong), "slot={wrong:?}");
+        }
+        // Head-equippable glider works only from Head, not Chest (check-output.txt:10-12)
+        let head_glider = GliderSlotStack {
+            has_glider: true,
+            equippable_slot: Some(EquipmentSlot::Head),
+            damageable: false,
+            damage: 431,
+            max_damage: ELYTRA_MAX_DAMAGE,
+        };
+        assert!(can_glide_using(&head_glider, EquipmentSlot::Head));
+        assert!(!can_glide_using(&head_glider, EquipmentSlot::Chest));
+
+        // Slot helper
+        let slots_with = |slot: EquipmentSlot, stack: GliderSlotStack| -> [Option<GliderSlotStack>; 8] {
+            let mut s = [None; 8];
+            s[slot as usize] = Some(stack);
+            s
+        };
+
+        // G1..G8 & A4-A5 (probe-output.txt:27-48 & check-output.txt:17-20)
+        let good_slots = slots_with(EquipmentSlot::Chest, GliderSlotStack::elytra(0));
+        // canGlide: true in air even in water (G6) and with slow falling (A5); false on_ground / passenger / levitation / creative flying
+        assert!(living_can_glide(false, false, false, &good_slots));
+        assert!(!living_can_glide(true, false, false, &good_slots));
+        assert!(!living_can_glide(false, true, false, &good_slots));
+        assert!(!living_can_glide(false, false, true, &good_slots));
+        assert!(!player_can_glide(true, false, false, false, &good_slots));
+        assert!(player_can_glide(false, false, false, false, &good_slots));
+
+        // tryToStartFallFlying blocks in water even when canGlide is true (probe-output.txt:36-40)
+        let cg = player_can_glide(false, false, false, false, &good_slots);
+        assert!(try_to_start_fall_flying(false, cg, false));
+        assert!(!try_to_start_fall_flying(false, cg, true));
+        assert!(!try_to_start_fall_flying(true, cg, false));
+
+        // LocalPlayer jump-edge gate requires !was_jumping && jump && !double_tap && !on_climbable
+        assert!(ai_step_start_fall_flying(false, true, false, false, true));
+        assert!(!ai_step_start_fall_flying(true, true, false, false, true));
+        assert!(!ai_step_start_fall_flying(false, true, true, false, true));
+        assert!(!ai_step_start_fall_flying(false, true, false, true, true));
+
+        // 65-tick durability & ELYTRA_GLIDE cadence (probe-output.txt:52-79):
+        // gameEvent at fallFlyTicks=9,19,29,39,49,59; wear at fallFlyTicks=19,39,59
+        let mut slots = slots_with(EquipmentSlot::Chest, GliderSlotStack::elytra(0));
+        let mut flag7 = true;
+        let mut worn_at = Vec::new();
+        let mut events_at = Vec::new();
+        for t in 0..65 {
+            let step = update_fall_flying(&mut flag7, t, false, false, false, false, true, &mut slots);
+            if step.worn_slot.is_some() {
+                worn_at.push(t);
+            }
+            if step.emitted_glide_game_event {
+                events_at.push(t);
+            }
+        }
+        assert_eq!(worn_at, vec![19, 39, 59]);
+        assert_eq!(events_at, vec![9, 19, 29, 39, 49, 59]);
+        assert_eq!(slots[EquipmentSlot::Chest as usize].unwrap().damage, 3);
+        assert!(flag7);
+
+        // Near-break boundary starting at dmg=429 (check-output.txt:22-77):
+        // wears to 430 at t=19, wears to 431 at t=39 (flag7 still true on that tick!),
+        // then at t=40 canGlide is false -> flag7 clears with NO wear or gameEvent.
+        let mut near_break = slots_with(EquipmentSlot::Chest, GliderSlotStack::elytra(429));
+        let mut fly = true;
+        for t in 0..=40 {
+            let res = update_fall_flying(&mut fly, t, false, false, false, false, true, &mut near_break);
+            if t < 19 {
+                assert_eq!(near_break[EquipmentSlot::Chest as usize].unwrap().damage, 429);
+                assert!(fly);
+            } else if t < 39 {
+                assert_eq!(near_break[EquipmentSlot::Chest as usize].unwrap().damage, 430);
+                assert!(fly);
+            } else if t == 39 {
+                assert_eq!(near_break[EquipmentSlot::Chest as usize].unwrap().damage, 431);
+                assert_eq!(res.worn_slot, Some(EquipmentSlot::Chest));
+                assert!(fly);
+            } else {
+                // t == 40
+                assert!(!fly);
+                assert!(res.cleared_fall_flying);
+                assert_eq!(res.worn_slot, None);
+                assert!(!res.emitted_glide_game_event);
+            }
+        }
     }
 }
