@@ -22,6 +22,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
@@ -33,6 +34,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Input;
@@ -45,6 +49,7 @@ import pathtracing.server.mixin.LivingEntityAccessor;
 public final class SwarmManager {
     enum Formation { GRID, POINT }
     enum StickMode { ALL, ONE }
+    enum ParadeMode { IMPERIAL, SQUARE }
 
     private record PendingGoal(int botId, int gx, int gy, int gz, long issueQpc, String requester) {}
 
@@ -61,7 +66,16 @@ public final class SwarmManager {
         double spacingZ
     ) {}
 
-    private record PendingBatchGoal(int gx, int gy, int gz, boolean grid, long issueQpc, String requester) {}
+    private record PendingBatchGoal(
+        int gx,
+        int gy,
+        int gz,
+        int formationMode,
+        int param,
+        int waveTicks,
+        long issueQpc,
+        String requester
+    ) {}
 
     private static final class SyntheticObserver {
         final int id;
@@ -166,12 +180,14 @@ public final class SwarmManager {
     private float formationSpacing = 1.5f;
 
     private boolean paradeActive = false;
+    private ParadeMode paradeMode = ParadeMode.IMPERIAL;
     private int paradeOriginX = 0;
     private int paradeOriginY = -60;
     private int paradeOriginZ = 0;
-    private int paradeDist = 60;
+    private int paradeDist = 56;
     private int paradeLeg = 0;
     private int paradeWaitTicks = 0;
+    private int paradeMarchTicks = 0;
 
     private UUID followPlayerUuid = null;
     private int followLastX = 0;
@@ -256,11 +272,15 @@ public final class SwarmManager {
                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
                     .executes(ctx -> cmdGoto(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos")))))
             .then(Commands.literal("parade")
-                .executes(ctx -> cmdParade(ctx.getSource(), 60))
+                .executes(ctx -> cmdParade(ctx.getSource(), ParadeMode.IMPERIAL, 56))
                 .then(Commands.literal("off")
                     .executes(ctx -> cmdParadeOff(ctx.getSource())))
+                .then(Commands.literal("square")
+                    .executes(ctx -> cmdParade(ctx.getSource(), ParadeMode.SQUARE, 60))
+                    .then(Commands.argument("distance", IntegerArgumentType.integer(10, 500))
+                        .executes(ctx -> cmdParade(ctx.getSource(), ParadeMode.SQUARE, IntegerArgumentType.getInteger(ctx, "distance")))))
                 .then(Commands.argument("distance", IntegerArgumentType.integer(10, 500))
-                    .executes(ctx -> cmdParade(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "distance")))))
+                    .executes(ctx -> cmdParade(ctx.getSource(), ParadeMode.IMPERIAL, IntegerArgumentType.getInteger(ctx, "distance")))))
             .then(Commands.literal("come")
                 .executes(ctx -> cmdCome(ctx.getSource())))
             .then(Commands.literal("follow")
@@ -525,6 +545,7 @@ public final class SwarmManager {
         paradeActive = false;
         followPlayerUuid = null;
         followHasLast = false;
+        clearPosture();
         try {
             suppressJoinChat = true;
             for (int i = 0; i < matBots.size(); i++) {
@@ -741,6 +762,7 @@ public final class SwarmManager {
         paradeActive = false;
         followPlayerUuid = null;
         followHasLast = false;
+        clearPosture();
         BlockPos snapped = snapGoalToGround(source.getServer().overworld(), goal);
         String requester = source.getPlayer() != null ? source.getPlayer().getPlainTextName() : null;
         issueGoal(snapped.getX(), snapped.getY(), snapped.getZ(), 0L, requester, true);
@@ -748,7 +770,109 @@ public final class SwarmManager {
         return reply(source, "Goal (" + snapped.getX() + " " + snapped.getY() + " " + snapped.getZ() + ")" + snapNote + " queued for " + total + " bot(s).");
     }
 
-    private int cmdParade(CommandSourceStack source, int distance) {
+    private void sendPosture(int flags, double tx, double ty, double tz) {
+        if (bridge == null || !bridge.isEngineAlive()) {
+            return;
+        }
+        pw.reset();
+        pw.u8(flags);
+        pw.f64(tx);
+        pw.f64(ty);
+        pw.f64(tz);
+        pw.send(bridge, ShmBridge.MSG_SWARM_POSTURE);
+    }
+
+    private void clearPosture() {
+        sendPosture(0, 0.0, 0.0, 0.0);
+    }
+
+    private void broadcastParadeSound(SoundEvent sound, float volume, float pitch) {
+        if (server == null) {
+            return;
+        }
+        ServerLevel level = server.overworld();
+        List<ServerPlayer> players = level.players();
+        for (int i = 0; i < players.size(); i++) {
+            ServerPlayer p = players.get(i);
+            if (!(p instanceof SwarmBot)) {
+                level.playSound(null, p.getX(), p.getY(), p.getZ(), sound, SoundSource.PLAYERS, volume, pitch);
+            }
+        }
+    }
+
+    private void broadcastParadeSoundHolder(Holder<SoundEvent> sound, float volume, float pitch) {
+        if (server == null) {
+            return;
+        }
+        ServerLevel level = server.overworld();
+        List<ServerPlayer> players = level.players();
+        for (int i = 0; i < players.size(); i++) {
+            ServerPlayer p = players.get(i);
+            if (!(p instanceof SwarmBot)) {
+                level.playSound(null, p.getX(), p.getY(), p.getZ(), sound, SoundSource.PLAYERS, volume, pitch);
+            }
+        }
+    }
+
+    private void broadcastActionBar(String text) {
+        if (server == null) {
+            return;
+        }
+        List<ServerPlayer> players = server.overworld().players();
+        for (int i = 0; i < players.size(); i++) {
+            ServerPlayer p = players.get(i);
+            if (!(p instanceof SwarmBot)) {
+                p.sendSystemMessage(Component.literal(text), true);
+            }
+        }
+    }
+
+    private ServerPlayer findNearestHuman() {
+        if (server == null) {
+            return null;
+        }
+        List<ServerPlayer> players = server.overworld().players();
+        for (int i = 0; i < players.size(); i++) {
+            ServerPlayer p = players.get(i);
+            if (!(p instanceof SwarmBot)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    private void dispatchImperialAct(int act, String requester) {
+        int ox = paradeOriginX;
+        int oy = paradeOriginY;
+        int oz = paradeOriginZ;
+        int d = paradeDist;
+        String actTitle;
+        switch (act % 5) {
+            case 0 -> {
+                actTitle = "I. THE SPEARHEAD";
+                issueBatchGoal(ox + d, oy, oz, ShmBridge.FORM_WEDGE, 0, 0, 0L, requester);
+            }
+            case 1 -> {
+                actTitle = "II. THE FOUR LEGIONS";
+                issueBatchGoal(ox + d, oy, oz, ShmBridge.FORM_QUAD, 18, 0, 0L, requester);
+            }
+            case 2 -> {
+                actTitle = "III. THE GRAND CITADEL";
+                issueBatchGoal(ox + (d / 2), oy, oz, ShmBridge.FORM_CITADEL, 6, 0, 0L, requester);
+            }
+            case 3 -> {
+                actTitle = "IV. THE RED SEA";
+                issueBatchGoal(ox, oy, oz, ShmBridge.FORM_CORRIDOR, 22, 0, 0L, requester);
+            }
+            default -> {
+                actTitle = "V. THE SHOCKWAVE ADVANCE";
+                issueBatchGoal(ox, oy, oz, ShmBridge.FORM_GRID, 0, 45, 0L, requester);
+            }
+        }
+        broadcastActionBar("§4§l" + actTitle);
+    }
+
+    private int cmdParade(CommandSourceStack source, ParadeMode mode, int distance) {
         int total = Math.max(swarmTotalCount, matBots.size());
         if (total == 0) {
             return reply(source, "No bots spawned.");
@@ -756,22 +880,36 @@ public final class SwarmManager {
         this.server = source.getServer();
         followPlayerUuid = null;
         followHasLast = false;
+        clearPosture();
         BlockPos origin = snapGoalToGround(server.overworld(), new BlockPos(formationAnchorX, formationAnchorY, formationAnchorZ));
         paradeOriginX = origin.getX();
         paradeOriginY = origin.getY();
         paradeOriginZ = origin.getZ();
+        paradeMode = mode;
         paradeDist = distance;
         paradeLeg = 0;
         paradeWaitTicks = 0;
+        paradeMarchTicks = 0;
         paradeActive = true;
-        BlockPos leg0 = paradeCorner(0);
         String requester = source.getPlayer() != null ? source.getPlayer().getPlainTextName() : null;
+        if (mode == ParadeMode.IMPERIAL && swarmMode != ShmBridge.MODE_MATERIALIZED) {
+            dispatchImperialAct(0, requester);
+            return reply(
+                source,
+                String.format(
+                    Locale.ROOT,
+                    "Imperial 5-Act parade active for %d bot(s) from (%d %d %d) span=%d.",
+                    total, paradeOriginX, paradeOriginY, paradeOriginZ, distance
+                )
+            );
+        }
+        BlockPos leg0 = paradeCorner(0);
         issueGoal(leg0.getX(), leg0.getY(), leg0.getZ(), 0L, requester, true);
         return reply(
             source,
             String.format(
                 Locale.ROOT,
-                "Stormtrooper parade active for %d bot(s): %d-block square from (%d %d %d).",
+                "Square stormtrooper parade active for %d bot(s): %d-block square from (%d %d %d).",
                 total, distance, paradeOriginX, paradeOriginY, paradeOriginZ
             )
         );
@@ -779,6 +917,7 @@ public final class SwarmManager {
 
     private int cmdParadeOff(CommandSourceStack source) {
         paradeActive = false;
+        clearPosture();
         stopAll();
         return reply(source, "Parade stopped (" + Math.max(swarmTotalCount, matBots.size()) + " bot(s)).");
     }
@@ -796,6 +935,7 @@ public final class SwarmManager {
         paradeActive = false;
         followPlayerUuid = null;
         followHasLast = false;
+        clearPosture();
         BlockPos ground = snapGoalToGround(source.getServer().overworld(), player.blockPosition());
         BlockPos anchor = centeredFormationGoal(ground);
         issueGoal(anchor.getX(), anchor.getY(), anchor.getZ(), 0L, player.getPlainTextName(), true);
@@ -815,6 +955,7 @@ public final class SwarmManager {
                     return 0;
                 }
                 paradeActive = false;
+                clearPosture();
                 followPlayerUuid = player.getUUID();
                 followHasLast = false;
                 followCooldownTicks = 0;
@@ -898,14 +1039,15 @@ public final class SwarmManager {
     }
 
     private void issueGoal(int gx, int gy, int gz, long issueQpc, String requester, boolean useFormation) {
-        pendingGoals.clear();
-        pendingBatchGoal = null;
-        if (useFormation && formation == Formation.GRID) {
-            this.formationAnchorX = gx;
-            this.formationAnchorY = gy;
-            this.formationAnchorZ = gz;
-        }
+        int mode = (useFormation && formation == Formation.GRID) ? ShmBridge.FORM_GRID : ShmBridge.FORM_POINT;
         if (swarmMode == ShmBridge.MODE_MATERIALIZED) {
+            pendingGoals.clear();
+            pendingBatchGoal = null;
+            if (useFormation && formation == Formation.GRID) {
+                this.formationAnchorX = gx;
+                this.formationAnchorY = gy;
+                this.formationAnchorZ = gz;
+            }
             resetBatchTelemetry(requester, matBots.size());
             for (int i = 0; i < matBots.size(); i++) {
                 SwarmBot b = matBots.get(i);
@@ -919,20 +1061,42 @@ public final class SwarmManager {
                 pendingGoals.add(new PendingGoal(b.botId, tx, gy, tz, issueQpc, requester));
             }
         } else {
-            int total = Math.max(swarmTotalCount, engineTotalBots);
-            resetBatchTelemetry(requester, total);
-            for (int i = 0; i < matBots.size(); i++) {
-                resetBotPlanFields(matBots.get(i), requester);
-            }
-            pendingBatchGoal = new PendingBatchGoal(
-                gx,
-                gy,
-                gz,
-                useFormation && formation == Formation.GRID,
-                issueQpc,
-                requester
-            );
+            issueBatchGoal(gx, gy, gz, mode, 0, 0, issueQpc, requester);
         }
+    }
+
+    private void issueBatchGoal(
+        int gx,
+        int gy,
+        int gz,
+        int formationMode,
+        int param,
+        int waveTicks,
+        long issueQpc,
+        String requester
+    ) {
+        pendingGoals.clear();
+        pendingBatchGoal = null;
+        if (formationMode == ShmBridge.FORM_GRID) {
+            this.formationAnchorX = gx;
+            this.formationAnchorY = gy;
+            this.formationAnchorZ = gz;
+        }
+        int total = Math.max(swarmTotalCount, engineTotalBots);
+        resetBatchTelemetry(requester, total);
+        for (int i = 0; i < matBots.size(); i++) {
+            resetBotPlanFields(matBots.get(i), requester);
+        }
+        pendingBatchGoal = new PendingBatchGoal(
+            gx,
+            gy,
+            gz,
+            formationMode,
+            param,
+            waveTicks,
+            issueQpc,
+            requester
+        );
     }
 
     private void issueSingleGoal(SwarmBot bot, int gx, int gy, int gz, long issueQpc, String requester) {
@@ -964,6 +1128,7 @@ public final class SwarmManager {
         paradeActive = false;
         followPlayerUuid = null;
         followHasLast = false;
+        clearPosture();
         for (int i = 0; i < matBots.size(); i++) {
             SwarmBot b = matBots.get(i);
             b.executing = false;
@@ -1295,17 +1460,55 @@ public final class SwarmManager {
             pw.send(bridge, ShmBridge.MSG_SWARM_STOP_ALL);
         }
 
-        if (paradeActive
-            && pendingBatchGoal == null
-            && pendingSpawnBatch == null
-            && pendingGoals.isEmpty()
-            && Math.max(swarmTotalCount, matBots.size()) > 0
-            && !anyBotActive()) {
-            if (++paradeWaitTicks >= 15) {
-                paradeLeg = (paradeLeg + 1) & 3;
+        if (paradeActive && pendingBatchGoal == null && pendingSpawnBatch == null && Math.max(swarmTotalCount, matBots.size()) > 0) {
+            if (anyBotActive()) {
                 paradeWaitTicks = 0;
-                BlockPos corner = paradeCorner(paradeLeg);
-                issueGoal(corner.getX(), corner.getY(), corner.getZ(), 0L, null, true);
+                paradeMarchTicks++;
+                if (paradeMode == ParadeMode.IMPERIAL && (paradeMarchTicks % 12 == 1)) {
+                    broadcastParadeSoundHolder(SoundEvents.NOTE_BLOCK_BASEDRUM, 0.65f, 0.5f);
+                    broadcastParadeSound(SoundEvents.RAVAGER_STEP, 0.55f, 0.55f);
+                }
+            } else if (pendingGoals.isEmpty()) {
+                paradeMarchTicks = 0;
+                if (paradeMode == ParadeMode.IMPERIAL && swarmMode != ShmBridge.MODE_MATERIALIZED) {
+                    paradeWaitTicks++;
+                    if (paradeWaitTicks == 1) {
+                        broadcastParadeSound(SoundEvents.ANVIL_LAND, 0.4f, 0.45f);
+                        broadcastParadeSound(SoundEvents.HEAVY_CORE_FALL, 0.7f, 0.5f);
+                    }
+                    if (paradeWaitTicks >= 10 && paradeWaitTicks <= 48) {
+                        ServerPlayer human = findNearestHuman();
+                        double tx = human != null ? human.getX() : -125.0;
+                        double ty = human != null ? (human.getY() + 1.62) : -50.4;
+                        double tz = human != null ? human.getZ() : -205.0;
+                        int flags = ShmBridge.POSTURE_STARE
+                            | ((paradeWaitTicks >= 22 && paradeWaitTicks <= 36) ? ShmBridge.POSTURE_SALUTE : 0);
+                        sendPosture(flags, tx, ty, tz);
+                        if (paradeWaitTicks == 10) {
+                            broadcastParadeSound(SoundEvents.WARDEN_HEARTBEAT, 0.9f, 0.7f);
+                            broadcastParadeSound(SoundEvents.BELL_RESONATE, 0.55f, 0.5f);
+                            broadcastActionBar("§8§o10,000 eyes lock onto you...");
+                        } else if (paradeWaitTicks == 22) {
+                            broadcastParadeSound(SoundEvents.TRIAL_SPAWNER_OMINOUS_ACTIVATE, 0.5f, 0.65f);
+                            broadcastActionBar("§4§lHOLD. SALUTE.");
+                        }
+                    } else if (paradeWaitTicks == 49) {
+                        clearPosture();
+                    } else if (paradeWaitTicks >= 55) {
+                        broadcastParadeSoundHolder(SoundEvents.RAID_HORN, 0.6f, 0.85f);
+                        broadcastParadeSound(SoundEvents.BEACON_ACTIVATE, 0.5f, 0.55f);
+                        paradeLeg = (paradeLeg + 1) % 5;
+                        paradeWaitTicks = 0;
+                        dispatchImperialAct(paradeLeg, null);
+                    }
+                } else {
+                    if (++paradeWaitTicks >= 15) {
+                        paradeLeg = (paradeLeg + 1) & 3;
+                        paradeWaitTicks = 0;
+                        BlockPos corner = paradeCorner(paradeLeg);
+                        issueGoal(corner.getX(), corner.getY(), corner.getZ(), 0L, null, true);
+                    }
+                }
             }
         } else if (followPlayerUuid != null
             && pendingBatchGoal == null
@@ -1340,7 +1543,9 @@ public final class SwarmManager {
             pw.i32(bg.gx);
             pw.i32(bg.gy);
             pw.i32(bg.gz);
-            pw.u8(bg.grid ? 0 : 1);
+            pw.u8(bg.formationMode);
+            pw.i32(bg.param);
+            pw.u16(bg.waveTicks);
             pw.u64(bg.issueQpc);
             pw.send(bridge, ShmBridge.MSG_SWARM_GOAL_BATCH);
             heavyWorkThisTick = true;

@@ -5,7 +5,9 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
@@ -31,6 +33,8 @@ public final class SwarmBuffer {
     private final float[] prevPhaseByIndex = new float[MAX_INDEX];
     private final float[] currPhaseByIndex = new float[MAX_INDEX];
     private final byte[] skinCache = new byte[MAX_INDEX];
+    private final UUID[] uuidCache = new UUID[MAX_INDEX];
+    private final Set<UUID> trackedBotUuids = new HashSet<>();
     private int frameSeq = 0;
 
     private int prevCount = 0;
@@ -90,6 +94,11 @@ public final class SwarmBuffer {
         currCount = 0;
         frameSeq = 0;
         lastFrameNanos = 0L;
+        trackedBotUuids.clear();
+    }
+
+    public synchronized boolean isTrackedBotUuid(UUID uuid) {
+        return uuid != null && trackedBotUuids.contains(uuid);
     }
 
     public synchronized int totalBots() {
@@ -178,6 +187,7 @@ public final class SwarmBuffer {
         currOriginY = oy;
         currOriginZ = oz;
         currCount = count;
+        trackedBotUuids.clear();
 
         for (int i = 0; i < count; i++) {
             float rx = bb.getFloat();
@@ -202,6 +212,10 @@ public final class SwarmBuffer {
             }
             if (botIndex < MAX_INDEX) {
                 currSlotByIndex[botIndex] = i;
+            }
+            UUID botUuid = uuidFor(botIndex);
+            if (botUuid != null) {
+                trackedBotUuids.add(botUuid);
             }
             currIndices[i] = botIndex;
             currSlotFrameSeq[i] = seq;
@@ -258,6 +272,20 @@ public final class SwarmBuffer {
         currFlags[slot] = flags;
     }
 
+    private UUID uuidFor(int botIndex) {
+        if (botIndex < 0 || botIndex >= MAX_INDEX) {
+            return null;
+        }
+        UUID cached = uuidCache[botIndex];
+        if (cached != null) {
+            return cached;
+        }
+        String name = botIndex == 0 ? "PathBot" : String.format(Locale.ROOT, "Swarm%04d", botIndex);
+        UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+        uuidCache[botIndex] = uuid;
+        return uuid;
+    }
+
     private float skinLayerFor(int botIndex) {
         if (botIndex < 0 || botIndex >= MAX_INDEX) {
             return 6.0f;
@@ -266,8 +294,7 @@ public final class SwarmBuffer {
         if (cached >= 0) {
             return (float) cached;
         }
-        String name = botIndex == 0 ? "PathBot" : String.format(Locale.ROOT, "Swarm%04d", botIndex);
-        UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+        UUID uuid = uuidFor(botIndex);
         int idx = Math.floorMod(uuid.hashCode(), 18) % 9;
         skinCache[botIndex] = (byte) idx;
         return (float) idx;
@@ -320,6 +347,7 @@ public final class SwarmBuffer {
         double camY,
         double camZ,
         Matrix4f viewProj,
+        Set<UUID> liveClientBotUuids,
         float[] outOriginRelCam,
         int[] outLodCounts,
         ByteBuffer[] outBufRef
@@ -350,7 +378,8 @@ public final class SwarmBuffer {
         int seq = frameSeq;
         int c0 = 0, c1 = 0, c2 = 0;
         for (int i = 0; i < currCount; i++) {
-            if ((currFlags[i] & 8) != 0) {
+            UUID botUuid = uuidFor(currIndices[i]);
+            if (liveClientBotUuids != null && botUuid != null && liveClientBotUuids.contains(botUuid)) {
                 continue;
             }
             float effAlpha = (currSlotFrameSeq[i] == seq) ? alpha : 1.0f;

@@ -62,6 +62,17 @@ public final class ShmBridge implements AutoCloseable {
     public static final short MSG_TICK_BEGIN = 20;
     public static final short MSG_SWARM_CONFIG = 21;
     public static final short MSG_RENDER_STREAM = 22;
+    public static final short MSG_SWARM_POSTURE = 23;
+
+    public static final int FORM_GRID = 0;
+    public static final int FORM_POINT = 1;
+    public static final int FORM_WEDGE = 2;
+    public static final int FORM_QUAD = 3;
+    public static final int FORM_CITADEL = 4;
+    public static final int FORM_CORRIDOR = 5;
+
+    public static final int POSTURE_STARE = 1 << 0;
+    public static final int POSTURE_SALUTE = 1 << 1;
 
     public static final int MSG_BOT_PLAN_STATUS = 100;
     public static final int MSG_BOT_TICK_CMD = 101;

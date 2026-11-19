@@ -15,9 +15,11 @@ use words::Arguments;
 use crate::{
     protocol::{
         FLAG_ARRIVED, FLAG_HORIZ_COL, FLAG_ON_GROUND, FLAG_SETTLED, FLAG_START_SPRINT,
-        FLAG_STOP_SPRINT, MODE_AUTO, MODE_MATERIALIZED, MODE_VIRTUAL, PLAN_STATUS_ALREADY_THERE,
-        PLAN_STATUS_NEEDS_JOINTS, PLAN_STATUS_READY, PLAN_STATUS_REFUSED, TIER_FLAG_ON_GROUND,
-        TIER_FLAG_SNEAKING, TIER_FLAG_SPRINTING, TIER_MATERIALIZED, TIER_VIRTUAL, TIER_VISUAL,
+        FLAG_STOP_SPRINT, FORM_CITADEL, FORM_CORRIDOR, FORM_GRID, FORM_POINT, FORM_QUAD,
+        FORM_WEDGE, MODE_AUTO, MODE_MATERIALIZED, MODE_VIRTUAL, PLAN_STATUS_ALREADY_THERE,
+        PLAN_STATUS_NEEDS_JOINTS, PLAN_STATUS_READY, PLAN_STATUS_REFUSED, POSTURE_SALUTE,
+        POSTURE_STARE, TIER_FLAG_ON_GROUND, TIER_FLAG_SNEAKING, TIER_FLAG_SPRINTING,
+        TIER_MATERIALIZED, TIER_VIRTUAL, TIER_VISUAL,
     },
     world_mirror::{FxHashMap, FxHashSet, WorldMirror},
 };
@@ -51,12 +53,47 @@ impl Default for SwarmConfig {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct StepPose {
+    pub dx: f32,
+    pub dy: f32,
+    pub dz: f32,
+    pub yaw: f32,
+    pub speed: f32,
+    pub on_ground: bool,
+    pub sprinting: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct StepCurveKey {
+    program: u16,
+    ticks: u32,
+    yaw_index: u8,
+    refined_yaw_bits: u32,
+    init_yaw_bits: u32,
+    vx_bits: u64,
+    vy_bits: u64,
+    vz_bits: u64,
+    on_ground: bool,
+    sprinting: bool,
+    no_jump_delay: u8,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct SwarmPosture {
+    pub flags: u8,
+    pub tx: f64,
+    pub ty: f64,
+    pub tz: f64,
+}
+
 pub struct CertifiedStep {
     pub program: u16,
     pub args: Arguments,
     pub ticks: u32,
     pub start_pos: Vec3,
     pub end: plan::state_view::StateAt,
+    pub curve: Option<Arc<Vec<StepPose>>>,
 }
 
 const JUMP_ARC_Y: [f64; 12] = [
@@ -81,6 +118,7 @@ pub enum BotPhase {
         idx: usize,
         elapsed: u32,
         lazy_ticks: u32,
+        delay_ticks: u16,
         step_start_state: PlayerState,
         goal_air: BlockPos,
         corridor: (BlockPos, BlockPos),
@@ -107,7 +145,7 @@ pub struct BotSlot {
 }
 
 impl BotSlot {
-    fn approx_pose(&self) -> (Vec3, f32, f32, f32, bool, bool) {
+    pub fn approx_pose(&self) -> (Vec3, f32, f32, f32, bool, bool) {
         if let BotPhase::Executing {
             steps,
             idx,
@@ -119,6 +157,23 @@ impl BotSlot {
             && *lazy_ticks > 0
             && let Some(step) = steps.get(*idx)
         {
+            if let Some(curve) = &step.curve
+                && *elapsed > 0
+                && let Some(p) = curve.get((*elapsed - 1) as usize)
+            {
+                return (
+                    Vec3::new(
+                        step.start_pos.x + f64::from(p.dx),
+                        step.start_pos.y + f64::from(p.dy),
+                        step.start_pos.z + f64::from(p.dz),
+                    ),
+                    p.yaw,
+                    self.state.pitch,
+                    p.speed,
+                    p.on_ground,
+                    p.sprinting,
+                );
+            }
             let ticks = step.ticks.max(1);
             let frac = f64::from(*elapsed) / f64::from(ticks);
             let dx = step.end.position.x - step.start_pos.x;
@@ -248,7 +303,13 @@ pub struct SolveGoalSpec {
     pub gx: i32,
     pub gy: i32,
     pub gz: i32,
-    pub grid_formation: bool,
+    pub formation_mode: u8,
+    pub param: i32,
+    pub wave_ticks: u16,
+    pub total_bots: u32,
+    pub cols: u32,
+    pub spacing_x: f64,
+    pub spacing_z: f64,
 }
 
 #[derive(Default)]
@@ -342,6 +403,7 @@ enum WorkerTask {
         server_tick: u64,
         total_bots: usize,
         cfg: SwarmConfig,
+        posture: SwarmPosture,
         observers: Arc<Vec<Observer>>,
         mat_allowed: Arc<FxHashSet<u32>>,
         vis_allowed: Arc<FxHashSet<u32>>,
@@ -374,6 +436,7 @@ struct WorkerState {
     by_id: FxHashMap<u32, usize>,
     store: GeneratorStore,
     codec: Interner,
+    step_curves: FxHashMap<StepCurveKey, Arc<Vec<StepPose>>>,
     world: Arc<RwLock<WorldMirror>>,
     programs: Arc<Vec<words::Program>>,
 }
@@ -411,11 +474,13 @@ impl WorkerState {
             WorkerTask::Clear => {
                 self.bots.clear();
                 self.by_id.clear();
+                self.step_curves.clear();
                 WorkerReply::Ack
             }
             WorkerTask::ResetStores => {
                 self.store = GeneratorStore::default();
                 self.codec = Interner::default();
+                self.step_curves.clear();
                 WorkerReply::Ack
             }
             WorkerTask::SpawnOne {
@@ -600,9 +665,12 @@ impl WorkerState {
                     let out = solve_slot(
                         &mut self.bots[idx],
                         goal_air,
+                        0,
                         &world,
                         &self.store,
                         &mut self.codec,
+                        &self.programs,
+                        &mut self.step_curves,
                     );
                     record_solve(&mut sum, out, emit_status);
                 } else if emit_status {
@@ -638,11 +706,28 @@ impl WorkerState {
                 let mut sum = SolveSummary::default();
                 sum.solve_ns_samples.reserve(self.bots.len());
                 let world = self.world.read().unwrap();
+                let cols = spec.cols.max(1);
+                let rows = spec.total_bots.max(1).div_ceil(cols).max(1);
                 for bot in &mut self.bots {
                     bot.pending_replan = None;
                     materialize_lazy_state(bot, &world, &self.programs);
                     let goal_air = goal_for_bot(bot, &spec);
-                    let out = solve_slot(bot, goal_air, &world, &self.store, &mut self.codec);
+                    let delay = if spec.wave_ticks > 0 {
+                        let row = bot.bot_index / cols;
+                        ((row * u32::from(spec.wave_ticks)) / rows) as u16
+                    } else {
+                        0
+                    };
+                    let out = solve_slot(
+                        bot,
+                        goal_air,
+                        delay,
+                        &world,
+                        &self.store,
+                        &mut self.codec,
+                        &self.programs,
+                        &mut self.step_curves,
+                    );
                     record_solve(&mut sum, out, emit_statuses);
                 }
                 WorkerReply::SolveDone(sum)
@@ -710,6 +795,7 @@ impl WorkerState {
                 server_tick,
                 total_bots,
                 cfg,
+                posture,
                 observers,
                 mat_allowed,
                 vis_allowed,
@@ -726,11 +812,20 @@ impl WorkerState {
                 }
 
                 for bot in &mut self.bots {
-                    let was_dirty = std::mem::take(&mut bot.dirty_render);
+                    let mut was_dirty = std::mem::take(&mut bot.dirty_render);
                     let was_active = !matches!(bot.phase, BotPhase::Idle);
                     if let Some(goal_air) = bot.pending_replan.take() {
                         materialize_lazy_state(bot, &world, &self.programs);
-                        let p = solve_slot(bot, goal_air, &world, &self.store, &mut self.codec);
+                        let p = solve_slot(
+                            bot,
+                            goal_air,
+                            0,
+                            &world,
+                            &self.store,
+                            &mut self.codec,
+                            &self.programs,
+                            &mut self.step_curves,
+                        );
                         if emit_statuses || p.status == PLAN_STATUS_NEEDS_JOINTS {
                             out.plan_statuses.push(p);
                         }
@@ -765,7 +860,8 @@ impl WorkerState {
                             && world.is_server_loaded(next_cx, next_cz)
                         {
                             TIER_MATERIALIZED
-                        } else if !observers.is_empty()
+                        } else if cfg.max_visual > 0
+                            && !observers.is_empty()
                             && nearest_observer_dist(bot, &observers, 0.0).is_some()
                         {
                             TIER_VISUAL
@@ -812,9 +908,11 @@ impl WorkerState {
                         prev_state.as_ref(),
                         hooked,
                         stay_lazy,
+                        posture,
                         &world,
                         &self.programs,
                         &mut out,
+                        &mut was_dirty,
                         emit_statuses,
                     );
 
@@ -880,6 +978,7 @@ fn spawn_worker(
                 by_id: FxHashMap::default(),
                 store: GeneratorStore::default(),
                 codec: Interner::default(),
+                step_curves: FxHashMap::default(),
                 world,
                 programs,
             };
@@ -903,6 +1002,9 @@ pub struct WorkerPool {
     bot_owner: FxHashMap<u32, usize>,
     world: Arc<RwLock<WorldMirror>>,
     next_rr: usize,
+    spawn_cols: u32,
+    spawn_spacing_x: f64,
+    spawn_spacing_z: f64,
 }
 
 impl WorkerPool {
@@ -928,6 +1030,9 @@ impl WorkerPool {
             bot_owner: FxHashMap::default(),
             world,
             next_rr: 0,
+            spawn_cols: 1,
+            spawn_spacing_x: 1.5,
+            spawn_spacing_z: 1.5,
         }
     }
 
@@ -937,6 +1042,9 @@ impl WorkerPool {
 
     pub fn clear(&mut self) {
         self.bot_owner.clear();
+        self.spawn_cols = 1;
+        self.spawn_spacing_x = 1.5;
+        self.spawn_spacing_z = 1.5;
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::Clear);
         }
@@ -991,6 +1099,9 @@ impl WorkerPool {
             return;
         }
         let cols_eff = cols.max(1);
+        self.spawn_cols = cols_eff;
+        self.spawn_spacing_x = spacing_x;
+        self.spawn_spacing_z = spacing_z;
         let mut chunks = FxHashSet::default();
         for i in 0..count {
             let x = base_x + (i % cols_eff) as f64 * spacing_x;
@@ -1110,6 +1221,7 @@ impl WorkerPool {
         }
     }
 
+    #[allow(dead_code)]
     pub fn goal_batch(
         &mut self,
         gx: i32,
@@ -1117,11 +1229,37 @@ impl WorkerPool {
         gz: i32,
         grid_formation: bool,
     ) -> SolveSummary {
+        self.goal_batch_ext(
+            gx,
+            gy,
+            gz,
+            if grid_formation { FORM_GRID } else { FORM_POINT },
+            0,
+            0,
+        )
+    }
+
+    pub fn goal_batch_ext(
+        &mut self,
+        gx: i32,
+        gy: i32,
+        gz: i32,
+        formation_mode: u8,
+        param: i32,
+        wave_ticks: u16,
+    ) -> SolveSummary {
+        let total = self.bot_owner.len().max(1) as u32;
         let spec = Arc::new(SolveGoalSpec {
             gx,
             gy,
             gz,
-            grid_formation,
+            formation_mode,
+            param,
+            wave_ticks,
+            total_bots: total,
+            cols: self.spawn_cols.max(1),
+            spacing_x: self.spawn_spacing_x,
+            spacing_z: self.spawn_spacing_z,
         });
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::CollectGoalChunks { spec: spec.clone() });
@@ -1172,6 +1310,7 @@ impl WorkerPool {
         &mut self,
         server_tick: u64,
         cfg: SwarmConfig,
+        posture: SwarmPosture,
         observers: &[Observer],
         ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
         emit_render_bots: bool,
@@ -1279,6 +1418,7 @@ impl WorkerPool {
                 server_tick,
                 total_bots,
                 cfg,
+                posture,
                 observers: obs_arc.clone(),
                 mat_allowed: mat_arc.clone(),
                 vis_allowed: vis_arc.clone(),
@@ -1366,14 +1506,71 @@ impl Drop for WorkerPool {
 }
 
 fn goal_for_bot(bot: &BotSlot, spec: &SolveGoalSpec) -> BlockPos {
-    if spec.grid_formation {
-        [
+    let cols = spec.cols.max(1);
+    let total = spec.total_bots.max(1);
+    let rows = total.div_ceil(cols).max(1);
+    let col = bot.bot_index % cols;
+    let row = bot.bot_index / cols;
+    match spec.formation_mode {
+        FORM_GRID => [
             spec.gx + bot.rel_x.floor() as i32,
             spec.gy,
             spec.gz + bot.rel_z.floor() as i32,
-        ]
-    } else {
-        [spec.gx, spec.gy, spec.gz]
+        ],
+        FORM_WEDGE => {
+            let half_c = (f64::from(cols) - 1.0) * 0.5;
+            let wedge_back = ((f64::from(col) - half_c).abs() * 0.65).round() as i32;
+            [
+                spec.gx + bot.rel_x.floor() as i32 - wedge_back,
+                spec.gy,
+                spec.gz + bot.rel_z.floor() as i32,
+            ]
+        }
+        FORM_QUAD => {
+            let gap = spec.param.max(6);
+            let sx = if col < cols / 2 { -gap } else { gap };
+            let sz = if row < rows / 2 { -gap } else { gap };
+            [
+                spec.gx + bot.rel_x.floor() as i32 + sx,
+                spec.gy,
+                spec.gz + bot.rel_z.floor() as i32 + sz,
+            ]
+        }
+        FORM_CITADEL => {
+            let spx = spec.spacing_x.max(0.5);
+            let spz = spec.spacing_z.max(0.5);
+            let cx = spec.gx + (f64::from(cols.saturating_sub(1)) * spx * 0.5).round() as i32;
+            let cz = spec.gz + (f64::from(rows.saturating_sub(1)) * spz * 0.5).round() as i32;
+            let side = bot.bot_index % 4;
+            let k = bot.bot_index / 4;
+            let per_side = total.div_ceil(4).max(1);
+            let thickness = (f64::from(per_side).sqrt() * 0.4).round().clamp(4.0, 20.0) as u32;
+            let len = per_side.div_ceil(thickness).max(1);
+            let along = k % len;
+            let depth = k / len;
+            let half_span = (f64::from(len) * spx * 0.5).round() as i32;
+            let pad = spec.param.max(0);
+            let along_x = (f64::from(along) * spx).floor() as i32;
+            let along_z = (f64::from(along) * spz).floor() as i32;
+            let depth_x = (f64::from(depth) * spx).floor() as i32;
+            let depth_z = (f64::from(depth) * spz).floor() as i32;
+            match side {
+                0 => [cx - half_span + along_x, spec.gy, cz - half_span - pad - depth_z],
+                1 => [cx - half_span + along_x, spec.gy, cz + half_span + pad + depth_z],
+                2 => [cx - half_span - pad - depth_x, spec.gy, cz - half_span + along_z],
+                _ => [cx + half_span + pad + depth_x, spec.gy, cz - half_span + along_z],
+            }
+        }
+        FORM_CORRIDOR => {
+            let gap = spec.param.max(8);
+            let sz = if row < rows / 2 { -gap } else { gap };
+            [
+                spec.gx + bot.rel_x.floor() as i32,
+                spec.gy,
+                spec.gz + bot.rel_z.floor() as i32 + sz,
+            ]
+        }
+        _ => [spec.gx, spec.gy, spec.gz],
     }
 }
 
@@ -1633,12 +1830,94 @@ fn snap_airborne_goal(world: &WorldMirror, goal_air: BlockPos) -> BlockPos {
     goal_air
 }
 
+fn sample_flat_step_curve(
+    step_start: &PlayerState,
+    step: &plan::WordStep,
+    world: &WorldMirror,
+    programs: &[words::Program],
+    cache: &mut FxHashMap<StepCurveKey, Arc<Vec<StepPose>>>,
+) -> Option<Arc<Vec<StepPose>>> {
+    if step.ticks == 0
+        || step.ticks > 2000
+        || (step.end.position.y - step_start.position.y).abs() >= 1e-6
+    {
+        return None;
+    }
+    let exp_dx = step.end.position.x - step_start.position.x;
+    let exp_dy = step.end.position.y - step_start.position.y;
+    let exp_dz = step.end.position.z - step_start.position.z;
+    let key = StepCurveKey {
+        program: step.program,
+        ticks: step.ticks,
+        yaw_index: step.args.yaw_index,
+        refined_yaw_bits: step.args.refined_yaw.map_or(u32::MAX, f32::to_bits),
+        init_yaw_bits: step_start.yaw.to_bits(),
+        vx_bits: step_start.velocity.x.to_bits(),
+        vy_bits: step_start.velocity.y.to_bits(),
+        vz_bits: step_start.velocity.z.to_bits(),
+        on_ground: step_start.on_ground,
+        sprinting: step_start.sprinting,
+        no_jump_delay: step_start.no_jump_delay.min(255) as u8,
+    };
+    if let Some(arc) = cache.get(&key)
+        && let Some(last) = arc.last()
+        && (f64::from(last.dx) - exp_dx).abs() < 1e-3
+        && (f64::from(last.dy) - exp_dy).abs() < 1e-3
+        && (f64::from(last.dz) - exp_dz).abs() < 1e-3
+    {
+        return Some(arc.clone());
+    }
+    if cache.len() >= 512 {
+        return None;
+    }
+    let start = step_start.position;
+    let mut s = step_start.clone();
+    let mut poses = Vec::with_capacity(step.ticks as usize);
+    for t in 0..step.ticks {
+        let sel = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            programs[step.program as usize].select(world, &s, t, step.args)
+        }));
+        let Ok(Some((_, input))) = sel else {
+            return None;
+        };
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            law::try_tick(&mut s, world, &input)
+        }));
+        if !matches!(ok, Ok(Ok(()))) {
+            return None;
+        }
+        poses.push(StepPose {
+            dx: (s.position.x - start.x) as f32,
+            dy: (s.position.y - start.y) as f32,
+            dz: (s.position.z - start.z) as f32,
+            yaw: s.yaw,
+            speed: s.velocity.x.hypot(s.velocity.z) as f32,
+            on_ground: s.on_ground,
+            sprinting: s.sprinting,
+        });
+    }
+    let last = poses.last()?;
+    if (f64::from(last.dx) - exp_dx).abs() >= 1e-3
+        || (f64::from(last.dy) - exp_dy).abs() >= 1e-3
+        || (f64::from(last.dz) - exp_dz).abs() >= 1e-3
+    {
+        return None;
+    }
+    let arc = Arc::new(poses);
+    cache.insert(key, arc.clone());
+    Some(arc)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn solve_slot(
     bot: &mut BotSlot,
     goal_air: BlockPos,
+    delay_ticks: u16,
     world: &WorldMirror,
     store: &GeneratorStore,
     codec: &mut Interner,
+    programs: &[words::Program],
+    step_curves: &mut FxHashMap<StepCurveKey, Arc<Vec<StepPose>>>,
 ) -> PlanStatusOut {
     let bot_id = bot.bot_id;
     let goal_air = snap_airborne_goal(world, goal_air);
@@ -1736,17 +2015,25 @@ fn solve_slot(
                     msg: "Already there.".into(),
                 }
             } else {
-                let mut cur_pos = bot.state.position;
+                let mut cur_state = bot.state.clone();
                 let mut steps = Vec::with_capacity(found.words.len());
                 for step in &found.words {
+                    let curve = sample_flat_step_curve(
+                        &cur_state,
+                        step,
+                        world,
+                        programs,
+                        step_curves,
+                    );
                     steps.push(CertifiedStep {
                         program: step.program,
                         args: step.args,
                         ticks: step.ticks,
-                        start_pos: cur_pos,
+                        start_pos: cur_state.position,
                         end: step.end.clone(),
+                        curve,
                     });
-                    cur_pos = step.end.position;
+                    cur_state = step.end.materialize();
                 }
                 let ticks = found.ticks.min(u32::MAX as u64) as u32;
                 bot.predicted_ticks = ticks;
@@ -1757,6 +2044,7 @@ fn solve_slot(
                     idx: 0,
                     elapsed: 0,
                     lazy_ticks: 0,
+                    delay_ticks,
                     step_start_state: bot.state.clone(),
                     goal_air,
                     corridor: (cl, ch),
@@ -1839,9 +2127,11 @@ fn step_bot_physics(
     prev_state: Option<&PlayerState>,
     hooked: bool,
     stay_lazy: bool,
+    posture: SwarmPosture,
     world: &WorldMirror,
     programs: &[words::Program],
     out: &mut StepOutputs,
+    pose_changed: &mut bool,
     emit_statuses: bool,
 ) {
     let bot_id = bot.bot_id;
@@ -1871,6 +2161,68 @@ fn step_bot_physics(
     let phase = std::mem::replace(&mut bot.phase, BotPhase::Idle);
     match phase {
         BotPhase::Idle => {
+            if (posture.flags & POSTURE_STARE) != 0 {
+                let dx = posture.tx - bot.state.position.x;
+                let dy = posture.ty - (bot.state.position.y + 1.62);
+                let dz = posture.tz - bot.state.position.z;
+                let horiz = dx.hypot(dz);
+                let new_yaw = if horiz > 1e-6 {
+                    (-dx).atan2(dz).to_degrees() as f32
+                } else {
+                    bot.state.yaw
+                };
+                let new_pitch = (-dy.atan2(horiz.max(1e-6)).to_degrees()).clamp(-85.0, 85.0) as f32;
+                let want_crouch = (posture.flags & POSTURE_SALUTE) != 0;
+                let mut yaw_diff = (new_yaw - bot.state.yaw).rem_euclid(360.0);
+                if yaw_diff > 180.0 {
+                    yaw_diff = 360.0 - yaw_diff;
+                }
+                let changed = yaw_diff > 0.5
+                    || (new_pitch - bot.state.pitch).abs() > 0.5
+                    || bot.state.crouching != want_crouch;
+                if changed {
+                    bot.state.yaw = new_yaw;
+                    bot.state.pitch = new_pitch;
+                    bot.state.crouching = want_crouch;
+                    *pose_changed = true;
+                }
+                if next_tier == TIER_MATERIALIZED && changed {
+                    let mut flags = 0u32;
+                    if bot.state.on_ground {
+                        flags |= FLAG_ON_GROUND;
+                    }
+                    out.tick_cmds.push(TickCmdOut {
+                        bot_id,
+                        keys: if want_crouch { 32 } else { 0 },
+                        flags,
+                        x: bot.state.position.x,
+                        y: bot.state.position.y,
+                        z: bot.state.position.z,
+                        yaw: bot.state.yaw,
+                        pitch: bot.state.pitch,
+                    });
+                }
+            } else if bot.state.crouching {
+                bot.state.crouching = false;
+                bot.state.pitch = 0.0;
+                *pose_changed = true;
+                if next_tier == TIER_MATERIALIZED {
+                    let mut flags = 0u32;
+                    if bot.state.on_ground {
+                        flags |= FLAG_ON_GROUND;
+                    }
+                    out.tick_cmds.push(TickCmdOut {
+                        bot_id,
+                        keys: 0,
+                        flags,
+                        x: bot.state.position.x,
+                        y: bot.state.position.y,
+                        z: bot.state.position.z,
+                        yaw: bot.state.yaw,
+                        pitch: bot.state.pitch,
+                    });
+                }
+            }
             if next_tier == TIER_VISUAL {
                 out.visuals.push(visual_from_state(bot_id, &bot.state));
             }
@@ -1880,11 +2232,47 @@ fn step_bot_physics(
             mut idx,
             mut elapsed,
             mut lazy_ticks,
+            mut delay_ticks,
             mut step_start_state,
             goal_air,
             corridor,
         } => {
             out.stats.active_bots += 1;
+            if delay_ticks > 0 {
+                delay_ticks -= 1;
+                bot.phase = BotPhase::Executing {
+                    steps,
+                    idx,
+                    elapsed,
+                    lazy_ticks,
+                    delay_ticks,
+                    step_start_state,
+                    goal_air,
+                    corridor,
+                };
+                if next_tier == TIER_MATERIALIZED {
+                    let mut flags = 0u32;
+                    if bot.state.on_ground {
+                        flags |= FLAG_ON_GROUND;
+                    }
+                    out.tick_cmds.push(TickCmdOut {
+                        bot_id,
+                        keys: 0,
+                        flags,
+                        x: bot.state.position.x,
+                        y: bot.state.position.y,
+                        z: bot.state.position.z,
+                        yaw: bot.state.yaw,
+                        pitch: bot.state.pitch,
+                    });
+                } else if next_tier == TIER_VISUAL {
+                    out.visuals.push(visual_from_state(bot_id, &bot.state));
+                }
+                return;
+            }
+            if bot.state.crouching {
+                bot.state.crouching = false;
+            }
             if stay_lazy {
                 let step_ticks = steps[idx].ticks;
                 bot.active_ticks += 1;
@@ -1913,6 +2301,7 @@ fn step_bot_physics(
                         idx,
                         elapsed,
                         lazy_ticks,
+                        delay_ticks: 0,
                         step_start_state,
                         goal_air,
                         corridor,
@@ -2000,6 +2389,7 @@ fn step_bot_physics(
                     idx,
                     elapsed,
                     lazy_ticks,
+                    delay_ticks: 0,
                     step_start_state,
                     goal_air,
                     corridor,

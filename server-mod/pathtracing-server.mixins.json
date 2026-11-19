@@ -5,6 +5,7 @@
   "mixins": [
     "ChunkMapMixin",
     "TrackedEntityMixin",
+    "ServerEntityMixin",
     "WaypointManagerMixin",
     "LevelChunkMixin",
     "FoodDataAccessor",

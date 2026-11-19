@@ -20,6 +20,18 @@ pub const MSG_OBSERVERS: u16 = 19;
 pub const MSG_TICK_BEGIN: u16 = 20;
 pub const MSG_SWARM_CONFIG: u16 = 21;
 pub const MSG_RENDER_STREAM: u16 = 22;
+pub const MSG_SWARM_POSTURE: u16 = 23;
+
+pub const FORM_GRID: u8 = 0;
+#[allow(dead_code)]
+pub const FORM_POINT: u8 = 1;
+pub const FORM_WEDGE: u8 = 2;
+pub const FORM_QUAD: u8 = 3;
+pub const FORM_CITADEL: u8 = 4;
+pub const FORM_CORRIDOR: u8 = 5;
+
+pub const POSTURE_STARE: u8 = 1 << 0;
+pub const POSTURE_SALUTE: u8 = 1 << 1;
 
 pub const MSG_BOT_PLAN_STATUS: u16 = 100;
 pub const MSG_BOT_TICK_CMD: u16 = 101;

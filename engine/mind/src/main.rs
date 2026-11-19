@@ -13,17 +13,17 @@ use std::{
 
 use law::{PlayerState, Vec3};
 use pool::{
-    Observer, PlanStatusOut, RenderBotOut, SolveSummary, SwarmConfig, TierChangeOut, TickCmdOut,
-    VisualOut, WorkerPool,
+    Observer, PlanStatusOut, RenderBotOut, SolveSummary, SwarmConfig, SwarmPosture, TierChangeOut,
+    TickCmdOut, VisualOut, WorkerPool,
 };
 use protocol::{
     BotSyncPayload, MODE_MATERIALIZED, MSG_BLOCK_DELTA, MSG_BOT_GOAL, MSG_BOT_PLAN_STATUS,
     MSG_BOT_REMOVE, MSG_BOT_SELF_SYNC, MSG_BOT_SPAWN, MSG_BOT_STOP, MSG_BOT_TICK_CMD,
     MSG_BOT_TIER_CHANGE, MSG_CHUNK_TICKET, MSG_CHUNK_UNLOAD, MSG_OBSERVERS, MSG_RENDER_FRAME,
     MSG_RENDER_STREAM, MSG_SECTION_AIR, MSG_SECTION_RLE, MSG_SWARM_CLEAR, MSG_SWARM_CONFIG,
-    MSG_SWARM_GOAL_BATCH, MSG_SWARM_PLAN_SUMMARY, MSG_SWARM_SPAWN_BATCH, MSG_SWARM_STOP_ALL,
-    MSG_TICK_BEGIN, MSG_TICK_END, MSG_VISUAL_BATCH, MSG_WORLD_RESET, MSG_WORLD_RULES, Reader,
-    Writer,
+    MSG_SWARM_GOAL_BATCH, MSG_SWARM_PLAN_SUMMARY, MSG_SWARM_POSTURE, MSG_SWARM_SPAWN_BATCH,
+    MSG_SWARM_STOP_ALL, MSG_TICK_BEGIN, MSG_TICK_END, MSG_VISUAL_BATCH, MSG_WORLD_RESET,
+    MSG_WORLD_RULES, Reader, Writer,
 };
 use shm::Shm;
 use world_mirror::{FxHashMap, WorldMirror};
@@ -227,6 +227,7 @@ fn handle_message(
     world: &Arc<RwLock<WorldMirror>>,
     pool: &mut WorkerPool,
     config: &mut SwarmConfig,
+    posture: &mut SwarmPosture,
     observers: &mut Vec<Observer>,
     ticket_last_sent: &mut FxHashMap<([i32; 2], u8), u64>,
     totals: &mut TickTotals,
@@ -251,6 +252,7 @@ fn handle_message(
             pool.reset_stores();
             ticket_last_sent.clear();
             totals.reset();
+            *posture = SwarmPosture::default();
             render_stream.dirty = true;
         }
         MSG_WORLD_RULES => {
@@ -358,16 +360,20 @@ fn handle_message(
             pool.clear();
             ticket_last_sent.clear();
             totals.reset();
+            *posture = SwarmPosture::default();
             render_stream.dirty = true;
         }
         MSG_SWARM_GOAL_BATCH => {
             let gx = r.i32()?;
             let gy = r.i32()?;
             let gz = r.i32()?;
-            let grid_formation = r.u8()? == 0;
+            let formation_mode = r.u8()?;
+            let param = r.i32()?;
+            let wave_ticks = r.u16()?;
             let _issue_qpc = r.u64()?;
+            *posture = SwarmPosture::default();
             let t0 = Instant::now();
-            let mut sum = pool.goal_batch(gx, gy, gz, grid_formation);
+            let mut sum = pool.goal_batch_ext(gx, gy, gz, formation_mode, param, wave_ticks);
             let wall_ns = t0.elapsed().as_nanos().min(u64::MAX as u128) as u64;
             for p in &sum.statuses {
                 send_plan_status(shm, w, p);
@@ -375,7 +381,15 @@ fn handle_message(
             send_plan_summary(shm, w, &mut sum, pool.total_bots() as u32, wall_ns);
         }
         MSG_SWARM_STOP_ALL => {
+            *posture = SwarmPosture::default();
             pool.stop_all();
+        }
+        MSG_SWARM_POSTURE => {
+            let flags = r.u8()?;
+            let tx = r.f64()?;
+            let ty = r.f64()?;
+            let tz = r.f64()?;
+            *posture = SwarmPosture { flags, tx, ty, tz };
         }
         MSG_OBSERVERS => {
             let count = r.u32()? as usize;
@@ -417,6 +431,7 @@ fn handle_message(
             let (outputs, tickets) = pool.step_tick(
                 server_tick,
                 *config,
+                *posture,
                 observers,
                 ticket_last_sent,
                 render_stream.enabled,
@@ -502,6 +517,7 @@ fn main() {
     let programs = Arc::new(words::tiny_programs());
     let mut pool = WorkerPool::new(world.clone(), programs);
     let mut config = SwarmConfig::default();
+    let mut posture = SwarmPosture::default();
     let mut observers = Vec::new();
     let mut ticket_last_sent = FxHashMap::default();
     let mut totals = TickTotals::default();
@@ -529,6 +545,7 @@ fn main() {
             observers.clear();
             ticket_last_sent.clear();
             totals.reset();
+            posture = SwarmPosture::default();
             render_stream = RenderStreamState::default();
         }
 
@@ -541,6 +558,7 @@ fn main() {
                 &world,
                 &mut pool,
                 &mut config,
+                &mut posture,
                 &mut observers,
                 &mut ticket_last_sent,
                 &mut totals,
@@ -567,6 +585,7 @@ mod tests {
     use super::*;
     use law::{World, codec::Interner};
     use plan::{Goal, Kit, PlanOutcome, store::GeneratorStore};
+    use protocol::{FORM_CITADEL, FORM_CORRIDOR, FORM_QUAD, FORM_WEDGE};
 
     fn build_flat_mirror(cx_range: std::ops::RangeInclusive<i32>, cz_range: std::ops::RangeInclusive<i32>) -> WorldMirror {
         let mut world = WorldMirror::new();
@@ -712,7 +731,7 @@ mod tests {
         let mut tick_ms = Vec::new();
         for tick in 1..=5u64 {
             let t0 = Instant::now();
-            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), &[], &mut last_sent, false, false);
+            let (out, _) = pool.step_tick(tick, SwarmConfig::default(), SwarmPosture::default(), &[], &mut last_sent, false, false);
             tick_ms.push(t0.elapsed().as_secs_f64() * 1e3);
             assert_eq!(out.stats.active_bots, 10_000);
             assert_eq!(out.stats.virt_count, 10_000);
@@ -744,7 +763,7 @@ mod tests {
         assert_eq!(sum.ready, 10_000);
 
         let mut last_sent = FxHashMap::default();
-        let (out, _) = pool.step_tick(1, SwarmConfig::default(), &[], &mut last_sent, true, true);
+        let (out, _) = pool.step_tick(1, SwarmConfig::default(), SwarmPosture::default(), &[], &mut last_sent, true, true);
         assert_eq!(out.render_bots.len(), 10_000);
 
         let mut w = Writer::new();
@@ -777,7 +796,7 @@ mod tests {
         let mut sent_a = FxHashMap::default();
         let mut final_a = None;
         for tick in 1..=(pred_t as u64 + 10) {
-            let (out, _) = pool_eager.step_tick(tick, SwarmConfig::default(), &[], &mut sent_a, false, false);
+            let (out, _) = pool_eager.step_tick(tick, SwarmConfig::default(), SwarmPosture::default(), &[], &mut sent_a, false, false);
             if let Some(cmd) = out.tick_cmds.first() {
                 if (cmd.flags & protocol::FLAG_SETTLED) != 0 {
                     final_a = Some((cmd.x, cmd.y, cmd.z, out.stats.min_act_t));
@@ -796,7 +815,7 @@ mod tests {
         let mut sent_b = FxHashMap::default();
         let mut final_b = None;
         for tick in 1..=(pred_t as u64 + 10) {
-            let (out, _) = pool_lazy.step_tick(tick, SwarmConfig::default(), &[], &mut sent_b, true, false);
+            let (out, _) = pool_lazy.step_tick(tick, SwarmConfig::default(), SwarmPosture::default(), &[], &mut sent_b, true, false);
             if out.stats.settled_count == 1 {
                 let rb = out.render_bots.first().expect("active virtual bot emitted");
                 final_b = Some((rb.x, rb.y, rb.z, out.stats.min_act_t));
@@ -839,7 +858,7 @@ mod tests {
             } else {
                 Vec::new()
             };
-            let (out, _) = pool_prom.step_tick(tick, cfg_prom, &obs, &mut sent_c, true, false);
+            let (out, _) = pool_prom.step_tick(tick, cfg_prom, SwarmPosture::default(), &obs, &mut sent_c, true, false);
             if tick == 113 {
                 assert!(
                     out.tier_changes.iter().any(|tc| tc.new_tier == protocol::TIER_VISUAL),
@@ -883,14 +902,14 @@ mod tests {
         };
         let mut last_sent = FxHashMap::default();
         // Tick 1: initial full emit (simulate dirty).
-        let (out1, _) = pool.step_tick(1, cfg, &[], &mut last_sent, true, true);
+        let (out1, _) = pool.step_tick(1, cfg, SwarmPosture::default(), &[], &mut last_sent, true, true);
         assert_eq!(out1.render_bots.len(), 4);
         let mut w = Writer::new();
         encode_render_frame(&mut w, 1, &out1.render_bots, false);
         assert_eq!(u32::from_le_bytes(w.buf[4..8].try_into().unwrap()), 4);
 
         // Tick 2: idle with no observer -> 0 bots emitted.
-        let (out2, _) = pool.step_tick(2, cfg, &[], &mut last_sent, true, false);
+        let (out2, _) = pool.step_tick(2, cfg, SwarmPosture::default(), &[], &mut last_sent, true, false);
         assert!(out2.render_bots.is_empty());
 
         // Tick 3: observer sees only bot 1 -> tier change for 1 bot -> 1 entry delta (52 bytes, bit 31 set).
@@ -900,7 +919,7 @@ mod tests {
             z: 0.5,
             view_dist: 10.0,
         }];
-        let (out3, _) = pool.step_tick(3, cfg, &obs, &mut last_sent, true, false);
+        let (out3, _) = pool.step_tick(3, cfg, SwarmPosture::default(), &obs, &mut last_sent, true, false);
         assert_eq!(out3.render_bots.len(), 1);
         assert_eq!(out3.render_bots[0].bot_index, 0);
         encode_render_frame(&mut w, 3, &out3.render_bots, true);
@@ -937,7 +956,7 @@ mod tests {
             ..SwarmConfig::default()
         };
         for tick in 1..=200u64 {
-            let (out, _) = pool.step_tick(tick, cfg, &[], &mut last_sent, true, false);
+            let (out, _) = pool.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut last_sent, true, false);
             if out.stats.settled_count == 1 {
                 let rb = out.render_bots.first().expect("settled bot emitted");
                 assert!((rb.y - (-60.0)).abs() < 1e-6, "expected y=-60, got {}", rb.y);
@@ -946,5 +965,102 @@ mod tests {
             }
         }
         panic!("airborne-snapped bot did not settle within 200 ticks");
+    }
+
+    #[test]
+    fn lazy_step_curve_matches_eager_every_tick() {
+        let make_state = || PlayerState {
+            position: Vec3::new(0.5, -60.0, 0.5),
+            on_ground: true,
+            main_supporting_block: Some([0, -61, 0]),
+            health: 20.0,
+            saturation: 5.0,
+            food_level: 20,
+            ..PlayerState::default()
+        };
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool_eager = WorkerPool::with_workers(
+            1,
+            Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1))),
+            progs.clone(),
+        );
+        let mut pool_lazy = WorkerPool::with_workers(
+            1,
+            Arc::new(RwLock::new(build_flat_mirror(-1..=6, -1..=1))),
+            progs,
+        );
+        pool_eager.spawn_one(1, protocol::MODE_MATERIALIZED, make_state());
+        pool_lazy.spawn_one(1, protocol::MODE_VIRTUAL, make_state());
+
+        let st_a = pool_eager.goal_one(1, [80, -60, 0]);
+        let st_b = pool_lazy.goal_one(1, [80, -60, 0]);
+        let pred_t = st_a[0].predicted_ticks;
+        assert_eq!(pred_t, st_b[0].predicted_ticks);
+
+        let cfg = SwarmConfig {
+            canary_count: 0,
+            ..SwarmConfig::default()
+        };
+        let mut sent_a = FxHashMap::default();
+        let mut sent_b = FxHashMap::default();
+        let mut checked = 0u32;
+        for tick in 1..=(pred_t as u64 + 10) {
+            let (oa, _) = pool_eager.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut sent_a, false, false);
+            let (ob, _) = pool_lazy.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut sent_b, true, false);
+            if let (Some(cmd), Some(rb)) = (oa.tick_cmds.first(), ob.render_bots.first()) {
+                assert!(
+                    (cmd.x - rb.x).abs() < 1e-4
+                        && (cmd.y - rb.y).abs() < 1e-4
+                        && (cmd.z - rb.z).abs() < 1e-4,
+                    "tick {tick} curve mismatch eager=({},{},{}) lazy=({},{},{})",
+                    cmd.x, cmd.y, cmd.z, rb.x, rb.y, rb.z
+                );
+                checked += 1;
+                if ob.stats.settled_count == 1 {
+                    assert_eq!(oa.stats.settled_count, 1);
+                    assert!(checked >= pred_t);
+                    return;
+                }
+            }
+        }
+        panic!("step curve test did not settle within predicted window");
+    }
+
+    #[test]
+    fn imperial_formations_solve_cleanly() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-4..=10, -4..=10)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::new(world, progs);
+        pool.spawn_batch(
+            100,
+            1,
+            0,
+            protocol::MODE_VIRTUAL,
+            10,
+            -10.5,
+            -60.0,
+            -10.5,
+            1.5,
+            1.5,
+        );
+        for (mode, param) in [
+            (FORM_WEDGE, 0),
+            (FORM_QUAD, 10),
+            (FORM_CITADEL, 6),
+            (FORM_CORRIDOR, 10),
+        ] {
+            let sum = pool.goal_batch_ext(20, -60, 0, mode, param, 0);
+            assert_eq!(
+                sum.ready + sum.already,
+                100,
+                "mode={mode} ready={} already={} refused={} sample={}",
+                sum.ready,
+                sum.already,
+                sum.refused,
+                sum.sample_msg
+            );
+            assert_eq!(sum.refused, 0);
+            assert_eq!(sum.joints, 0);
+        }
     }
 }

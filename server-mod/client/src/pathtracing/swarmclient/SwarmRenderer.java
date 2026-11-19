@@ -30,8 +30,11 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.Set;
+import java.util.UUID;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelTargetBundle;
@@ -249,6 +252,7 @@ public final class SwarmRenderer {
     private final float[] relOrigin = new float[3];
     private final int[] lodCounts = new int[3];
     private final ByteBuffer[] instanceBufRef = new ByteBuffer[1];
+    private final Set<UUID> liveClientBotUuids = new HashSet<>();
     private int lastLoggedTotal = -1;
 
     public SwarmRenderer(SwarmBuffer buffer) {
@@ -294,12 +298,25 @@ public final class SwarmRenderer {
         }
 
         long t0 = System.nanoTime();
+        liveClientBotUuids.clear();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level != null) {
+            var players = mc.level.players();
+            for (int i = 0; i < players.size(); i++) {
+                var p = players.get(i);
+                if (p != mc.player && buffer.isTrackedBotUuid(p.getUUID())) {
+                    p.getInterpolation().setInterpolationLength(1);
+                    liveClientBotUuids.add(p.getUUID());
+                }
+            }
+        }
         viewProj.set(camState.projectionMatrix).mul(camState.viewRotationMatrix);
         int drawn = buffer.buildVisibleInstances(
             camState.pos.x,
             camState.pos.y,
             camState.pos.z,
             viewProj,
+            liveClientBotUuids,
             relOrigin,
             lodCounts,
             instanceBufRef

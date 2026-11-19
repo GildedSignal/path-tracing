@@ -118,3 +118,13 @@ looks good just did a reboot. you can proceed with the plan
 ### 2026-11-19 10:35
 
 ok it's running well but multiple issues maybe i fail the goto command but it did not worked, when i moved around it looks like the floor and bots are wiggling in the some way as if the space got distorted, i want to see them all move like a stromtrooper army in sync, the lod detail jump is way too noticeable, the bots change skins when i get close to them and they are rendered in full, i really want to be abble to see all of them interact and move they are here not statues so we gotta be smart about it
+
+
+### 2026-11-19 10:59
+
+this is actually hilarious wow good job, i added a gif for an issue in how bots appears when you're close by as movement continuation is not great so it is distracting. Also good idea on the parade i love it, i think you earn it you can have fun with the parade make it cool and ominous
+
+
+### 2026-11-19 15:34
+
+continue
