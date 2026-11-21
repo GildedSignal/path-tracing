@@ -1,5 +1,6 @@
-//! Boat laws: established IN_WATER, non-IN_WATER float/collision, mount/clamp/dismount.
+//! Boat laws: placement, damage/break, water-entry snap, IN_WATER/land/air physics, mount/clamp/dismount.
 use crate::{
+    interact::{self, BlockHitResult, ClipFluidMode},
     math,
     shapes::collide_with_shapes,
     world::block_pos,
@@ -16,6 +17,20 @@ use crate::{
 
 pub const BOAT_WIDTH: f32 = 1.375;
 pub const BOAT_HEIGHT: f32 = 0.5625;
+/// `BoatItem.use @39-44`: eye-ray entity obstruction search reach (`5.0d`).
+pub const BOAT_EYE_OBSTRUCTION_RANGE: f64 = 5.0;
+/// `VehicleEntity.hurtServer @110`: survival break requires strict `damage > 40.0f`.
+pub const BOAT_BREAK_THRESHOLD: f32 = 40.0;
+/// `VehicleEntity.hurtServer @44`: per-hit accumulation `amount * 10.0f`.
+pub const BOAT_HURT_MULTIPLIER: f32 = 10.0;
+/// `VehicleEntity.hurtServer @29`: `setHurtTime(10)`.
+pub const BOAT_HURT_TIME: i32 = 10;
+/// `AbstractBoat.tick @110`: `damage` decays by `1.0f` per tick while `> 0.0f`.
+pub const BOAT_DAMAGE_DECAY: f32 = 1.0;
+/// `ServerGamePacketListenerImpl.handleMoveVehicle @248`: `d^2 - |v|^2 > 100.0`.
+pub const MOVE_VEHICLE_SPEED_BUDGET_SQR: f64 = 100.0;
+/// `ServerGamePacketListenerImpl.handleMoveVehicle @488`: residual `> 0.0625` (0.25 blocks).
+pub const MOVE_VEHICLE_WRONG_RESIDUAL_SQR: f64 = 0.0625;
 
 // EntityDimensions.makeBoundingBox for EntityTypes.OAK_BOAT (1.375 x 0.5625).
 pub fn boat_aabb(position: Vec3) -> Aabb {
@@ -53,6 +68,23 @@ pub struct Boat { pub position: Vec3, pub velocity: Vec3, pub yaw: f32, pub delt
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Controls { pub left: bool, pub right: bool, pub forward: bool, pub backward: bool }
 
+/// `AbstractBoat.controlBoat @8-211`: updates `delta_rotation`, `yaw`, horizontal thrust,
+/// and returns `(paddle_left, paddle_right)`.
+pub fn control_boat(boat: &mut Boat, input: Controls) -> (bool, bool) {
+    if input.left { boat.delta_rotation -= 1.0f32; }
+    if input.right { boat.delta_rotation += 1.0f32; }
+    let mut thrust = 0.0f32;
+    if input.left != input.right && !input.forward && !input.backward { thrust += 0.005f32; }
+    boat.yaw += boat.delta_rotation;
+    if input.forward { thrust += 0.04f32; }
+    if input.backward { thrust -= 0.005f32; }
+    boat.velocity.x += (math::sin((-boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
+    boat.velocity.z += (math::cos((boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
+    let paddle_left = (input.right && !input.left) || input.forward;
+    let paddle_right = (input.left && !input.right) || input.forward;
+    (paddle_left, paddle_right)
+}
+
 // AbstractBoat.tick 150,164,191-199; floatBoat 138-167,270-359;
 // getDefaultGravity 0-3; controlBoat 0-152. Water level is supplied by the caller.
 pub fn tick(boat: &mut Boat, water_level: f64, input: Controls) {
@@ -63,15 +95,7 @@ pub fn tick(boat: &mut Boat, water_level: f64, input: Controls) {
     boat.velocity.z *= drag as f64;
     boat.delta_rotation *= drag;
     if draft > 0.0 { boat.velocity.y = (boat.velocity.y + draft * (0.04f64 / 0.65f64)) * 0.75f64; }
-    if input.left { boat.delta_rotation -= 1.0f32; }
-    if input.right { boat.delta_rotation += 1.0f32; }
-    let mut thrust = 0.0f32;
-    if input.left != input.right && !input.forward && !input.backward { thrust += 0.005f32; }
-    boat.yaw += boat.delta_rotation;
-    if input.forward { thrust += 0.04f32; }
-    if input.backward { thrust -= 0.005f32; }
-    boat.velocity.x += (math::sin((-boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
-    boat.velocity.z += (math::cos((boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
+    let _ = control_boat(boat, input);
     boat.position = boat.position.plus(boat.velocity);
 }
 
@@ -101,6 +125,186 @@ pub trait BoatQuery: World {
 
 impl BoatQuery for BoxWorld {}
 
+/// `VehicleEntity` hit/break state (`DATA_ID_HURT`, `DATA_ID_HURTDIR`, `DATA_ID_DAMAGE`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoatHurtState {
+    pub hurt_time: i32,
+    pub hurt_dir: i32,
+    pub damage: f32,
+    pub removed: bool,
+}
+
+impl Default for BoatHurtState {
+    fn default() -> Self {
+        Self {
+            hurt_time: 0,
+            hurt_dir: 1,
+            damage: 0.0,
+            removed: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoatHurtOutcome {
+    AlreadyRemoved,
+    Invulnerable,
+    Damaged,
+    Destroyed { drop_item: bool },
+    Discarded,
+}
+
+impl BoatHurtState {
+    /// `VehicleEntity.hurtServer @0-143` + `VehicleEntity.destroy @122-151`.
+    pub fn hurt_server(
+        &mut self,
+        amount: f32,
+        attacker_instabuild: bool,
+        should_source_destroy: bool,
+        invulnerable_to_base: bool,
+        do_entity_drops: bool,
+    ) -> (bool, BoatHurtOutcome) {
+        if self.removed {
+            return (true, BoatHurtOutcome::AlreadyRemoved);
+        }
+        if invulnerable_to_base {
+            return (false, BoatHurtOutcome::Invulnerable);
+        }
+        self.hurt_dir = -self.hurt_dir;
+        self.hurt_time = BOAT_HURT_TIME;
+        self.damage += amount * BOAT_HURT_MULTIPLIER;
+
+        let destroy = (!attacker_instabuild && self.damage > BOAT_BREAK_THRESHOLD)
+            || should_source_destroy;
+        if destroy {
+            self.removed = true;
+            (true, BoatHurtOutcome::Destroyed { drop_item: do_entity_drops })
+        } else if attacker_instabuild {
+            self.removed = true;
+            (true, BoatHurtOutcome::Discarded)
+        } else {
+            (true, BoatHurtOutcome::Damaged)
+        }
+    }
+
+    /// `AbstractBoat.tick @79-112`: decays `hurtTime` and `damage` per tick.
+    pub fn tick_decay(&mut self) {
+        if self.hurt_time > 0 {
+            self.hurt_time -= 1;
+        }
+        if self.damage > 0.0f32 {
+            self.damage -= BOAT_DAMAGE_DECAY;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoatPickTarget {
+    pub aabb: Aabb,
+    pub pick_radius: f32,
+    pub is_pickable: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BoatPlaceResult {
+    Pass,
+    Fail,
+    Success {
+        pos: Vec3,
+        yaw: f32,
+        aabb: Aabb,
+        spawned_server: bool,
+        consumed: bool,
+    },
+}
+
+/// `Item.getPlayerPOVHitResult` with `ClipContext.Block.OUTLINE` and caller fluid mode.
+pub fn boat_pov_hit(
+    world: &impl World,
+    eye_pos: Vec3,
+    yaw: f32,
+    pitch: f32,
+    block_interaction_range: f64,
+    fluid_mode: ClipFluidMode,
+) -> BlockHitResult {
+    let view = interact::calculate_view_vector(yaw, pitch);
+    let end = Vec3::new(
+        eye_pos.x + view.x * block_interaction_range,
+        eye_pos.y + view.y * block_interaction_range,
+        eye_pos.z + view.z * block_interaction_range,
+    );
+    interact::clip_blocks(eye_pos, end, fluid_mode, |cell| {
+        let block = world.block(cell);
+        let fh = if block.fluid.kind != FluidKind::Empty {
+            block.fluid.surface_height(world, cell)
+        } else {
+            0.0
+        };
+        let is_source = block.fluid.raw_amount == Some(8);
+        (&block.shape, None, fh, is_source)
+    })
+}
+
+/// `BoatItem.use @0-264` + `BoatItem.getBoat @0-77`:
+/// raycasts with `ClipContext.Fluid.ANY`, rejects if eyes lie inside an inflated pickable entity
+/// box, spawns at the raw hit location with `yaw`, and checks `noCollision`.
+#[allow(clippy::too_many_arguments)]
+pub fn place_boat(
+    world: &impl World,
+    player_pos: Vec3,
+    player_bb: Aabb,
+    eye_height: f32,
+    yaw: f32,
+    pitch: f32,
+    block_interaction_range: f64,
+    has_infinite_materials: bool,
+    is_client_side: bool,
+    pick_targets: &[BoatPickTarget],
+) -> BoatPlaceResult {
+    let eye = interact::get_eye_position(player_pos, eye_height);
+    let hit = boat_pov_hit(
+        world,
+        eye,
+        yaw,
+        pitch,
+        block_interaction_range,
+        ClipFluidMode::Any,
+    );
+    if !hit.is_hit() {
+        return BoatPlaceResult::Pass;
+    }
+
+    let view = interact::calculate_view_vector(yaw, pitch);
+    let search_box = player_bb
+        .expand(view.scale(BOAT_EYE_OBSTRUCTION_RANGE))
+        .deflate(-1.0);
+    for target in pick_targets {
+        if target.is_pickable
+            && search_box.intersects(target.aabb)
+            && target
+                .aabb
+                .deflate(-(target.pick_radius as f64))
+                .contains(eye)
+        {
+            return BoatPlaceResult::Pass;
+        }
+    }
+
+    let pos = hit.location();
+    let aabb = boat_aabb(pos);
+    if !world.no_collision(aabb, empty_context(pos.y)) {
+        return BoatPlaceResult::Fail;
+    }
+
+    BoatPlaceResult::Success {
+        pos,
+        yaw,
+        aabb,
+        spawned_server: !is_client_side,
+        consumed: !is_client_side && !has_infinite_materials,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoatBody {
     pub boat: Boat,
@@ -114,6 +318,9 @@ pub struct BoatBody {
     pub horizontal_collision: bool,
     pub no_gravity: bool,
     pub has_passenger: bool,
+    pub paddle_left: bool,
+    pub paddle_right: bool,
+    pub hurt: BoatHurtState,
 }
 
 impl Default for BoatBody {
@@ -130,6 +337,9 @@ impl Default for BoatBody {
             horizontal_collision: false,
             no_gravity: false,
             has_passenger: false,
+            paddle_left: false,
+            paddle_right: false,
+            hurt: BoatHurtState::default(),
         }
     }
 }
@@ -291,6 +501,36 @@ pub fn get_status(body: &mut BoatBody, world: &impl BoatQuery) -> BoatStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WaterEntry {
+    Snap(f64),
+    Blocked,
+}
+
+/// `AbstractBoat.floatBoat @52-66`: `(float)(getWaterLevelAbove() - getBbHeight()) + 0.101`.
+pub fn water_entry_target(water_level_above: f32, bb_height: f32) -> f64 {
+    (water_level_above - bb_height) as f64 + 0.101
+}
+
+/// `AbstractBoat.floatBoat @13-135`: air -> water entry transition.
+pub fn water_entry(
+    old_in_air: bool,
+    status_in_air: bool,
+    status_on_land: bool,
+    water_level_above: f32,
+    bb_height: f32,
+    ceiling_clear: bool,
+) -> Option<WaterEntry> {
+    if !old_in_air || status_in_air || status_on_land {
+        return None;
+    }
+    Some(if ceiling_clear {
+        WaterEntry::Snap(water_entry_target(water_level_above, bb_height))
+    } else {
+        WaterEntry::Blocked
+    })
+}
+
 // AbstractBoat.floatBoat @0-362
 fn float_boat(body: &mut BoatBody, world: &impl BoatQuery, player_controlling: bool) {
     let mut d1 = if body.no_gravity { 0.0 } else { -0.04 };
@@ -304,11 +544,13 @@ fn float_boat(body: &mut BoatBody, world: &impl BoatQuery, player_controlling: b
     {
         body.water_level = body.boat.position.y + BOAT_HEIGHT as f64;
         let bb = boat_aabb(body.boat.position);
-        let target_y = (water_level_above(world, bb, body.last_yd) - BOAT_HEIGHT) as f64 + 0.101;
+        let wla = water_level_above(world, bb, body.last_yd);
+        let target_y = water_entry_target(wla, BOAT_HEIGHT);
         let moved = bb.moved(Vec3::new(0.0, target_y - body.boat.position.y, 0.0));
         if world.no_collision(moved, empty_context(body.boat.position.y)) {
             body.boat.position.y = target_y;
-            body.boat.velocity.y = 0.0;
+            // v.multiply(1, 0, 1): preserves negative zero when falling.
+            body.boat.velocity = body.boat.velocity.multiply(Vec3::new(1.0, 0.0, 1.0));
             body.last_yd = 0.0;
         }
         body.status = Some(BoatStatus::InWater);
@@ -369,24 +611,23 @@ pub fn tick_body(
     if ejected {
         body.has_passenger = false;
     }
+    body.hurt.tick_decay();
 
-    // Occupied-player boat is client-authoritative; server zeros velocity instead of stepping physics.
+    // Occupied-player boat is client-authoritative; server zeroes velocity instead of stepping physics.
     if server_side && player_controlling {
         body.boat.velocity = Vec3::default();
         return ejected;
     }
 
+    if !player_controlling {
+        body.paddle_left = false;
+        body.paddle_right = false;
+    }
     float_boat(body, world, player_controlling);
     if apply_controls {
-        if input.left { body.boat.delta_rotation -= 1.0f32; }
-        if input.right { body.boat.delta_rotation += 1.0f32; }
-        let mut thrust = 0.0f32;
-        if input.left != input.right && !input.forward && !input.backward { thrust += 0.005f32; }
-        body.boat.yaw += body.boat.delta_rotation;
-        if input.forward { thrust += 0.04f32; }
-        if input.backward { thrust -= 0.005f32; }
-        body.boat.velocity.x += (math::sin((-body.boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
-        body.boat.velocity.z += (math::cos((body.boat.yaw * 0.017453292f32) as f64) * thrust) as f64;
+        let (pl, pr) = control_boat(&mut body.boat, input);
+        body.paddle_left = pl;
+        body.paddle_right = pr;
     }
 
     let wanted = body.boat.velocity;
@@ -405,6 +646,8 @@ pub fn tick_body(
     }
     body.horizontal_collision = wanted.x != collided.x || wanted.z != collided.z;
     body.on_ground = wanted.y != collided.y && wanted.y < 0.0;
+    // Entity.move @546 -> AbstractBoat.checkFallDamage @0-8 (runs before restitution).
+    body.last_yd = body.boat.velocity.y;
     // Entity.restituteMovementAfterCollisions with getEntityBounciness() == 0.0.
     if wanted.x != collided.x {
         body.boat.velocity.x = -body.boat.velocity.x * 0.0;
@@ -416,6 +659,28 @@ pub fn tick_body(
         body.boat.velocity.y = (0.0 - body.boat.velocity.y) * 1.0 * 0.0;
     }
     ejected
+}
+
+/// `ServerGamePacketListenerImpl.handlePaddleBoat @0-44`: paddle state is animation/sound only.
+pub fn handle_paddle_boat(body: &mut BoatBody, left: bool, right: bool) {
+    body.paddle_left = left;
+    body.paddle_right = right;
+}
+
+/// `ServerGamePacketListenerImpl.handleMoveVehicle @215-259`: 10-block packet budget check
+/// (`server_vehicle_vel` is zero on driven boats because the server zeroes it each tick).
+pub fn move_vehicle_exceeds_speed_budget(
+    packet_pos: Vec3,
+    first_good_pos: Vec3,
+    server_vehicle_vel: Vec3,
+    is_singleplayer_owner: bool,
+) -> bool {
+    if is_singleplayer_owner {
+        return false;
+    }
+    let d_sqr = packet_pos.minus(first_good_pos).length_sqr();
+    let v_sqr = server_vehicle_vel.length_sqr();
+    d_sqr - v_sqr > MOVE_VEHICLE_SPEED_BUDGET_SQR
 }
 
 /// `AbstractBoat.interact` (`@20-35`) + `AbstractBoat.canAddPassenger` (`@0-31`).

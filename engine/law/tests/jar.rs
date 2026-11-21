@@ -1297,3 +1297,549 @@ fn jar_world_hooks() {
     }
     assert_eq!(row_count, 294, "expected all 294 jar witness rows executed");
 }
+
+#[test]
+fn jar_vehicles_and_wormholes() {
+    use law::{boat, interact, pearl, portal, Block, BlockPos, BoxWorld, Fluid, FluidFlowBlock, FluidKind, World};
+
+    let h64 = |s: &str| u64::from_str_radix(s, 16).unwrap();
+    let d64 = |s: &str| f64::from_bits(h64(s));
+    let h32 = |s: &str| u32::from_str_radix(s, 16).unwrap();
+    let f32b = |s: &str| f32::from_bits(h32(s));
+
+    let water_block = |amount: u8| Block {
+        air: false,
+        fluid: Fluid {
+            kind: FluidKind::Water,
+            raw_amount: Some(amount),
+            raw_falling: Some(false),
+            ..Fluid::default()
+        },
+        fluid_flow: Some(FluidFlowBlock::default()),
+        ..Block::default()
+    };
+
+    // World for BOAT_CLIP (matching VehicleWormholeWitness.emitBoatPlaceAndBreak)
+    let mut clip_world = BoxWorld::default();
+    clip_world.set([2, 69, 2], Block::full());
+    clip_world.set([2, 70, 2], water_block(8));
+    clip_world.set([2, 69, 3], Block::full());
+    clip_world.set([2, 70, 3], water_block(8));
+    clip_world.set([2, 70, 4], Block::full());
+    clip_world.set([2, 71, 4], Block::full());
+
+    // World for BOAT_STATUS (matching VehicleWormholeWitness.emitBoatSnapStatusAndPaddle)
+    struct FrictionWorld {
+        inner: BoxWorld,
+        lily: BlockPos,
+    }
+    impl World for FrictionWorld {
+        fn block(&self, pos: BlockPos) -> &Block {
+            self.inner.block(pos)
+        }
+        fn visit_collision_cells(
+            &self,
+            bounds: Aabb,
+            lo: BlockPos,
+            hi: BlockPos,
+            visit: impl FnMut(BlockPos) -> bool,
+        ) -> bool {
+            self.inner.visit_collision_cells(bounds, lo, hi, visit)
+        }
+    }
+    impl boat::BoatQuery for FrictionWorld {
+        fn skip_ground_friction(&self, pos: BlockPos) -> bool {
+            pos == self.lily
+        }
+    }
+    let mut fw = FrictionWorld {
+        inner: BoxWorld::default(),
+        lily: [200, 65, 200],
+    };
+    let stone = Block {
+        friction: f32::from_bits(0x3f19_999a),
+        ..Block::full()
+    };
+    let blue_ice = Block {
+        friction: f32::from_bits(0x3f7d_2f1b),
+        ..Block::full()
+    };
+    fw.inner.fill([90, 64, 90], [99, 64, 110], stone);
+    fw.inner.fill([100, 64, 90], [110, 64, 110], blue_ice);
+    fw.inner.set(
+        [200, 65, 200],
+        Block::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.09375, 0.9375)]),
+    );
+
+    // Sea world for BOAT_SNAP (water at y <= 61)
+    struct SeaWorld {
+        top_y: i32,
+        water: Block,
+        air: Block,
+        ceiling_block: Option<Aabb>,
+    }
+    impl World for SeaWorld {
+        fn block(&self, pos: BlockPos) -> &Block {
+            if pos[1] <= self.top_y {
+                &self.water
+            } else {
+                &self.air
+            }
+        }
+        fn visit_collision_cells(
+            &self,
+            _bounds: Aabb,
+            _lo: BlockPos,
+            _hi: BlockPos,
+            _visit: impl FnMut(BlockPos) -> bool,
+        ) -> bool {
+            true
+        }
+        fn extra_collisions(
+            &self,
+            bounds: Aabb,
+            _ctx: law::CollisionContext,
+        ) -> Vec<VoxelShape> {
+            match self.ceiling_block {
+                Some(b) if b.intersects(bounds) => vec![VoxelShape::boxes(&[b])],
+                _ => Vec::new(),
+            }
+        }
+        fn visit_extra_collisions(
+            &self,
+            bounds: Aabb,
+            _ctx: law::CollisionContext,
+            mut visit: impl FnMut(law::shapes::ShapeView<'_>) -> bool,
+        ) -> bool {
+            if let Some(b) = self.ceiling_block {
+                if b.intersects(bounds) {
+                    let s = VoxelShape::boxes(&[b]);
+                    return visit(s.view());
+                }
+            }
+            true
+        }
+    }
+    impl boat::BoatQuery for SeaWorld {}
+
+    let parse_boat_status = |s: &str| match s {
+        "IN_WATER" => boat::BoatStatus::InWater,
+        "UNDER_WATER" => boat::BoatStatus::UnderWater,
+        "UNDER_FLOWING_WATER" => boat::BoatStatus::UnderFlowingWater,
+        "ON_LAND" => boat::BoatStatus::OnLand,
+        "IN_AIR" => boat::BoatStatus::InAir,
+        other => panic!("unexpected boat status: {other}"),
+    };
+    let parse_axis = |s: &str| match s {
+        "X" => portal::PortalAxis::X,
+        "Z" => portal::PortalAxis::Z,
+        other => panic!("unexpected portal axis: {other}"),
+    };
+
+    let mut surv_hurt = boat::BoatHurtState::default();
+    let mut row_count = 0usize;
+
+    for (line, row) in include_str!("data/vehicles_wormholes.tsv").lines().enumerate() {
+        if row.trim().is_empty() {
+            continue;
+        }
+        row_count += 1;
+        let p: Vec<_> = row.split_whitespace().collect();
+        match p[0] {
+            "BOAT_DIM" => {
+                assert_eq!(boat::BOAT_WIDTH.to_bits(), h32(p[1]), "line {line}");
+                assert_eq!(boat::BOAT_HEIGHT.to_bits(), h32(p[2]), "line {line}");
+            }
+            "BOAT_CLIP" => {
+                let mode = match p[1] {
+                    "ANY" => interact::ClipFluidMode::Any,
+                    "NONE" => interact::ClipFluidMode::None,
+                    other => panic!("unexpected clip mode {other}"),
+                };
+                let player_pos = Vec3::new(d64(p[2]), d64(p[3]), d64(p[4]));
+                let eye_h = f32b(p[5]);
+                let yaw = f32b(p[6]);
+                let pitch = f32b(p[7]);
+                let range = d64(p[8]);
+                let eye = interact::get_eye_position(player_pos, eye_h);
+                let hit = boat::boat_pov_hit(&clip_world, eye, yaw, pitch, range, mode);
+                assert_eq!(hit.is_hit(), p[9] == "BLOCK", "BOAT_CLIP kind line {line}");
+                let loc = hit.location();
+                assert_eq!(loc.x.to_bits(), h64(p[10]), "BOAT_CLIP hx line {line}");
+                assert_eq!(loc.y.to_bits(), h64(p[11]), "BOAT_CLIP hy line {line}");
+                assert_eq!(loc.z.to_bits(), h64(p[12]), "BOAT_CLIP hz line {line}");
+                if mode == interact::ClipFluidMode::Any {
+                    let player_bb = Aabb::player(player_pos, 1.8);
+                    let placed = boat::place_boat(
+                        &clip_world,
+                        player_pos,
+                        player_bb,
+                        eye_h,
+                        yaw,
+                        pitch,
+                        range,
+                        false,
+                        false,
+                        &[],
+                    );
+                    match p[9] {
+                        "MISS" => assert_eq!(placed, boat::BoatPlaceResult::Pass, "line {line}"),
+                        "BLOCK" if p[13] == "1" => assert_eq!(
+                            placed,
+                            boat::BoatPlaceResult::Success {
+                                pos: loc,
+                                yaw,
+                                aabb: boat::boat_aabb(loc),
+                                spawned_server: true,
+                                consumed: true,
+                            },
+                            "line {line}"
+                        ),
+                        "BLOCK" => assert_eq!(placed, boat::BoatPlaceResult::Fail, "line {line}"),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            "BOAT_PICK" => {
+                // Eye enclosed in inflated pickable box -> BoatItem.use returns Pass
+                let eye = Vec3::new(2.5, 73.62, 2.5);
+                let enclosing = Aabb::new(2.0, 72.0, 2.0, 3.0, 73.5, 3.0);
+                assert_eq!(enclosing.contains(eye), p[1] == "1");
+                assert_eq!(enclosing.deflate(-0.2).contains(eye), p[2] == "1");
+                let player_pos = Vec3::new(2.5, 72.0, 2.5);
+                let res = boat::place_boat(
+                    &clip_world,
+                    player_pos,
+                    Aabb::player(player_pos, 1.8),
+                    1.62,
+                    0.0,
+                    90.0,
+                    20.0,
+                    false,
+                    false,
+                    &[boat::BoatPickTarget {
+                        aabb: enclosing,
+                        pick_radius: 0.2,
+                        is_pickable: true,
+                    }],
+                );
+                assert_eq!(res, boat::BoatPlaceResult::Pass, "BOAT_PICK line {line}");
+            }
+            "BOAT_HURT" => {
+                let creative = p[1] == "1";
+                let amt = f32b(p[2]);
+                let mut h = if creative {
+                    boat::BoatHurtState::default()
+                } else {
+                    surv_hurt
+                };
+                assert_eq!(h.hurt_time, p[3].parse::<i32>().unwrap(), "line {line}");
+                assert_eq!(h.damage.to_bits(), h32(p[4]), "line {line}");
+                assert_eq!(h.hurt_dir, p[5].parse::<i32>().unwrap(), "line {line}");
+                let (ret, outcome) = h.hurt_server(amt, creative, false, false, true);
+                assert_eq!(ret, p[6] == "1", "line {line}");
+                assert_eq!(h.removed, p[7] == "1", "line {line}");
+                assert_eq!(
+                    matches!(outcome, boat::BoatHurtOutcome::Destroyed { .. }),
+                    p[8] == "1",
+                    "line {line}"
+                );
+                assert_eq!(
+                    matches!(outcome, boat::BoatHurtOutcome::Discarded),
+                    p[9] == "1",
+                    "line {line}"
+                );
+                assert_eq!(h.hurt_time, p[10].parse::<i32>().unwrap(), "line {line}");
+                assert_eq!(h.damage.to_bits(), h32(p[11]), "line {line}");
+                assert_eq!(h.hurt_dir, p[12].parse::<i32>().unwrap(), "line {line}");
+                if !creative {
+                    surv_hurt = h;
+                }
+            }
+            "BOAT_HURT_TICK" => {
+                let mut h = boat::BoatHurtState {
+                    damage: f32b(p[1]),
+                    hurt_time: p[2].parse().unwrap(),
+                    ..boat::BoatHurtState::default()
+                };
+                h.tick_decay();
+                assert_eq!(h.damage.to_bits(), h32(p[3]), "BOAT_HURT_TICK dmg line {line}");
+                assert_eq!(h.hurt_time, p[4].parse::<i32>().unwrap(), "BOAT_HURT_TICK ht line {line}");
+            }
+            "BOAT_STATUS" => {
+                let pos = Vec3::new(d64(p[2]), d64(p[3]), d64(p[4]));
+                let fric = boat::get_ground_friction(&fw, pos);
+                assert_eq!(fric.to_bits(), h32(p[5]), "BOAT_STATUS fric {} line {line}", p[1]);
+                let mut body = boat::BoatBody {
+                    boat: boat::Boat { position: pos, ..Default::default() },
+                    water_level: -f64::MAX,
+                    ..Default::default()
+                };
+                let st = boat::get_status(&mut body, &fw);
+                assert_eq!(st, parse_boat_status(p[6]), "BOAT_STATUS st {} line {line}", p[1]);
+                assert_eq!(body.water_level.to_bits(), h64(p[7]), "BOAT_STATUS wl {} line {line}", p[1]);
+            }
+            "BOAT_SNAP" => {
+                let cid = p[1];
+                let old_status = parse_boat_status(p[2]);
+                let clear = p[3] == "1";
+                let y_in = d64(p[4]);
+                let vx_in = d64(p[5]);
+                let vy_in = d64(p[6]);
+                let vz_in = d64(p[7]);
+                let last_yd_in = d64(p[8]);
+                let wla_expected = h32(p[9]);
+                let flowing = cid.contains("FLOWING");
+                let sea = SeaWorld {
+                    top_y: 61,
+                    water: water_block(if flowing { 1 } else { 8 }),
+                    air: Block::default(),
+                    ceiling_block: (!clear).then(|| Aabb::new(0.0, 61.5, 0.0, 1.0, 62.0, 1.0)),
+                };
+                let mut body = boat::BoatBody {
+                    boat: boat::Boat {
+                        position: Vec3::new(0.5, y_in, 0.5),
+                        velocity: Vec3::new(vx_in, vy_in, vz_in),
+                        ..Default::default()
+                    },
+                    status: Some(old_status),
+                    last_yd: last_yd_in,
+                    ..Default::default()
+                };
+                if old_status == boat::BoatStatus::InAir {
+                    let entry = boat::water_entry(
+                        true,
+                        false,
+                        false,
+                        f32::from_bits(wla_expected),
+                        boat::BOAT_HEIGHT,
+                        clear,
+                    );
+                    if clear {
+                        assert_eq!(entry, Some(boat::WaterEntry::Snap(d64(p[10]))), "{cid}");
+                    } else {
+                        assert_eq!(entry, Some(boat::WaterEntry::Blocked), "{cid}");
+                    }
+                }
+                boat::tick_body(&mut body, &sea, boat::Controls::default(), true, false, false);
+                assert_eq!(body.boat.position.y.to_bits(), h64(p[10]), "SNAP {cid} y");
+                assert_eq!(body.boat.velocity.x.to_bits(), h64(p[11]), "SNAP {cid} vx");
+                assert_eq!(body.boat.velocity.y.to_bits(), h64(p[12]), "SNAP {cid} vy");
+                assert_eq!(body.boat.velocity.z.to_bits(), h64(p[13]), "SNAP {cid} vz");
+                assert_eq!(body.last_yd.to_bits(), h64(p[14]), "SNAP {cid} last_yd");
+                assert_eq!(body.water_level.to_bits(), h64(p[15]), "SNAP {cid} water_level");
+                assert_eq!(body.status, Some(parse_boat_status(p[16])), "SNAP {cid} status");
+            }
+            "BOAT_PADDLE" => {
+                let input = boat::Controls {
+                    left: p[1] == "1",
+                    right: p[2] == "1",
+                    forward: p[3] == "1",
+                    backward: p[4] == "1",
+                };
+                let mut b = boat::Boat {
+                    yaw: f32b(p[5]),
+                    delta_rotation: f32b(p[6]),
+                    velocity: Vec3::new(d64(p[7]), 0.0, d64(p[8])),
+                    ..Default::default()
+                };
+                let (pl, pr) = boat::control_boat(&mut b, input);
+                assert_eq!(b.yaw.to_bits(), h32(p[9]), "PADDLE yaw line {line}");
+                assert_eq!(b.delta_rotation.to_bits(), h32(p[10]), "PADDLE dr line {line}");
+                assert_eq!(b.velocity.x.to_bits(), h64(p[11]), "PADDLE vx line {line}");
+                assert_eq!(b.velocity.y.to_bits(), h64(p[12]), "PADDLE vy line {line}");
+                assert_eq!(b.velocity.z.to_bits(), h64(p[13]), "PADDLE vz line {line}");
+                assert_eq!(pl, p[14] == "1", "PADDLE left line {line}");
+                assert_eq!(pr, p[15] == "1", "PADDLE right line {line}");
+            }
+            "PEARL_LAUNCH" => {
+                let cid = p[1];
+                let pos = Vec3::new(d64(p[2]), d64(p[3]), d64(p[4]));
+                let eye_h = f32b(p[5]);
+                let x_rot = f32b(p[6]);
+                let y_rot = f32b(p[7]);
+                let km = Vec3::new(d64(p[8]), d64(p[9]), d64(p[10]));
+                let on_ground = p[11] == "1";
+                let draws = [
+                    d64(p[12]), d64(p[13]), d64(p[14]), d64(p[15]), d64(p[16]), d64(p[17]),
+                ];
+                let res = pearl::use_ender_pearl(&pearl::PearlUseInput {
+                    is_spectator: false,
+                    cooldown_end_tick: None,
+                    tick_count: 100,
+                    stack_count: 5,
+                    has_infinite_materials: false,
+                    owner_pos: pos,
+                    owner_eye_height: eye_h,
+                    x_rot,
+                    y_rot,
+                    known_movement: km,
+                    on_ground,
+                    draws,
+                });
+                let pearl::PearlUseResult::Thrown {
+                    state,
+                    y_rot: py_rot,
+                    x_rot: px_rot,
+                    remaining_stack,
+                    cooldown_end_tick,
+                } = res else {
+                    panic!("expected pearl thrown for {cid}");
+                };
+                assert_eq!(remaining_stack, 4);
+                assert_eq!(cooldown_end_tick, 120);
+                assert_eq!(state.pos.x.to_bits(), h64(p[18]), "{cid} sx");
+                assert_eq!(state.pos.y.to_bits(), h64(p[19]), "{cid} sy");
+                assert_eq!(state.pos.z.to_bits(), h64(p[20]), "{cid} sz");
+                assert_eq!(state.old_pos, state.pos);
+                assert_eq!(state.tick_count, 0);
+                assert_eq!(state.vel.x.to_bits(), h64(p[21]), "{cid} vx");
+                assert_eq!(state.vel.y.to_bits(), h64(p[22]), "{cid} vy");
+                assert_eq!(state.vel.z.to_bits(), h64(p[23]), "{cid} vz");
+                assert_eq!(py_rot.to_bits(), h32(p[24]), "{cid} pearl yRot");
+                assert_eq!(px_rot.to_bits(), h32(p[25]), "{cid} pearl xRot");
+            }
+            "PEARL_COOLDOWN" => {
+                let cd_ticks: i32 = p[1].parse().unwrap();
+                let elapsed: i32 = p[2].parse().unwrap();
+                let expected_on = p[3] == "1";
+                assert_eq!(cd_ticks, pearl::PEARL_COOLDOWN_TICKS);
+                let end = pearl::add_cooldown_end_tick(0, cd_ticks);
+                assert_eq!(pearl::is_on_cooldown(Some(end), elapsed), expected_on, "elapsed {elapsed}");
+            }
+            "CONSUME" => {
+                let surv_res = pearl::use_ender_pearl(&pearl::PearlUseInput {
+                    is_spectator: false,
+                    cooldown_end_tick: None,
+                    tick_count: 0,
+                    stack_count: 5,
+                    has_infinite_materials: false,
+                    owner_pos: Vec3::default(),
+                    owner_eye_height: 1.62,
+                    x_rot: 0.0,
+                    y_rot: 0.0,
+                    known_movement: Vec3::default(),
+                    on_ground: true,
+                    draws: [0.0; 6],
+                });
+                let crea_res = pearl::use_ender_pearl(&pearl::PearlUseInput {
+                    is_spectator: false,
+                    cooldown_end_tick: None,
+                    tick_count: 0,
+                    stack_count: 5,
+                    has_infinite_materials: true,
+                    owner_pos: Vec3::default(),
+                    owner_eye_height: 1.62,
+                    x_rot: 0.0,
+                    y_rot: 0.0,
+                    known_movement: Vec3::default(),
+                    on_ground: true,
+                    draws: [0.0; 6],
+                });
+                let pearl::PearlUseResult::Thrown { remaining_stack: s_rem, .. } = surv_res else { panic!() };
+                let pearl::PearlUseResult::Thrown { remaining_stack: c_rem, .. } = crea_res else { panic!() };
+                assert_eq!(s_rem, p[1].parse::<i32>().unwrap());
+                assert_eq!(c_rem, p[2].parse::<i32>().unwrap());
+            }
+            "PORTAL_SCALE" => {
+                let from_s: f64 = p[1].parse().unwrap();
+                let to_s: f64 = p[2].parse().unwrap();
+                assert_eq!(portal::teleportation_scale(from_s, to_s).to_bits(), h64(p[3]));
+            }
+            "PORTAL_BORDER" => {
+                let pos = Vec3::new(d64(p[1]), d64(p[2]), d64(p[3]));
+                let wb = portal::WorldBorderBounds {
+                    min_x: d64(p[4]),
+                    max_x: d64(p[5]),
+                    min_z: d64(p[6]),
+                    max_z: d64(p[7]),
+                };
+                let got = wb.clamp_vec_to_bounds(pos);
+                let exp = [p[8].parse().unwrap(), p[9].parse().unwrap(), p[10].parse().unwrap()];
+                assert_eq!(got, exp, "PORTAL_BORDER line {line}");
+            }
+            "PORTAL_TRANSIT" => {
+                let cid = p[1];
+                let entry_axis = parse_axis(p[2]);
+                let entry_rect = portal::FoundRectangle {
+                    min_corner: [p[3].parse().unwrap(), p[4].parse().unwrap(), p[5].parse().unwrap()],
+                    axis1_size: p[6].parse().unwrap(),
+                    axis2_size: p[7].parse().unwrap(),
+                };
+                let exit_axis = parse_axis(p[8]);
+                let exit_rect = portal::FoundRectangle {
+                    min_corner: [p[9].parse().unwrap(), p[10].parse().unwrap(), p[11].parse().unwrap()],
+                    axis1_size: p[12].parse().unwrap(),
+                    axis2_size: p[13].parse().unwrap(),
+                };
+                let entry_pos = Vec3::new(d64(p[14]), d64(p[15]), d64(p[16]));
+                let entry_vel = Vec3::new(d64(p[17]), d64(p[18]), d64(p[19]));
+                let yaw = f32b(p[20]);
+                let pitch = f32b(p[21]);
+                let rel = portal::relative_position(entry_rect, entry_axis, entry_pos, 0.6, 1.8);
+                assert_eq!(rel.x.to_bits(), h64(p[22]), "{cid} rel.x");
+                assert_eq!(rel.y.to_bits(), h64(p[23]), "{cid} rel.y");
+                assert_eq!(rel.z.to_bits(), h64(p[24]), "{cid} rel.z");
+                let exit_pos = portal::exit_position(exit_rect, exit_axis, rel, 0.6, 1.8);
+                assert_eq!(exit_pos.x.to_bits(), h64(p[25]), "{cid} exit.x");
+                assert_eq!(exit_pos.y.to_bits(), h64(p[26]), "{cid} exit.y");
+                assert_eq!(exit_pos.z.to_bits(), h64(p[27]), "{cid} exit.z");
+                let tr = portal::transit(
+                    portal::PortalTransit { position: entry_pos, velocity: entry_vel, yaw, pitch },
+                    entry_axis,
+                    exit_axis,
+                    exit_pos,
+                );
+                assert_eq!(tr.position.x.to_bits(), h64(p[28]), "{cid} abs.x");
+                assert_eq!(tr.position.y.to_bits(), h64(p[29]), "{cid} abs.y");
+                assert_eq!(tr.position.z.to_bits(), h64(p[30]), "{cid} abs.z");
+                assert_eq!(tr.velocity.x.to_bits(), h64(p[31]), "{cid} abs.vx");
+                assert_eq!(tr.velocity.y.to_bits(), h64(p[32]), "{cid} abs.vy");
+                assert_eq!(tr.velocity.z.to_bits(), h64(p[33]), "{cid} abs.vz");
+                assert_eq!(tr.yaw.to_bits(), h32(p[34]), "{cid} abs.yRot");
+                assert_eq!(tr.pitch.to_bits(), h32(p[35]), "{cid} abs.xRot");
+            }
+            "PORTAL_PROC" => {
+                let p_delay: i32 = p[1].parse().unwrap();
+                let b_delay: i32 = p[2].parse().unwrap();
+                let e_delay: i32 = p[3].parse().unwrap();
+                let trig_tick: i32 = p[4].parse().unwrap();
+                let pt_trig: i32 = p[5].parse().unwrap();
+                let pt_decay: i32 = p[6].parse().unwrap();
+                let exp_flag = p[7] == "1";
+
+                assert_eq!(portal::dimension_changing_delay(true, false), p_delay);
+                assert_eq!(portal::PORTAL_COOLDOWN_VEHICLE, b_delay);
+                assert_eq!(portal::dimension_changing_delay(false, false), e_delay);
+
+                let mut state = portal::PortalProcessState::default();
+                let mut fired_at = -1;
+                for t in 1..=85 {
+                    state.set_inside_portal([0, 64, 0], true, p_delay);
+                    match state.handle_portal(true, portal::NETHER_PORTAL_DEFAULT_DELAY_TICKS, p_delay, false) {
+                        portal::PortalHandleOutcome::NullDestinationLockedOut => {
+                            fired_at = t;
+                            break;
+                        }
+                        portal::PortalHandleOutcome::Counting { .. } => {}
+                        other => panic!("unexpected outcome at t={t}: {other:?}"),
+                    }
+                }
+                assert_eq!(fired_at, trig_tick);
+                assert_eq!(state.portal_time, pt_trig);
+                assert_eq!(state.portal_cooldown, p_delay);
+                assert!(state.has_processor, "null destination keeps portalProcessor");
+                let dec = state.handle_portal(true, portal::NETHER_PORTAL_DEFAULT_DELAY_TICKS, p_delay, false);
+                assert_eq!(
+                    dec,
+                    portal::PortalHandleOutcome::Decayed {
+                        portal_time: pt_decay,
+                        expired: exp_flag,
+                    }
+                );
+            }
+            other => panic!("unexpected row kind: {other}"),
+        }
+    }
+    assert_eq!(row_count, 65);
+}
