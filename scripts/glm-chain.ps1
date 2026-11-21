@@ -24,5 +24,6 @@ while ($true) {
   # A job leaves the list only when its run finished with a dossier; a broken run stops the chain to be fixed.
   if (-not $out -or -not (Test-Path (Join-Path $out.FullName 'dossier.md'))) { Write-Log "failed: $job -> $($out.Name); chain stopped"; break }
   Write-Log "end: $job -> $($out.Name)"
-  Set-Content -Encoding utf8 $list ($jobs | Select-Object -Skip 1)
+  $current = @(Get-Content $list | Where-Object { $_.Trim() -and $_.Trim() -ne $job })
+  [IO.File]::WriteAllLines($list, [string[]]$current, [Text.UTF8Encoding]::new($false))
 }
