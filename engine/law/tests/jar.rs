@@ -1843,3 +1843,352 @@ fn jar_vehicles_and_wormholes() {
     }
     assert_eq!(row_count, 65);
 }
+
+#[test]
+fn jar_movement_wired() {
+    use law::{
+        apply_server_resource_event, calculate_fall_power, player, server_freeze_step, tick,
+        try_tick, Block, BoxWorld, Fluid, FluidKind, Input, Inside, PlayerState, Pose,
+        ServerResourceEvent, VoxelShape, Aabb,
+    };
+    let h64 = |s: &str| f64::from_bits(u64::from_str_radix(s, 16).unwrap());
+    let h32 = |s: &str| f32::from_bits(u32::from_str_radix(s, 16).unwrap());
+    let bit = |s: &str| match s { "1" => true, "0" => false, _ => panic!("bad bool {s}") };
+
+    let mut count = 0usize;
+    for (idx, row) in include_str!("data/movement_wired.tsv").lines().enumerate() {
+        if row.trim().is_empty() { continue; }
+        count += 1;
+        let c: Vec<&str> = row.split('\t').collect();
+        match c[0] {
+            "ABILITY_SWITCH" => {
+                let mut s = PlayerState { flying_speed: 0.08, ..PlayerState::default() };
+                s.set_game_mode(player::GameType::by_id(c[1].parse().unwrap()));
+                s.flying = bit(c[2]);
+                s.set_game_mode(player::GameType::by_id(c[3].parse().unwrap()));
+                assert_eq!(
+                    (s.invulnerable, s.flying, s.mayfly, s.instabuild, s.may_build, s.flying_speed.to_bits()),
+                    (bit(c[4]), bit(c[5]), bit(c[6]), bit(c[7]), bit(c[8]), h32(c[9]).to_bits()),
+                    "row {idx}: {row}"
+                );
+            }
+            "FLY_SPEED" => {
+                let actual = player::player_get_flying_speed(bit(c[1]), bit(c[2]), bit(c[3]), h32(c[4]));
+                assert_eq!(actual.to_bits(), h32(c[5]).to_bits(), "row {idx}: {row}");
+            }
+            "FLY_TRAVEL" => {
+                let dir: i32 = c[1].parse().unwrap();
+                let fspeed = h32(c[2]);
+                let init_vy = h64(c[3]);
+                let sprinting = bit(c[4]);
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    velocity: Vec3::new(0.0, init_vy, 0.0),
+                    game_mode: player::GameType::Creative,
+                    mayfly: true,
+                    flying: true,
+                    invulnerable: true,
+                    instabuild: true,
+                    flying_speed: fspeed,
+                    sprinting,
+                    sprint_speed_modifier: sprinting,
+                    ..PlayerState::default()
+                };
+                let inp = Input {
+                    forward: true,
+                    sprint: sprinting,
+                    jump: dir > 0,
+                    sneak: dir < 0,
+                    ..Input::default()
+                };
+                tick(&mut s, &BoxWorld::default(), &inp);
+                assert_eq!(
+                    (s.velocity.x.to_bits(), s.velocity.y.to_bits(), s.velocity.z.to_bits()),
+                    (h64(c[6]).to_bits(), h64(c[7]).to_bits(), h64(c[8]).to_bits()),
+                    "row {idx}: {row}"
+                );
+            }
+            "EFFECT_SPEED" => {
+                let sp: i32 = c[1].parse().unwrap();
+                let sl: i32 = c[2].parse().unwrap();
+                let sprinting = bit(c[3]);
+                let mut s = PlayerState::default();
+                s.set_speed_effect((sp >= 0).then_some(sp as u8));
+                s.set_slowness_effect((sl >= 0).then_some(sl as u8));
+                s.set_sprinting(sprinting);
+                assert_eq!(s.movement_speed_value().to_bits(), h64(c[4]).to_bits(), "row {idx}: {row}");
+                let mut ts = s.clone();
+                ts.effects = sp >= 0 || sl >= 0;
+                ts.position = Vec3::new(0.5, 64.0, 0.5);
+                let inp = Input { forward: true, sprint: sprinting, ..Input::default() };
+                try_tick(&mut ts, &BoxWorld::default(), &inp).expect("modeled effects must not refuse");
+                assert_eq!(ts.speed.to_bits(), h32(c[5]).to_bits(), "row {idx}: {row}");
+                if sp < 0 && sl < 0 {
+                    ts.effects = true;
+                    assert!(try_tick(&mut ts, &BoxWorld::default(), &inp).is_err(), "unmodeled effect flag must refuse");
+                }
+            }
+            "EFFECT_SPEED_ORD" => {
+                let mut s = PlayerState::default();
+                s.set_speed_effect(Some(1));
+                s.set_slowness_effect(Some(0));
+                s.set_sprinting(true);
+                assert_eq!(s.movement_speed_value().to_bits(), h64(c[2]).to_bits(), "row {idx}: {row}");
+            }
+            "EFFECT_JUMP" => {
+                let jb: i32 = c[1].parse().unwrap();
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    on_ground: true,
+                    yaw: 35.0,
+                    effects: jb >= 0,
+                    ..PlayerState::default()
+                };
+                s.set_jump_boost((jb >= 0).then_some(jb as u8));
+                s.set_sprinting(true);
+                assert_eq!(s.jump_boost_power().to_bits(), h32(c[2]).to_bits(), "row {idx} boost");
+                assert_eq!(s.safe_fall_distance.to_bits(), h64(c[4]).to_bits(), "row {idx} safe_fall");
+                assert_eq!(calculate_fall_power(&s, 5.5).to_bits(), h64(c[5]).to_bits(), "row {idx} fall_power");
+                // Confirm law::tick executes jump_from_ground + travel_air without effects refusal.
+                tick(&mut s, &BoxWorld::default(), &Input { jump: true, forward: true, sprint: true, yaw: 35.0, ..Input::default() });
+                let vertical = 0.98f32 as f64;
+                assert_eq!(s.velocity.y.to_bits(), ((h64(c[7]) - 0.08) * vertical).to_bits(), "row {idx} jump vy");
+            }
+            "CRAWL_POSE" => {
+                let case_id: i32 = c[1].parse().unwrap();
+                let expected_pose = match c[2] {
+                    "0" => Pose::Standing,
+                    "1" => Pose::Crouching,
+                    "2" => Pose::Swimming,
+                    o => panic!("bad pose {o}"),
+                };
+                let mut w = BoxWorld::default();
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    gravity: 0.0,
+                    ..PlayerState::default()
+                };
+                let mut inp = Input::default();
+                match case_id {
+                    0 => {}
+                    1 => inp.sneak = true,
+                    2 => { inp.sneak = true; s.flying = true; s.mayfly = true; }
+                    3 => { w.set([0, 65, 0], Block::full()); s.position.y = 63.4; }
+                    4 => { w.set([0, 65, 0], Block::full()); }
+                    5 => { w.set([0, 65, 0], Block::full()); s.set_game_mode(player::GameType::Spectator); }
+                    _ => panic!("bad case_id {case_id}"),
+                }
+                tick(&mut s, &w, &inp);
+                assert_eq!(s.pose, expected_pose, "row {idx}: {row}");
+            }
+            "EXHAUSTION" => {
+                let case_id: i32 = c[1].parse().unwrap();
+                if case_id == 2 {
+                    // Riding is guarded by LivingEntity.travelRidden refusal while ServerPlayer checkMovementStatistics guards riding.
+                    continue;
+                }
+                let mut w = BoxWorld::default();
+                w.set([0, 63, 0], Block::full());
+                w.set([1, 63, 0], Block::full());
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    on_ground: true,
+                    gravity: 0.0,
+                    movement_speed_base: 0.0,
+                    ..PlayerState::default()
+                };
+                s.set_sprinting(true);
+                if case_id == 1 {
+                    s.invulnerable = true;
+                }
+                if case_id == 3 {
+                    for x in 0..=1 {
+                        for y in 64..=65 {
+                            w.set([x, y, 0], Block {
+                                fluid: Fluid { kind: FluidKind::Water, height: 1.0, ..Fluid::default() },
+                                ..Block::default()
+                            });
+                        }
+                    }
+                    s.on_ground = false;
+                    s.flying = true;
+                    s.mayfly = true;
+                    s.velocity = Vec3::new(0.28, 0.12, 0.0);
+                } else {
+                    s.velocity = Vec3::new(0.28, -0.08, 0.0);
+                }
+                let inp = if case_id == 3 { Input::default() } else { Input { forward: true, ..Input::default() } };
+                tick(&mut s, &w, &inp);
+                assert_eq!(s.exhaustion.to_bits(), h32(c[2]).to_bits(), "row {idx}: {row}");
+            }
+            "REGEN_GUARD" => {
+                let mut w = BoxWorld::default();
+                w.difficulty = 0;
+                w.natural_regeneration = true;
+                let mut s = PlayerState {
+                    health: h32(c[1]),
+                    food_level: 15,
+                    saturation: 1.0,
+                    ..PlayerState::default()
+                };
+                apply_server_resource_event(&mut s, &w, ServerResourceEvent::Regeneration(c[2].parse().unwrap()));
+                assert_eq!(
+                    (s.health.to_bits(), s.food_level, s.saturation.to_bits()),
+                    (h32(c[3]).to_bits(), c[4].parse::<i32>().unwrap(), h32(c[5]).to_bits()),
+                    "row {idx}: {row}"
+                );
+            }
+            "BUBBLE_COLUMN" => {
+                let drag = bit(c[1]);
+                let above_kind: i32 = c[2].parse().unwrap();
+                let intersects = bit(c[3]);
+                let flying = bit(c[4]);
+                let init_vy = h64(c[5]);
+                let mut w = BoxWorld::default();
+                let mut col_block = Block {
+                    air: false,
+                    inside: Inside::BubbleColumn { drag },
+                    ..Block::default()
+                };
+                if !intersects {
+                    // Far corner outside player's AABB [0.2..0.8] while in block [0,64,0].
+                    col_block.inside_shape = Some(VoxelShape::boxes(&[Aabb::new(0.9, 0.0, 0.9, 1.0, 1.0, 1.0)]));
+                }
+                w.set([0, 64, 0], col_block);
+                if above_kind == 1 {
+                    w.set([0, 65, 0], Block {
+                        air: false,
+                        inside_shape: Some(VoxelShape::default()),
+                        fluid: Fluid { kind: FluidKind::Water, height: 1.0, ..Fluid::default() },
+                        ..Block::default()
+                    });
+                } else if above_kind == 2 {
+                    w.set([0, 65, 0], Block::boxes(&[Aabb::new(0.0, 0.9, 0.0, 1.0, 1.0, 1.0)]));
+                }
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, if above_kind == 2 && init_vy > 0.0 { 63.5 } else { 64.0 }, 0.5),
+                    pose: Pose::Swimming,
+                    velocity: Vec3::new(0.0, init_vy, 0.0),
+                    gravity: 0.0,
+                    air_drag_modifier: 0.0,
+                    flying,
+                    fall_distance: 5.0,
+                    ..PlayerState::default()
+                };
+                tick(&mut s, &w, &Input::default());
+                let expected_vy = if flying { h64(c[6]) * 0.6 } else { h64(c[6]) };
+                let pre_fall = if flying { 0.0 } else { h64(c[7]) };
+                let after_move_fall = if above_kind == 1 && init_vy >= 1.0 {
+                    0.0 // move >= 1.0 crosses Water at [0,65,0] in Entity.move -> fall_reset_ray
+                } else if init_vy < 0.0 {
+                    pre_fall - (init_vy as f32) as f64
+                } else {
+                    pre_fall
+                };
+                let expected_fall = if !flying && h64(c[7]) == 0.0 { 0.0 } else { after_move_fall };
+                assert_eq!(s.velocity.y.to_bits(), expected_vy.to_bits(), "row {idx} vy: {row}");
+                assert_eq!(s.fall_distance.to_bits(), expected_fall.to_bits(), "row {idx} fall: {row}");
+            }
+            "FROST_MOD" => {
+                let tf: i32 = c[1].parse().unwrap();
+                let feet_non_air = bit(c[2]);
+                let has_mod = bit(c[3]);
+                let mod_amount = h64(c[4]);
+                let (_, frost, _) = server_freeze_step(tf, true, true, feet_non_air, 1);
+                assert_eq!(frost.is_some(), has_mod, "row {idx} has_mod: {row}");
+                assert_eq!(frost.unwrap_or(0.0).to_bits(), mod_amount.to_bits(), "row {idx} frost: {row}");
+            }
+            "COLLECTOR_FREEZE" => {
+                let steps: i32 = c[1].parse().unwrap();
+                let init_frozen: i32 = c[2].parse().unwrap();
+                let spectator = bit(c[3]);
+                let mut w = BoxWorld::default();
+                for dy in 0..steps {
+                    w.set([0, 64 + dy, 0], Block { air: false, inside: Inside::PowderSnow, ..Block::default() });
+                }
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, if steps == 3 { 66.7 } else { 64.0 }, 0.5),
+                    velocity: Vec3::new(0.0, if steps == 3 { -2.5 } else { 0.0 }, 0.0),
+                    gravity: 0.0,
+                    air_drag_modifier: 0.0,
+                    ticks_frozen: init_frozen,
+                    remaining_fire_ticks: 40,
+                    game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival },
+                    mayfly: spectator,
+                    flying: spectator,
+                    invulnerable: spectator,
+                    ..PlayerState::default()
+                };
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.in_powder_snow, bit(c[4]), "row {idx} inSnow: {row}");
+                assert_eq!(s.ticks_frozen, c[5].parse::<i32>().unwrap(), "row {idx} tf: {row}");
+                assert_eq!(s.remaining_fire_ticks, c[6].parse::<i32>().unwrap(), "row {idx} fire: {row}");
+            }
+            "COLLECTOR_LAVA" => {
+                let with_water = bit(c[1]);
+                let with_fire_res = bit(c[2]);
+                let invuln = bit(c[3]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block {
+                    air: false,
+                    inside_shape: Some(VoxelShape::default()),
+                    fluid: Fluid { kind: FluidKind::Lava, height: 1.0, ..Fluid::default() },
+                    ..Block::default()
+                });
+                if with_water {
+                    w.set([1, 64, 0], Block {
+                        air: false,
+                        inside_shape: Some(VoxelShape::default()),
+                        fluid: Fluid { kind: FluidKind::Water, height: 1.0, ..Fluid::default() },
+                        ..Block::default()
+                    });
+                }
+                let mut s = PlayerState {
+                    // X=0.8 makes player bounding box [0.5..1.1] intersect both [0,64,0] (lava) and [1,64,0] (water) at step 0.
+                    position: Vec3::new(if with_water { 0.8 } else { 0.5 }, 64.0, 0.5),
+                    ticks_frozen: 50,
+                    invulnerable: invuln,
+                    fire_resistance: with_fire_res,
+                    effects: with_fire_res,
+                    ..PlayerState::default()
+                };
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.health.to_bits(), h32(c[4]).to_bits(), "row {idx} health: {row}");
+                assert_eq!(s.ticks_frozen, c[5].parse::<i32>().unwrap(), "row {idx} tf: {row}");
+                assert_eq!(s.remaining_fire_ticks, c[6].parse::<i32>().unwrap(), "row {idx} fire: {row}");
+                assert_eq!(s.hurt_cooldown.remaining_ticks, c[7].parse::<i32>().unwrap(), "row {idx} invulnTime: {row}");
+                assert_eq!(s.exhaustion.to_bits(), h32(c[8]).to_bits(), "row {idx} ex: {row}");
+            }
+            "FREEZE_STEP" => {
+                let tf: i32 = c[1].parse().unwrap();
+                let in_snow = bit(c[2]);
+                let spectator = bit(c[3]);
+                let tc: i32 = c[4].parse().unwrap();
+                let mut w = BoxWorld::default();
+                w.set([0, 63, 0], Block::full());
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    on_ground: true,
+                    ticks_frozen: tf,
+                    gravity: 0.0,
+                    game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival },
+                    mayfly: spectator,
+                    flying: spectator,
+                    invulnerable: spectator,
+                    ..PlayerState::default()
+                };
+                if in_snow {
+                    w.set([0, 64, 0], Block { air: false, inside: Inside::PowderSnow, ..Block::default() });
+                    tick(&mut s, &w, &Input::default());
+                }
+                let (frozen, frost, damage) = server_freeze_step(s.ticks_frozen, in_snow && !spectator, !spectator, true, tc);
+                assert_eq!(frozen, c[5].parse::<i32>().unwrap(), "row {idx} tf: {row}");
+                assert_eq!(frost.is_some(), bit(c[6]), "row {idx} has_mod: {row}");
+                assert_eq!(frost.unwrap_or(0.0).to_bits(), h64(c[7]).to_bits(), "row {idx} frost: {row}");
+                assert_eq!(damage.unwrap_or(0.0).to_bits(), h32(c[8]).to_bits(), "row {idx} dmg: {row}");
+            }
+            other => panic!("unknown tag {other}"),
+        }
+    }
+    assert_eq!(count, 270);
+}

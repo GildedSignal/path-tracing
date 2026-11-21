@@ -185,7 +185,10 @@ fn load_block(object: &Object<'_>) -> Block {
     if object.get("inside").is_some() {
         block.inside = match object.string("inside") {
             "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow,
-            "honey" => Inside::Honey, "none" => Inside::None,
+            "honey" => Inside::Honey,
+            "bubbleColumnUp" => Inside::BubbleColumn { drag: false },
+            "bubbleColumnDown" => Inside::BubbleColumn { drag: true },
+            "none" => Inside::None,
             "unmodeled" if object.get("block").is_some() => {
                 let id = object.string("block");
                 let name = if unsupported_fall_on.is_none() {
@@ -441,6 +444,19 @@ fn check_server_end(state: &mut PlayerState, world: &impl World, expected: &Obje
     for _ in 0..offset { tick(state, world, &input); }
     assert_server(state, expected);
     true
+}
+
+#[test]
+#[ignore = "explicit recorded witness"]
+fn freeze_sweep_recording() {
+    let file = PathBuf::from(std::env::var_os("PATHTRACING_FREEZE_WITNESS").expect("witness path"));
+    let fixture = fs::read_to_string(file.with_extension("world.jsonl")).expect("witness world");
+    let text = fs::read_to_string(&file).expect("witness recording");
+    let header = Object::parse(text.lines().next().expect("recording header"));
+    let fixture = format!("{}\n{}", fixture, header.required("initialPlayer"));
+    let (world, mut state, _) = parse_world(&fixture);
+    let (ticks, _) = replay_text(&text, &world, &mut state);
+    println!("freeze sweep witness: {ticks} ticks replayed");
 }
 
 #[test]

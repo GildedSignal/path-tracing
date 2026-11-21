@@ -118,6 +118,21 @@ pub struct PlayerState {
     pub using_item: bool,
     pub use_item_speed_multiplier: Option<f32>,
     pub use_item_can_sprint: Option<bool>,
+    pub game_mode: crate::player::GameType,
+    pub mayfly: bool,
+    pub instabuild: bool,
+    pub invulnerable: bool,
+    pub may_build: bool,
+    pub flying_speed: f32,
+    pub jump_trigger_time: i32,
+    pub sprint_trigger_time: i32,
+    pub sprint_window: i32,
+    pub jump_boost: Option<u8>,
+    pub speed_effect: Option<u8>,
+    pub slowness_effect: Option<u8>,
+    pub blindness: bool,
+    pub fire_resistance: bool,
+    pub unmodeled_effects: bool,
 }
 // Test instrumentation sits at the type, so every Clone call is counted.
 #[cfg(feature = "count-state-copies")]
@@ -194,6 +209,21 @@ impl Clone for PlayerState {
             using_item: self.using_item.clone(),
             use_item_speed_multiplier: self.use_item_speed_multiplier.clone(),
             use_item_can_sprint: self.use_item_can_sprint.clone(),
+            game_mode: self.game_mode.clone(),
+            mayfly: self.mayfly.clone(),
+            instabuild: self.instabuild.clone(),
+            invulnerable: self.invulnerable.clone(),
+            may_build: self.may_build.clone(),
+            flying_speed: self.flying_speed.clone(),
+            jump_trigger_time: self.jump_trigger_time.clone(),
+            sprint_trigger_time: self.sprint_trigger_time.clone(),
+            sprint_window: self.sprint_window.clone(),
+            jump_boost: self.jump_boost.clone(),
+            speed_effect: self.speed_effect.clone(),
+            slowness_effect: self.slowness_effect.clone(),
+            blindness: self.blindness.clone(),
+            fire_resistance: self.fire_resistance.clone(),
+            unmodeled_effects: self.unmodeled_effects.clone(),
         }
     }
 }
@@ -266,7 +296,22 @@ impl Default for PlayerState {
             flying: false,
             using_item: false,
             use_item_speed_multiplier: None,
-            use_item_can_sprint: None
+            use_item_can_sprint: None,
+            game_mode: crate::player::GameType::Survival,
+            mayfly: false,
+            instabuild: false,
+            invulnerable: false,
+            may_build: true,
+            flying_speed: 0.05f32,
+            jump_trigger_time: 0,
+            sprint_trigger_time: 0,
+            sprint_window: 0,
+            jump_boost: None,
+            speed_effect: None,
+            slowness_effect: None,
+            blindness: false,
+            fire_resistance: false,
+            unmodeled_effects: false,
         }
     }
 }
@@ -292,6 +337,8 @@ impl PlayerState {
             step_height, friction_modifier, air_drag_modifier, water_movement_efficiency,
             movement_efficiency, sneaking_speed, safe_fall_distance, fall_damage_multiplier,
             bounciness, fall_flying, riding, boat, effects, flying, using_item, use_item_speed_multiplier, use_item_can_sprint,
+            game_mode, mayfly, instabuild, invulnerable, may_build, flying_speed, jump_trigger_time, sprint_trigger_time,
+            sprint_window, jump_boost, speed_effect, slowness_effect, blindness, fire_resistance, unmodeled_effects,
         } = self;
         let mut bits = vec![*t, input.yaw.to_bits() as u64, input.pitch.to_bits() as u64,
             yaw.to_bits() as u64, pitch.to_bits() as u64, *pose as u64,
@@ -323,6 +370,40 @@ impl PlayerState {
         for modifier in speed_modifiers {
             bits.push(modifier.id.len() as u64); bits.extend(modifier.id.bytes().map(u64::from));
             bits.extend([modifier.amount.to_bits(), modifier.operation as u64]);
+        }
+        let has_extended = *game_mode != crate::player::GameType::Survival
+            || *mayfly
+            || *instabuild
+            || *invulnerable
+            || !*may_build
+            || flying_speed.to_bits() != 0.05f32.to_bits()
+            || *jump_trigger_time != 0
+            || *sprint_trigger_time != 0
+            || *sprint_window != 0
+            || jump_boost.is_some()
+            || speed_effect.is_some()
+            || slowness_effect.is_some()
+            || *blindness
+            || *fire_resistance
+            || *unmodeled_effects;
+        if has_extended {
+            bits.extend([
+                *game_mode as u64,
+                *mayfly as u64,
+                *instabuild as u64,
+                *invulnerable as u64,
+                *may_build as u64,
+                flying_speed.to_bits() as u64,
+                *jump_trigger_time as u64,
+                *sprint_trigger_time as u64,
+                *sprint_window as u64,
+                jump_boost.map_or(u64::MAX, u64::from),
+                speed_effect.map_or(u64::MAX, u64::from),
+                slowness_effect.map_or(u64::MAX, u64::from),
+                *blindness as u64,
+                *fire_resistance as u64,
+                *unmodeled_effects as u64,
+            ]);
         }
         bits
     }
@@ -459,6 +540,39 @@ impl PlayerState {
             let operation = match b.word()? { 0 => crate::SpeedOperation::AddValue, 1 => crate::SpeedOperation::AddMultipliedBase,
                 2 => crate::SpeedOperation::AddMultipliedTotal, _ => return Err(Refusal { position: at, reason: "operation" }) };
             s.speed_modifiers.push(crate::SpeedModifier { id, amount, operation });
+        }
+        if b.at < words.len() {
+            let at = b.at;
+            s.game_mode = match b.word()? {
+                0 => crate::player::GameType::Survival,
+                1 => crate::player::GameType::Creative,
+                2 => crate::player::GameType::Adventure,
+                3 => crate::player::GameType::Spectator,
+                _ => return Err(Refusal { position: at, reason: "game mode" }),
+            };
+            s.mayfly = b.boolean()?;
+            s.instabuild = b.boolean()?;
+            s.invulnerable = b.boolean()?;
+            s.may_build = b.boolean()?;
+            s.flying_speed = b.f32()?;
+            s.jump_trigger_time = b.i32()?;
+            s.sprint_trigger_time = b.i32()?;
+            s.sprint_window = b.i32()?;
+            let opt_u8 = |b: &mut Bits<'_>| -> Result<Option<u8>, Refusal> {
+                let at = b.at;
+                let w = b.word()?;
+                if w == u64::MAX {
+                    Ok(None)
+                } else {
+                    u8::try_from(w).map(Some).map_err(|_| Refusal { position: at, reason: "effect amplifier" })
+                }
+            };
+            s.jump_boost = opt_u8(&mut b)?;
+            s.speed_effect = opt_u8(&mut b)?;
+            s.slowness_effect = opt_u8(&mut b)?;
+            s.blindness = b.boolean()?;
+            s.fire_resistance = b.boolean()?;
+            s.unmodeled_effects = b.boolean()?;
         }
         if b.at != words.len() { return Err(Refusal { position: b.at, reason: "extra word" }); }
         Ok(s)

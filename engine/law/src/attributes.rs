@@ -53,9 +53,70 @@ impl PlayerState {
         self.sprint_speed_modifier = sprinting;
     }
 
+    pub fn set_speed_effect(&mut self, amplifier: Option<u8>) {
+        self.speed_effect = amplifier;
+    }
+
+    pub fn set_slowness_effect(&mut self, amplifier: Option<u8>) {
+        self.slowness_effect = amplifier;
+    }
+
+    pub fn set_jump_boost(&mut self, amplifier: Option<u8>) {
+        let bonus = |amp: Option<u8>| amp.map_or(0.0, |a| (a as i32 + 1) as f64);
+        self.safe_fall_distance += bonus(amplifier) - bonus(self.jump_boost);
+        self.jump_boost = amplifier;
+    }
+
+    /// `LivingEntity.getJumpBoostPower()`: `0.1f * ((float)amplifier + 1.0f)` when active, else `0.0f`.
+    pub fn jump_boost_power(&self) -> f32 {
+        self.jump_boost.map_or(0.0f32, |amp| 0.1f32 * ((amp as i32 as f32) + 1.0f32))
+    }
+
+    pub fn abilities(&self) -> crate::player::Abilities {
+        crate::player::Abilities {
+            invulnerable: self.invulnerable,
+            flying: self.flying,
+            mayfly: self.mayfly,
+            instabuild: self.instabuild,
+            may_build: self.may_build,
+            flying_speed: self.flying_speed,
+            walking_speed: self.movement_speed_base as f32,
+        }
+    }
+
+    pub fn set_abilities(&mut self, abilities: crate::player::Abilities) {
+        self.invulnerable = abilities.invulnerable;
+        self.flying = abilities.flying;
+        self.mayfly = abilities.mayfly;
+        self.instabuild = abilities.instabuild;
+        self.may_build = abilities.may_build;
+        self.flying_speed = abilities.flying_speed;
+    }
+
+    pub fn set_game_mode(&mut self, mode: crate::player::GameType) {
+        self.game_mode = mode;
+        let mut abilities = self.abilities();
+        crate::player::update_player_abilities(mode, &mut abilities);
+        self.set_abilities(abilities);
+    }
+
     // AttributeInstance.calculateValue; LivingEntity.setSprinting; RangedAttribute.sanitizeValue
     pub fn movement_speed_value(&self) -> f64 {
-        if self.speed_modifiers.is_empty() {
+        let speed = self.speed_effect
+            .filter(|_| !self.speed_modifiers.iter().any(|m| m.id == "minecraft:effect.speed"))
+            .map(|amp| SpeedModifier {
+                id: "minecraft:effect.speed".to_owned(),
+                amount: 0.20000000298023224f64 * ((amp as i32 + 1) as f64),
+                operation: SpeedOperation::AddMultipliedTotal,
+            });
+        let slowness = self.slowness_effect
+            .filter(|_| !self.speed_modifiers.iter().any(|m| m.id == "minecraft:effect.slowness"))
+            .map(|amp| SpeedModifier {
+                id: "minecraft:effect.slowness".to_owned(),
+                amount: -0.15000000596046448f64 * ((amp as i32 + 1) as f64),
+                operation: SpeedOperation::AddMultipliedTotal,
+            });
+        if self.speed_modifiers.is_empty() && speed.is_none() && slowness.is_none() {
             let value = if self.sprint_speed_modifier {
                 self.movement_speed_base * (1.0 + 0.3f32 as f64)
             } else {
@@ -69,7 +130,10 @@ impl PlayerState {
             operation: SpeedOperation::AddMultipliedTotal,
         };
         let ordered = |operation| operation_order(
-            self.speed_modifiers.iter().chain(self.sprint_speed_modifier.then_some(&sprint))
+            self.speed_modifiers.iter()
+                .chain(self.sprint_speed_modifier.then_some(&sprint))
+                .chain(speed.as_ref())
+                .chain(slowness.as_ref())
                 .filter(move |modifier| modifier.operation == operation));
         let mut base = self.movement_speed_base;
         for modifier in ordered(SpeedOperation::AddValue) { base += modifier.amount; }

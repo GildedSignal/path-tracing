@@ -423,7 +423,15 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         for value in [*water_block, *climbable, *scaffolding, *bed, *suffocating, *suppresses_bounce, *slime,
             *fence, *wall_or_gate, *resets_fall_distance, *end_portal_or_gateway, *world_hook, *air] { bytes.push(value as u8); }
         bytes.extend([*ladder_facing, *open_trapdoor_facing].map(|f| f.map_or(255, |f| frame.facing(f))));
-        bytes.push(match inside { Inside::None => 0, Inside::Cobweb => 1, Inside::PowderSnow => 2, Inside::Honey => 3, Inside::Unsupported(_) => unreachable!() });
+        bytes.push(match inside {
+            Inside::None => 0,
+            Inside::Cobweb => 1,
+            Inside::PowderSnow => 2,
+            Inside::Honey => 3,
+            Inside::BubbleColumn { drag: false } => 4,
+            Inside::BubbleColumn { drag: true } => 5,
+            Inside::Unsupported(_) => unreachable!()
+        });
         bytes.push(match grounded_contact { crate::GroundedContact::None => 0,
             crate::GroundedContact::DamageUnlessCareful(crate::ContactDamage::HotFloor) => 1 });
         bytes.push(stuck_multiplier.is_some() as u8);

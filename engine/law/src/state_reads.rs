@@ -2,7 +2,7 @@
 //! write to its world (`World::read_state`, `World::write_state`), and a recording world
 //! keeps the reads. The reports observe places and never substitute values. A partial
 //! write keeps the whole field as read.
-use crate::{PlayerState, Input, Vec3, Pose, HurtCooldown, SpeedModifier};
+use crate::{PlayerState, Input, Vec3, Pose, HurtCooldown, SpeedModifier, player::GameType};
 
 macro_rules! state_fields {
     ($($field:ident),* $(,)?) => {
@@ -92,6 +92,21 @@ state_fields!(
     using_item,
     use_item_speed_multiplier,
     use_item_can_sprint,
+    game_mode,
+    mayfly,
+    instabuild,
+    invulnerable,
+    may_build,
+    flying_speed,
+    jump_trigger_time,
+    sprint_trigger_time,
+    sprint_window,
+    jump_boost,
+    speed_effect,
+    slowness_effect,
+    blindness,
+    fire_resistance,
+    unmodeled_effects,
 );
 impl StateField {
     pub fn is_resource(self) -> bool {
@@ -126,8 +141,8 @@ macro_rules! encode_as { ($($t:ty: |$v:ident| $e:expr),* $(,)?) => { $(impl Enco
     fn encode(&self, out: &mut Vec<u64>) { let $v = self; out.extend($e); }
 })* } }
 encode_as!(
-    bool: |v| [*v as u64], i32: |v| [*v as u64], u32: |v| [*v as u64], u64: |v| [*v],
-    f32: |v| [v.to_bits() as u64], f64: |v| [v.to_bits()], Pose: |v| [*v as u64],
+    bool: |v| [*v as u64], u8: |v| [*v as u64], i32: |v| [*v as u64], u32: |v| [*v as u64], u64: |v| [*v],
+    f32: |v| [v.to_bits() as u64], f64: |v| [v.to_bits()], Pose: |v| [*v as u64], GameType: |v| [*v as u64],
     Vec3: |v| [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()],
     [i32; 3]: |v| v.map(|c| c as u64),
     HurtCooldown: |v| [v.remaining_ticks as u64, v.last_raw_hit.to_bits() as u64],

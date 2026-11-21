@@ -148,6 +148,7 @@ pub enum Inside {
     Cobweb,
     PowderSnow,
     Honey,
+    BubbleColumn { drag: bool },
     Unsupported(String)
 }
 
