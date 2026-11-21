@@ -55,8 +55,15 @@ pub use world::{
     World
 };
 
+pub mod combat;
 pub mod entity_contact;
+pub mod explosion;
+pub mod falling;
+pub mod fluid;
+pub mod neighbor;
+pub mod piston;
 pub mod state_reads;
+pub mod ticks;
 
 pub mod boat;
 pub mod elytra;

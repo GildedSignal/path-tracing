@@ -26,6 +26,21 @@ pub fn lfloor(value: f64) -> i64 {
     value.floor() as i64
 }
 
+// Mth.ceil
+pub fn ceil(value: f64) -> i32 {
+    value.ceil() as i32
+}
+
+// Mth.floor(float): f2d, Math.floor, d2i
+pub fn floor_f32(value: f32) -> i32 {
+    (value as f64).floor() as i32
+}
+
+// Mth.lerp(DDD): start + delta * (end - start)
+pub fn lerp(delta: f64, start: f64, end: f64) -> f64 {
+    start + delta * (end - start)
+}
+
 // Mth.sqrt
 pub fn sqrt(value: f32) -> f32 {
     (value as f64).sqrt() as f32
