@@ -2192,3 +2192,809 @@ fn jar_movement_wired() {
     }
     assert_eq!(count, 270);
 }
+
+#[test]
+fn jar_world_items_vehicles() {
+    use law::block_hooks::{
+        BambooLeaves, HookContext, HookEntityKind, NonPlayerHookBlock, ShulkerAnimationStatus,
+        ShulkerBoxEntityState, ShulkerBreakOutcome, SpeleothemThickness, TipDirection,
+        WorldHookAction, aabb_contract, bamboo_collision_aabb, bamboo_outline_aabb,
+        detector_rail_search_bb, evaluate_entity_inside, evaluate_step_on, get_seed,
+        get_xz_offset, hopper_suck_aabb, offset_collision_shape, shulker_break_outcome,
+        shulker_can_open, shulker_can_open_box, shulker_collision_aabb,
+        shulker_entity_push_vector, shulker_open_support_aabb, shulker_placement_facing,
+        speleothem_aabb, turtle_egg_can_destroy, OffsetCollisionSpec,
+    };
+    use law::interact::{BlockId, Direction};
+    use law::items::{
+        can_consume, consume_ticks, eat, eat_food, eat_with_modifier, push, riptide_push,
+        saturation_by_modifier, scale_effect_duration, spin_attack_hull, start_using_item,
+        stop_using_item, trident_spin_attack_strength, use_item_tick, SpinAttack, SpinTouch,
+        COOKED_BEEF, DRIED_KELP, ENCHANTED_GOLDEN_APPLE, GOLDEN_APPLE, GOLDEN_CARROT,
+        GROUNDED_HOP, HONEY_BOTTLE, POTION, SPIN_ATTACK_POSE_EYE_HEIGHT, SPIN_ATTACK_POSE_HEIGHT,
+        SPIN_ATTACK_POSE_WIDTH,
+    };
+    use law::minecart::{CartConditions, Minecart, RailInfo, RailShape, Rails};
+    use law::{Block, BlockPos, BoxWorld};
+    use std::collections::{HashMap, HashSet};
+
+    #[derive(Default)]
+    struct TestRails {
+        rails: HashMap<BlockPos, RailInfo>,
+        conductors: HashSet<BlockPos>,
+    }
+    impl TestRails {
+        fn add_rail(&mut self, pos: BlockPos, shape: RailShape, powered: bool, is_powered: bool) {
+            self.rails.insert(pos, RailInfo::new(shape, powered, is_powered));
+        }
+    }
+    impl Rails for TestRails {
+        fn rail_at(&self, pos: BlockPos) -> Option<RailInfo> {
+            self.rails.get(&pos).copied()
+        }
+        fn rails_tag_below(&self, pos: BlockPos) -> bool {
+            self.rails.contains_key(&[pos[0], pos[1] - 1, pos[2]])
+        }
+        fn is_redstone_conductor(&self, pos: BlockPos) -> bool {
+            self.conductors.contains(&pos)
+        }
+    }
+
+    let h64 = |s: &str| f64::from_bits(u64::from_str_radix(s, 16).unwrap());
+    let h32 = |s: &str| f32::from_bits(u32::from_str_radix(s, 16).unwrap());
+    let bit = |s: &str| s == "1";
+    let parse_box = |c: &[&str]| {
+        Aabb::new(h64(c[0]), h64(c[1]), h64(c[2]), h64(c[3]), h64(c[4]), h64(c[5]))
+    };
+    let assert_box = |actual: Aabb, expected: Aabb, ctx: &str| {
+        assert_eq!(actual.min.x.to_bits(), expected.min.x.to_bits(), "{ctx} min.x");
+        assert_eq!(actual.min.y.to_bits(), expected.min.y.to_bits(), "{ctx} min.y");
+        assert_eq!(actual.min.z.to_bits(), expected.min.z.to_bits(), "{ctx} min.z");
+        assert_eq!(actual.max.x.to_bits(), expected.max.x.to_bits(), "{ctx} max.x");
+        assert_eq!(actual.max.y.to_bits(), expected.max.y.to_bits(), "{ctx} max.y");
+        assert_eq!(actual.max.z.to_bits(), expected.max.z.to_bits(), "{ctx} max.z");
+    };
+    let parse_shape = |s: &str| match s {
+        "NORTH_SOUTH" => RailShape::NorthSouth,
+        "EAST_WEST" => RailShape::EastWest,
+        "ASCENDING_EAST" => RailShape::AscendingEast,
+        "ASCENDING_WEST" => RailShape::AscendingWest,
+        "ASCENDING_NORTH" => RailShape::AscendingNorth,
+        "ASCENDING_SOUTH" => RailShape::AscendingSouth,
+        "SOUTH_EAST" => RailShape::SouthEast,
+        "SOUTH_WEST" => RailShape::SouthWest,
+        "NORTH_WEST" => RailShape::NorthWest,
+        "NORTH_EAST" => RailShape::NorthEast,
+        other => panic!("unknown rail shape {other}"),
+    };
+    let parse_dir = |s: &str| match s {
+        "DOWN" => Direction::Down,
+        "UP" => Direction::Up,
+        "NORTH" => Direction::North,
+        "SOUTH" => Direction::South,
+        "WEST" => Direction::West,
+        "EAST" => Direction::East,
+        other => panic!("unknown direction {other}"),
+    };
+    let lookup_item = |s: &str| match s {
+        "golden_carrot" => &GOLDEN_CARROT,
+        "cooked_beef" => &COOKED_BEEF,
+        "golden_apple" => &GOLDEN_APPLE,
+        "enchanted_golden_apple" => &ENCHANTED_GOLDEN_APPLE,
+        "dried_kelp" => &DRIED_KELP,
+        "honey_bottle" => &HONEY_BOTTLE,
+        "potion" => &POTION,
+        other => panic!("unknown item {other}"),
+    };
+
+    let build_cart_scenario = |name: &str| -> (Minecart, TestRails, CartConditions, bool) {
+        let mut rails = TestRails::default();
+        let mut cond = CartConditions::default();
+        let mut clamp_floor = false;
+        let cart = match name {
+            "S1_BRAKE" => {
+                for x in 2..=22 {
+                    rails.add_rail([x, 0, 2], RailShape::EastWest, false, true);
+                }
+                Minecart {
+                    position: Vec3::new(2.5, 0.0625, 2.5),
+                    velocity: Vec3::new(0.2, 0.0, 0.0),
+                }
+            }
+            "S2_BOOST" => {
+                for x in 2..=22 {
+                    rails.add_rail([x, 0, 2], RailShape::EastWest, true, true);
+                }
+                Minecart {
+                    position: Vec3::new(2.5, 0.0625, 2.5),
+                    velocity: Vec3::new(0.05, 0.0, 0.0),
+                }
+            }
+            "S3_CLIMB_EAST" => {
+                for x in 0..=4 {
+                    rails.add_rail([x, 0, 8], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([5, 0, 8], RailShape::AscendingEast, false, true);
+                for x in 6..=14 {
+                    rails.add_rail([x, 1, 8], RailShape::EastWest, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(0.5, 0.0625, 8.5),
+                    velocity: Vec3::new(0.3, 0.0, 0.0),
+                }
+            }
+            "S4_DESCEND_EAST" => {
+                for x in 0..=4 {
+                    rails.add_rail([x, 0, 8], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([5, 0, 8], RailShape::AscendingEast, false, false);
+                for x in 6..=8 {
+                    rails.add_rail([x, 1, 8], RailShape::EastWest, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(6.2, 1.0625, 8.5),
+                    velocity: Vec3::new(-0.3, 0.0, 0.0),
+                }
+            }
+            "S4_DESCEND_WEST" => {
+                for x in 2..=4 {
+                    rails.add_rail([x, 1, 8], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([5, 0, 8], RailShape::AscendingWest, false, false);
+                for x in 6..=10 {
+                    rails.add_rail([x, 0, 8], RailShape::EastWest, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(4.8, 1.0625, 8.5),
+                    velocity: Vec3::new(0.3, 0.0, 0.0),
+                }
+            }
+            "S4_DESCEND_NORTH" => {
+                for z in 2..=4 {
+                    rails.add_rail([8, 1, z], RailShape::NorthSouth, false, false);
+                }
+                rails.add_rail([8, 0, 5], RailShape::AscendingNorth, false, false);
+                for z in 6..=10 {
+                    rails.add_rail([8, 0, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(8.5, 1.0625, 4.8),
+                    velocity: Vec3::new(0.0, 0.0, 0.3),
+                }
+            }
+            "S4_DESCEND_SOUTH" => {
+                for z in 0..=4 {
+                    rails.add_rail([8, 0, z], RailShape::NorthSouth, false, false);
+                }
+                rails.add_rail([8, 0, 5], RailShape::AscendingSouth, false, false);
+                for z in 6..=8 {
+                    rails.add_rail([8, 1, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(8.5, 1.0625, 6.2),
+                    velocity: Vec3::new(0.0, 0.0, -0.3),
+                }
+            }
+            "S5_CURVE_SE_IN" => {
+                for x in 21..=23 {
+                    rails.add_rail([x, 0, 19], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([20, 0, 19], RailShape::SouthEast, false, false);
+                for z in 20..=23 {
+                    rails.add_rail([20, 0, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(21.2, 0.0625, 19.5),
+                    velocity: Vec3::new(-0.35, 0.0, 0.0),
+                }
+            }
+            "S5_CURVE_SW" => {
+                for x in 17..=19 {
+                    rails.add_rail([x, 0, 19], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([20, 0, 19], RailShape::SouthWest, false, false);
+                for z in 20..=23 {
+                    rails.add_rail([20, 0, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(19.8, 0.0625, 19.5),
+                    velocity: Vec3::new(0.35, 0.0, 0.0),
+                }
+            }
+            "S5_CURVE_NW" => {
+                for x in 17..=19 {
+                    rails.add_rail([x, 0, 19], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([20, 0, 19], RailShape::NorthWest, false, false);
+                for z in 15..=18 {
+                    rails.add_rail([20, 0, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(19.8, 0.0625, 19.5),
+                    velocity: Vec3::new(0.35, 0.0, 0.0),
+                }
+            }
+            "S5_CURVE_NE" => {
+                for x in 21..=23 {
+                    rails.add_rail([x, 0, 19], RailShape::EastWest, false, false);
+                }
+                rails.add_rail([20, 0, 19], RailShape::NorthEast, false, false);
+                for z in 15..=18 {
+                    rails.add_rail([20, 0, z], RailShape::NorthSouth, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(21.2, 0.0625, 19.5),
+                    velocity: Vec3::new(-0.35, 0.0, 0.0),
+                }
+            }
+            "S6_OFF_GROUND" => {
+                cond.on_ground = true;
+                clamp_floor = true;
+                Minecart {
+                    position: Vec3::new(10.06, 0.0, 30.5),
+                    velocity: Vec3::new(0.04, 0.0, 0.0),
+                }
+            }
+            "S6_OFF_AIR" => Minecart {
+                position: Vec3::new(10.06, 10.0, 30.5),
+                velocity: Vec3::new(0.3, 0.0, 0.0),
+            },
+            "S7_OCCUPIED" => {
+                cond.occupied = true;
+                for x in 2..=22 {
+                    rails.add_rail([x, 0, 40], RailShape::EastWest, true, true);
+                }
+                Minecart {
+                    position: Vec3::new(2.5, 0.0625, 40.5),
+                    velocity: Vec3::new(0.05, 0.0, 0.0),
+                }
+            }
+            "S8_WALL_SOUTH" => {
+                for z in 46..=50 {
+                    rails.add_rail([5, 0, z], RailShape::NorthSouth, true, true);
+                }
+                rails.conductors.insert([5, 0, 51]);
+                Minecart {
+                    position: Vec3::new(5.5, 0.0625, 50.5),
+                    velocity: Vec3::new(0.0, 0.0, 0.0),
+                }
+            }
+            "S8_WALL_WEST" => {
+                for x in 5..=9 {
+                    rails.add_rail([x, 0, 50], RailShape::EastWest, true, true);
+                }
+                rails.conductors.insert([4, 0, 50]);
+                Minecart {
+                    position: Vec3::new(5.5, 0.0625, 50.5),
+                    velocity: Vec3::new(0.0, 0.0, 0.0),
+                }
+            }
+            "S9_WATER_FLAT" => {
+                cond.in_water = true;
+                for x in 0..=10 {
+                    rails.add_rail([x, 0, 60], RailShape::EastWest, false, false);
+                }
+                Minecart {
+                    position: Vec3::new(2.5, 0.0625, 60.5),
+                    velocity: Vec3::new(0.3, 0.0, 0.0),
+                }
+            }
+            "S9_WATER_SLOPE" => {
+                cond.in_water = true;
+                rails.add_rail([4, 0, 62], RailShape::EastWest, false, false);
+                rails.add_rail([5, 0, 62], RailShape::AscendingEast, false, false);
+                rails.add_rail([6, 1, 62], RailShape::EastWest, false, false);
+                Minecart {
+                    position: Vec3::new(5.5, 0.0625, 62.5),
+                    velocity: Vec3::new(0.15, 0.0, 0.0),
+                }
+            }
+            other => panic!("unknown cart scenario {other}"),
+        };
+        (cart, rails, cond, clamp_floor)
+    };
+
+    let mut active_cart: Option<(String, Minecart, TestRails, CartConditions, bool)> = None;
+    let mut shulker_anim_open = ShulkerBoxEntityState {
+        status: ShulkerAnimationStatus::Opening,
+        progress: 0.0,
+        progress_old: 0.0,
+    };
+    let mut shulker_anim_close = ShulkerBoxEntityState {
+        status: ShulkerAnimationStatus::Closing,
+        progress: 1.0,
+        progress_old: 1.0,
+    };
+
+    let mut count = 0usize;
+    for (idx, row) in include_str!("data/world_items_vehicles.tsv").lines().enumerate() {
+        count += 1;
+        let c: Vec<_> = row.split('\t').collect();
+        match c[0] {
+            "MC_GET_POS" => {
+                let shape = parse_shape(c[1]);
+                let mut rails = TestRails::default();
+                rails.add_rail([0, 64, 0], shape, false, false);
+                let cart = Minecart::default();
+                let got = cart.get_pos(&rails, h64(c[2]), h64(c[3]), h64(c[4]));
+                assert_eq!(got.is_some(), bit(c[6]), "row {idx}: {row}");
+                if let Some(p) = got {
+                    assert_eq!(p.x.to_bits(), h64(c[7]).to_bits(), "row {idx} rx: {row}");
+                    assert_eq!(p.y.to_bits(), h64(c[8]).to_bits(), "row {idx} ry: {row}");
+                    assert_eq!(p.z.to_bits(), h64(c[9]).to_bits(), "row {idx} rz: {row}");
+                }
+            }
+            "MC_GET_POS_OFFS" => {
+                let shape = parse_shape(c[1]);
+                let mut rails = TestRails::default();
+                rails.add_rail([0, 64, 0], shape, false, false);
+                let cart = Minecart::default();
+                let got = cart.get_pos_offs(&rails, h64(c[2]), h64(c[3]), h64(c[4]), h64(c[5]));
+                assert_eq!(got.is_some(), bit(c[6]), "row {idx}: {row}");
+                if let Some(p) = got {
+                    assert_eq!(p.x.to_bits(), h64(c[7]).to_bits(), "row {idx} rx: {row}");
+                    assert_eq!(p.y.to_bits(), h64(c[8]).to_bits(), "row {idx} ry: {row}");
+                    assert_eq!(p.z.to_bits(), h64(c[9]).to_bits(), "row {idx} rz: {row}");
+                }
+            }
+            "MC_TICK" => {
+                let scen = c[1];
+                let step: usize = c[2].parse().unwrap();
+                if step == 1 || active_cart.as_ref().map(|a| a.0.as_str()) != Some(scen) {
+                    let (cart, rails, cond, clamp_floor) = build_cart_scenario(scen);
+                    active_cart = Some((scen.to_string(), cart, rails, cond, clamp_floor));
+                }
+                let (_, cart, rails, cond, clamp_floor) = active_cart.as_mut().unwrap();
+                cart.tick(rails, *cond);
+                if *clamp_floor {
+                    // Entity.move resolves floor collision at y=0.0 before next tick.
+                    cart.position.y = 0.0;
+                    cart.velocity.y = 0.0;
+                }
+                assert_eq!(cart.position.x.to_bits(), h64(c[3]).to_bits(), "row {idx} px: {row}");
+                assert_eq!(cart.position.y.to_bits(), h64(c[4]).to_bits(), "row {idx} py: {row}");
+                assert_eq!(cart.position.z.to_bits(), h64(c[5]).to_bits(), "row {idx} pz: {row}");
+                assert_eq!(cart.velocity.x.to_bits(), h64(c[6]).to_bits(), "row {idx} vx: {row}");
+                assert_eq!(cart.velocity.y.to_bits(), h64(c[7]).to_bits(), "row {idx} vy: {row}");
+                assert_eq!(cart.velocity.z.to_bits(), h64(c[8]).to_bits(), "row {idx} vz: {row}");
+            }
+            "MC_STEER" => {
+                let mut rails = TestRails::default();
+                for x in 2..=10 {
+                    rails.add_rail([x, 0, 70], RailShape::EastWest, false, true);
+                }
+                let mut cart = Minecart {
+                    position: Vec3::new(5.5, 0.0625, 70.5),
+                    velocity: Vec3::default(),
+                };
+                let intent = Vec3::new(h64(c[1]), h64(c[2]), h64(c[3]));
+                cart.tick(
+                    &rails,
+                    CartConditions {
+                        occupied: true,
+                        passenger_intent: Some(intent),
+                        ..CartConditions::default()
+                    },
+                );
+                assert_eq!(cart.position.x.to_bits(), h64(c[4]).to_bits(), "row {idx} px: {row}");
+                assert_eq!(cart.position.y.to_bits(), h64(c[5]).to_bits(), "row {idx} py: {row}");
+                assert_eq!(cart.position.z.to_bits(), h64(c[6]).to_bits(), "row {idx} pz: {row}");
+                assert_eq!(cart.velocity.x.to_bits(), h64(c[7]).to_bits(), "row {idx} vx: {row}");
+                assert_eq!(cart.velocity.y.to_bits(), h64(c[8]).to_bits(), "row {idx} vy: {row}");
+                assert_eq!(cart.velocity.z.to_bits(), h64(c[9]).to_bits(), "row {idx} vz: {row}");
+            }
+            "ITEM_PROPS" => {
+                let item = lookup_item(c[1]);
+                assert_eq!(item.consume_ticks, c[2].parse::<i32>().unwrap(), "row {idx}: {row}");
+                assert_eq!(item.has_food, bit(c[3]), "row {idx}: {row}");
+                assert_eq!(item.nutrition, c[4].parse::<i32>().unwrap(), "row {idx}: {row}");
+                assert_eq!(item.saturation.to_bits(), h32(c[5]).to_bits(), "row {idx}: {row}");
+                assert_eq!(item.can_always_eat, bit(c[6]), "row {idx}: {row}");
+            }
+            "ITEM_CONSUME_TICKS" => {
+                assert_eq!(consume_ticks(h32(c[1])), c[2].parse::<i32>().unwrap(), "row {idx}: {row}");
+            }
+            "ITEM_SAT_MOD" => {
+                let n: i32 = c[1].parse().unwrap();
+                let sat = saturation_by_modifier(n, h32(c[2]));
+                assert_eq!(sat.to_bits(), h32(c[3]).to_bits(), "row {idx}: {row}");
+            }
+            "ITEM_CAN_CONSUME" => {
+                let item = lookup_item(c[1]);
+                let fl: i32 = c[2].parse().unwrap();
+                let invuln = bit(c[3]);
+                assert_eq!(can_consume(item, fl, invuln), bit(c[4]), "row {idx}: {row}");
+            }
+            "ITEM_EAT_FOOD" => {
+                let mut fl: i32 = c[1].parse().unwrap();
+                let mut sat = h32(c[2]);
+                let nut: i32 = c[3].parse().unwrap();
+                let baked_sat = h32(c[4]);
+                eat_food(&mut fl, &mut sat, nut, baked_sat);
+                assert_eq!(fl, c[5].parse::<i32>().unwrap(), "row {idx} fl: {row}");
+                assert_eq!(sat.to_bits(), h32(c[6]).to_bits(), "row {idx} sat: {row}");
+            }
+            "ITEM_EAT_MOD" => {
+                let mut fl: i32 = c[1].parse().unwrap();
+                let mut sat = h32(c[2]);
+                let nut: i32 = c[3].parse().unwrap();
+                let mod_f = h32(c[4]);
+                eat_with_modifier(&mut fl, &mut sat, nut, mod_f);
+                assert_eq!(fl, c[5].parse::<i32>().unwrap(), "row {idx} fl: {row}");
+                assert_eq!(sat.to_bits(), h32(c[6]).to_bits(), "row {idx} sat: {row}");
+            }
+            "ITEM_COUNTDOWN" => {
+                let item = lookup_item(c[1]);
+                let mut fl: i32 = c[2].parse().unwrap();
+                let mut sat = h32(c[3]);
+                let run_ticks: i32 = c[4].parse().unwrap();
+                let abort_at: i32 = c[5].parse().unwrap();
+                let mut rem = start_using_item(item);
+                for t in 1..=run_ticks {
+                    if rem > 0 && use_item_tick(&mut rem, false, item.use_on_release) {
+                        eat(&mut fl, &mut sat, item);
+                    }
+                    if t == abort_at {
+                        stop_using_item(&mut rem);
+                    }
+                }
+                assert_eq!(rem, c[6].parse::<i32>().unwrap(), "row {idx} rem: {row}");
+                assert_eq!(fl, c[7].parse::<i32>().unwrap(), "row {idx} fl: {row}");
+                assert_eq!(sat.to_bits(), h32(c[8]).to_bits(), "row {idx} sat: {row}");
+            }
+            "ITEM_POTION_SCALE" => {
+                let dur: i32 = c[1].parse().unwrap();
+                let scale = h32(c[2]);
+                assert_eq!(scale_effect_duration(dur, scale), c[3].parse::<i32>().unwrap(), "row {idx}: {row}");
+            }
+            "TRIDENT_STRENGTH" => {
+                let lvl: i32 = c[1].parse().unwrap();
+                assert_eq!(trident_spin_attack_strength(lvl).to_bits(), h32(c[2]).to_bits(), "row {idx}: {row}");
+            }
+            "TRIDENT_LAUNCH" => {
+                let imp = riptide_push(h32(c[1]), h32(c[2]), h32(c[3]));
+                let v0 = Vec3::new(h64(c[4]), h64(c[5]), h64(c[6]));
+                assert_eq!(imp.x.to_bits(), h64(c[7]).to_bits(), "row {idx} dx: {row}");
+                assert_eq!(imp.y.to_bits(), h64(c[8]).to_bits(), "row {idx} dy: {row}");
+                assert_eq!(imp.z.to_bits(), h64(c[9]).to_bits(), "row {idx} dz: {row}");
+                let res = push(v0, imp);
+                assert_eq!(res.x.to_bits(), h64(c[10]).to_bits(), "row {idx} px: {row}");
+                assert_eq!(res.y.to_bits(), h64(c[11]).to_bits(), "row {idx} py: {row}");
+                assert_eq!(res.z.to_bits(), h64(c[12]).to_bits(), "row {idx} pz: {row}");
+            }
+            "TRIDENT_HOP_POSE" => {
+                assert_eq!(GROUNDED_HOP.y.to_bits(), h64(c[1]).to_bits(), "row {idx} hop");
+                assert_eq!(SPIN_ATTACK_POSE_WIDTH.to_bits(), h32(c[2]).to_bits(), "row {idx} w");
+                assert_eq!(SPIN_ATTACK_POSE_HEIGHT.to_bits(), h32(c[3]).to_bits(), "row {idx} h");
+                assert_eq!(SPIN_ATTACK_POSE_EYE_HEIGHT.to_bits(), h32(c[4]).to_bits(), "row {idx} eye");
+            }
+            "TRIDENT_SPIN_CHECK" => {
+                let old_box = Aabb::new(0.0, 64.0, 0.0, 0.6, 64.6, 0.6);
+                let new_box = Aabb::new(1.2, 64.0, 0.0, 1.8, 64.6, 0.6);
+                let hull = spin_attack_hull(old_box, new_box);
+                assert_box(hull, parse_box(&c[7..13]), &format!("row {idx}"));
+                let (horiz, touch) = match c[1] {
+                    "NONE_CLEAR" => (false, SpinTouch::None),
+                    "NONE_HORIZ" => (true, SpinTouch::None),
+                    "NON_LIVING_HORIZ" => (true, SpinTouch::NonLivingOnly),
+                    "LIVING_HIT" => (false, SpinTouch::Living),
+                    other => panic!("unknown spin mode {other}"),
+                };
+                let mut spin = SpinAttack::default();
+                spin.start();
+                let mut vel = Vec3::new(-1.59, 1.59, 0.001);
+                let _ = spin.check_auto_spin_attack(&mut vel, horiz, touch);
+                assert_eq!(spin.remaining_ticks, c[2].parse::<i32>().unwrap(), "row {idx} ticks: {row}");
+                assert_eq!(spin.flag_active, bit(c[3]), "row {idx} flag: {row}");
+                assert_eq!(vel.x.to_bits(), h64(c[4]).to_bits(), "row {idx} vx: {row}");
+                assert_eq!(vel.y.to_bits(), h64(c[5]).to_bits(), "row {idx} vy: {row}");
+                assert_eq!(vel.z.to_bits(), h64(c[6]).to_bits(), "row {idx} vz: {row}");
+            }
+            "OFFSET_SEED" => {
+                let x: i32 = c[1].parse().unwrap();
+                let y: i32 = c[2].parse().unwrap();
+                let z: i32 = c[3].parse().unwrap();
+                let exp = u64::from_str_radix(c[4], 16).unwrap() as i64;
+                assert_eq!(get_seed(x, y, z), exp, "row {idx}: {row}");
+            }
+            "OFFSET_BLOCK" => {
+                let x: i32 = c[4].parse().unwrap();
+                let z: i32 = c[5].parse().unwrap();
+                let max_h = h32(c[6]);
+                let off = get_xz_offset(x, z, max_h);
+                assert_eq!(off.x.to_bits(), h64(c[7]).to_bits(), "row {idx} ox: {row}");
+                assert_eq!(off.y.to_bits(), h64(c[8]).to_bits(), "row {idx} oy: {row}");
+                assert_eq!(off.z.to_bits(), h64(c[9]).to_bits(), "row {idx} oz: {row}");
+                let expected = parse_box(&c[10..16]);
+                let actual = match c[1] {
+                    "bamboo" => bamboo_collision_aabb([x, 0, z]),
+                    "sulfur_spike" | "pointed_dripstone" => {
+                        let th = match c[2] {
+                            "TIP_MERGE" => SpeleothemThickness::TipMerge,
+                            "TIP" => SpeleothemThickness::Tip,
+                            "FRUSTUM" => SpeleothemThickness::Frustum,
+                            "MIDDLE" => SpeleothemThickness::Middle,
+                            "BASE" => SpeleothemThickness::Base,
+                            other => panic!("unknown thickness {other}"),
+                        };
+                        let td = match c[3] {
+                            "UP" => TipDirection::Up,
+                            "DOWN" => TipDirection::Down,
+                            other => panic!("unknown tip dir {other}"),
+                        };
+                        let shape = offset_collision_shape(
+                            OffsetCollisionSpec::Speleothem { thickness: th, tip_direction: td },
+                            [x, 0, z],
+                        )
+                        .unwrap();
+                        let v = shape.view();
+                        let s_box = Aabb::new(
+                            v.coord(0, 0),
+                            v.coord(1, 0),
+                            v.coord(2, 0),
+                            v.coord(0, 1),
+                            v.coord(1, 1),
+                            v.coord(2, 1),
+                        );
+                        assert_box(s_box, expected, &format!("row {idx} shape"));
+                        speleothem_aabb([x, 0, z], th, td)
+                    }
+                    other => panic!("unknown offset block {other}"),
+                };
+                assert_box(actual, expected, &format!("row {idx}"));
+            }
+            "OFFSET_BAMBOO_OUTLINE" => {
+                let lv = match c[1] {
+                    "NONE" => BambooLeaves::None,
+                    "SMALL" => BambooLeaves::Small,
+                    "LARGE" => BambooLeaves::Large,
+                    other => panic!("unknown leaves {other}"),
+                };
+                let x: i32 = c[2].parse().unwrap();
+                let z: i32 = c[3].parse().unwrap();
+                assert_box(bamboo_outline_aabb([x, 0, z], lv), parse_box(&c[4..10]), &format!("row {idx}"));
+            }
+            "SHULKER_CONTRACT" => {
+                let unit = Aabb::new(-0.5, 0.0, -0.5, 0.5, 1.0, 0.5);
+                let got = aabb_contract(unit, h64(c[1]), h64(c[2]), h64(c[3]));
+                assert_box(got, parse_box(&c[4..10]), &format!("row {idx}"));
+            }
+            "SHULKER_SHAPE" => {
+                let dir = parse_dir(c[1]);
+                let be = match c[2] {
+                    "NULL_BE" => None,
+                    "CLOSED" => Some(ShulkerBoxEntityState {
+                        status: ShulkerAnimationStatus::Closed,
+                        progress: h32(c[3]),
+                        progress_old: h32(c[4]),
+                    }),
+                    "OPENED" => Some(ShulkerBoxEntityState {
+                        status: ShulkerAnimationStatus::Opened,
+                        progress: h32(c[3]),
+                        progress_old: h32(c[4]),
+                    }),
+                    other => panic!("unknown shulker be {other}"),
+                };
+                assert_box(shulker_collision_aabb(dir, be), parse_box(&c[5..11]), &format!("row {idx}"));
+            }
+            "SHULKER_SUPPORT" => {
+                let dir = parse_dir(c[1]);
+                assert_box(shulker_open_support_aabb(dir, bit(c[2])), parse_box(&c[3..9]), &format!("row {idx}"));
+            }
+            "SHULKER_PUSH" => {
+                let dir = parse_dir(c[1]);
+                let mut be = ShulkerBoxEntityState {
+                    status: ShulkerAnimationStatus::Opening,
+                    progress: 0.0,
+                    progress_old: 0.0,
+                };
+                let tick_res = be.tick_animation([0, 0, 0], dir);
+                let sweep = tick_res.move_collided_sweep.unwrap();
+                let delta = shulker_entity_push_vector(dir, sweep);
+                assert_eq!(delta.x.to_bits(), h64(c[3]).to_bits(), "row {idx} dx: {row}");
+                assert_eq!(delta.y.to_bits(), h64(c[4]).to_bits(), "row {idx} dy: {row}");
+                assert_eq!(delta.z.to_bits(), h64(c[5]).to_bits(), "row {idx} dz: {row}");
+            }
+            "SHULKER_ANIM" => {
+                let state = if c[1] == "OPEN" {
+                    &mut shulker_anim_open
+                } else {
+                    &mut shulker_anim_close
+                };
+                let res = state.tick_animation([0, 0, 0], Direction::Up);
+                let exp_status = match c[3] {
+                    "CLOSED" => ShulkerAnimationStatus::Closed,
+                    "OPENING" => ShulkerAnimationStatus::Opening,
+                    "OPENED" => ShulkerAnimationStatus::Opened,
+                    "CLOSING" => ShulkerAnimationStatus::Closing,
+                    other => panic!("unknown anim status {other}"),
+                };
+                assert_eq!(state.status, exp_status, "row {idx} status: {row}");
+                assert_eq!(state.progress_old.to_bits(), h32(c[4]).to_bits(), "row {idx} po: {row}");
+                assert_eq!(state.progress.to_bits(), h32(c[5]).to_bits(), "row {idx} p: {row}");
+                assert_eq!(res.do_neighbor_updates, bit(c[6]), "row {idx} neigh: {row}");
+                assert_box(
+                    shulker_collision_aabb(Direction::Up, Some(*state)),
+                    parse_box(&c[7..13]),
+                    &format!("row {idx}"),
+                );
+            }
+            "SHULKER_CAN_OPEN" => {
+                let mut w = BoxWorld::default();
+                let mut status = ShulkerAnimationStatus::Closed;
+                let mut ents = Vec::new();
+                match c[1] {
+                    "air_above" => {}
+                    "stone_above" => w.set([0, 1, 0], Block::full()),
+                    "bottom_slab_above" => w.set([0, 1, 0], Block::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)])),
+                    "top_slab_above" => w.set([0, 1, 0], Block::boxes(&[Aabb::new(0.0, 0.5, 0.0, 1.0, 1.0, 1.0)])),
+                    "entity_in_cell" => ents.push(Aabb::new(0.2, 1.1, 0.2, 0.8, 1.9, 0.8)),
+                    "entity_top_plane" => ents.push(Aabb::new(0.2, 1.5, 0.2, 0.8, 1.9, 0.8)),
+                    "opening_unconditional" => {
+                        w.set([0, 1, 0], Block::full());
+                        status = ShulkerAnimationStatus::Opening;
+                    }
+                    other => panic!("unknown can_open {other}"),
+                }
+                assert_eq!(shulker_can_open(&w, [0, 0, 0], Direction::Up, status, &ents), bit(c[2]), "row {idx}: {row}");
+                assert_box(shulker_can_open_box([0, 0, 0], Direction::Up), parse_box(&c[3..9]), &format!("row {idx} box"));
+            }
+            "SHULKER_PLACE" => {
+                assert_eq!(shulker_placement_facing(parse_dir(c[1])), parse_dir(c[2]), "row {idx}: {row}");
+            }
+            "SHULKER_BREAK" => {
+                let creative = bit(c[1]);
+                let empty = bit(c[2]);
+                let spawns: usize = c[3].parse().unwrap();
+                let exp = if creative && !empty {
+                    ShulkerBreakOutcome::CreativeDropWithComponents
+                } else if creative && empty {
+                    ShulkerBreakOutcome::CreativeEmptyNoDrop
+                } else {
+                    ShulkerBreakOutcome::NormalDrop
+                };
+                assert_eq!(shulker_break_outcome(false, creative, empty), exp, "row {idx}: {row}");
+                assert_eq!(spawns, usize::from(exp == ShulkerBreakOutcome::CreativeDropWithComponents), "row {idx} spawns: {row}");
+            }
+            "HOOK_PLAYER_AUDIT" => {
+                assert_eq!(c[1].parse::<i32>().unwrap(), 5238, "row {idx}");
+                assert_eq!(c[2].parse::<i32>().unwrap(), 0, "row {idx} player must never mutate");
+            }
+            "HOOK_HOPPER_SUCK" => {
+                let pos = [c[1].parse().unwrap(), c[2].parse().unwrap(), c[3].parse().unwrap()];
+                assert_box(hopper_suck_aabb(pos), parse_box(&c[4..10]), &format!("row {idx}"));
+            }
+            "HOOK_DETECTOR_BB" => {
+                let pos = [c[1].parse().unwrap(), c[2].parse().unwrap(), c[3].parse().unwrap()];
+                assert_box(detector_rail_search_bb(pos), parse_box(&c[4..10]), &format!("row {idx}"));
+            }
+            "HOOK_DETECTOR_STEP" => {
+                let powered0 = bit(c[1]);
+                let has_cart = bit(c[2]);
+                let ev = evaluate_entity_inside(
+                    NonPlayerHookBlock::DetectorRail {
+                        block_id: BlockId(1),
+                        powered: powered0,
+                        can_survive: true,
+                    },
+                    HookEntityKind::Player,
+                    HookContext { detector_has_minecart: has_cart, ..HookContext::default() },
+                );
+                assert!(!ev.player_mutated);
+                match ev.action {
+                    WorldHookAction::NoOp => {
+                        assert!(powered0, "row {idx}");
+                        assert_eq!(bit(c[3]), powered0, "row {idx}");
+                        assert_eq!(c[4].parse::<i32>().unwrap(), 0, "row {idx}");
+                        assert_eq!(c[5].parse::<u32>().unwrap(), 0, "row {idx}");
+                        assert_eq!(c[6].parse::<i32>().unwrap(), 0, "row {idx}");
+                    }
+                    WorldHookAction::DetectorRailCheck(res) => {
+                        assert_eq!(res.new_powered, bit(c[3]), "row {idx} powered1: {row}");
+                        assert_eq!(res.set_block_flags.unwrap_or(0), c[4].parse::<i32>().unwrap(), "row {idx} flags: {row}");
+                        assert_eq!(res.schedule_tick_delay.unwrap_or(0), c[5].parse::<u32>().unwrap(), "row {idx} sched: {row}");
+                        assert_eq!(usize::from(res.update_comparator_output), c[6].parse::<usize>().unwrap(), "row {idx} comp: {row}");
+                    }
+                    other => panic!("unexpected detector action {other:?}"),
+                }
+            }
+            "HOOK_REDSTONE_ORE" => {
+                let ev = evaluate_step_on(
+                    NonPlayerHookBlock::RedStoneOre { block_id: BlockId(2), lit: false },
+                    HookEntityKind::Player,
+                    HookContext { stepping_carefully: bit(c[1]), ..HookContext::default() },
+                );
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::SetRedstoneOreLit { .. }), bit(c[2]), "row {idx}: {row}");
+            }
+            "HOOK_LILY_PAD" => {
+                let ent = if bit(c[1]) { HookEntityKind::Boat } else { HookEntityKind::Player };
+                let ev = evaluate_entity_inside(NonPlayerHookBlock::LilyPad { block_id: BlockId(3) }, ent, HookContext::default());
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::DestroyBlock { drop: true }), bit(c[2]), "row {idx}: {row}");
+            }
+            "HOOK_FROGSPAWN" => {
+                let ent = if bit(c[1]) { HookEntityKind::FallingBlock } else { HookEntityKind::Player };
+                let ev = evaluate_entity_inside(NonPlayerHookBlock::Frogspawn { block_id: BlockId(4) }, ent, HookContext::default());
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::DestroyBlock { drop: false }), bit(c[2]), "row {idx}: {row}");
+            }
+            "HOOK_EYEBLOSSOM" => {
+                let (attracts, ent) = match c[1].parse::<i32>().unwrap() {
+                    0 => (true, HookEntityKind::Bee { has_poison: false }),
+                    1 => (true, HookEntityKind::Player),
+                    2 => (false, HookEntityKind::Bee { has_poison: false }),
+                    other => panic!("unknown eyeblossom kind {other}"),
+                };
+                let ev = evaluate_entity_inside(
+                    NonPlayerHookBlock::Eyeblossom { block_id: BlockId(5), attracts_bees: attracts },
+                    ent,
+                    HookContext::default(),
+                );
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::PoisonBee), bit(c[2]), "row {idx}: {row}");
+            }
+            "HOOK_TURTLE_CAN" => {
+                let ent = match c[1] {
+                    "player" | "player_nogrief" => HookEntityKind::Player,
+                    "turtle" => HookEntityKind::Turtle,
+                    "bat" => HookEntityKind::Bat,
+                    "zombie" | "zombie_nogrief" => HookEntityKind::Zombie,
+                    other => panic!("unknown turtle caller {other}"),
+                };
+                assert_eq!(turtle_egg_can_destroy(ent, bit(c[2])), bit(c[3]), "row {idx}: {row}");
+            }
+            "HOOK_CROP_RAVAGER" => {
+                let blk = if c[1] == "pitcher_crop" {
+                    NonPlayerHookBlock::PitcherCrop { block_id: BlockId(6) }
+                } else {
+                    NonPlayerHookBlock::Crop { block_id: BlockId(7) }
+                };
+                let ev = evaluate_entity_inside(
+                    blk,
+                    HookEntityKind::Ravager,
+                    HookContext { mob_griefing: bit(c[2]), ..HookContext::default() },
+                );
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::DestroyBlock { drop: true }), bit(c[3]), "row {idx}: {row}");
+            }
+            "HOOK_SCULK_SENSOR" => {
+                let ent = match c[1] {
+                    "player" => HookEntityKind::Player,
+                    "warden" => HookEntityKind::Warden,
+                    "zombie" => HookEntityKind::Zombie,
+                    other => panic!("unknown sculk sensor entity {other}"),
+                };
+                let ev = evaluate_step_on(
+                    NonPlayerHookBlock::SculkSensor {
+                        block_id: BlockId(8),
+                        phase_inactive: true,
+                        has_block_entity: true,
+                        can_receive_step: true,
+                    },
+                    ent,
+                    HookContext::default(),
+                );
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::SculkScheduleVibration), bit(c[2]), "row {idx}: {row}");
+            }
+            "HOOK_SCULK_SHRIEKER" => {
+                let ent = if c[1] == "player" { HookEntityKind::Player } else { HookEntityKind::Zombie };
+                let ev = evaluate_step_on(
+                    NonPlayerHookBlock::SculkShrieker {
+                        block_id: BlockId(9),
+                        shrieking: false,
+                        can_respond: true,
+                        has_block_entity: true,
+                    },
+                    ent,
+                    HookContext::default(),
+                );
+                assert!(!ev.player_mutated);
+                assert_eq!(matches!(ev.action, WorldHookAction::SculkShriek { schedule_delay: 90, .. }), bit(c[2]), "row {idx}: {row}");
+            }
+            other => panic!("unknown tag {other}"),
+        }
+    }
+    assert_eq!(count, 467);
+}

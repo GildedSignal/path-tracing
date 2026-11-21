@@ -75,6 +75,10 @@ pub mod player;
 pub mod portal;
 pub mod world_hooks;
 
+pub mod block_hooks;
+pub mod items;
+pub mod minecart;
+
 #[cfg(feature = "count-state-copies")]
 pub use state::player_state_copies;
 
