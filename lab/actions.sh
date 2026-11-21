@@ -3,7 +3,7 @@
 set -euo pipefail
 
 finalize() {
-  local status=$? i source
+  local status=$? i source scrub_ok=true
   trap - EXIT
   for i in "${!ids[@]}"; do
     source=$host/worktree-$i/lab/results/${ids[$i]}
@@ -11,8 +11,15 @@ finalize() {
       cp -a -- "$source" lab/results/ || status=1
     fi
   done
-  # Fail closed: upload is enabled only after every collected file was scanned.
-  if bash "$host/scrub.sh" lab/results; then
+  # Fail closed: scrub only the new run folders produced by this batch (never walk all of lab/results/).
+  for i in "${!ids[@]}"; do
+    if [[ -d lab/results/${ids[$i]} ]]; then
+      if ! bash "$host/scrub.sh" "lab/results/${ids[$i]}"; then
+        scrub_ok=false
+      fi
+    fi
+  done
+  if [[ $scrub_ok == true ]]; then
     for i in "${!ids[@]}"; do
       if [[ -f lab/results/${ids[$i]}/DONE ]]; then
         cat "lab/results/${ids[$i]}/DONE" >> "$GITHUB_STEP_SUMMARY"
@@ -24,6 +31,13 @@ finalize() {
     echo 'Artifact upload refused: results could not be scrubbed' >&2
     status=1
   fi
+  for i in "${!ids[@]}"; do
+    for _ in 1 2 3 4; do
+      git worktree remove --force "$host/worktree-$i" >/dev/null 2>&1 && break
+      sleep 1
+    done
+  done
+  rm -rf -- "$host" 2>/dev/null || true
   exit "$status"
 }
 main() {
@@ -54,16 +68,21 @@ main() {
   # Make all worktrees before launching any process that can alter a checkout.
   for i in "${!lenses[@]}"; do
     ids+=("${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${i}-${lenses[$i]}")
-    git worktree add --quiet --detach "$host/worktree-$i" HEAD
+    for _ in 1 2 3 4; do
+      git worktree add --quiet --detach "$host/worktree-$i" HEAD && break
+      sleep 1
+    done
+    [[ -d $host/worktree-$i ]] || { echo "Failed to add worktree for ${lenses[$i]}" >&2; return 1; }
   done
   trap finalize EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  mkdir -p lab/results
-  timeout --signal=TERM --kill-after=1m 1m omp usage > lab/results/quota.txt 2>&1 || {
-    printf '\nQuota command failed or timed out; runs will still be attempted.\n' >> lab/results/quota.txt
+  mkdir -p lab/results "$host/quota"
+  timeout --signal=TERM --kill-after=1m 1m omp usage > "$host/quota/quota.txt" 2>&1 || {
+    printf '\nQuota command failed or timed out; runs will still be attempted.\n' >> "$host/quota/quota.txt"
   }
-  bash "$host/scrub.sh" lab/results
+  bash "$host/scrub.sh" "$host/quota"
+  cp -f -- "$host/quota/quota.txt" lab/results/quota.txt || true
   [[ ! -f lab/results/quota.txt ]] || cat lab/results/quota.txt
   for i in "${!lenses[@]}"; do
     (

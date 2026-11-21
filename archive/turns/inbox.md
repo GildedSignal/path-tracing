@@ -251,3 +251,19 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-21T12:04:36+01:00**
 > once things are verified in game you can port into main, don't make fake tests as the test protocol indicates, the goal is the full port, remove duplicate better of not doing duplicate work and then noticing the gap rather than the opposite we're here to be efficient not faking work
+
+---
+**2026-11-21T12:26:32+01:00**
+> when they finish don't start the next wave of your own sub-agents, i'll advise based on usage consumption
+
+---
+**2026-11-21T12:57:54+01:00**
+> glm at 2% means that we need to use it more in parallel
+
+---
+**2026-11-21T22:21:10+01:00**
+> lunch 2 sub-agents of you doing more ports
+
+---
+**2026-11-21T23:25:55+01:00**
+> fix the bottlenecks you talked about
