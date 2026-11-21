@@ -83,7 +83,10 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             | F::game_mode | F::mayfly | F::instabuild | F::invulnerable | F::may_build | F::flying_speed
             | F::jump_trigger_time | F::sprint_trigger_time | F::sprint_window
             | F::jump_boost | F::speed_effect | F::slowness_effect | F::blindness | F::fire_resistance
-            | F::unmodeled_effects => s.push_field_bits(field, &mut words),
+            | F::unmodeled_effects
+            | F::levitation | F::slow_falling | F::dolphins_grace | F::weaving | F::resistance
+            | F::armor | F::armor_toughness | F::protection_epf | F::feather_falling_epf | F::absorption
+            | F::soul_speed_active => s.push_field_bits(field, &mut words),
         }
     }
     words.into()

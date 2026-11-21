@@ -166,6 +166,7 @@ pub enum InsideBlockEffectType {
 pub enum InsideEffectOp {
     ApplyType(InsideBlockEffectType),
     LavaHurt,
+    FireHurt { soul: bool },
     Custom(u32),
 }
 
@@ -241,6 +242,14 @@ impl StepBasedCollector {
         self.run_after(InsideBlockEffectType::LavaIgnite, InsideEffectOp::LavaHurt);
     }
 
+    /// `BaseFireBlock.entityInside` (`@396-409`): `ClearFreeze` + `FireIgnite` (Set dedup),
+    /// and `FireHurt` after-consumer once per visited cell.
+    pub fn record_fire_cell(&mut self, soul: bool) {
+        self.apply(InsideBlockEffectType::ClearFreeze);
+        self.apply(InsideBlockEffectType::FireIgnite);
+        self.run_after(InsideBlockEffectType::FireIgnite, InsideEffectOp::FireHurt { soul });
+    }
+
     /// Drains and returns the flushed ops in execution order; caller checks `is_alive()` before each.
     pub fn take_final_effects(&mut self) -> Vec<InsideEffectOp> {
         self.flush_step();
@@ -252,6 +261,35 @@ impl StepBasedCollector {
 pub const LAVA_IGNITE_SECONDS: f32 = 15.0;
 pub const LAVA_DAMAGE: f32 = 4.0;
 pub const LAVA_EXHAUSTION: f32 = 0.1;
+
+/// `Mth.clamp(float, float, float)` (`@0-13`): `< min => min`, else `Math.min(value, max)`.
+pub fn mth_clamp_f32(value: f32, min: f32, max: f32) -> f32 {
+    if value < min {
+        min
+    } else {
+        value.min(max)
+    }
+}
+
+/// `CombatRules.getDamageAfterAbsorb(LivingEntity, float, DamageSource, float, float)` (`@0-99`),
+/// environmental branch (no weapon item). `armor` is `Mth.floor(generic.armor)`.
+pub fn damage_after_armor_absorb(damage: f32, armor: f32, toughness: f32) -> f32 {
+    let f = 2.0f32 + toughness / 4.0f32;
+    let clamped = mth_clamp_f32(armor - damage / f, armor * 0.2f32, 20.0f32);
+    damage * (1.0f32 - clamped / 25.0f32)
+}
+
+/// `LivingEntity.getDamageAfterMagicAbsorb` Resistance branch (`@42-73`):
+/// `j = 25 - (amp + 1) * 5`, `Math.max(damage * (float)j / 25.0f, 0.0f)`.
+pub fn damage_after_resistance(damage: f32, amplifier: u8) -> f32 {
+    let j = 25 - (amplifier as i32 + 1) * 5;
+    (damage * (j as f32) / 25.0f32).max(0.0f32)
+}
+
+/// `CombatRules.getDamageAfterMagicAbsorb(float, float)`: `damage * (1.0f - Mth.clamp(epf, 0.0f, 20.0f) / 25.0f)`.
+pub fn damage_after_magic_absorb(damage: f32, epf: f32) -> f32 {
+    damage * (1.0f32 - mth_clamp_f32(epf, 0.0f32, 20.0f32) / 25.0f32)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HurtEntityState {
@@ -266,6 +304,12 @@ pub struct HurtEntityState {
     pub fire_immune: bool,
     pub abilities_invulnerable: bool,
     pub has_fire_resistance: bool,
+    pub armor: f32,
+    pub armor_toughness: f32,
+    pub protection_epf: f32,
+    pub feather_falling_epf: f32,
+    pub resistance: Option<u8>,
+    pub absorption: f32,
 }
 
 impl Default for HurtEntityState {
@@ -282,6 +326,12 @@ impl Default for HurtEntityState {
             fire_immune: false,
             abilities_invulnerable: false,
             has_fire_resistance: false,
+            armor: 0.0,
+            armor_toughness: 0.0,
+            protection_epf: 0.0,
+            feather_falling_epf: 0.0,
+            resistance: None,
+            absorption: 0.0,
         }
     }
 }
@@ -294,6 +344,47 @@ pub fn ignite_for_ticks(entity: &mut HurtEntityState, ticks: i32) {
     entity.ticks_frozen = 0;
 }
 
+/// `Entity.clearFire()` (`Entity.code.txt:1271-1279`): `min(0, current)`.
+pub fn clear_fire_ticks(current: i32) -> i32 {
+    current.min(0)
+}
+
+/// `BaseFireBlock.fireIgnite` (`@1-69`): skips `fireImmune`, charges `< 0` by `+1`,
+/// increments `ServerPlayer` `>= 0` deterministically by `+1` (`nextInt(1, 3)` min),
+/// and ignites for `8.0f * 20 = 160` ticks when `next >= 0`.
+pub fn base_fire_ignite_ticks(current: i32, fire_immune: bool, is_server_player: bool) -> i32 {
+    if fire_immune {
+        return current;
+    }
+    let next = if current < 0 {
+        current + 1
+    } else if is_server_player {
+        current + 1
+    } else {
+        current
+    };
+    if next >= 0 { next.max(160) } else { next }
+}
+
+/// `Entity.applyEffectsFromBlocks` fire grace tail (`@129-157`): server-only reset to
+/// `-Player.getFireImmuneTicks() (-20)` for players (or `0` for non-player entities) when
+/// `!isOnFire && !grew`.
+pub fn apply_effects_fire_tail(
+    after_ticks: i32,
+    before_ticks: i32,
+    is_server_level: bool,
+    fire_immune: bool,
+    is_player: bool,
+) -> i32 {
+    let is_on_fire = !fire_immune && after_ticks > 0;
+    let grew = after_ticks > before_ticks;
+    if is_server_level && !is_on_fire && !grew {
+        if is_player { -20 } else { 0 }
+    } else {
+        after_ticks
+    }
+}
+
 /// `Entity.lavaIgnite()` (`@0-15`).
 pub fn lava_ignite(entity: &mut HurtEntityState) {
     if entity.fire_immune {
@@ -303,6 +394,26 @@ pub fn lava_ignite(entity: &mut HurtEntityState) {
     ignite_for_ticks(entity, ticks);
 }
 
+/// `PointedDripstoneBlock.fallOn` (`@0-60`): returns `(distance, multiplier, is_stalagmite)`.
+pub fn dripstone_fall_on_args(
+    fall_distance: f64,
+    tip_direction_up: bool,
+    thickness_is_tip: bool,
+) -> (f64, f32, bool) {
+    if tip_direction_up && thickness_is_tip {
+        (fall_distance + 2.5, 2.0, true)
+    } else {
+        (fall_distance, 1.0, false)
+    }
+}
+
+/// `FarmlandBlock.fallOn` trample condition (`@0-99`, `LivingEntity.getBbWidth()*width*height > 0.512f`,
+/// `random.nextFloat() < fall_distance - 0.5`).
+pub fn farmland_trample_threshold(width: f32, height: f32, fall_distance: f64, random_float: f32) -> bool {
+    let bb_volume = width * width * height;
+    bb_volume > 0.512f32 && (random_float as f64) < (fall_distance - 0.5)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DamageScaling {
     Never,
@@ -310,14 +421,68 @@ pub enum DamageScaling {
     Always,
 }
 
-/// `Player.hurtServer` + `LivingEntity.hurtServer` + `Player.actuallyHurt` (environmental / general).
-pub fn hurt_server(
+/// `Player.actuallyHurt` (`Player.javap:1679`) + `LivingEntity.getDamageAfterArmorAbsorb`
+/// + `LivingEntity.getDamageAfterMagicAbsorb`.
+#[allow(clippy::too_many_arguments)]
+pub fn actually_hurt(
+    health: &mut f32,
+    absorption: &mut f32,
+    exhaustion: &mut f32,
+    abilities_invulnerable: bool,
+    mut amount: f32,
+    armor: f32,
+    armor_toughness: f32,
+    resistance: Option<u8>,
+    protection_epf: f32,
+    feather_falling_epf: f32,
+    bypasses_armor: bool,
+    bypasses_effects: bool,
+    bypasses_resistance: bool,
+    bypasses_enchantments: bool,
+    is_fall: bool,
+    source_exhaustion: f32,
+) {
+    if !bypasses_armor {
+        let floored_armor = math::floor(armor as f64) as f32;
+        amount = damage_after_armor_absorb(amount, floored_armor, armor_toughness);
+    }
+    if !bypasses_effects {
+        if !bypasses_resistance && let Some(amp) = resistance {
+            amount = damage_after_resistance(amount, amp);
+        }
+        if amount <= 0.0f32 {
+            amount = 0.0f32;
+        } else if !bypasses_enchantments {
+            let epf = protection_epf + if is_fall { feather_falling_epf } else { 0.0f32 };
+            if epf > 0.0f32 {
+                amount = damage_after_magic_absorb(amount, epf);
+            }
+        }
+    }
+    let to_health = (amount - *absorption).max(0.0f32);
+    *absorption -= amount - to_health;
+    if to_health != 0.0f32 {
+        if !abilities_invulnerable {
+            *exhaustion = (*exhaustion + source_exhaustion).min(40.0f32);
+        }
+        *health = (*health - to_health).max(0.0f32);
+    }
+}
+
+/// Full `Player.hurtServer` + `LivingEntity.hurtServer` + `Player.actuallyHurt` pipeline.
+#[allow(clippy::too_many_arguments)]
+pub fn hurt_server_mitigated(
     entity: &mut HurtEntityState,
     is_server_level: bool,
     mut amount: f32,
     is_fire: bool,
     bypasses_invulnerability: bool,
     bypasses_cooldown: bool,
+    bypasses_armor: bool,
+    bypasses_effects: bool,
+    bypasses_resistance: bool,
+    bypasses_enchantments: bool,
+    is_fall: bool,
     scales: DamageScaling,
     caused_by_living_non_player: bool,
     difficulty: u8,
@@ -351,6 +516,11 @@ pub fn hurt_server(
     if is_fire && entity.has_fire_resistance {
         return false;
     }
+    if amount < 0.0f32 {
+        amount = 0.0f32;
+    } else if !amount.is_finite() {
+        amount = f32::MAX;
+    }
 
     // LivingEntity.hurtServer @184-269: strict `(float)invulnerableTime > 10.0f`.
     let damage_to_apply = if (entity.invulnerable_time as f32) > 10.0f32 && !bypasses_cooldown {
@@ -368,13 +538,58 @@ pub fn hurt_server(
         amount
     };
 
-    if damage_to_apply != 0.0f32 {
-        if !entity.abilities_invulnerable {
-            entity.exhaustion = (entity.exhaustion + source_exhaustion).min(40.0f32);
-        }
-        entity.health -= damage_to_apply;
-    }
+    actually_hurt(
+        &mut entity.health,
+        &mut entity.absorption,
+        &mut entity.exhaustion,
+        entity.abilities_invulnerable,
+        damage_to_apply,
+        entity.armor,
+        entity.armor_toughness,
+        entity.resistance,
+        entity.protection_epf,
+        entity.feather_falling_epf,
+        bypasses_armor,
+        bypasses_effects,
+        bypasses_resistance,
+        bypasses_enchantments,
+        is_fall,
+        source_exhaustion,
+    );
     true
+}
+
+/// `Player.hurtServer` + `LivingEntity.hurtServer` + `Player.actuallyHurt` (default non-bypassing flags).
+#[allow(clippy::too_many_arguments)]
+pub fn hurt_server(
+    entity: &mut HurtEntityState,
+    is_server_level: bool,
+    amount: f32,
+    is_fire: bool,
+    bypasses_invulnerability: bool,
+    bypasses_cooldown: bool,
+    scales: DamageScaling,
+    caused_by_living_non_player: bool,
+    difficulty: u8,
+    source_exhaustion: f32,
+) -> bool {
+    hurt_server_mitigated(
+        entity,
+        is_server_level,
+        amount,
+        is_fire,
+        bypasses_invulnerability,
+        bypasses_cooldown,
+        false,
+        false,
+        false,
+        false,
+        false,
+        scales,
+        caused_by_living_non_player,
+        difficulty,
+        source_exhaustion,
+    )
 }
 
 /// `Entity.lavaHurt()` (`@0-99`): `4.0f` unscaled environmental lava damage (`0.1f` exhaustion).
@@ -417,18 +632,38 @@ pub fn apply_collector_effects(
                 entity.ticks_frozen = 0;
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::FireIgnite) => {
-                ignite_for_ticks(entity, 160);
+                let next = base_fire_ignite_ticks(entity.remaining_fire_ticks, entity.fire_immune, is_server_level);
+                entity.remaining_fire_ticks = next;
+                if next >= 0 {
+                    entity.ticks_frozen = 0;
+                }
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::LavaIgnite) => {
                 ignite_calls += 1;
                 lava_ignite(entity);
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::Extinguish) => {
-                entity.remaining_fire_ticks = 0;
+                entity.remaining_fire_ticks = clear_fire_ticks(entity.remaining_fire_ticks);
             }
             InsideEffectOp::LavaHurt => {
                 hurt_calls += 1;
                 lava_hurt(entity, is_server_level);
+            }
+            InsideEffectOp::FireHurt { soul } => {
+                hurt_calls += 1;
+                let amount = if soul { 2.0 } else { 1.0 };
+                hurt_server(
+                    entity,
+                    is_server_level,
+                    amount,
+                    true,
+                    false,
+                    false,
+                    DamageScaling::WhenCausedByLivingNonPlayer,
+                    false,
+                    2,
+                    0.1,
+                );
             }
             InsideEffectOp::Custom(_) => {}
         }

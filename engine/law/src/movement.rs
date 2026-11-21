@@ -135,15 +135,24 @@ mod swimming_witness {
     }
 }
 
+fn has_modeled_effect(state: &PlayerState, world: &impl World) -> bool {
+    read_state!(world, state.jump_boost).is_some()
+        || read_state!(world, state.speed_effect).is_some()
+        || read_state!(world, state.slowness_effect).is_some()
+        || read_state!(world, state.blindness)
+        || read_state!(world, state.fire_resistance)
+        || read_state!(world, state.levitation).is_some()
+        || read_state!(world, state.slow_falling)
+        || read_state!(world, state.dolphins_grace)
+        || read_state!(world, state.weaving)
+        || read_state!(world, state.resistance).is_some()
+}
+
 fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Result<(Option<(Vec3, Vec3)>, Option<ContactDamage>), Refusal> {
     world.observe_tick();
-    let has_modeled_effect = read_state!(world, state.jump_boost).is_some()
-        || read_state!(world, state.speed_effect).is_some()
-        || read_state!(world, state.slowness_effect).is_some()
-        || read_state!(world, state.blindness)
-        || read_state!(world, state.fire_resistance);
+    let has_modeled_effect = has_modeled_effect(state, world);
     if read_state!(world, state.unmodeled_effects)
         || (read_state!(world, state.effects) && !has_modeled_effect)
     {
@@ -154,9 +163,6 @@ fn tick_movement(
     }
     if read_state!(world, state.riding) {
         refuse!("LivingEntity.travelRidden");
-    }
-    if read_state!(world, state.fall_flying) {
-        refuse!("LivingEntity.travelFallFlying; Math.cos");
     }
     let start = read_state!(world, state.position);
     let start_box = bounding_box(state, world);
@@ -169,6 +175,15 @@ fn tick_movement(
     update_fluid(state, world);
     if read_state!(world, state.in_lava) { modify_state!(world, state.fall_distance) *= 0.5; }
     update_swimming(state, world);
+    // Entity.baseTick @125-184 (server branch): check %20 before decrementing; negative grace untouched.
+    let mut burn_damage = None;
+    let cur_fire = read_state!(world, state.remaining_fire_ticks);
+    if cur_fire > 0 {
+        if cur_fire % 20 == 0 && !read_state!(world, state.in_lava) {
+            burn_damage = Some(ContactDamage::OnFire);
+        }
+        set_remaining_fire_ticks(state, world, cur_fire - 1);
+    }
     let was_shift = read_state!(world, state.shift_key_down);
     let was_jumping = if read_state!(world, state.mayfly) {
         read_state!(world, state.input).jump
@@ -265,9 +280,26 @@ fn tick_movement(
     } else {
         movement
     };
+    if read_state!(world, state.fall_flying) {
+        let clamped = crate::elytra::check_fall_distance_accumulation(
+            read_state!(world, state.velocity).y,
+            read_state!(world, state.fall_distance),
+        );
+        write_state!(world, state.fall_distance) = clamped;
+        if read_state!(world, state.on_ground)
+            || read_state!(world, state.riding)
+            || read_state!(world, state.levitation).is_some()
+        {
+            write_state!(world, state.fall_flying) = false;
+        }
+    }
+    if read_state!(world, state.slow_falling) || read_state!(world, state.levitation).is_some() {
+        write_state!(world, state.fall_distance) = 0.0;
+    }
     let collision = travel(state, world, movement)?;
     world.observe_sweep(start_box, bounding_box(state, world));
     let contact = apply_block_effects(state, world, start)?;
+    let contact = burn_damage.or(contact);
     let before_pose = bounding_box(state, world);
     modify_state!(world, state.position).x = read_state!(world, state.position).x.clamp(-29999999.0, 29999999.0);
     modify_state!(world, state.position).z = read_state!(world, state.position).z.clamp(-29999999.0, 29999999.0);
@@ -528,6 +560,16 @@ fn handle_climbable(state: &mut PlayerState, world: &impl World) {
     }
 }
 
+// LivingEntity.getEffectiveGravity (@8709)
+fn effective_gravity(state: &PlayerState, world: &impl World, pre_bump_vy: f64) -> f64 {
+    let g = read_state!(world, state.gravity);
+    if pre_bump_vy <= 0.0 && read_state!(world, state.slow_falling) {
+        g.min(0.01)
+    } else {
+        g
+    }
+}
+
 // Player.travel; LivingEntity.travel
 fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     if read_state!(world, state.swimming) {
@@ -546,11 +588,36 @@ fn travel(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result
     let pre_travel_vy = if flying { read_state!(world, state.velocity).y } else { 0.0 };
     let collision = if !flying && (read_state!(world, state.in_water) || read_state!(world, state.in_lava)) {
         travel_fluid(state, world, movement)?
+    } else if read_state!(world, state.fall_flying) {
+        travel_fall_flying(state, world, movement)?
     } else {
         travel_air(state, world, movement)?
     };
     if flying {
         write_state!(world, state.velocity).y = pre_travel_vy * 0.6;
+    }
+    Ok(collision)
+}
+
+// LivingEntity.travelFallFlying (@0-73)
+fn travel_fall_flying(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
+    if climbable(state, world) {
+        let collision = travel_air(state, world, movement)?;
+        write_state!(world, state.fall_flying) = false;
+        return Ok(collision);
+    }
+    let vel = read_state!(world, state.velocity);
+    let pre_h = vel.horizontal_sqr().sqrt();
+    let g = effective_gravity(state, world, vel.y);
+    let pitch = read_state!(world, state.pitch);
+    let look = crate::elytra::calculate_view_vector(read_state!(world, state.yaw), pitch);
+    let updated = crate::elytra::update_fall_flying_movement(vel, look, pitch, g);
+    write_state!(world, state.velocity) = updated;
+    let collision = move_player(state, world, updated)?;
+    let post_h = read_state!(world, state.velocity).horizontal_sqr().sqrt();
+    if let Some(damage) = crate::elytra::fly_into_wall_damage(read_state!(world, state.horizontal_collision), pre_h, post_h) {
+        // flyIntoWall: bypasses_armor = true, is_fire = false, is_fall = false, exhaustion = 0.0.
+        apply_server_damage(state, world, damage, false, true, false, false, 0.0);
     }
     Ok(collision)
 }
@@ -568,13 +635,17 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
     handle_climbable(state, world);
     let collision = move_player(state, world, read_state!(world, state.velocity))?;
     let mut velocity = read_state!(world, state.velocity);
+    let pre_bump_vy = velocity.y;
     if (read_state!(world, state.horizontal_collision) || read_state!(world, state.input).jump) && (climbable(state, world) || read_state!(world, state.was_in_powder_snow) && read_state!(world, state.leather_boots)) {
         velocity.y = 0.2;
     }
-    // LivingEntity.travelInAir @101-131: unloaded-chunk -0.1/0.0 fallback is client-only
-    // (`isClientSide() == false` jumps directly to gravity) and dead even on 26.2 client
-    // (`ClientLevel.hasChunk` returns constant true).
-    let vy = velocity.y - read_state!(world, state.gravity);
+    let vy = if let Some(amp) = read_state!(world, state.levitation) {
+        velocity.y + (0.05 * ((amp as i32 + 1) as f64) - velocity.y) * 0.2
+    } else {
+        // LivingEntity.travelInAir @101-131: unloaded-chunk -0.1/0.0 fallback is client-only
+        // (`isClientSide() == false` jumps directly to gravity) and dead even on 26.2 client.
+        velocity.y - effective_gravity(state, world, pre_bump_vy)
+    };
     let drag = math::modified_friction(0.91, read_state!(world, state.air_drag_modifier));
     let horizontal = f*drag;
     world.observe_air_travel(movement.z * acceleration as f64, horizontal);
@@ -585,7 +656,9 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
 
 // LivingEntity.travelInFluid; LivingEntity.travelInWater; LivingEntity.travelInLava
 fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
-    let falling = read_state!(world, state.velocity).y <= 0.0;
+    let pre_vel_y = read_state!(world, state.velocity).y;
+    let falling = pre_vel_y <= 0.0;
+    let base_gravity = effective_gravity(state, world, pre_vel_y);
     let old_y = read_state!(world, state.position).y;
     let collision = if read_state!(world, state.in_water) {
         let mut drag = if read_state!(world, state.sprinting) {
@@ -603,25 +676,28 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
             drag += (0.54600006f32-drag)*efficiency;
             acceleration += (read_state!(world, state.speed)-acceleration)*efficiency;
         }
+        if read_state!(world, state.dolphins_grace) {
+            drag = 0.96f32;
+        }
         write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, acceleration, read_state!(world, state.yaw)));
         let collision = move_player(state, world, read_state!(world, state.velocity))?;
         if read_state!(world, state.horizontal_collision) && climbable(state, world) {
             modify_state!(world, state.velocity).y = 0.2;
         }
         write_state!(world, state.velocity) = read_state!(world, state.velocity).multiply(Vec3::new(drag as f64, 0.8f32 as f64, drag as f64));
-        fluid_falling(state, world, falling);
+        fluid_falling(state, world, falling, base_gravity);
         collision
     } else {
         write_state!(world, state.velocity) = read_state!(world, state.velocity).plus(input_vector(movement, 0.02, read_state!(world, state.yaw)));
         let collision = move_player(state, world, read_state!(world, state.velocity))?;
         if read_state!(world, state.lava_height) <= 0.4 {
             write_state!(world, state.velocity) = read_state!(world, state.velocity).multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5));
-            fluid_falling(state, world, falling);
+            fluid_falling(state, world, falling, base_gravity);
         } else {
             write_state!(world, state.velocity) = read_state!(world, state.velocity).scale(0.5);
         }
-        if read_state!(world, state.gravity) != 0.0 {
-            modify_state!(world, state.velocity).y += -read_state!(world, state.gravity)/4.0;
+        if base_gravity != 0.0 {
+            modify_state!(world, state.velocity).y += -base_gravity/4.0;
         }
         collision
     };
@@ -634,12 +710,12 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
 }
 
 // LivingEntity.getFluidFallingAdjustedMovement
-fn fluid_falling(state: &mut PlayerState, world: &impl World, falling: bool) {
-    if read_state!(world, state.gravity) != 0.0 && !read_state!(world, state.sprinting) {
-        modify_state!(world, state.velocity).y = if falling && (read_state!(world, state.velocity).y-0.005).abs() >= 0.003 && (read_state!(world, state.velocity).y-read_state!(world, state.gravity)/16.0).abs() < 0.003 {
+fn fluid_falling(state: &mut PlayerState, world: &impl World, falling: bool, base_gravity: f64) {
+    if base_gravity != 0.0 && !read_state!(world, state.sprinting) {
+        modify_state!(world, state.velocity).y = if falling && (read_state!(world, state.velocity).y-0.005).abs() >= 0.003 && (read_state!(world, state.velocity).y-base_gravity/16.0).abs() < 0.003 {
             -0.003
         } else {
-            read_state!(world, state.velocity).y-read_state!(world, state.gravity)/16.0
+            read_state!(world, state.velocity).y-base_gravity/16.0
         };
     }
 }
@@ -656,6 +732,8 @@ fn update_pose(state: &mut PlayerState, world: &impl World) {
     }
     let desired = if read_state!(world, state.swimming) {
         Pose::Swimming
+    } else if read_state!(world, state.fall_flying) {
+        Pose::FallFlying
     } else if read_state!(world, state.shift_key_down) && !read_state!(world, state.flying) {
         Pose::Crouching
     } else {
@@ -988,7 +1066,8 @@ fn check_fall_damage(state: &mut PlayerState, world: &impl World, block: &Block,
                 let _ = (read_state!(world, state.safe_fall_distance), read_state!(world, state.fall_damage_multiplier));
                 let damage=calculate_fall_damage(state, distance, multiplier).max(0);
                 if damage>0 {
-                    write_state!(world, state.health)=(read_state!(world, state.health)-damage as f32).max(0.0);
+                    // fall damage type: is_fire=false, bypasses_armor=true, is_fall=true, exhaustion=0.0.
+                    apply_server_damage(state, world, damage as f32, false, true, false, true, 0.0);
                 }
             }
         }
@@ -1103,8 +1182,11 @@ fn fall_reset_ray(state: &PlayerState, world: &impl World, movement: Vec3) -> bo
     world.fall_reset_clip(read_state!(world, state.position), end)
 }
 
-// Entity.makeStuckInBlock; Player.makeStuckInBlock
+// Entity.makeStuckInBlock; Player.makeStuckInBlock (@0-17: gated by !abilities.flying)
 fn stuck(state: &mut PlayerState, world: &impl World, multiplier: Vec3) {
+    if read_state!(world, state.flying) {
+        return;
+    }
     write_state!(world, state.fall_distance)=0.0;
     write_state!(world, state.stuck_speed_multiplier)=multiplier;
 }
@@ -1126,18 +1208,33 @@ pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Optio
     }
 }
 
+fn fire_grace_tail(state: &mut PlayerState, world: &impl World, fire_before: i32) {
+    if fire_before < 0 {
+        let after = read_state!(world, state.remaining_fire_ticks);
+        let updated = player::apply_effects_fire_tail(after, fire_before, true, false, true);
+        if updated != after {
+            set_remaining_fire_ticks(state, world, updated);
+        }
+    }
+}
+
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks
 fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<ContactDamage>, Refusal> {
     if read_state!(world, state.no_physics) {
         return Ok(None);
     }
     let contact = apply_grounded_step(state, world);
+    let fire_before = read_state!(world, state.remaining_fire_ticks);
     let swept = bounding_box(state, world).expand(start.minus(read_state!(world, state.position)));
     world.observe_region(crate::footprint::Query::Hooks, block_pos(swept.min), block_pos(swept.max));
-    if !world.has_inside_effects() {return Ok(contact);}
+    if !world.has_inside_effects() {
+        fire_grace_tail(state, world, fire_before);
+        return Ok(contact);
+    }
     let delta=read_state!(world, state.position).minus(start);
     let mut visited=crate::blocks::SeenBlocks::new();
     let mut collector=StepBasedCollector::new();
+    let mut inside_contact=None;
     let mut budget=16;
     let mut from=start;
     if let Some(original) = read_state!(world, state.movement_this_tick).filter(|_| delta.length_sqr()>0.0) {
@@ -1147,17 +1244,18 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
                 continue;
             }
             let to=from.plus(Vec3::default().with(axis, distance));
-            budget-=inside_segment(state, world, from, to, &mut visited, &mut collector, budget)?;
+            budget-=inside_segment(state, world, from, to, &mut visited, &mut collector, budget, delta, &mut inside_contact)?;
             from=to;
         }
     } else {
-        budget-=inside_segment(state, world, start, read_state!(world, state.position), &mut visited, &mut collector, 16)?;
+        budget-=inside_segment(state, world, start, read_state!(world, state.position), &mut visited, &mut collector, 16, delta, &mut inside_contact)?;
     }
     if budget<=0 {
-        inside_segment(state, world, read_state!(world, state.position), read_state!(world, state.position), &mut visited, &mut collector, 1)?;
+        inside_segment(state, world, read_state!(world, state.position), read_state!(world, state.position), &mut visited, &mut collector, 1, delta, &mut inside_contact)?;
     }
-    apply_collector(state, world, &mut collector);
-    Ok(contact)
+    let collector_contact = apply_collector(state, world, &mut collector);
+    fire_grace_tail(state, world, fire_before);
+    Ok(contact.or(inside_contact).or(collector_contact))
 }
 
 fn set_remaining_fire_ticks(state: &mut PlayerState, world: &impl World, ticks: i32) {
@@ -1169,7 +1267,8 @@ fn set_remaining_fire_ticks(state: &mut PlayerState, world: &impl World, ticks: 
     };
 }
 
-fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut StepBasedCollector) {
+fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut StepBasedCollector) -> Option<ContactDamage> {
+    let mut contact = None;
     for op in collector.take_final_effects() {
         if read_state!(world, state.health) <= 0.0 {
             break;
@@ -1187,10 +1286,15 @@ fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut 
                 write_state!(world, state.ticks_frozen) = 0;
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::FireIgnite) => {
-                if read_state!(world, state.remaining_fire_ticks) < 160 {
-                    set_remaining_fire_ticks(state, world, 160);
+                let next = player::base_fire_ignite_ticks(
+                    read_state!(world, state.remaining_fire_ticks),
+                    false,
+                    true,
+                );
+                set_remaining_fire_ticks(state, world, next);
+                if next >= 0 {
+                    write_state!(world, state.ticks_frozen) = 0;
                 }
-                write_state!(world, state.ticks_frozen) = 0;
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::LavaIgnite) => {
                 let ticks = math::floor((player::LAVA_IGNITE_SECONDS * 20.0f32) as f64);
@@ -1200,7 +1304,7 @@ fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut 
                 write_state!(world, state.ticks_frozen) = 0;
             }
             InsideEffectOp::ApplyType(InsideBlockEffectType::Extinguish) => {
-                let extinguished = read_state!(world, state.remaining_fire_ticks).min(0);
+                let extinguished = player::clear_fire_ticks(read_state!(world, state.remaining_fire_ticks));
                 set_remaining_fire_ticks(state, world, extinguished);
             }
             InsideEffectOp::LavaHurt => {
@@ -1217,9 +1321,16 @@ fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut 
                     fire_immune: false,
                     abilities_invulnerable: read_state!(world, state.invulnerable),
                     has_fire_resistance: read_state!(world, state.fire_resistance),
+                    armor: read_state!(world, state.armor),
+                    armor_toughness: read_state!(world, state.armor_toughness),
+                    protection_epf: read_state!(world, state.protection_epf),
+                    feather_falling_epf: read_state!(world, state.feather_falling_epf),
+                    resistance: read_state!(world, state.resistance),
+                    absorption: read_state!(world, state.absorption),
                 };
                 if player::lava_hurt(&mut entity, true) {
                     write_state!(world, state.health) = entity.health.max(0.0);
+                    write_state!(world, state.absorption) = entity.absorption;
                     write_state!(world, state.hurt_cooldown) = HurtCooldown {
                         remaining_ticks: entity.invulnerable_time,
                         last_raw_hit: entity.last_hurt,
@@ -1227,14 +1338,22 @@ fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut 
                     write_state!(world, state.exhaustion) = entity.exhaustion;
                 }
             }
+            InsideEffectOp::FireHurt { soul } => {
+                if contact.is_none() {
+                    contact = Some(ContactDamage::InFire { soul });
+                }
+            }
             InsideEffectOp::Custom(_) => {}
         }
     }
+    contact
 }
 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
+#[allow(clippy::too_many_arguments)]
 fn inside_segment(state: &mut PlayerState, world: &impl World, from: Vec3, to: Vec3,
-visited: &mut impl crate::blocks::BlockSet, collector: &mut StepBasedCollector, budget: i32) -> Result<i32, Refusal> {
+visited: &mut impl crate::blocks::BlockSet, collector: &mut StepBasedCollector, budget: i32,
+delta: Vec3, damage: &mut Option<ContactDamage>) -> Result<i32, Refusal> {
     let bounds=Aabb::player(to, read_state!(world, state.pose).height()).deflate(1.0e-5f32 as f64);
     let large=from.minus(to).length_sqr()>(1.0-1.0e-5f32 as f64)*(1.0-1.0e-5f32 as f64);
     let body=Aabb::player(from, read_state!(world, state.pose).height());
@@ -1264,7 +1383,17 @@ visited: &mut impl crate::blocks::BlockSet, collector: &mut StepBasedCollector, 
             let cube=Aabb {
                 min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0))
             };
-            if let Err(rule)=inside_block(state, world, p, large||bounds.intersects(cube), collector) { refused=Some(rule); return false; }
+            match inside_block(state, world, p, large||bounds.intersects(cube), collector, delta) {
+                Ok(d) => {
+                    if let Some(d) = d {
+                        damage.get_or_insert(d);
+                    }
+                }
+                Err(rule) => {
+                    refused=Some(rule);
+                    return false;
+                }
+            }
         }
         if fluid_inside {
             // Entity.lambda$checkInsideBlocks$0:287-313: the fluid branch advances independently.
@@ -1280,28 +1409,39 @@ visited: &mut impl crate::blocks::BlockSet, collector: &mut StepBasedCollector, 
     match refused { Some(rule) => Err(rule), None => Ok(last_step+1) }
 }
 
-// WebBlock.entityInside; PowderSnowBlock.entityInside; HoneyBlock.entityInside; BubbleColumnBlock.entityInside
+// WebBlock.entityInside; PowderSnowBlock.entityInside; HoneyBlock.entityInside;
+// BubbleColumnBlock.entityInside; BaseFireBlock.entityInside; CampfireBlock.entityInside;
+// SweetBerryBushBlock.entityInside; CactusBlock.entityInside
 fn inside_block(
     state: &mut PlayerState,
     world: &impl World,
     p: BlockPos,
     intersects: bool,
     collector: &mut StepBasedCollector,
-) -> Result<(), Refusal> {
+    delta: Vec3,
+) -> Result<Option<ContactDamage>, Refusal> {
     let block=world.hook_block(p);
     if let Some(multiplier)=block.stuck_multiplier {
         stuck(state, world, multiplier);
     }
-    match &block.inside {
-        Inside::None=>{
+    let damage = match &block.inside {
+        Inside::None=>None,
+        Inside::Cobweb=>{
+            let multiplier = if read_state!(world, state.weaving) {
+                Vec3::new(0.5, 0.25, 0.5)
+            } else {
+                Vec3::new(0.25, 0.05f32 as f64, 0.25)
+            };
+            stuck(state, world, multiplier);
+            None
         },
-        Inside::Cobweb=>stuck(state, world, Vec3::new(0.25, 0.05f32 as f64, 0.25)),
         Inside::PowderSnow=>{
             if world.hook_block(block_pos(read_state!(world, state.position))).inside==Inside::PowderSnow {
                 stuck(state, world, Vec3::new(0.9f32 as f64, 1.5, 0.9f32 as f64));
             }
             collector.apply(InsideBlockEffectType::Freeze);
             collector.apply(InsideBlockEffectType::Extinguish);
+            None
         },
         Inside::Honey=>{
             let old_y=read_state!(world, state.velocity).y/0.98f32 as f64+0.08;
@@ -1316,6 +1456,7 @@ fn inside_block(
                 modify_state!(world, state.velocity).y=(-0.05-0.08)*0.98f32 as f64;
                 write_state!(world, state.fall_distance)=0.0;
             }
+            None
         },
         Inside::BubbleColumn { drag } => {
             if intersects && !read_state!(world, state.flying) {
@@ -1338,10 +1479,22 @@ fn inside_block(
                     write_state!(world, state.fall_distance) = 0.0;
                 }
             }
+            None
         },
+        Inside::Fire { soul } => {
+            collector.record_fire_cell(*soul);
+            None
+        },
+        Inside::Campfire { soul } => Some(ContactDamage::Campfire { soul: *soul }),
+        Inside::BerryBush { hurt } => {
+            stuck(state, world, Vec3::new(0.8f32 as f64, 0.75, 0.8f32 as f64));
+            (*hurt && (delta.x.abs() >= 0.003f32 as f64 || delta.z.abs() >= 0.003f32 as f64))
+                .then_some(ContactDamage::SweetBerryBush)
+        },
+        Inside::Cactus => Some(ContactDamage::Cactus),
         Inside::Unsupported(name) => refuse!("BlockState.entityInside: {name}"),
-    }
-    Ok(())
+    };
+    Ok(damage)
 }
 
 // FoodData.addExhaustion
@@ -1420,14 +1573,22 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
             }
         }
         ServerResourceEvent::UnmodifiedContactDamage(request) => {
-            assert!(world.difficulty() == 2 && !read_state!(world, state.effects) && !read_state!(world, state.leather_boots),
-                "contact damage prediction requires unmodified normal survival");
-            if read_state!(world, state.health) > 0.0
-                && let Some(amount) = accept_raw_hit(&mut modify_state!(world, state.hurt_cooldown), request.raw_amount())
-            {
-                add_exhaustion(state, world, request.exhaustion());
-                write_state!(world, state.health) = (read_state!(world, state.health) - amount).max(0.0);
-            }
+            assert!(
+                world.difficulty() == 2
+                    && !read_state!(world, state.unmodeled_effects)
+                    && !(read_state!(world, state.effects) && !has_modeled_effect(state, world)),
+                "contact damage prediction requires unmodified normal survival"
+            );
+            apply_server_damage(
+                state,
+                world,
+                request.raw_amount(),
+                request.is_fire(),
+                request.bypasses_armor(),
+                false,
+                request.is_fall(),
+                request.exhaustion(),
+            );
         }
         ServerResourceEvent::Regeneration(tick) => server_regeneration(state, world, tick),
         ServerResourceEvent::FoodTick => food_tick(state, world),
@@ -1494,7 +1655,6 @@ mod knockback_regression {
 }
 
 // LivingEntity.hurtServer's cooldown branch for an eligible, non-bypassing hit.
-// Future sources can pass their pre-cooldown amount here before mitigation.
 fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
     let debit = if cooldown.remaining_ticks > 10 {
         if amount <= cooldown.last_raw_hit {
@@ -1507,6 +1667,71 @@ fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
     };
     cooldown.last_raw_hit = amount;
     Some(debit)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_hit(
+    state: &mut PlayerState,
+    world: &impl World,
+    amount: f32,
+    bypasses_armor: bool,
+    bypasses_resistance: bool,
+    is_fall: bool,
+    exhaustion: f32,
+) {
+    let mut health = read_state!(world, state.health);
+    let mut absorption = read_state!(world, state.absorption);
+    let mut cur_exhaustion = read_state!(world, state.exhaustion);
+    player::actually_hurt(
+        &mut health,
+        &mut absorption,
+        &mut cur_exhaustion,
+        read_state!(world, state.invulnerable),
+        amount,
+        read_state!(world, state.armor),
+        read_state!(world, state.armor_toughness),
+        read_state!(world, state.resistance),
+        read_state!(world, state.protection_epf),
+        read_state!(world, state.feather_falling_epf),
+        bypasses_armor,
+        false,
+        bypasses_resistance,
+        false,
+        is_fall,
+        exhaustion,
+    );
+    write_state!(world, state.absorption) = absorption;
+    if cur_exhaustion != read_state!(world, state.exhaustion) {
+        write_state!(world, state.exhaustion) = cur_exhaustion;
+    }
+    write_state!(world, state.health) = health;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_server_damage(
+    state: &mut PlayerState,
+    world: &impl World,
+    mut raw_amount: f32,
+    is_fire: bool,
+    bypasses_armor: bool,
+    bypasses_resistance: bool,
+    is_fall: bool,
+    exhaustion: f32,
+) {
+    if read_state!(world, state.invulnerable)
+        || read_state!(world, state.health) <= 0.0
+        || (is_fire && read_state!(world, state.fire_resistance))
+    {
+        return;
+    }
+    if raw_amount < 0.0f32 {
+        raw_amount = 0.0f32;
+    } else if !raw_amount.is_finite() {
+        raw_amount = f32::MAX;
+    }
+    if let Some(debit) = accept_raw_hit(&mut modify_state!(world, state.hurt_cooldown), raw_amount) {
+        apply_hit(state, world, debit, bypasses_armor, bypasses_resistance, is_fall, exhaustion);
+    }
 }
 
 /// Server-side freeze recurrence after travel. The caller supplies the server's
@@ -1695,19 +1920,19 @@ mod tests {
         let mut visited = std::collections::BTreeSet::new();
         let mut collector = StepBasedCollector::new();
         let position = read_state!(world, state.position);
-        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16).unwrap();
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16, Vec3::default(), &mut None).unwrap();
         apply_collector(&mut state, &world, &mut collector);
         assert!(visited.contains(&[0, 0, 0]));
         assert_eq!(read_state!(world, state.remaining_fire_ticks), 0);
         write_state!(world, state.remaining_fire_ticks) = 10;
-        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16).unwrap();
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16, Vec3::default(), &mut None).unwrap();
         apply_collector(&mut state, &world, &mut collector);
         assert_eq!(read_state!(world, state.remaining_fire_ticks), 10);
         visited.clear();
         world.set([0, 0, 0], Block {
             air: false, inside_shape: Some(VoxelShape::default()), ..Block::default()
         });
-        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16).unwrap();
+        inside_segment(&mut state, &world, position, position, &mut visited, &mut collector, 16, Vec3::default(), &mut None).unwrap();
         apply_collector(&mut state, &world, &mut collector);
         assert!(visited.is_empty());
     }

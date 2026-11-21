@@ -430,10 +430,28 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
             Inside::Honey => 3,
             Inside::BubbleColumn { drag: false } => 4,
             Inside::BubbleColumn { drag: true } => 5,
+            Inside::Fire { soul: false } => 6,
+            Inside::Fire { soul: true } => 7,
+            Inside::Campfire { soul: false } => 8,
+            Inside::Campfire { soul: true } => 9,
+            Inside::BerryBush { hurt: false } => 10,
+            Inside::BerryBush { hurt: true } => 11,
+            Inside::Cactus => 12,
             Inside::Unsupported(_) => unreachable!()
         });
-        bytes.push(match grounded_contact { crate::GroundedContact::None => 0,
-            crate::GroundedContact::DamageUnlessCareful(crate::ContactDamage::HotFloor) => 1 });
+        bytes.push(match grounded_contact {
+            crate::GroundedContact::None => 0,
+            crate::GroundedContact::DamageUnlessCareful(c) => match c {
+                crate::ContactDamage::HotFloor => 1,
+                crate::ContactDamage::OnFire => 2,
+                crate::ContactDamage::InFire { soul: false } => 3,
+                crate::ContactDamage::InFire { soul: true } => 4,
+                crate::ContactDamage::Campfire { soul: false } => 5,
+                crate::ContactDamage::Campfire { soul: true } => 6,
+                crate::ContactDamage::SweetBerryBush => 7,
+                crate::ContactDamage::Cactus => 8,
+            },
+        });
         bytes.push(stuck_multiplier.is_some() as u8);
         if let Some(v) = stuck_multiplier {
             // A per-axis scale: turns swap x and z, mirrors leave it.

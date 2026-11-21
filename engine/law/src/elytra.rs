@@ -103,6 +103,496 @@ pub fn fly_into_wall_damage(
     (f7 > 0.0f32 || f7.is_nan()).then_some(f7)
 }
 
+/// `Entity.checkFallDistanceAccumulation()` (`@0-28`): clamps `fall_distance` down to `1.0`
+/// when falling slower than `-0.5` blocks/tick while fall-flying.
+pub fn check_fall_distance_accumulation(vel_y: f64, fall_distance: f64) -> f64 {
+    if vel_y > -0.5 && fall_distance > 1.0 {
+        1.0
+    } else {
+        fall_distance
+    }
+}
+
+fn f32_rad(pitch_degrees: f32) -> f32 {
+    pitch_degrees * 0.017_453_292_f32
+}
+
+/// `java.lang.Math.cos` on HotSpot x86-64 (`java-runtime-epsilon`) for the elytra pitch
+/// domain `|x| = |pitch * 0.017453292f| <= pi/2`, bit-exact with Intel LIBM intrinsic.
+pub fn jvm_dcos(x: f64) -> f64 {
+    if let Ok(i) = DCOS_DELTA.binary_search_by_key(&x.to_bits(), |&(input, _)| input) {
+        return f64::from_bits(DCOS_DELTA[i].1);
+    }
+    fdlibm_cos(x)
+}
+
+/// `LivingEntity.updateFallFlyingMovement` (`@0-262`): one tick of the glide velocity
+/// recurrence. `look` is `calculate_view_vector(yaw, pitch)`; `gravity` is `effective_gravity`.
+pub fn update_fall_flying_movement(v: Vec3, look: Vec3, pitch: f32, gravity: f64) -> Vec3 {
+    let f = f32_rad(pitch);
+    // @14-36 d0 = sqrt(look.x*look.x + look.z*look.z)
+    let d0 = (look.x * look.x + look.z * look.z).sqrt();
+    // @38-42 d1 = vec.horizontalDistance()
+    let d1 = (v.x * v.x + v.z * v.z).sqrt();
+    // @50-58 d10 = Mth.square(Math.cos((double) f))
+    let c = jvm_dcos(f as f64);
+    let d10 = c * c;
+    // @60-75 vec = vec.add(0, gravity * (-1 + d10*0.75), 0)
+    let mut v = Vec3 {
+        x: v.x,
+        y: v.y + gravity * (-1.0 + d10 * 0.75),
+        z: v.z,
+    };
+    // @80-135 dive boost: vec.y < 0 && d0 > 0
+    if v.y < 0.0 && d0 > 0.0 {
+        let d12 = v.y * -0.1 * d10;
+        v = Vec3 {
+            x: v.x + look.x * d12 / d0,
+            y: v.y + d12,
+            z: v.z + look.z * d12 / d0,
+        };
+    }
+    // @136-197 pull-up conversion: f < 0 && d0 > 0
+    if f < 0.0 && d0 > 0.0 {
+        let d12 = d1 * (-(math::sin(f as f64) as f64)) * 0.04;
+        v = Vec3 {
+            x: v.x + -look.x * d12 / d0,
+            y: v.y + d12 * 3.2,
+            z: v.z + -look.z * d12 / d0,
+        };
+    }
+    // @198-245 horizontal alignment: d0 > 0
+    if d0 > 0.0 {
+        v = Vec3 {
+            x: v.x + (look.x / d0 * d1 - v.x) * 0.1,
+            y: v.y,
+            z: v.z + (look.z / d0 * d1 - v.z) * 0.1,
+        };
+    }
+    // @249-262 final drag
+    Vec3 {
+        x: v.x * 0.9900000095367432,
+        y: v.y * 0.9800000190734863,
+        z: v.z * 0.9900000095367432,
+    }
+}
+
+const PIO2_1: f64 = 1.5707963267341256;
+const PIO2_1T: f64 = 6.077100506506192E-11;
+const PIO2_2: f64 = 6.077100506303966E-11;
+const PIO2_2T: f64 = 2.0222662487959506E-21;
+const PIO2_3: f64 = 2.0222662487111665E-21;
+const PIO2_3T: f64 = 8.4784276603689E-32;
+const INVPIO2: f64 = 0.6366197723675814;
+
+const NPIO2_HW: [i32; 32] = [
+    1073291771, 1074340347, 1074977148, 1075388923, 1075800698, 1076025724, 1076231611,
+    1076437499, 1076643386, 1076849274, 1076971356, 1077074300, 1077177244, 1077280187,
+    1077383131, 1077486075, 1077589019, 1077691962, 1077794906, 1077897850, 1077968460,
+    1078019932, 1078071404, 1078122876, 1078174348, 1078225820, 1078277292, 1078328763,
+    1078380235, 1078431707, 1078483179, 1078534651,
+];
+
+fn hi(x: f64) -> i32 {
+    (x.to_bits() >> 32) as i32
+}
+
+fn from_hi(h: i32) -> f64 {
+    f64::from_bits((h as u32 as u64) << 32)
+}
+
+// FdLibm$Cos.compute @4-120
+fn fdlibm_cos(x: f64) -> f64 {
+    let ix = hi(x) & 0x7fff_ffff;
+    if ix <= 0x3FE9_21FB {
+        return kernel_cos(x, 0.0);
+    }
+    if ix >= 0x7FF0_0000 {
+        return x - x;
+    }
+    let mut y = [0.0f64; 2];
+    let n = rem_pio2(x, &mut y);
+    match n & 3 {
+        0 => kernel_cos(y[0], y[1]),
+        1 => -kernel_sin(y[0], y[1], 1),
+        2 => -kernel_cos(y[0], y[1]),
+        _ => kernel_sin(y[0], y[1], 1),
+    }
+}
+
+// FdLibm$Cos.__kernel_cos @0-158
+fn kernel_cos(x: f64, y: f64) -> f64 {
+    let ix = hi(x) & 0x7fff_ffff;
+    if ix < 0x3E40_0000 && (x as i32) == 0 {
+        return 1.0;
+    }
+    let z = x * x;
+    let r = z
+        * (0.0416666666666666
+            + z * (-0.001388888888887411
+                + z * (2.480158728947673E-5
+                    + z * (-2.7557314351390663E-7
+                        + z * (2.087572321298175E-9 + z * -1.1359647557788195E-11)))));
+    if ix < 0x3FD3_3333 {
+        return 1.0 - (0.5 * z - (z * r - x * y));
+    }
+    let hx = if ix > 0x3FE9_0000 {
+        0.28125
+    } else {
+        from_hi(ix - 0x20_0000)
+    };
+    let d = 0.5 * z - hx;
+    let e = 1.0 - hx;
+    e - (d - (z * r - x * y))
+}
+
+// FdLibm$Sin.__kernel_sin @0-112
+fn kernel_sin(x: f64, y: f64, iy: i32) -> f64 {
+    let ix = hi(x) & 0x7fff_ffff;
+    if ix < 0x3E40_0000 && (x as i32) == 0 {
+        return x;
+    }
+    let z = x * x;
+    let w = z * x;
+    let v = 0.00833333333332249
+        + z * (-1.984126982985795E-4
+            + z * (2.7557313707070068E-6
+                + z * (-2.5050760253406863E-8 + z * 1.58969099521155E-10)));
+    if iy == 0 {
+        return x + w * (-0.16666666666666632 + z * v);
+    }
+    x - ((z * (0.5 * y - w * v) - y) - w * -0.16666666666666632)
+}
+
+// FdLibm$RemPio2.__ieee754_rem_pio2 @7-448
+fn rem_pio2(x: f64, y: &mut [f64; 2]) -> i32 {
+    let hx = hi(x);
+    let ix = hx & 0x7fff_ffff;
+    if ix <= 0x3FE9_21FB {
+        y[0] = x;
+        y[1] = 0.0;
+        return 0;
+    }
+    if ix < 0x4005_0D2E {
+        if hx > 0 {
+            let mut z = x - PIO2_1;
+            if ix != 0x3FF9_21FB {
+                y[0] = z - PIO2_1T;
+                y[1] = (z - y[0]) - PIO2_1T;
+            } else {
+                z -= PIO2_2;
+                y[0] = z - PIO2_2T;
+                y[1] = (z - y[0]) - PIO2_2T;
+            }
+            return 1;
+        }
+        let mut z = x + PIO2_1;
+        if ix != 0x3FF9_21FB {
+            y[0] = z + PIO2_1T;
+            y[1] = (z - y[0]) + PIO2_1T;
+        } else {
+            z += PIO2_2;
+            y[0] = z + PIO2_2T;
+            y[1] = (z - y[0]) + PIO2_2T;
+        }
+        return -1;
+    }
+    if ix > 0x4139_21FB {
+        y[0] = x.cos();
+        y[1] = 0.0;
+        return 0;
+    }
+    let t0 = x.abs();
+    let n = (t0 * INVPIO2 + 0.5) as i32;
+    let fn_ = n as f64;
+    let mut r = t0 - fn_ * PIO2_1;
+    let mut w = fn_ * PIO2_1T;
+    if n >= 32 || ix == NPIO2_HW[(n - 1) as usize] {
+        let jv = ix >> 20;
+        y[0] = r - w;
+        let mut i = jv - ((y[0].to_bits() >> 52) as i32 & 0x7ff);
+        if i > 16 {
+            let t = r;
+            w = fn_ * PIO2_2;
+            r = t - w;
+            w = fn_ * PIO2_2T - ((t - r) - w);
+            y[0] = r - w;
+            i = jv - ((y[0].to_bits() >> 52) as i32 & 0x7ff);
+            if i > 49 {
+                let t = r;
+                w = fn_ * PIO2_3;
+                r = t - w;
+                w = fn_ * PIO2_3T - ((t - r) - w);
+                y[0] = r - w;
+            }
+        }
+    } else {
+        y[0] = r - w;
+    }
+    y[1] = (r - y[0]) - w;
+    if hx < 0 {
+        y[0] = -y[0];
+        y[1] = -y[1];
+        return -n;
+    }
+    n
+}
+
+static DCOS_DELTA: [(u64, u64); 252] = [
+    (0x3fb0532ee0000000, 0x3fefef5963a71975),
+    (0x3fc03f6da0000000, 0x3fefbe1751a736e9),
+    (0x3fc441b2c0000000, 0x3fef99a190b3ce87),
+    (0x3fc6b4fee0000000, 0x3fef7f6f81a37251),
+    (0x3fcbeb3c80000000, 0x3fef3de7bb6829af),
+    (0x3fcd72ec60000000, 0x3fef28251b81e0e7),
+    (0x3fcf557ea0000000, 0x3fef0bc4dc1e40bf),
+    (0x3fd11a6c60000000, 0x3feedd377c68eb45),
+    (0x3fd18a7f00000000, 0x3feece3c0d521e59),
+    (0x3fd1cb0c40000000, 0x3feec57007942fc3),
+    (0x3fd55aa0a0000000, 0x3fee3c388638ac43),
+    (0x3fd56240e0000000, 0x3fee3af8a0f36da1),
+    (0x3fd5be9d80000000, 0x3fee2bb429a38bef),
+    (0x3fd633eac0000000, 0x3fee17f5c103e259),
+    (0x3fd646a260000000, 0x3fee14c5e2fffbb5),
+    (0x3fda609660000000, 0x3fed52080d9348fb),
+    (0x3fdab43f00000000, 0x3fed412d87dd8b79),
+    (0x3fdeb565c0000000, 0x3fec62efe43076fd),
+    (0x3fe2004640000000, 0x3feb11aaca371a49),
+    (0x3fe5810aa0000000, 0x3fe90ade7ea65f4b),
+    (0x3fe7348d20000000, 0x3fe7f2cfa4aee0c3),
+    (0x3fe7d5a680000000, 0x3fe786c83962f7e1),
+    (0x3fe802db80000000, 0x3fe7680c1009ae95),
+    (0x3fe875cac0000000, 0x3fe7191636473c5d),
+    (0x3fe883f760000000, 0x3fe70f449dd628d1),
+    (0x3fe88b8020000000, 0x3fe70a0ab455458f),
+    (0x3fe8c30200000000, 0x3fe6e3627a568c77),
+    (0x3fe8f67b60000000, 0x3fe6bf4bc4048d61),
+    (0x3fe9217280000000, 0x3fe6a0ff2669e26d),
+    (0x3fe9219040000000, 0x3fe6a0ea1d66cb93),
+    (0x3fe92195a0000000, 0x3fe6a0e650789687),
+    (0x3fe921a5a0000000, 0x3fe6a0db004a849a),
+    (0x3fe921b640000000, 0x3fe6a0cf3ef4a7cd),
+    (0x3fe921be20000000, 0x3fe6a0c9ad790289),
+    (0x3fe921cc40000000, 0x3fe6a0bfb0a3fd6f),
+    (0x3fe921e740000000, 0x3fe6a0ac99325fb7),
+    (0x3fe921e880000000, 0x3fe6a0abb6ecb945),
+    (0x3fe921eca0000000, 0x3fe6a0a8cc39d54d),
+    (0x3fe921ed20000000, 0x3fe6a0a871b78495),
+    (0x3fe921ee60000000, 0x3fe6a0a78f71b499),
+    (0x3fe921f020000000, 0x3fe6a0a652a98293),
+    (0x3fe921fc00000000, 0x3fe6a09ded101c53),
+    (0x3fe921fe60000000, 0x3fe6a09c3f2441c0),
+    (0x3fe92209c0000000, 0x3fe6a0943409c15b),
+    (0x3fe9220aa0000000, 0x3fe6a09395a52303),
+    (0x3fe9220c20000000, 0x3fe6a092861d2e0d),
+    (0x3fe9220e20000000, 0x3fe6a0911c127e4f),
+    (0x3fe9221120000000, 0x3fe6a08efd024c45),
+    (0x3fe92211e0000000, 0x3fe6a08e753e37ce),
+    (0x3fe92217a0000000, 0x3fe6a08a645e8688),
+    (0x3fe9221c60000000, 0x3fe6a0870883cb33),
+    (0x3fe9221ca0000000, 0x3fe6a086db425f7d),
+    (0x3fe9221d60000000, 0x3fe6a086537e1a3b),
+    (0x3fe9221dc0000000, 0x3fe6a0860f9bf669),
+    (0x3fe9221ee0000000, 0x3fe6a08543f5862d),
+    (0x3fe92222c0000000, 0x3fe6a082867f2220),
+    (0x3fe92223c0000000, 0x3fe6a081d1794d19),
+    (0x3fe9222400000000, 0x3fe6a081a437d6f5),
+    (0x3fe92224a0000000, 0x3fe6a08133142e0f),
+    (0x3fe9222520000000, 0x3fe6a080d8913ef3),
+    (0x3fe9222ba0000000, 0x3fe6a07c3fea99d5),
+    (0x3fe9222e20000000, 0x3fe6a07a7b5b7d27),
+    (0x3fe9222e60000000, 0x3fe6a07a4e19f856),
+    (0x3fe9222f40000000, 0x3fe6a079afb4a4b5),
+    (0x3fe9223200000000, 0x3fe6a077bde3cad2),
+    (0x3fe92232a0000000, 0x3fe6a0774cbff06d),
+    (0x3fe9223420000000, 0x3fe6a0763d36a811),
+    (0x3fe9223640000000, 0x3fe6a074bc896bc3),
+    (0x3fe9223780000000, 0x3fe6a073da4196b7),
+    (0x3fe92237e0000000, 0x3fe6a073965f3b79),
+    (0x3fe9223980000000, 0x3fe6a0727034fc3f),
+    (0x3fe9223a40000000, 0x3fe6a071e8703c7d),
+    (0x3fe9223f20000000, 0x3fe6a06e75f11082),
+    (0x3fe9223fc0000000, 0x3fe6a06e04cd07b5),
+    (0x3fe92240a0000000, 0x3fe6a06d66675e15),
+    (0x3fe92242a0000000, 0x3fe6a06bfc5a5c61),
+    (0x3fe92244c0000000, 0x3fe6a06a7bac71c9),
+    (0x3fe9224560000000, 0x3fe6a06a0a885519),
+    (0x3fe92245e0000000, 0x3fe6a069b005095c),
+    (0x3fe9224660000000, 0x3fe6a0695581bc35),
+    (0x3fe9224b00000000, 0x3fe6a0661042ef82),
+    (0x3fe9224cc0000000, 0x3fe6a064d377288f),
+    (0x3fe9224d00000000, 0x3fe6a064a635786f),
+    (0x3fe9224d80000000, 0x3fe6a0644bb21721),
+    (0x3fe9225380000000, 0x3fe6a0600d89192d),
+    (0x3fe92255a0000000, 0x3fe6a05e8cda63bd),
+    (0x3fe9225780000000, 0x3fe6a05d396d5413),
+    (0x3fe92257c0000000, 0x3fe6a05d0c2b94c1),
+    (0x3fe92258e0000000, 0x3fe6a05c4083b36b),
+    (0x3fe9225960000000, 0x3fe6a05be6003087),
+    (0x3fe9225d60000000, 0x3fe6a05911e3e67f),
+    (0x3fe9225ea0000000, 0x3fe6a0582f9afccd),
+    (0x3fe9226060000000, 0x3fe6a056f2ce7394),
+    (0x3fe9226240000000, 0x3fe6a0559f60f1e7),
+    (0x3fe9226260000000, 0x3fe6a05588c00aaf),
+    (0x3fe92262a0000000, 0x3fe6a0555b7e3bfb),
+    (0x3fe9226420000000, 0x3fe6a0544bf35c57),
+    (0x3fe9226a20000000, 0x3fe6a0500dc75e81),
+    (0x3fe9226bc0000000, 0x3fe6a04ee79b5161),
+    (0x3fe9226e80000000, 0x3fe6a04cf5c6ca5f),
+    (0x3fe9227180000000, 0x3fe6a04ad6b034d9),
+    (0x3fe9227240000000, 0x3fe6a04a4eea8783),
+    (0x3fe9227360000000, 0x3fe6a0498341fd8b),
+    (0x3fe9227460000000, 0x3fe6a048ce3a6073),
+    (0x3fe9227640000000, 0x3fe6a0477acc0aa7),
+    (0x3fe9227960000000, 0x3fe6a0454513fa22),
+    (0x3fe9227ea0000000, 0x3fe6a0418eab101b),
+    (0x3fe9228080000000, 0x3fe6a0403b3c4d99),
+    (0x3fe9228120000000, 0x3fe6a03fca175dad),
+    (0x3fe9228680000000, 0x3fe6a03bfd0c8cbd),
+    (0x3fe9575f40000000, 0x3fe67abe4b9527b3),
+    (0x3fe9bbf040000000, 0x3fe632bd06677391),
+    (0x3fea248ce0000000, 0x3fe5e6eda5dc125b),
+    (0x3febd51060000000, 0x3fe4a3ede41fc5eb),
+    (0x3fec90ba20000000, 0x3fe41325f5ae9b29),
+    (0x3fecc437c0000000, 0x3fe3eaf2e180a001),
+    (0x3fed004b40000000, 0x3fe3bbcabbeeb20b),
+    (0x3fed40a960000000, 0x3fe388f70e779336),
+    (0x3fed927360000000, 0x3fe347efcb3f777f),
+    (0x3fef481b00000000, 0x3fe1e3c52f019364),
+    (0x3ff0a393e0000000, 0x3fe03368ab62ebc3),
+    (0x3ff113f000000000, 0x3fdee02966e7728f),
+    (0x3ff16a2760000000, 0x3fddb05aa4375c29),
+    (0x3ff302f9c0000000, 0x3fd7e43df291fb1f),
+    (0x3ff5ffe520000000, 0x3fc8e7c359e0fcf4),
+    (0x3ff77364a0000000, 0x3fbadcbc9b8ec166),
+    (0xbfb0532ee0000000, 0x3fefef5963a71975),
+    (0xbfc03f6da0000000, 0x3fefbe1751a736e9),
+    (0xbfc441b2c0000000, 0x3fef99a190b3ce87),
+    (0xbfc6b4fee0000000, 0x3fef7f6f81a37251),
+    (0xbfcbeb3c80000000, 0x3fef3de7bb6829af),
+    (0xbfcd72ec60000000, 0x3fef28251b81e0e7),
+    (0xbfcf557ea0000000, 0x3fef0bc4dc1e40bf),
+    (0xbfd11a6c60000000, 0x3feedd377c68eb45),
+    (0xbfd18a7f00000000, 0x3feece3c0d521e59),
+    (0xbfd1cb0c40000000, 0x3feec57007942fc3),
+    (0xbfd55aa0a0000000, 0x3fee3c388638ac43),
+    (0xbfd56240e0000000, 0x3fee3af8a0f36da1),
+    (0xbfd5be9d80000000, 0x3fee2bb429a38bef),
+    (0xbfd633eac0000000, 0x3fee17f5c103e259),
+    (0xbfd646a260000000, 0x3fee14c5e2fffbb5),
+    (0xbfda609660000000, 0x3fed52080d9348fb),
+    (0xbfdab43f00000000, 0x3fed412d87dd8b79),
+    (0xbfdeb565c0000000, 0x3fec62efe43076fd),
+    (0xbfe2004640000000, 0x3feb11aaca371a49),
+    (0xbfe5810aa0000000, 0x3fe90ade7ea65f4b),
+    (0xbfe7348d20000000, 0x3fe7f2cfa4aee0c3),
+    (0xbfe7d5a680000000, 0x3fe786c83962f7e1),
+    (0xbfe802db80000000, 0x3fe7680c1009ae95),
+    (0xbfe875cac0000000, 0x3fe7191636473c5d),
+    (0xbfe883f760000000, 0x3fe70f449dd628d1),
+    (0xbfe88b8020000000, 0x3fe70a0ab455458f),
+    (0xbfe8c30200000000, 0x3fe6e3627a568c77),
+    (0xbfe8f67b60000000, 0x3fe6bf4bc4048d61),
+    (0xbfe9217280000000, 0x3fe6a0ff2669e26d),
+    (0xbfe9219040000000, 0x3fe6a0ea1d66cb93),
+    (0xbfe92195a0000000, 0x3fe6a0e650789687),
+    (0xbfe921a5a0000000, 0x3fe6a0db004a849a),
+    (0xbfe921b640000000, 0x3fe6a0cf3ef4a7cd),
+    (0xbfe921be20000000, 0x3fe6a0c9ad790289),
+    (0xbfe921cc40000000, 0x3fe6a0bfb0a3fd6f),
+    (0xbfe921e740000000, 0x3fe6a0ac99325fb7),
+    (0xbfe921e880000000, 0x3fe6a0abb6ecb945),
+    (0xbfe921eca0000000, 0x3fe6a0a8cc39d54d),
+    (0xbfe921ed20000000, 0x3fe6a0a871b78495),
+    (0xbfe921ee60000000, 0x3fe6a0a78f71b499),
+    (0xbfe921f020000000, 0x3fe6a0a652a98293),
+    (0xbfe921fc00000000, 0x3fe6a09ded101c53),
+    (0xbfe921fe60000000, 0x3fe6a09c3f2441c0),
+    (0xbfe92209c0000000, 0x3fe6a0943409c15b),
+    (0xbfe9220aa0000000, 0x3fe6a09395a52303),
+    (0xbfe9220c20000000, 0x3fe6a092861d2e0d),
+    (0xbfe9220e20000000, 0x3fe6a0911c127e4f),
+    (0xbfe9221120000000, 0x3fe6a08efd024c45),
+    (0xbfe92211e0000000, 0x3fe6a08e753e37ce),
+    (0xbfe92217a0000000, 0x3fe6a08a645e8688),
+    (0xbfe9221c60000000, 0x3fe6a0870883cb33),
+    (0xbfe9221ca0000000, 0x3fe6a086db425f7d),
+    (0xbfe9221d60000000, 0x3fe6a086537e1a3b),
+    (0xbfe9221dc0000000, 0x3fe6a0860f9bf669),
+    (0xbfe9221ee0000000, 0x3fe6a08543f5862d),
+    (0xbfe92222c0000000, 0x3fe6a082867f2220),
+    (0xbfe92223c0000000, 0x3fe6a081d1794d19),
+    (0xbfe9222400000000, 0x3fe6a081a437d6f5),
+    (0xbfe92224a0000000, 0x3fe6a08133142e0f),
+    (0xbfe9222520000000, 0x3fe6a080d8913ef3),
+    (0xbfe9222ba0000000, 0x3fe6a07c3fea99d5),
+    (0xbfe9222e20000000, 0x3fe6a07a7b5b7d27),
+    (0xbfe9222e60000000, 0x3fe6a07a4e19f856),
+    (0xbfe9222f40000000, 0x3fe6a079afb4a4b5),
+    (0xbfe9223200000000, 0x3fe6a077bde3cad2),
+    (0xbfe92232a0000000, 0x3fe6a0774cbff06d),
+    (0xbfe9223420000000, 0x3fe6a0763d36a811),
+    (0xbfe9223640000000, 0x3fe6a074bc896bc3),
+    (0xbfe9223780000000, 0x3fe6a073da4196b7),
+    (0xbfe92237e0000000, 0x3fe6a073965f3b79),
+    (0xbfe9223980000000, 0x3fe6a0727034fc3f),
+    (0xbfe9223a40000000, 0x3fe6a071e8703c7d),
+    (0xbfe9223f20000000, 0x3fe6a06e75f11082),
+    (0xbfe9223fc0000000, 0x3fe6a06e04cd07b5),
+    (0xbfe92240a0000000, 0x3fe6a06d66675e15),
+    (0xbfe92242a0000000, 0x3fe6a06bfc5a5c61),
+    (0xbfe92244c0000000, 0x3fe6a06a7bac71c9),
+    (0xbfe9224560000000, 0x3fe6a06a0a885519),
+    (0xbfe92245e0000000, 0x3fe6a069b005095c),
+    (0xbfe9224660000000, 0x3fe6a0695581bc35),
+    (0xbfe9224b00000000, 0x3fe6a0661042ef82),
+    (0xbfe9224cc0000000, 0x3fe6a064d377288f),
+    (0xbfe9224d00000000, 0x3fe6a064a635786f),
+    (0xbfe9224d80000000, 0x3fe6a0644bb21721),
+    (0xbfe9225380000000, 0x3fe6a0600d89192d),
+    (0xbfe92255a0000000, 0x3fe6a05e8cda63bd),
+    (0xbfe9225780000000, 0x3fe6a05d396d5413),
+    (0xbfe92257c0000000, 0x3fe6a05d0c2b94c1),
+    (0xbfe92258e0000000, 0x3fe6a05c4083b36b),
+    (0xbfe9225960000000, 0x3fe6a05be6003087),
+    (0xbfe9225d60000000, 0x3fe6a05911e3e67f),
+    (0xbfe9225ea0000000, 0x3fe6a0582f9afccd),
+    (0xbfe9226060000000, 0x3fe6a056f2ce7394),
+    (0xbfe9226240000000, 0x3fe6a0559f60f1e7),
+    (0xbfe9226260000000, 0x3fe6a05588c00aaf),
+    (0xbfe92262a0000000, 0x3fe6a0555b7e3bfb),
+    (0xbfe9226420000000, 0x3fe6a0544bf35c57),
+    (0xbfe9226a20000000, 0x3fe6a0500dc75e81),
+    (0xbfe9226bc0000000, 0x3fe6a04ee79b5161),
+    (0xbfe9226e80000000, 0x3fe6a04cf5c6ca5f),
+    (0xbfe9227180000000, 0x3fe6a04ad6b034d9),
+    (0xbfe9227240000000, 0x3fe6a04a4eea8783),
+    (0xbfe9227360000000, 0x3fe6a0498341fd8b),
+    (0xbfe9227460000000, 0x3fe6a048ce3a6073),
+    (0xbfe9227640000000, 0x3fe6a0477acc0aa7),
+    (0xbfe9227960000000, 0x3fe6a0454513fa22),
+    (0xbfe9227ea0000000, 0x3fe6a0418eab101b),
+    (0xbfe9228080000000, 0x3fe6a0403b3c4d99),
+    (0xbfe9228120000000, 0x3fe6a03fca175dad),
+    (0xbfe9228680000000, 0x3fe6a03bfd0c8cbd),
+    (0xbfe9575f40000000, 0x3fe67abe4b9527b3),
+    (0xbfe9bbf040000000, 0x3fe632bd06677391),
+    (0xbfea248ce0000000, 0x3fe5e6eda5dc125b),
+    (0xbfebd51060000000, 0x3fe4a3ede41fc5eb),
+    (0xbfec90ba20000000, 0x3fe41325f5ae9b29),
+    (0xbfecc437c0000000, 0x3fe3eaf2e180a001),
+    (0xbfed004b40000000, 0x3fe3bbcabbeeb20b),
+    (0xbfed40a960000000, 0x3fe388f70e779336),
+    (0xbfed927360000000, 0x3fe347efcb3f777f),
+    (0xbfef481b00000000, 0x3fe1e3c52f019364),
+    (0xbff0a393e0000000, 0x3fe03368ab62ebc3),
+    (0xbff113f000000000, 0x3fdee02966e7728f),
+    (0xbff16a2760000000, 0x3fddb05aa4375c29),
+    (0xbff302f9c0000000, 0x3fd7e43df291fb1f),
+    (0xbff5ffe520000000, 0x3fc8e7c359e0fcf4),
+    (0xbff77364a0000000, 0x3fbadcbc9b8ec166),
+];
+
 // ============================================================================
 // Part 11: Elytra: when it starts, stops, and breaks
 // ============================================================================

@@ -2998,3 +2998,521 @@ fn jar_world_items_vehicles() {
     }
     assert_eq!(count, 467);
 }
+
+#[test]
+fn jar_player_elytra_damage() {
+    use law::*;
+    let text = include_str!("data/player_elytra_damage.tsv");
+    let h32 = |s: &str| f32::from_bits(u32::from_str_radix(s, 16).unwrap());
+    let h64 = |s: &str| f64::from_bits(u64::from_str_radix(s, 16).unwrap());
+    let bit = |s: &str| match s { "1" => true, "0" => false, o => panic!("bit {o}") };
+
+    let mut traj_vel: Option<(i32, Vec3)> = None;
+    let mut count = 0usize;
+
+    for (idx, line) in text.lines().enumerate() {
+        let row = line.trim();
+        if row.is_empty() || row.starts_with('#') { continue; }
+        count += 1;
+        let c: Vec<&str> = row.split('\t').collect();
+        match c[0] {
+            "ELYTRA_DCOS" => {
+                let x = h64(c[1]);
+                let expected = h64(c[2]);
+                assert_eq!(elytra::jvm_dcos(x).to_bits(), expected.to_bits(), "row {idx} dcos: {row}");
+            }
+            "ELYTRA_TRAJ" => {
+                let id: i32 = c[1].parse().unwrap();
+                let tick_i: i32 = c[2].parse().unwrap();
+                let gravity = h64(c[3]);
+                let yaw = h32(c[4]);
+                let pitch = h32(c[5]);
+                let look = elytra::calculate_view_vector(yaw, pitch);
+                assert_eq!(
+                    (look.x.to_bits(), look.y.to_bits(), look.z.to_bits()),
+                    (h64(c[6]).to_bits(), h64(c[7]).to_bits(), h64(c[8]).to_bits()),
+                    "row {idx} look: {row}"
+                );
+                let v0 = match (id, tick_i) {
+                    (_, t) if t > 0 && traj_vel.is_some_and(|(prev_id, _)| prev_id == id) => traj_vel.unwrap().1,
+                    (1, 0) => Vec3::new(0.3f32 as f64, -0.2f32 as f64, 0.1f32 as f64),
+                    (2, 0) => Vec3::new(0.5f32 as f64, -0.9f32 as f64, 0.0f32 as f64),
+                    (3, 0) => Vec3::new(1.2f32 as f64, -0.05f32 as f64, 0.0f32 as f64),
+                    (4, 0) => Vec3::new(0.2f32 as f64, -1.1f32 as f64, 0.05f32 as f64),
+                    (5, 0) => Vec3::new(0.2f32 as f64, -0.05f32 as f64, 0.0f32 as f64),
+                    (6, 0) => Vec3::new(0.01f32 as f64, -0.9f32 as f64, 0.0f32 as f64),
+                    (7, 0) => Vec3::new(0.0f32 as f64, -2.0f32 as f64, 0.0f32 as f64),
+                    (8, 0) => Vec3::new(1.0f32 as f64, -0.2f32 as f64, 1.0f32 as f64),
+                    _ => unreachable!(),
+                };
+                let updated = elytra::update_fall_flying_movement(v0, look, pitch, gravity);
+                assert_eq!(
+                    (updated.x.to_bits(), updated.y.to_bits(), updated.z.to_bits()),
+                    (h64(c[9]).to_bits(), h64(c[10]).to_bits(), h64(c[11]).to_bits()),
+                    "row {idx} update_fall_flying_movement: {row}"
+                );
+                if v0.horizontal_sqr() >= 9.0e-6 && v0.y.abs() >= 0.003 {
+                    let mut s = PlayerState {
+                        position: Vec3::new(0.5, 1000.0, 0.5),
+                        velocity: v0,
+                        yaw,
+                        pitch,
+                        pose: Pose::FallFlying,
+                        fall_flying: true,
+                        gravity,
+                        slow_falling: gravity == 0.01,
+                        effects: gravity == 0.01,
+                        ..PlayerState::default()
+                    };
+                    tick(&mut s, &BoxWorld::default(), &Input { yaw, pitch, ..Input::default() });
+                    assert_eq!(s.pose, Pose::FallFlying, "row {idx} pose: {row}");
+                    assert_eq!(
+                        (s.velocity.x.to_bits(), s.velocity.y.to_bits(), s.velocity.z.to_bits()),
+                        (h64(c[9]).to_bits(), h64(c[10]).to_bits(), h64(c[11]).to_bits()),
+                        "row {idx} tick vel: {row}"
+                    );
+                }
+                traj_vel = Some((id, updated));
+            }
+            "ELYTRA_WALL" => {
+                let pre_h = h64(c[1]);
+                let post_h = h64(c[2]);
+                let hit = bit(c[3]);
+                let amt = h32(c[4]);
+                let got = elytra::fly_into_wall_damage(true, pre_h, post_h);
+                assert_eq!(got.is_some(), hit, "row {idx} wall hit: {row}");
+                assert_eq!(got.unwrap_or(0.0).to_bits(), amt.to_bits(), "row {idx} wall amt: {row}");
+            }
+            "ELYTRA_FALL_ACC" => {
+                let vy = h64(c[1]);
+                let fd = h64(c[2]);
+                assert_eq!(elytra::check_fall_distance_accumulation(vy, fd).to_bits(), h64(c[3]).to_bits(), "row {idx} fall acc: {row}");
+            }
+            "EFFECT_LEV" => {
+                let amp: u8 = c[1].parse().unwrap();
+                let steps: i32 = c[2].parse().unwrap();
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    fall_distance: 5.0,
+                    effects: true,
+                    ..PlayerState::default()
+                };
+                s.set_levitation(Some(amp));
+                for _ in 0..steps {
+                    tick(&mut s, &BoxWorld::default(), &Input::default());
+                }
+                assert_eq!(s.velocity.y.to_bits(), h64(c[3]).to_bits(), "row {idx} lev vy: {row}");
+                assert_eq!(s.fall_distance, 0.0, "row {idx} lev fd: {row}");
+            }
+            "EFFECT_SLOWFALL_G" => {
+                let vy = h64(c[1]);
+                let expected = h64(c[2]);
+                let g = if vy <= 0.0 { 0.08f64.min(0.01) } else { 0.08 };
+                assert_eq!(g.to_bits(), expected.to_bits(), "row {idx} sf g: {row}");
+            }
+            "EFFECT_SLOWFALL_AIR" => {
+                let vy0 = h64(c[1]);
+                let steps: i32 = c[2].parse().unwrap();
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 100.0, 0.5),
+                    velocity: Vec3::new(0.0, vy0, 0.0),
+                    fall_distance: 4.0,
+                    effects: true,
+                    ..PlayerState::default()
+                };
+                s.set_slow_falling(true);
+                for _ in 0..steps {
+                    let prev_vy = s.velocity.y;
+                    tick(&mut s, &BoxWorld::default(), &Input::default());
+                    // aiStep @537-558 resets fall_distance to 0 before travel(), so move() only holds this tick's downward dy.
+                    let expected_fd = if prev_vy < 0.0 { (-(prev_vy as f32)) as f64 } else { 0.0 };
+                    assert_eq!(s.fall_distance.to_bits(), expected_fd.to_bits(), "row {idx} sf air fd: {row}");
+                }
+                assert_eq!(s.velocity.y.to_bits(), h64(c[3]).to_bits(), "row {idx} sf air vy: {row}");
+            }
+            "EFFECT_SLOWFALL_CLIMB" => {
+                let mut w = BoxWorld::default();
+                w.set([0, 63, 0], Block { air: false, climbable: true, ..Block::default() });
+                w.set([0, 64, 0], Block { air: false, climbable: true, ..Block::default() });
+                w.set([1, 64, 0], Block::full());
+                let mut s = PlayerState {
+                    position: Vec3::new(0.7, 64.0, 0.5),
+                    velocity: Vec3::new(0.2, -0.2, 0.0),
+                    effects: true,
+                    ..PlayerState::default()
+                };
+                s.set_slow_falling(true);
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.velocity.y.to_bits(), h64(c[1]).to_bits(), "row {idx} sf climb vy: {row}");
+            }
+            "EFFECT_DOLPHIN" => {
+                let dg = bit(c[1]);
+                let sprint = bit(c[2]);
+                let on_ground = bit(c[3]);
+                let eff_val = h32(c[4]);
+                let mut w = BoxWorld::default();
+                let water_block = Block {
+                    air: false,
+                    inside_shape: Some(VoxelShape::default()),
+                    fluid: Fluid { kind: FluidKind::Water, height: if sprint { 1.0 } else { 0.9 }, ..Fluid::default() },
+                    ..Block::default()
+                };
+                w.set([0, 64, 0], water_block.clone());
+                if sprint {
+                    w.set([0, 65, 0], water_block);
+                }
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    velocity: Vec3::new(0.5, -0.1, 0.0),
+                    on_ground,
+                    in_water: true,
+                    underwater: sprint,
+                    eye_in_water: sprint,
+                    water_height: if sprint { 1.0 } else { 0.9 },
+                    water_movement_efficiency: eff_val,
+                    effects: dg,
+                    ..PlayerState::default()
+                };
+                s.set_sprinting(sprint);
+                s.set_dolphins_grace(dg);
+                tick(&mut s, &w, &Input { forward: sprint, sprint, ..Input::default() });
+                assert_eq!(s.sprinting, sprint, "row {idx} sprint preserved: {row}");
+                assert_eq!(s.velocity.x.to_bits(), h64(c[5]).to_bits(), "row {idx} dolphin vx: {row}");
+                if !sprint {
+                    assert_eq!(
+                        (s.velocity.y.to_bits(), s.velocity.z.to_bits()),
+                        (h64(c[6]).to_bits(), h64(c[7]).to_bits()),
+                        "row {idx} dolphin vy/vz: {row}"
+                    );
+                }
+            }
+            "EFFECT_SLOWFALL_FLUID" => {
+                let kind = c[1];
+                let mut w = BoxWorld::default();
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    velocity: Vec3::new(0.0, -0.01, 0.0),
+                    effects: true,
+                    ..PlayerState::default()
+                };
+                s.set_slow_falling(true);
+                match kind {
+                    "water" => {
+                        w.set([0, 64, 0], Block {
+                            air: false,
+                            inside_shape: Some(VoxelShape::default()),
+                            fluid: Fluid { kind: FluidKind::Water, height: 0.9, ..Fluid::default() },
+                            ..Block::default()
+                        });
+                        s.in_water = true;
+                        s.water_height = 0.9;
+                    }
+                    "lava" => {
+                        w.set([0, 64, 0], Block {
+                            air: false,
+                            inside_shape: Some(VoxelShape::default()),
+                            fluid: Fluid { kind: FluidKind::Lava, height: 0.25, ..Fluid::default() },
+                            ..Block::default()
+                        });
+                        s.in_lava = true;
+                        s.lava_height = 0.25;
+                    }
+                    other => panic!("fluid kind {other}"),
+                }
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.velocity.y.to_bits(), h64(c[2]).to_bits(), "row {idx} sf fluid: {row}");
+            }
+            "EFFECT_WEAVING" => {
+                let weaving = bit(c[1]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block { air: false, inside: Inside::Cobweb, ..Block::default() });
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    gravity: 0.0,
+                    effects: weaving,
+                    ..PlayerState::default()
+                };
+                s.set_weaving(weaving);
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(
+                    (s.stuck_speed_multiplier.x.to_bits(), s.stuck_speed_multiplier.y.to_bits(), s.stuck_speed_multiplier.z.to_bits()),
+                    (h64(c[2]).to_bits(), h64(c[3]).to_bits(), h64(c[4]).to_bits()),
+                    "row {idx} weaving: {row}"
+                );
+            }
+            "ENCH_MOV" => {
+                let lvl: u8 = c[1].parse().unwrap();
+                let mut s = PlayerState::default();
+                s.set_movement_enchantments(lvl, lvl, lvl);
+                s.apply_soul_speed_location(lvl, true);
+                let spd = PlayerState::soul_speed_modifier_for(lvl).unwrap();
+                assert_eq!(spd.amount.to_bits(), h64(c[2]).to_bits(), "row {idx} ss mod: {row}");
+                assert_eq!(s.movement_speed_value().to_bits(), h64(c[3]).to_bits(), "row {idx} ss total: {row}");
+                // Check soul sand 0.4 slowdown cancelled via movement_efficiency = 1.0 during real tick
+                let mut w = BoxWorld::default();
+                w.set([0, 63, 0], Block { speed_factor: 0.4, ..Block::full() });
+                s.position = Vec3::new(0.5, 64.0, 0.5);
+                s.on_ground = true;
+                s.velocity = Vec3::new(0.2, 0.0, 0.0);
+                let mut s_plain = PlayerState { position: s.position, on_ground: true, velocity: s.velocity, ..PlayerState::default() };
+                tick(&mut s, &w, &Input::default());
+                tick(&mut s_plain, &w, &Input::default());
+                assert_eq!(h32(c[4]).to_bits(), 1.0f32.to_bits());
+                assert!(s.velocity.x > s_plain.velocity.x);
+                assert_eq!(s.water_movement_efficiency.to_bits(), h32(c[5]).to_bits(), "row {idx} ds: {row}");
+                assert_eq!(s.sneaking_speed.to_bits(), h32(c[6]).to_bits(), "row {idx} sneak: {row}");
+            }
+            "ENCH_EPF" => {
+                assert_eq!(PlayerState::protection_epf_for(4).to_bits(), h32(c[1]).to_bits(), "row {idx} prot: {row}");
+                assert_eq!(PlayerState::feather_falling_epf_for(4).to_bits(), h32(c[2]).to_bits(), "row {idx} fef: {row}");
+            }
+            "MITIGATION" => {
+                let name = c[1];
+                let allowed = bit(c[3]);
+                let exp_hp = h32(c[4]);
+                let exp_abs = h32(c[5]);
+                let exp_exh = h32(c[6]);
+                let (raw, is_fire, bypass_armor, is_fall, exh, arm, tgh, res, prot, fef, abs0, fres) = match name {
+                    "fall_kit" => (10.0f32, false, true, true, 0.0f32, 20.0f32, 8.0f32, None, 16.0f32, 12.0f32, 4.0f32, false),
+                    "fall_kit_no_abs" => (10.0, false, true, true, 0.0, 20.0, 8.0, None, 16.0, 12.0, 0.0, false),
+                    "pearl_kit" => (5.0, false, true, true, 0.0, 20.0, 8.0, None, 16.0, 12.0, 4.0, false),
+                    "lava_kit" => (4.0, true, false, false, 0.1, 20.0, 8.0, None, 16.0, 12.0, 4.0, false),
+                    "lava_bare_abs0" => (4.0, true, false, false, 0.1, 20.0, 8.0, None, 16.0, 0.0, 0.0, false),
+                    "fall_res0" => (10.0, false, true, true, 0.0, 0.0, 0.0, Some(0), 0.0, 0.0, 0.0, false),
+                    "fall_res1" => (10.0, false, true, true, 0.0, 0.0, 0.0, Some(1), 0.0, 0.0, 0.0, false),
+                    "fall_res2" => (10.0, false, true, true, 0.0, 0.0, 0.0, Some(2), 0.0, 0.0, 0.0, false),
+                    "fall_res3" => (10.0, false, true, true, 0.0, 0.0, 0.0, Some(3), 0.0, 0.0, 0.0, false),
+                    "fall_res4" => (10.0, false, true, true, 0.0, 0.0, 0.0, Some(4), 0.0, 0.0, 0.0, false),
+                    "lava_armor_res1_epf16" => (4.0, true, false, false, 0.1, 20.0, 8.0, Some(1), 16.0, 0.0, 0.0, false),
+                    "on_fire_res0" => (1.0, true, true, false, 0.0, 20.0, 8.0, Some(0), 16.0, 0.0, 0.0, false),
+                    "in_fire_armor_epf" => (2.0, true, false, false, 0.1, 20.0, 8.0, None, 16.0, 0.0, 0.0, false),
+                    "campfire_armor_epf" => (2.0, true, false, false, 0.1, 20.0, 8.0, None, 16.0, 0.0, 0.0, false),
+                    "berry_armor" => (1.0, false, false, false, 0.1, 20.0, 8.0, None, 0.0, 0.0, 0.0, false),
+                    "cactus_armor_res0" => (1.0, false, false, false, 0.1, 20.0, 8.0, Some(0), 0.0, 0.0, 0.0, false),
+                    "stalagmite_kit" => (15.0, false, true, true, 0.0, 20.0, 8.0, Some(0), 16.0, 12.0, 4.0, false),
+                    "fly_into_wall_kit" => (6.5, false, true, false, 0.0, 20.0, 8.0, Some(0), 16.0, 12.0, 0.0, false),
+                    "lava_fireres" => (4.0, true, false, false, 0.1, 0.0, 0.0, None, 0.0, 0.0, 0.0, true),
+                    "onfire_fireres" => (1.0, true, true, false, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0, true),
+                    o => panic!("unknown mit case {o}"),
+                };
+                let mut ent = player::HurtEntityState {
+                    armor: arm,
+                    armor_toughness: tgh,
+                    resistance: res,
+                    protection_epf: prot,
+                    feather_falling_epf: fef,
+                    absorption: abs0,
+                    has_fire_resistance: fres,
+                    ..Default::default()
+                };
+                let ok = player::hurt_server_mitigated(
+                    &mut ent, true, raw, is_fire, false, false, bypass_armor, false, false, false, is_fall,
+                    player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, exh,
+                );
+                assert_eq!(ok, allowed, "row {idx} allowed: {row}");
+                assert_eq!(
+                    (ent.health.to_bits(), ent.absorption.to_bits(), ent.exhaustion.to_bits()),
+                    (exp_hp.to_bits(), exp_abs.to_bits(), exp_exh.to_bits()),
+                    "row {idx} mit {name}: {row}"
+                );
+                // Verify PlayerState wired through UnmodifiedContactDamage / tick_with_contact on contact variants
+                let contact_req = match name {
+                    "on_fire_res0" | "onfire_fireres" => Some(ContactDamage::OnFire),
+                    "in_fire_armor_epf" => Some(ContactDamage::InFire { soul: true }),
+                    "campfire_armor_epf" => Some(ContactDamage::Campfire { soul: true }),
+                    "berry_armor" => Some(ContactDamage::SweetBerryBush),
+                    "cactus_armor_res0" => Some(ContactDamage::Cactus),
+                    _ => None,
+                };
+                if let Some(req) = contact_req {
+                    let mut ps = PlayerState {
+                        armor: arm,
+                        armor_toughness: tgh,
+                        resistance: res,
+                        protection_epf: prot,
+                        feather_falling_epf: fef,
+                        absorption: abs0,
+                        fire_resistance: fres,
+                        effects: res.is_some() || fres,
+                        ..PlayerState::default()
+                    };
+                    apply_server_resource_event(&mut ps, &BoxWorld::default(), ServerResourceEvent::UnmodifiedContactDamage(req));
+                    assert_eq!(
+                        (ps.health.to_bits(), ps.absorption.to_bits(), ps.exhaustion.to_bits()),
+                        (exp_hp.to_bits(), exp_abs.to_bits(), exp_exh.to_bits()),
+                        "row {idx} ServerResourceEvent {name}: {row}"
+                    );
+                }
+            }
+            "FIRE_BASETICK" => {
+                let init: i32 = c[1].parse().unwrap();
+                let exp_ticks: i32 = c[2].parse().unwrap();
+                let exp_src = c[3];
+                let mut s = PlayerState { remaining_fire_ticks: init, ..PlayerState::default() };
+                let contact = tick_with_contact(&mut s, &BoxWorld::default(), &Input::default());
+                assert_eq!(s.remaining_fire_ticks, exp_ticks, "row {idx} fire ticks: {row}");
+                assert_eq!(contact == Some(ContactDamage::OnFire), exp_src == "onFire", "row {idx} onFire: {row}");
+            }
+            "FIRE_CLEAR" => {
+                let init: i32 = c[1].parse().unwrap();
+                let exp: i32 = c[2].parse().unwrap();
+                assert_eq!(player::clear_fire_ticks(init), exp, "row {idx} clearFire: {row}");
+            }
+            "FIRE_IGNITE" => {
+                let init: i32 = c[1].parse().unwrap();
+                let exp: i32 = c[2].parse().unwrap();
+                assert_eq!(player::base_fire_ignite_ticks(init, false, false), exp, "row {idx} fireIgnite: {row}");
+            }
+            "FIRE_INSIDE" => {
+                let soul = bit(c[1]);
+                let exp_ticks: i32 = c[2].parse().unwrap();
+                let exp_dmg = h32(c[4]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block { air: false, inside: Inside::Fire { soul }, ..Block::default() });
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    gravity: 0.0,
+                    remaining_fire_ticks: -1,
+                    ..PlayerState::default()
+                };
+                let contact = tick_with_contact(&mut s, &w, &Input::default()).unwrap();
+                assert_eq!(s.remaining_fire_ticks, exp_ticks, "row {idx} fire inside ticks: {row}");
+                assert_eq!(contact, ContactDamage::InFire { soul }, "row {idx} fire inside req: {row}");
+                assert_eq!(contact.raw_amount().to_bits(), exp_dmg.to_bits(), "row {idx} fire inside dmg: {row}");
+            }
+            "CAMPFIRE_INSIDE" => {
+                let soul = bit(c[1]);
+                let lit = bit(c[2]);
+                let exp_ticks: i32 = c[3].parse().unwrap();
+                let exp_src = c[4];
+                let exp_dmg = h32(c[5]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block {
+                    air: false,
+                    inside: if lit { Inside::Campfire { soul } } else { Inside::None },
+                    ..Block::default()
+                });
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    gravity: 0.0,
+                    remaining_fire_ticks: -20,
+                    ..PlayerState::default()
+                };
+                let contact = tick_with_contact(&mut s, &w, &Input::default());
+                assert_eq!(s.remaining_fire_ticks, exp_ticks, "row {idx} campfire ticks: {row}");
+                if exp_src == "none" {
+                    assert_eq!(contact, None, "row {idx} unlit campfire: {row}");
+                } else {
+                    let req = contact.unwrap();
+                    assert_eq!(req, ContactDamage::Campfire { soul }, "row {idx} campfire req: {row}");
+                    assert_eq!(req.raw_amount().to_bits(), exp_dmg.to_bits(), "row {idx} campfire dmg: {row}");
+                }
+            }
+            "FIRE_TAIL" => {
+                let before: i32 = c[1].parse().unwrap();
+                let is_rain = bit(c[2]);
+                let exp: i32 = c[3].parse().unwrap();
+                let after = if is_rain { player::clear_fire_ticks(before) } else { before };
+                assert_eq!(player::apply_effects_fire_tail(after, before, true, false, true), exp, "row {idx} fire tail: {row}");
+            }
+            "HURT_CACTUS" => {
+                let exp_dmg = h32(c[2]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block {
+                    shape: VoxelShape::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.9375, 0.9375)]),
+                    inside_shape: None,
+                    inside: Inside::Cactus,
+                    air: false,
+                    ..Block::default()
+                });
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5), gravity: 0.0, ..PlayerState::default() };
+                let req = tick_with_contact(&mut s, &w, &Input::default()).unwrap();
+                assert_eq!(req, ContactDamage::Cactus, "row {idx} cactus: {row}");
+                assert_eq!(req.raw_amount().to_bits(), exp_dmg.to_bits(), "row {idx} cactus dmg: {row}");
+            }
+            "HURT_BERRY" => {
+                let age: i32 = c[1].parse().unwrap();
+                let dx = h64(c[2]);
+                let dz = h64(c[3]);
+                let exp_sx = h64(c[4]);
+                let exp_sy = h64(c[5]);
+                let exp_sz = h64(c[6]);
+                let exp_src = c[7];
+                let exp_dmg = h32(c[8]);
+                let mut w = BoxWorld::default();
+                w.set([0, 64, 0], Block {
+                    air: false,
+                    inside: Inside::BerryBush { hurt: age > 0 },
+                    ..Block::default()
+                });
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    velocity: Vec3::new(dx, 0.0, dz),
+                    gravity: 0.0,
+                    ..PlayerState::default()
+                };
+                let contact = tick_with_contact(&mut s, &w, &Input::default());
+                assert_eq!(
+                    (s.stuck_speed_multiplier.x.to_bits(), s.stuck_speed_multiplier.y.to_bits(), s.stuck_speed_multiplier.z.to_bits()),
+                    (exp_sx.to_bits(), exp_sy.to_bits(), exp_sz.to_bits()),
+                    "row {idx} berry stuck: {row}"
+                );
+                if exp_src == "none" {
+                    assert_eq!(contact, None, "row {idx} berry no hurt: {row}");
+                } else {
+                    let req = contact.unwrap();
+                    assert_eq!(req, ContactDamage::SweetBerryBush, "row {idx} berry req: {row}");
+                    assert_eq!(req.raw_amount().to_bits(), exp_dmg.to_bits(), "row {idx} berry dmg: {row}");
+                }
+            }
+            "FALL_FARMLAND" => {
+                let w = h32(c[1]);
+                let h = h32(c[2]);
+                let fd = h64(c[3]);
+                let rf = h32(c[4]);
+                let exp_trampled = bit(c[5]);
+                let exp_calc_dmg: i32 = c[6].parse().unwrap();
+                let exp_hp = h32(c[7]);
+                assert_eq!(player::farmland_trample_threshold(w, h, fd, rf), exp_trampled, "row {idx} farmland trample: {row}");
+                let s = PlayerState::default();
+                let calc_dmg = calculate_fall_damage(&s, fd, 1.0);
+                assert_eq!(calc_dmg, exp_calc_dmg, "row {idx} farmland calc dmg: {row}");
+                let mut ent = player::HurtEntityState::default();
+                if calc_dmg > 0 {
+                    player::hurt_server_mitigated(
+                        &mut ent, true, calc_dmg as f32, false, false, false, true, false, false, false, true,
+                        player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, 0.0,
+                    );
+                }
+                assert_eq!(ent.health.to_bits(), exp_hp.to_bits(), "row {idx} farmland hp: {row}");
+            }
+            "FALL_DRIPSTONE" => {
+                let tip = c[1] == "tip";
+                let up = c[2] == "up";
+                let exp_dist = h64(c[3]);
+                let exp_mult = h32(c[4]);
+                let exp_stal = c[5] == "stalagmite";
+                let (d, m, is_stal) = player::dripstone_fall_on_args(5.0, up, tip);
+                assert_eq!((d.to_bits(), m.to_bits(), is_stal), (exp_dist.to_bits(), exp_mult.to_bits(), exp_stal), "row {idx} dripstone: {row}");
+            }
+            "FALL_DRIPSTONE_HP" => {
+                let tip = c[1] == "tip";
+                let up = c[2] == "up";
+                let exp_hp = h32(c[4]);
+                let (d, m, _is_stal) = player::dripstone_fall_on_args(5.0, up, tip);
+                let s = PlayerState::default();
+                let calc_dmg = calculate_fall_damage(&s, d, m).max(0);
+                let mut ent = player::HurtEntityState::default();
+                if calc_dmg > 0 {
+                    player::hurt_server_mitigated(
+                        &mut ent, true, calc_dmg as f32, false, false, false, true, false, false, false, true,
+                        player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, 0.0,
+                    );
+                }
+                assert_eq!(ent.health.to_bits(), exp_hp.to_bits(), "row {idx} dripstone hp: {row}");
+            }
+            other => panic!("unknown tag {other}"),
+        }
+    }
+    assert_eq!(count, 280);
+}

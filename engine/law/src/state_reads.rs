@@ -107,6 +107,17 @@ state_fields!(
     blindness,
     fire_resistance,
     unmodeled_effects,
+    levitation,
+    slow_falling,
+    dolphins_grace,
+    weaving,
+    resistance,
+    armor,
+    armor_toughness,
+    protection_epf,
+    feather_falling_epf,
+    absorption,
+    soul_speed_active,
 );
 impl StateField {
     pub fn is_resource(self) -> bool {

@@ -20,7 +20,8 @@ pub struct Input {
 pub enum Pose {
     #[default] Standing,
     Crouching,
-    Swimming
+    Swimming,
+    FallFlying,
 }
 impl Pose {
     // Avatar.POSES
@@ -28,7 +29,7 @@ impl Pose {
         match self {
             Self::Standing => 1.8,
             Self::Crouching => 1.5,
-            Self::Swimming => 0.6
+            Self::Swimming | Self::FallFlying => 0.6
         }
     }
 
@@ -37,7 +38,7 @@ impl Pose {
         match self {
             Self::Standing => 1.62,
             Self::Crouching => 1.27,
-            Self::Swimming => 0.4
+            Self::Swimming | Self::FallFlying => 0.4
         }
     }
 }
@@ -133,6 +134,17 @@ pub struct PlayerState {
     pub blindness: bool,
     pub fire_resistance: bool,
     pub unmodeled_effects: bool,
+    pub levitation: Option<u8>,
+    pub slow_falling: bool,
+    pub dolphins_grace: bool,
+    pub weaving: bool,
+    pub resistance: Option<u8>,
+    pub armor: f32,
+    pub armor_toughness: f32,
+    pub protection_epf: f32,
+    pub feather_falling_epf: f32,
+    pub absorption: f32,
+    pub soul_speed_active: bool,
 }
 // Test instrumentation sits at the type, so every Clone call is counted.
 #[cfg(feature = "count-state-copies")]
@@ -224,6 +236,17 @@ impl Clone for PlayerState {
             blindness: self.blindness.clone(),
             fire_resistance: self.fire_resistance.clone(),
             unmodeled_effects: self.unmodeled_effects.clone(),
+            levitation: self.levitation.clone(),
+            slow_falling: self.slow_falling.clone(),
+            dolphins_grace: self.dolphins_grace.clone(),
+            weaving: self.weaving.clone(),
+            resistance: self.resistance.clone(),
+            armor: self.armor.clone(),
+            armor_toughness: self.armor_toughness.clone(),
+            protection_epf: self.protection_epf.clone(),
+            feather_falling_epf: self.feather_falling_epf.clone(),
+            absorption: self.absorption.clone(),
+            soul_speed_active: self.soul_speed_active.clone(),
         }
     }
 }
@@ -312,6 +335,17 @@ impl Default for PlayerState {
             blindness: false,
             fire_resistance: false,
             unmodeled_effects: false,
+            levitation: None,
+            slow_falling: false,
+            dolphins_grace: false,
+            weaving: false,
+            resistance: None,
+            armor: 0.0,
+            armor_toughness: 0.0,
+            protection_epf: 0.0,
+            feather_falling_epf: 0.0,
+            absorption: 0.0,
+            soul_speed_active: false,
         }
     }
 }
@@ -339,6 +373,8 @@ impl PlayerState {
             bounciness, fall_flying, riding, boat, effects, flying, using_item, use_item_speed_multiplier, use_item_can_sprint,
             game_mode, mayfly, instabuild, invulnerable, may_build, flying_speed, jump_trigger_time, sprint_trigger_time,
             sprint_window, jump_boost, speed_effect, slowness_effect, blindness, fire_resistance, unmodeled_effects,
+            levitation, slow_falling, dolphins_grace, weaving, resistance,
+            armor, armor_toughness, protection_epf, feather_falling_epf, absorption, soul_speed_active,
         } = self;
         let mut bits = vec![*t, input.yaw.to_bits() as u64, input.pitch.to_bits() as u64,
             yaw.to_bits() as u64, pitch.to_bits() as u64, *pose as u64,
@@ -371,7 +407,19 @@ impl PlayerState {
             bits.push(modifier.id.len() as u64); bits.extend(modifier.id.bytes().map(u64::from));
             bits.extend([modifier.amount.to_bits(), modifier.operation as u64]);
         }
-        let has_extended = *game_mode != crate::player::GameType::Survival
+        let has_extended_v2 = levitation.is_some()
+            || *slow_falling
+            || *dolphins_grace
+            || *weaving
+            || resistance.is_some()
+            || armor.to_bits() != 0
+            || armor_toughness.to_bits() != 0
+            || protection_epf.to_bits() != 0
+            || feather_falling_epf.to_bits() != 0
+            || absorption.to_bits() != 0
+            || *soul_speed_active;
+        let has_extended = has_extended_v2
+            || *game_mode != crate::player::GameType::Survival
             || *mayfly
             || *instabuild
             || *invulnerable
@@ -403,6 +451,21 @@ impl PlayerState {
                 *blindness as u64,
                 *fire_resistance as u64,
                 *unmodeled_effects as u64,
+            ]);
+        }
+        if has_extended_v2 {
+            bits.extend([
+                levitation.map_or(u64::MAX, u64::from),
+                *slow_falling as u64,
+                *dolphins_grace as u64,
+                *weaving as u64,
+                resistance.map_or(u64::MAX, u64::from),
+                armor.to_bits() as u64,
+                armor_toughness.to_bits() as u64,
+                protection_epf.to_bits() as u64,
+                feather_falling_epf.to_bits() as u64,
+                absorption.to_bits() as u64,
+                *soul_speed_active as u64,
             ]);
         }
         bits
@@ -459,6 +522,7 @@ impl PlayerState {
         s.yaw = b.f32()?; s.pitch = b.f32()?;
         let at = b.at;
         s.pose = match b.word()? { 0 => Pose::Standing, 1 => Pose::Crouching, 2 => Pose::Swimming,
+            3 => Pose::FallFlying,
             _ => return Err(Refusal { position: at, reason: "pose" }) };
         s.hurt_cooldown.remaining_ticks = b.i32()?; s.hurt_cooldown.last_raw_hit = b.f32()?;
         s.food_level = b.i32()?;
@@ -541,6 +605,15 @@ impl PlayerState {
                 2 => crate::SpeedOperation::AddMultipliedTotal, _ => return Err(Refusal { position: at, reason: "operation" }) };
             s.speed_modifiers.push(crate::SpeedModifier { id, amount, operation });
         }
+        let opt_u8 = |b: &mut Bits<'_>| -> Result<Option<u8>, Refusal> {
+            let at = b.at;
+            let w = b.word()?;
+            if w == u64::MAX {
+                Ok(None)
+            } else {
+                u8::try_from(w).map(Some).map_err(|_| Refusal { position: at, reason: "effect amplifier" })
+            }
+        };
         if b.at < words.len() {
             let at = b.at;
             s.game_mode = match b.word()? {
@@ -558,21 +631,25 @@ impl PlayerState {
             s.jump_trigger_time = b.i32()?;
             s.sprint_trigger_time = b.i32()?;
             s.sprint_window = b.i32()?;
-            let opt_u8 = |b: &mut Bits<'_>| -> Result<Option<u8>, Refusal> {
-                let at = b.at;
-                let w = b.word()?;
-                if w == u64::MAX {
-                    Ok(None)
-                } else {
-                    u8::try_from(w).map(Some).map_err(|_| Refusal { position: at, reason: "effect amplifier" })
-                }
-            };
             s.jump_boost = opt_u8(&mut b)?;
             s.speed_effect = opt_u8(&mut b)?;
             s.slowness_effect = opt_u8(&mut b)?;
             s.blindness = b.boolean()?;
             s.fire_resistance = b.boolean()?;
             s.unmodeled_effects = b.boolean()?;
+        }
+        if b.at < words.len() {
+            s.levitation = opt_u8(&mut b)?;
+            s.slow_falling = b.boolean()?;
+            s.dolphins_grace = b.boolean()?;
+            s.weaving = b.boolean()?;
+            s.resistance = opt_u8(&mut b)?;
+            s.armor = b.f32()?;
+            s.armor_toughness = b.f32()?;
+            s.protection_epf = b.f32()?;
+            s.feather_falling_epf = b.f32()?;
+            s.absorption = b.f32()?;
+            s.soul_speed_active = b.boolean()?;
         }
         if b.at != words.len() { return Err(Refusal { position: b.at, reason: "extra word" }); }
         Ok(s)

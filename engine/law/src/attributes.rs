@@ -67,6 +67,95 @@ impl PlayerState {
         self.jump_boost = amplifier;
     }
 
+    pub fn set_levitation(&mut self, amplifier: Option<u8>) {
+        self.levitation = amplifier;
+    }
+
+    pub fn set_slow_falling(&mut self, active: bool) {
+        self.slow_falling = active;
+    }
+
+    pub fn set_dolphins_grace(&mut self, active: bool) {
+        self.dolphins_grace = active;
+    }
+
+    pub fn set_weaving(&mut self, active: bool) {
+        self.weaving = active;
+    }
+
+    pub fn set_resistance(&mut self, amplifier: Option<u8>) {
+        self.resistance = amplifier;
+    }
+
+    pub fn set_movement_enchantments(&mut self, soul_speed: u8, depth_strider: u8, swift_sneak: u8) {
+        let enchantments = MovementEnchantments { soul_speed, depth_strider, swift_sneak };
+        self.water_movement_efficiency = enchantments.depth_strider_water_efficiency();
+        self.sneaking_speed = enchantments.swift_sneak_sneaking_speed();
+    }
+
+    /// Evaluates Soul Speed's `location_changed` hysteresis and updates `soul_speed_active`,
+    /// `speed_modifiers`, and `movement_efficiency`.
+    pub fn apply_soul_speed_location(&mut self, soul_speed_level: u8, on_soul_speed_block: bool) {
+        let holds = soul_speed_level > 0
+            && MovementEnchantments::soul_speed_holds(
+                self.soul_speed_active,
+                self.riding,
+                self.flying,
+                self.on_ground,
+                on_soul_speed_block,
+            );
+        self.speed_modifiers.retain(|m| m.id != "minecraft:enchantment.soul_speed/feet");
+        if holds {
+            let enchantments = MovementEnchantments { soul_speed: soul_speed_level, ..Default::default() };
+            if let Some(modifier) = enchantments.soul_speed_modifier() {
+                self.speed_modifiers.push(modifier);
+            }
+            if !self.soul_speed_active {
+                self.movement_efficiency += enchantments.soul_speed_movement_efficiency();
+            }
+        } else if self.soul_speed_active {
+            let enchantments = MovementEnchantments { soul_speed: soul_speed_level.max(1), ..Default::default() };
+            self.movement_efficiency = (self.movement_efficiency - enchantments.soul_speed_movement_efficiency()).max(0.0);
+        }
+        self.soul_speed_active = holds;
+    }
+
+    pub fn soul_speed_holds(
+        active: bool,
+        riding: bool,
+        flying: bool,
+        on_ground: bool,
+        on_soul_speed_block: bool,
+    ) -> bool {
+        MovementEnchantments::soul_speed_holds(active, riding, flying, on_ground, on_soul_speed_block)
+    }
+
+    pub fn soul_speed_modifier_for(level: u8) -> Option<SpeedModifier> {
+        MovementEnchantments { soul_speed: level, ..Default::default() }.soul_speed_modifier()
+    }
+
+    pub fn depth_strider_efficiency_for(level: u8) -> f32 {
+        MovementEnchantments { depth_strider: level, ..Default::default() }.depth_strider_water_efficiency()
+    }
+
+    pub fn swift_sneak_speed_for(level: u8) -> f32 {
+        MovementEnchantments { swift_sneak: level, ..Default::default() }.swift_sneak_sneaking_speed()
+    }
+
+    /// `protection.json`: `add` linear (1.0, 1.0) EPF per piece.
+    pub fn protection_epf_for(level: u8) -> f32 {
+        if level == 0 { 0.0 } else { linear_level_value(1.0, 1.0, level) }
+    }
+
+    /// `feather_falling.json`: `add` linear (3.0, 3.0) EPF on `is_fall && !bypasses_invulnerability`.
+    pub fn feather_falling_epf_for(level: u8) -> f32 {
+        if level == 0 { 0.0 } else { linear_level_value(3.0, 3.0, level) }
+    }
+
+    pub const fn soul_speed_wear_chance() -> f32 {
+        MovementEnchantments::SOUL_SPEED_WEAR_CHANCE
+    }
+
     /// `LivingEntity.getJumpBoostPower()`: `0.1f * ((float)amplifier + 1.0f)` when active, else `0.0f`.
     pub fn jump_boost_power(&self) -> f32 {
         self.jump_boost.map_or(0.0f32, |amp| 0.1f32 * ((amp as i32 as f32) + 1.0f32))
@@ -142,4 +231,73 @@ impl PlayerState {
         for modifier in ordered(SpeedOperation::AddMultipliedTotal) { value *= 1.0 + modifier.amount; }
         if value.is_nan() { 0.0 } else { value.clamp(0.0, 1024.0) }
     }
+}
+
+// Equipment-driven movement enchantments, from the 26.2 jar:
+// `data/minecraft/enchantment/{soul_speed,depth_strider,swift_sneak}.json` (mirrored by the
+// `Enchantments` bootstrap constants).
+// `LevelBasedValue.Linear.calculate`: `base + per_level_above_first * (level - 1)`, f32, product first.
+fn linear_level_value(base: f32, per_level_above_first: f32, level: u8) -> f32 {
+    base + per_level_above_first * (level as i32 - 1) as f32
+}
+
+/// Boots and leggings movement enchantments; level 0 = not enchanted. Max level 3 for all three.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MovementEnchantments {
+    /// Boots, `slots: ["feet"]`.
+    pub soul_speed: u8,
+    /// Boots, `slots: ["feet"]`.
+    pub depth_strider: u8,
+    /// Leggings, `slots: ["legs"]`.
+    pub swift_sneak: u8,
+}
+
+impl MovementEnchantments {
+    /// Soul Speed's `minecraft:location_changed` attribute effect on movement_speed:
+    /// `add_value`, linear (0.0405, 0.0105), modifier id `minecraft:enchantment.soul_speed/feet`.
+    pub fn soul_speed_modifier(&self) -> Option<SpeedModifier> {
+        (self.soul_speed > 0).then(|| SpeedModifier {
+            id: "minecraft:enchantment.soul_speed/feet".to_owned(),
+            amount: linear_level_value(0.0405, 0.0105, self.soul_speed) as f64,
+            operation: SpeedOperation::AddValue,
+        })
+    }
+
+    /// Soul Speed's second effect: `movement_efficiency` +1.0, a constant `add_value`.
+    pub fn soul_speed_movement_efficiency(&self) -> f32 {
+        (self.soul_speed > 0).then_some(1.0).unwrap_or(0.0)
+    }
+
+    /// Depth Strider on `water_movement_efficiency` (base 0.0): `add_value`, linear (0.33333334, 0.33333334).
+    pub fn depth_strider_water_efficiency(&self) -> f32 {
+        if self.depth_strider == 0 {
+            0.0
+        } else {
+            linear_level_value(0.33333334, 0.33333334, self.depth_strider)
+        }
+    }
+
+    /// Swift Sneak on `sneaking_speed` (base 0.3): `add_value`, linear (0.15, 0.15).
+    pub fn swift_sneak_sneaking_speed(&self) -> f32 {
+        if self.swift_sneak == 0 {
+            0.3
+        } else {
+            (0.3f64 + linear_level_value(0.15, 0.15, self.swift_sneak) as f64) as f32
+        }
+    }
+
+    /// Soul-speed condition from `soul_speed.json`: holds while `!riding && !flying` and
+    /// `(on_soul_speed_block || (active && !on_ground))`.
+    pub fn soul_speed_holds(
+        active: bool,
+        riding: bool,
+        flying: bool,
+        on_ground: bool,
+        on_soul_speed_block: bool,
+    ) -> bool {
+        !riding && !flying && (on_soul_speed_block || active && !on_ground)
+    }
+
+    /// Boot wear per qualifying location change: flat 4% chance (`random_chance`), level-independent.
+    pub const SOUL_SPEED_WEAR_CHANCE: f32 = 0.04;
 }

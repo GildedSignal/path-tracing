@@ -149,26 +149,54 @@ pub enum Inside {
     PowderSnow,
     Honey,
     BubbleColumn { drag: bool },
+    Fire { soul: bool },
+    Campfire { soul: bool },
+    BerryBush { hurt: bool },
+    Cactus,
     Unsupported(String)
 }
 
-/// A damage request emitted by a grounded contact hook.
+/// A damage request emitted by a grounded or inside-block contact hook, or `baseTick` burn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContactDamage {
+    OnFire,
+    InFire { soul: bool },
+    Campfire { soul: bool },
     HotFloor,
+    SweetBerryBush,
+    Cactus,
 }
 
 impl ContactDamage {
     pub fn raw_amount(self) -> f32 {
         match self {
-            Self::HotFloor => 1.0,
+            Self::OnFire | Self::HotFloor | Self::SweetBerryBush | Self::Cactus => 1.0,
+            Self::InFire { soul } | Self::Campfire { soul } => if soul { 2.0 } else { 1.0 },
         }
     }
 
-    pub(crate) fn exhaustion(self) -> f32 {
+    pub fn exhaustion(self) -> f32 {
         match self {
-            Self::HotFloor => 0.1,
+            // data/minecraft/damage_type/on_fire.json: exhaustion = 0.0
+            Self::OnFire => 0.0,
+            Self::InFire { .. }
+            | Self::Campfire { .. }
+            | Self::HotFloor
+            | Self::SweetBerryBush
+            | Self::Cactus => 0.1,
         }
+    }
+
+    pub fn is_fire(self) -> bool {
+        matches!(self, Self::OnFire | Self::InFire { .. } | Self::Campfire { .. } | Self::HotFloor)
+    }
+
+    pub fn bypasses_armor(self) -> bool {
+        matches!(self, Self::OnFire)
+    }
+
+    pub fn is_fall(self) -> bool {
+        false
     }
 }
 
