@@ -72,6 +72,7 @@ pub mod pearl;
 pub mod place;
 pub mod player;
 pub mod portal;
+pub mod world_hooks;
 
 #[cfg(feature = "count-state-copies")]
 pub use state::player_state_copies;
