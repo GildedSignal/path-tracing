@@ -3925,3 +3925,328 @@ fn jar_cauldron_and_redstone() {
     assert_eq!(count, 326);
 }
 
+#[test]
+fn jar_projectiles_and_redstone() {
+    use law::neighbor::Direction;
+    use law::projectiles::*;
+    use law::redstone::{comparator, copper_bulb, daylight, target, torch, TickPriority};
+    use law::{Axis, Vec3};
+
+    let h32 = |s: &str| u32::from_str_radix(s, 16).unwrap();
+    let f32b = |s: &str| f32::from_bits(h32(s));
+    let h64 = |s: &str| u64::from_str_radix(s, 16).unwrap();
+    let d64 = |s: &str| f64::from_bits(h64(s));
+    let vec3_bits = |actual: Vec3, cols: &[&str], label: &str| {
+        assert_eq!(actual.x.to_bits(), h64(cols[0]), "{label} x");
+        assert_eq!(actual.y.to_bits(), h64(cols[1]), "{label} y");
+        assert_eq!(actual.z.to_bits(), h64(cols[2]), "{label} z");
+    };
+
+    let zero_draws = [0.5f64; 6];
+    let mut arrow_air: Option<ArrowState> = None;
+    let mut arrow_water: Option<ArrowState> = None;
+    let mut throw_air: Option<(Vec3, Vec3)> = None;
+    let mut throw_water: Option<(Vec3, Vec3)> = None;
+    let mut torch_toggles = torch::Toggles::default();
+    let mut torch_lit = true;
+
+    let mut count = 0usize;
+    for (line, row) in include_str!("data/projectiles_redstone.tsv").lines().enumerate() {
+        if row.is_empty() {
+            continue;
+        }
+        count += 1;
+        let c: Vec<&str> = row.split('\t').collect();
+        match c[0] {
+            "BOW_CURVE" => {
+                let t: i32 = c[1].parse().unwrap();
+                let power = bow_power_for_time(t);
+                let fires = bow_releases(power);
+                let speed = bow_launch_speed(power);
+                let crit = bow_is_crit(power);
+                assert_eq!(power.to_bits(), h32(c[2]), "row {line} power");
+                assert_eq!(fires, c[3] == "1", "row {line} fires");
+                assert_eq!(speed.to_bits(), h32(c[4]), "row {line} speed");
+                assert_eq!(crit, c[5] == "1", "row {line} crit");
+                if fires {
+                    let rel = bow_release(t).unwrap();
+                    assert_eq!(rel.power.to_bits(), h32(c[2]), "row {line} rel power");
+                    assert_eq!(rel.speed.to_bits(), h32(c[4]), "row {line} rel speed");
+                    assert_eq!(rel.crit, crit, "row {line} rel crit");
+                } else {
+                    assert!(bow_release(t).is_none(), "row {line} no release");
+                }
+            }
+            "BOW_LAUNCH" => {
+                let t: i32 = c[1].parse().unwrap();
+                let pitch = f32b(c[2]);
+                let yaw = f32b(c[3]);
+                let speed = bow_release(t).unwrap().speed;
+                let known = Vec3::new(0.12, -0.0784, -0.08);
+                let still = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, Vec3::default(), true);
+                vec3_bits(still.velocity, &c[4..7], &format!("row {line} still"));
+                assert_eq!(still.y_rot.to_bits(), h32(c[7]), "row {line} y_rot");
+                assert_eq!(still.x_rot.to_bits(), h32(c[8]), "row {line} x_rot");
+
+                let ground = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, known, true);
+                vec3_bits(ground.velocity, &c[9..12], &format!("row {line} ground"));
+                assert_eq!(ground.y_rot.to_bits(), h32(c[7]), "row {line} ground y_rot");
+                assert_eq!(ground.x_rot.to_bits(), h32(c[8]), "row {line} ground x_rot");
+
+                let air = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, known, false);
+                vec3_bits(air.velocity, &c[12..15], &format!("row {line} air"));
+                assert_eq!(air.y_rot.to_bits(), h32(c[7]), "row {line} air y_rot");
+                assert_eq!(air.x_rot.to_bits(), h32(c[8]), "row {line} air x_rot");
+            }
+            "BOW_SPREAD" => {
+                let draws = [0.8, 0.2, 0.3, 0.7, 0.75, 0.25];
+                let launch = bow_launch(-30.5, 17.0, 0.0, 3.0, BOW_INACCURACY, draws, Vec3::default(), true);
+                vec3_bits(launch.velocity, &c[1..4], &format!("row {line} spread"));
+                assert_eq!(launch.y_rot.to_bits(), h32(c[4]), "row {line} spread y_rot");
+                assert_eq!(launch.x_rot.to_bits(), h32(c[5]), "row {line} spread x_rot");
+            }
+            "XBOW_CHARGE" => {
+                let qc: u8 = c[1].parse().unwrap();
+                assert_eq!(crossbow_charging_time_seconds(qc).to_bits(), h32(c[2]), "row {line} secs");
+                assert_eq!(crossbow_charge_duration(qc), c[3].parse::<i32>().unwrap(), "row {line} ticks");
+            }
+            "XBOW_POWER" => {
+                assert_eq!(crossbow_shooting_power(false).to_bits(), h32(c[1]), "row {line} arrow");
+                assert_eq!(crossbow_shooting_power(true).to_bits(), h32(c[2]), "row {line} firework");
+            }
+            "XBOW_FAN" => {
+                let n: usize = c[1].parse().unwrap();
+                let idx: usize = c[2].parse().unwrap();
+                let spread = f32b(c[3]);
+                let angle = projectile_fan_angle(idx, n, spread);
+                assert_eq!(angle.to_bits(), h32(c[4]), "row {line} fan");
+                if n == 3 {
+                    assert_eq!(crossbow_multishot_angles(spread)[idx].to_bits(), h32(c[4]));
+                }
+            }
+            "XBOW_MULTISHOT" => {
+                let angle = f32b(c[1]);
+                let pitch = f32b(c[2]);
+                let yaw = f32b(c[3]);
+                let speed = f32b(c[4]);
+                let launch = crossbow_launch(pitch, yaw, angle, speed, 0.0, zero_draws);
+                vec3_bits(launch.velocity, &c[5..8], &format!("row {line} xbow"));
+                assert_eq!(launch.y_rot.to_bits(), h32(c[8]), "row {line} xbow y_rot");
+                assert_eq!(launch.x_rot.to_bits(), h32(c[9]), "row {line} xbow x_rot");
+            }
+            "ARROW_TRAJ" => {
+                let water = c[1] == "1";
+                let tick: i32 = c[2].parse().unwrap();
+                let slot = if water { &mut arrow_water } else { &mut arrow_air };
+                if tick == 1 {
+                    let init = bow_launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
+                    *slot = Some(ArrowState {
+                        pos: Vec3::new(0.5, 65.62, -0.5),
+                        vel: init.velocity,
+                        ..ArrowState::default()
+                    });
+                }
+                let a = slot.as_mut().unwrap();
+                assert!(arrow_free_tick(a, water, water));
+                vec3_bits(a.pos, &c[3..6], &format!("row {line} arrow pos"));
+                vec3_bits(a.vel, &c[6..9], &format!("row {line} arrow vel"));
+            }
+            "ARROW_TRANSITION" => {
+                let water_before = c[1] == "1";
+                let water_after = c[2] == "1";
+                let init = bow_launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
+                let mut a = ArrowState {
+                    pos: Vec3::new(0.0, 64.5, 0.0),
+                    vel: init.velocity,
+                    ..ArrowState::default()
+                };
+                assert!(arrow_free_tick(&mut a, water_before, water_after));
+                vec3_bits(a.pos, &c[3..6], &format!("row {line} trans pos"));
+                vec3_bits(a.vel, &c[6..9], &format!("row {line} trans vel"));
+            }
+            "THROW_TRAJ" => {
+                let water = c[1] == "1";
+                let tick: i32 = c[2].parse().unwrap();
+                let slot = if water { &mut throw_water } else { &mut throw_air };
+                if tick == 1 {
+                    let init = throwable_launch(-30.5, 17.0, SNOWBALL_SHOOT_POWER, 0.0, zero_draws, Vec3::default(), true);
+                    *slot = Some((Vec3::new(0.5, 65.52, -0.5), init.velocity));
+                }
+                let (p, v) = slot.as_mut().unwrap();
+                throwable_free_tick(p, v, water);
+                vec3_bits(*p, &c[3..6], &format!("row {line} throw pos"));
+                vec3_bits(*v, &c[6..9], &format!("row {line} throw vel"));
+            }
+            "ARROW_STICK" => {
+                let mut a = ArrowState {
+                    pos: Vec3::new(d64(c[1]), d64(c[2]), d64(c[3])),
+                    vel: Vec3::new(d64(c[4]), d64(c[5]), d64(c[6])),
+                    crit: true,
+                    pierce_level: 3,
+                    ..ArrowState::default()
+                };
+                arrow_hit_block(&mut a);
+                vec3_bits(a.pos, &c[7..10], &format!("row {line} stick pos"));
+                assert_eq!(a.vel, Vec3::default());
+                assert!(a.in_ground);
+                assert_eq!(a.shake_time, ARROW_SHAKE_TIME);
+                assert!(!a.crit);
+                assert_eq!(a.pierce_level, 0);
+            }
+            "ARROW_DMG" => {
+                let vel = Vec3::new(d64(c[1]), d64(c[2]), d64(c[3]));
+                let pwr: u8 = c[4].parse().unwrap();
+                let base = arrow_power_base_damage(ARROW_BASE_DAMAGE, pwr);
+                assert_eq!(base.to_bits(), h64(c[5]), "row {line} base");
+                let dmg = arrow_damage(vel, base);
+                assert_eq!(dmg, c[6].parse::<i32>().unwrap(), "row {line} dmg");
+                let max_roll = arrow_crit_bonus_bound(dmg) - 1;
+                assert_eq!(arrow_crit_damage(dmg, max_roll), c[7].parse::<i32>().unwrap(), "row {line} crit");
+            }
+            "ARROW_PUNCH" => {
+                let punch: u8 = c[1].parse().unwrap();
+                let resist = d64(c[2]);
+                let vel = Vec3::new(d64(c[3]), d64(c[4]), d64(c[5]));
+                let kb = arrow_punch_knockback(punch);
+                let pushed = arrow_punch_push(vel, kb, resist);
+                assert_eq!(pushed.is_some(), c[6] == "1", "row {line} pushes");
+                vec3_bits(pushed.unwrap_or_default(), &c[7..10], &format!("row {line} punch"));
+            }
+            "FISH_CAST" => {
+                let pitch = f32b(c[1]);
+                let yaw = f32b(c[2]);
+                let draws = [d64(c[3]), d64(c[4]), d64(c[5])];
+                let (spawn, vel) = fishing_cast(pitch, yaw, Vec3::new(10.0, 64.0, -5.0), 65.62, draws);
+                vec3_bits(spawn, &c[6..9], &format!("row {line} fish spawn"));
+                vec3_bits(vel, &c[9..12], &format!("row {line} fish vel"));
+            }
+            "FISH_PULL" => {
+                let owner = Vec3::new(d64(c[1]), d64(c[2]), d64(c[3]));
+                let hook = Vec3::new(d64(c[4]), d64(c[5]), d64(c[6]));
+                let tgt_vel = Vec3::new(d64(c[7]), d64(c[8]), d64(c[9]));
+                let imp = fishing_pull_impulse(owner, hook);
+                let next = fishing_pull_velocity(owner, hook, tgt_vel);
+                vec3_bits(imp, &c[10..13], &format!("row {line} fish imp"));
+                vec3_bits(next, &c[13..16], &format!("row {line} fish next"));
+            }
+            "TORCH_CONST" => {
+                assert_eq!(torch::TOGGLE_DELAY, c[1].parse::<i32>().unwrap());
+                assert_eq!(torch::RECENT_TOGGLE_TIMER, c[2].parse::<i64>().unwrap());
+                assert_eq!(torch::MAX_RECENT_TOGGLES, c[3].parse::<i32>().unwrap());
+                assert_eq!(torch::RESTART_DELAY, c[4].parse::<i32>().unwrap());
+                assert_eq!(TickPriority::Normal as i32, c[5].parse::<i32>().unwrap());
+            }
+            "TORCH_SIG" => {
+                let lit = c[2] == "1";
+                let dir = match c[3] {
+                    "down" => Direction::Down,
+                    "up" => Direction::Up,
+                    "north" => Direction::North,
+                    "south" => Direction::South,
+                    "west" => Direction::West,
+                    "east" => Direction::East,
+                    other => panic!("bad dir {other}"),
+                };
+                let exp_sig: i32 = c[4].parse().unwrap();
+                let exp_dir: i32 = c[5].parse().unwrap();
+                if c[1] == "standing" {
+                    assert_eq!(torch::standing_get_signal(lit, dir), exp_sig, "row {line} sig");
+                    assert_eq!(torch::get_direct_signal(lit, None, dir), exp_dir, "row {line} dir");
+                } else {
+                    assert_eq!(torch::wall_get_signal(lit, Direction::North, dir), exp_sig, "row {line} sig");
+                    assert_eq!(torch::get_direct_signal(lit, Some(Direction::North), dir), exp_dir, "row {line} dir");
+                }
+            }
+            "TORCH_STEP" => {
+                let game_time: i64 = c[1].parse().unwrap();
+                let expect_lit_before = c[2] == "1";
+                let has_sig = c[3] == "1";
+                assert_eq!(torch_lit, expect_lit_before, "row {line} pre lit");
+                let res = torch::tick(torch_lit, has_sig, &mut torch_toggles, game_time);
+                torch_lit = res.lit;
+                assert_eq!(res.lit, c[4] == "1", "row {line} post lit");
+                assert_eq!(res.burnt_out, c[5] == "1", "row {line} burnt");
+                let exp_restart: i32 = c[6].parse().unwrap();
+                assert_eq!(
+                    res.restart_after,
+                    if exp_restart >= 0 { Some((exp_restart, TickPriority::Normal)) } else { None },
+                    "row {line} restart"
+                );
+                assert_eq!(torch_toggles.off_times.len(), c[7].parse::<usize>().unwrap(), "row {line} len");
+            }
+            "COMP_PRIO" => {
+                assert_eq!(comparator::DELAY, c[1].parse::<i32>().unwrap());
+                assert_eq!(comparator::priority(true) as i32, c[2].parse::<i32>().unwrap());
+                assert_eq!(comparator::priority(false) as i32, c[3].parse::<i32>().unwrap());
+            }
+            "COMP_MATH" => {
+                let mode = if c[1] == "COMPARE" { comparator::Mode::Compare } else { comparator::Mode::Subtract };
+                let input: i32 = c[2].parse().unwrap();
+                let side: i32 = c[3].parse().unwrap();
+                assert_eq!(comparator::calculate_output_signal(input, side, mode), c[4].parse::<i32>().unwrap(), "row {line} out");
+                assert_eq!(comparator::should_turn_on(input, side, mode), c[5] == "1", "row {line} on");
+            }
+            "COMP_CONTAINER" => {
+                let size: usize = c[1].parse().unwrap();
+                let slots: Vec<(i32, i32)> = if c[2] == "0" {
+                    Vec::new()
+                } else {
+                    c[2].split(';').map(|pair| {
+                        let (cnt, max) = pair.split_once(':').unwrap();
+                        (cnt.parse().unwrap(), max.parse().unwrap())
+                    }).collect()
+                };
+                assert_eq!(comparator::container_analog_from_slots(size, &slots), c[3].parse::<i32>().unwrap(), "row {line} container");
+            }
+            "COMP_READ" => {
+                let behind_sig: i32 = c[1].parse().unwrap();
+                let behind_analog = if c[2].parse::<i32>().unwrap() >= 0 { Some(c[2].parse().unwrap()) } else { None };
+                let behind_cond = c[3] == "1";
+                let far_frame = if c[4].parse::<i32>().unwrap() >= 0 { Some(c[4].parse().unwrap()) } else { None };
+                let far_analog = if c[5].parse::<i32>().unwrap() >= 0 { Some(c[5].parse().unwrap()) } else { None };
+                assert_eq!(
+                    comparator::input_signal(behind_sig, behind_analog, behind_cond, far_frame, far_analog),
+                    c[6].parse::<i32>().unwrap(),
+                    "row {line} read"
+                );
+            }
+            "BULB" => {
+                let lit = c[1] == "1";
+                let pow = c[2] == "1";
+                let sig = c[3] == "1";
+                let changed = c[4] == "1";
+                let next_lit = c[5] == "1";
+                let next_pow = c[6] == "1";
+                let analog: i32 = c[7].parse().unwrap();
+                let flipped = copper_bulb::check_and_flip(lit, pow, sig);
+                assert_eq!(flipped, if changed { Some((next_lit, next_pow)) } else { None }, "row {line} bulb");
+                assert_eq!(copper_bulb::analog_output(next_lit), analog, "row {line} bulb analog");
+            }
+            "TARGET_CONST" => {
+                assert_eq!(target::ACTIVATION_TICKS_ARROWS, c[1].parse::<i32>().unwrap());
+                assert_eq!(target::ACTIVATION_TICKS_OTHER, c[2].parse::<i32>().unwrap());
+            }
+            "TARGET_STR" => {
+                let axis = match c[1] {
+                    "x" => Axis::X,
+                    "y" => Axis::Y,
+                    "z" => Axis::Z,
+                    other => panic!("bad axis {other}"),
+                };
+                let got = target::redstone_strength(d64(c[2]), d64(c[3]), d64(c[4]), axis);
+                assert_eq!(got, c[5].parse::<i32>().unwrap(), "row {line} target");
+            }
+            "DAYLIGHT" => {
+                let sky: i32 = c[1].parse().unwrap();
+                let deg = f32b(c[2]);
+                let inv = c[3] == "1";
+                let got = daylight::update_signal_strength(sky, deg, inv);
+                assert_eq!(got, c[4].parse::<i32>().unwrap(), "row {line} daylight");
+            }
+            other => panic!("unknown tag {other}"),
+        }
+    }
+    assert_eq!(count, 547);
+}
+
+

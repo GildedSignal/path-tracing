@@ -78,6 +78,7 @@ pub mod world_hooks;
 pub mod block_hooks;
 pub mod items;
 pub mod minecart;
+pub mod projectiles;
 pub mod redstone;
 
 #[cfg(feature = "count-state-copies")]
