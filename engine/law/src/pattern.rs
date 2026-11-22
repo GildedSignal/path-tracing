@@ -437,6 +437,11 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
             Inside::BerryBush { hurt: false } => 10,
             Inside::BerryBush { hurt: true } => 11,
             Inside::Cactus => 12,
+            Inside::Extinguish => 13,
+            Inside::Lava => 14,
+            Inside::EndPortal => 15,
+            Inside::NetherPortal => 16,
+            Inside::WitherRose => 17,
             Inside::Unsupported(_) => unreachable!()
         });
         bytes.push(match grounded_contact {

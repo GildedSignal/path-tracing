@@ -414,6 +414,18 @@ pub fn farmland_trample_threshold(width: f32, height: f32, fall_distance: f64, r
     bb_volume > 0.512f32 && (random_float as f64) < (fall_distance - 0.5)
 }
 
+/// `WitherMobEffect.DAMAGE_INTERVAL` (`40` ticks at amplifier 0) and `applyEffectTick` damage (`1.0f`).
+pub const WITHER_DAMAGE_BASE_INTERVAL: i32 = 40;
+pub const WITHER_EFFECT_DAMAGE: f32 = 1.0;
+
+/// `WitherMobEffect.shouldApplyEffectTickThisTick` (`@0-43`):
+/// `interval = 40 >> amplifier`; true when `interval <= 0 || duration % interval == 0`.
+#[inline]
+pub const fn wither_should_apply_effect_tick(duration: i32, amplifier: i32) -> bool {
+    let interval = WITHER_DAMAGE_BASE_INTERVAL.wrapping_shr(amplifier as u32);
+    interval <= 0 || duration % interval == 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DamageScaling {
     Never,

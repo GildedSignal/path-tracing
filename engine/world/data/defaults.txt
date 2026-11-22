@@ -32,6 +32,7 @@ minecraft:attached_pumpkin_stem[facing=north]
 minecraft:azalea
 minecraft:azalea_leaves[distance=7,persistent=false,waterlogged=false]
 minecraft:azure_bluet
+minecraft:bamboo[age=0,leaves=none,stage=0]
 minecraft:bamboo_block[axis=y]
 minecraft:bamboo_button[face=wall,facing=north,powered=false]
 minecraft:bamboo_door[facing=north,half=lower,hinge=left,open=false,powered=false]
@@ -58,7 +59,9 @@ minecraft:beacon
 minecraft:bedrock
 minecraft:bee_nest[facing=north,honey_level=0]
 minecraft:beehive[facing=north,honey_level=0]
+minecraft:beetroots[age=0]
 minecraft:bell[attachment=floor,facing=north,powered=false]
+minecraft:big_dripleaf[facing=north,tilt=none,waterlogged=false]
 minecraft:big_dripleaf_stem[facing=north,waterlogged=false]
 minecraft:birch_button[face=wall,facing=north,powered=false]
 minecraft:birch_door[facing=north,half=lower,hinge=left,open=false,powered=false]
@@ -137,17 +140,22 @@ minecraft:brown_stained_glass_pane[east=false,north=false,south=false,waterlogge
 minecraft:brown_terracotta
 minecraft:brown_wall_banner[facing=north]
 minecraft:brown_wool
+minecraft:bubble_column[drag=true]
 minecraft:bubble_coral[waterlogged=true]
 minecraft:bubble_coral_block
 minecraft:bubble_coral_fan[waterlogged=true]
 minecraft:bubble_coral_wall_fan[facing=north,waterlogged=true]
 minecraft:budding_amethyst
 minecraft:bush
+minecraft:cactus[age=0]
 minecraft:cactus_flower
 minecraft:cake[bites=0]
 minecraft:calcite
+minecraft:calibrated_sculk_sensor[facing=north,power=0,sculk_sensor_phase=inactive,waterlogged=false]
+minecraft:campfire[facing=north,lit=true,signal_fire=false,waterlogged=false]
 minecraft:candle[candles=1,lit=false,waterlogged=false]
 minecraft:candle_cake[lit=false]
+minecraft:carrots[age=0]
 minecraft:cartography_table
 minecraft:carved_pumpkin[facing=north]
 minecraft:cauldron
@@ -200,6 +208,7 @@ minecraft:cinnabar_slab[type=bottom,waterlogged=false]
 minecraft:cinnabar_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:cinnabar_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:clay
+minecraft:closed_eyeblossom
 minecraft:coal_block
 minecraft:coal_ore
 minecraft:coarse_dirt
@@ -339,10 +348,12 @@ minecraft:deepslate_emerald_ore
 minecraft:deepslate_gold_ore
 minecraft:deepslate_iron_ore
 minecraft:deepslate_lapis_ore
+minecraft:deepslate_redstone_ore[lit=false]
 minecraft:deepslate_tile_slab[type=bottom,waterlogged=false]
 minecraft:deepslate_tile_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:deepslate_tile_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:deepslate_tiles
+minecraft:detector_rail[powered=false,shape=north_south,waterlogged=false]
 minecraft:diamond_block
 minecraft:diamond_ore
 minecraft:diorite
@@ -362,6 +373,8 @@ minecraft:dropper[facing=north,triggered=false]
 minecraft:emerald_block
 minecraft:emerald_ore
 minecraft:enchanting_table
+minecraft:end_gateway
+minecraft:end_portal
 minecraft:end_portal_frame[eye=false,facing=north]
 minecraft:end_rod[facing=up]
 minecraft:end_stone
@@ -385,7 +398,9 @@ minecraft:exposed_cut_copper
 minecraft:exposed_cut_copper_slab[type=bottom,waterlogged=false]
 minecraft:exposed_cut_copper_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:exposed_lightning_rod[facing=up,powered=false,waterlogged=false]
+minecraft:farmland[moisture=0]
 minecraft:fern
+minecraft:fire[age=0,east=false,north=false,south=false,up=false,west=false]
 minecraft:fire_coral[waterlogged=true]
 minecraft:fire_coral_block
 minecraft:fire_coral_fan[waterlogged=true]
@@ -395,6 +410,7 @@ minecraft:fletching_table
 minecraft:flower_pot
 minecraft:flowering_azalea
 minecraft:flowering_azalea_leaves[distance=7,persistent=false,waterlogged=false]
+minecraft:frogspawn
 minecraft:frosted_ice[age=0]
 minecraft:furnace[facing=north,lit=false]
 minecraft:gilded_blackstone
@@ -444,6 +460,7 @@ minecraft:heavy_core[waterlogged=false]
 minecraft:heavy_weighted_pressure_plate[power=0]
 minecraft:honey_block
 minecraft:honeycomb_block
+minecraft:hopper[enabled=true,facing=down]
 minecraft:horn_coral[waterlogged=true]
 minecraft:horn_coral_block
 minecraft:horn_coral_fan[waterlogged=true]
@@ -491,6 +508,8 @@ minecraft:lapis_block
 minecraft:lapis_ore
 minecraft:large_amethyst_bud[facing=up,waterlogged=false]
 minecraft:large_fern[half=lower]
+minecraft:lava[level=0]
+minecraft:lava_cauldron
 minecraft:leaf_litter[facing=north,segment_amount=1]
 minecraft:lectern[facing=north,has_book=false,powered=false]
 minecraft:lever[face=wall,facing=north,powered=false]
@@ -525,6 +544,7 @@ minecraft:light_weighted_pressure_plate[power=0]
 minecraft:lightning_rod[facing=up,powered=false,waterlogged=false]
 minecraft:lilac[half=lower]
 minecraft:lily_of_the_valley
+minecraft:lily_pad
 minecraft:lime_banner[rotation=8]
 minecraft:lime_bed[facing=north,occupied=false,part=foot]
 minecraft:lime_candle[candles=1,lit=false,waterlogged=false]
@@ -600,6 +620,7 @@ minecraft:nether_brick_stairs[facing=north,half=bottom,shape=straight,waterlogge
 minecraft:nether_brick_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:nether_bricks
 minecraft:nether_gold_ore
+minecraft:nether_portal[axis=x]
 minecraft:nether_quartz_ore
 minecraft:nether_sprouts
 minecraft:nether_wart[age=0]
@@ -628,6 +649,7 @@ minecraft:oak_wood[axis=y]
 minecraft:observer[facing=south,powered=false]
 minecraft:obsidian
 minecraft:ochre_froglight[axis=y]
+minecraft:open_eyeblossom
 minecraft:orange_banner[rotation=8]
 minecraft:orange_bed[facing=north,occupied=false,part=foot]
 minecraft:orange_candle[candles=1,lit=false,waterlogged=false]
@@ -703,10 +725,12 @@ minecraft:pink_wall_banner[facing=north]
 minecraft:pink_wool
 minecraft:piston[extended=false,facing=north]
 minecraft:piston_head[facing=north,short=false,type=normal]
+minecraft:pitcher_crop[age=0,half=lower]
 minecraft:pitcher_plant[half=lower]
 minecraft:player_head[powered=false,rotation=0]
 minecraft:player_wall_head[facing=north,powered=false]
 minecraft:podzol[snowy=false]
+minecraft:pointed_dripstone[thickness=tip,vertical_direction=up,waterlogged=false]
 minecraft:polished_andesite
 minecraft:polished_andesite_slab[type=bottom,waterlogged=false]
 minecraft:polished_andesite_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
@@ -744,6 +768,7 @@ minecraft:polished_tuff_slab[type=bottom,waterlogged=false]
 minecraft:polished_tuff_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:polished_tuff_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:poppy
+minecraft:potatoes[age=0]
 minecraft:potent_sulfur[potent_sulfur_state=dry]
 minecraft:potted_acacia_sapling
 minecraft:potted_allium
@@ -784,6 +809,7 @@ minecraft:potted_warped_roots
 minecraft:potted_white_tulip
 minecraft:potted_wither_rose
 minecraft:powder_snow
+minecraft:powder_snow_cauldron[level=1]
 minecraft:powered_rail[powered=false,shape=north_south,waterlogged=false]
 minecraft:prismarine
 minecraft:prismarine_brick_slab[type=bottom,waterlogged=false]
@@ -847,6 +873,7 @@ minecraft:red_wall_banner[facing=north]
 minecraft:red_wool
 minecraft:redstone_block
 minecraft:redstone_lamp[lit=false]
+minecraft:redstone_ore[lit=false]
 minecraft:redstone_torch[lit=true]
 minecraft:redstone_wall_torch[facing=north,lit=true]
 minecraft:redstone_wire[east=none,north=none,power=0,south=none,west=none]
@@ -870,6 +897,8 @@ minecraft:sandstone_wall[east=none,north=none,south=none,up=true,waterlogged=fal
 minecraft:scaffolding[bottom=false,distance=7,waterlogged=false]
 minecraft:sculk
 minecraft:sculk_catalyst[bloom=false]
+minecraft:sculk_sensor[power=0,sculk_sensor_phase=inactive,waterlogged=false]
+minecraft:sculk_shrieker[can_summon=false,shrieking=false,waterlogged=false]
 minecraft:sculk_vein[down=false,east=false,north=false,south=false,up=false,waterlogged=false,west=false]
 minecraft:sea_lantern
 minecraft:sea_pickle[pickles=1,waterlogged=true]
@@ -899,6 +928,8 @@ minecraft:smooth_stone_slab[type=bottom,waterlogged=false]
 minecraft:sniffer_egg[hatch=0]
 minecraft:snow[layers=1]
 minecraft:snow_block
+minecraft:soul_campfire[facing=north,lit=true,signal_fire=false,waterlogged=false]
+minecraft:soul_fire
 minecraft:soul_lantern[hanging=false,waterlogged=false]
 minecraft:soul_sand
 minecraft:soul_soil
@@ -968,11 +999,13 @@ minecraft:sulfur_brick_stairs[facing=north,half=bottom,shape=straight,waterlogge
 minecraft:sulfur_brick_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:sulfur_bricks
 minecraft:sulfur_slab[type=bottom,waterlogged=false]
+minecraft:sulfur_spike[thickness=tip,vertical_direction=up,waterlogged=false]
 minecraft:sulfur_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:sulfur_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
 minecraft:sunflower[half=lower]
 minecraft:suspicious_gravel[dusted=0]
 minecraft:suspicious_sand[dusted=0]
+minecraft:sweet_berry_bush[age=0]
 minecraft:tall_dry_grass
 minecraft:tall_grass[half=lower]
 minecraft:tall_seagrass[half=lower]
@@ -984,6 +1017,7 @@ minecraft:tinted_glass
 minecraft:tnt[unstable=false]
 minecraft:torch
 minecraft:torchflower
+minecraft:torchflower_crop[age=0]
 minecraft:trapped_chest[facing=north,type=single,waterlogged=false]
 minecraft:trial_spawner[ominous=false,trial_spawner_state=inactive]
 minecraft:tripwire[attached=false,disarmed=false,east=false,north=false,powered=false,south=false,west=false]
@@ -1000,6 +1034,7 @@ minecraft:tuff_bricks
 minecraft:tuff_slab[type=bottom,waterlogged=false]
 minecraft:tuff_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]
 minecraft:tuff_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]
+minecraft:turtle_egg[eggs=1,hatch=0]
 minecraft:twisting_vines[age=0]
 minecraft:twisting_vines_plant
 minecraft:vault[facing=north,ominous=false,vault_state=inactive]
@@ -1028,6 +1063,7 @@ minecraft:warped_wall_hanging_sign[facing=north,waterlogged=false]
 minecraft:warped_wall_sign[facing=north,waterlogged=false]
 minecraft:warped_wart_block
 minecraft:water[level=0]
+minecraft:water_cauldron[level=1]
 minecraft:waxed_chiseled_copper
 minecraft:waxed_copper_bars[east=false,north=false,south=false,waterlogged=false,west=false]
 minecraft:waxed_copper_block
@@ -1106,6 +1142,7 @@ minecraft:weathered_lightning_rod[facing=up,powered=false,waterlogged=false]
 minecraft:weeping_vines[age=0]
 minecraft:weeping_vines_plant
 minecraft:wet_sponge
+minecraft:wheat[age=0]
 minecraft:white_banner[rotation=8]
 minecraft:white_bed[facing=north,occupied=false,part=foot]
 minecraft:white_candle[candles=1,lit=false,waterlogged=false]
@@ -1121,6 +1158,7 @@ minecraft:white_tulip
 minecraft:white_wall_banner[facing=north]
 minecraft:white_wool
 minecraft:wildflowers[facing=north,flower_amount=1]
+minecraft:wither_rose
 minecraft:wither_skeleton_skull[powered=false,rotation=0]
 minecraft:wither_skeleton_wall_skull[facing=north,powered=false]
 minecraft:yellow_banner[rotation=8]

@@ -1,11 +1,21 @@
 use crate::{ BlockState, LoadError, WorldReader, nbt, region::metadata};
-use law::{Aabb, Block, BlockPos, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape, World};
+use law::{
+    block_hooks::{OffsetCollisionSpec, SpeleothemThickness, TipDirection, get_seed, offset_collision_shape_for_keys},
+    Aabb, Block, BlockPos, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape, World,
+};
 use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 
 const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 /// A shared generator: the properties that change a model, and their values' slots.
 struct Map { properties: Vec<&'static str>, slots: BTreeMap<&'static str, usize> }
-struct Models { maps: Vec<Map>, tables: BTreeMap<&'static str, (usize, Vec<u16>)>, blocks: Vec<Block>, reach: Vec<u8>, refusals: BTreeMap<&'static str, &'static str> }
+struct Models {
+    maps: Vec<Map>,
+    tables: BTreeMap<&'static str, (usize, Vec<u16>)>,
+    blocks: Vec<Block>,
+    offset_variants: Vec<Option<Box<[Block]>>>,
+    reach: Vec<u8>,
+    refusals: BTreeMap<&'static str, &'static str>,
+}
 /// How far a model's collision reaches, in any context.
 const NOWHERE: u8 = 0;
 const OWN_CELL: u8 = 1;
@@ -13,7 +23,38 @@ const BEYOND: u8 = 2;
 fn models() -> &'static Models {
     static MODELS: OnceLock<Models> = OnceLock::new();
     MODELS.get_or_init(|| {
-        let blocks = include_str!("../data/models.tsv").lines().map(parse_model).collect::<Vec<_>>();
+        let mut blocks = Vec::new();
+        let mut offset_variants = Vec::new();
+        let mut reach = Vec::new();
+        for line in include_str!("../data/models.tsv").lines() {
+            let (block, offset) = parse_model(line);
+            let (variants, cell_reach) = match offset {
+                OffsetCollisionSpec::None => {
+                    let r = if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND };
+                    (None, r)
+                }
+                spec => {
+                    let mut list = Vec::with_capacity(256);
+                    for kx in 0..16u8 {
+                        for kz in 0..16u8 {
+                            let shifted = offset_collision_shape_for_keys(spec, kx, kz).expect("non-none offset spec");
+                            let mut variant = block.clone();
+                            variant.shape = shifted.clone();
+                            variant.above_shape = Some(shifted.clone());
+                            variant.below_shape = Some(shifted.clone());
+                            variant.sneak_shape = Some(shifted.clone());
+                            variant.inside_cell_shape = Some(shifted);
+                            assert!(!variant.never_collides() && variant.collision_within_cell(), "offset collision must remain within cell");
+                            list.push(variant);
+                        }
+                    }
+                    (Some(list.into_boxed_slice()), OWN_CELL)
+                }
+            };
+            blocks.push(block);
+            offset_variants.push(variants);
+            reach.push(cell_reach);
+        }
         // maps.tsv: relevant properties, then "values:slot" entries in that property order.
         let maps = include_str!("../data/maps.tsv").lines().map(|line| {
             let (properties, entries) = line.split_once('\t').expect("generated map row");
@@ -38,8 +79,7 @@ fn models() -> &'static Models {
             let [block, bucket, _] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated census row") };
             if bucket != "modeled" { assert!(refusals.insert(block, bucket).is_none(), "one refusal reason per block: {block}"); }
         }
-        let reach = blocks.iter().map(|b| if b.never_collides() { NOWHERE } else if b.collision_within_cell() { OWN_CELL } else { BEYOND }).collect();
-        Models { maps, tables, blocks, reach, refusals }
+        Models { maps, tables, blocks, offset_variants, reach, refusals }
     })
 }
 /// Project the state onto its block's relevant properties, then look the values up.
@@ -66,16 +106,42 @@ fn shape(raw: &str) -> VoxelShape {
     }).collect::<Vec<_>>();
     VoxelShape::boxes(&boxes)
 }
-fn parse_model(line: &str) -> Block {
+fn parse_offset(raw: &str) -> OffsetCollisionSpec {
+    if raw == "none" {
+        return OffsetCollisionSpec::None;
+    }
+    if raw == "bamboo" {
+        return OffsetCollisionSpec::Bamboo;
+    }
+    let parts: Vec<_> = raw.split(':').collect();
+    if parts.len() == 3 && parts[0] == "speleothem" {
+        let thickness = match parts[1] {
+            "tip_merge" => SpeleothemThickness::TipMerge,
+            "tip" => SpeleothemThickness::Tip,
+            "frustum" => SpeleothemThickness::Frustum,
+            "middle" => SpeleothemThickness::Middle,
+            "base" => SpeleothemThickness::Base,
+            other => panic!("generated speleothem thickness {other}"),
+        };
+        let tip_direction = match parts[2] {
+            "up" => TipDirection::Up,
+            "down" => TipDirection::Down,
+            other => panic!("generated speleothem tip direction {other}"),
+        };
+        return OffsetCollisionSpec::Speleothem { thickness, tip_direction };
+    }
+    panic!("generated offset spec {raw}");
+}
+fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
     let f: Vec<_> = line.split('\t').collect();
-    assert_eq!(f.len(), 21, "generated model schema");
+    assert_eq!(f.len(), 22, "generated model schema");
     let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i],16).expect("generated float bits"));
     let bits: u16 = f[5].parse().unwrap();
     let flag = |i: usize| bits & (1u16<<i) != 0;
     let direction = |i: usize| match f[i] { "-1" => None, s => Some(s.parse().unwrap()) };
     let amount: u8 = f[9].parse().unwrap();
     let faces: u8 = f[12].parse().unwrap();
-    Block {
+    let block = Block {
         shape: shape(f[15]), inside_shape: Some(shape(f[16])),
         above_shape: Some(shape(f[17])), below_shape: Some(shape(f[18])), sneak_shape: Some(shape(f[19])), inside_cell_shape: Some(shape(f[20])),
         friction: fp(0), speed_factor: fp(1), jump_factor: fp(2), bounce: fp(3), fall_on_multiplier: fp(4),
@@ -84,16 +150,37 @@ fn parse_model(line: &str) -> Block {
         resets_fall_distance: flag(10), end_portal_or_gateway: flag(11), world_hook: flag(12),
         ladder_facing: direction(6), open_trapdoor_facing: direction(7),
         fluid: Fluid {
-            kind: match f[8] { "0" => FluidKind::Empty, "1" => FluidKind::Water, _ => panic!("generated fluid kind") },
+            kind: match f[8] { "0" => FluidKind::Empty, "1" => FluidKind::Water, "2" => FluidKind::Lava, _ => panic!("generated fluid kind") },
             raw_amount: (amount != 0).then_some(amount),
             raw_falling: (amount != 0).then(|| f[10].parse().unwrap()),
             ..Fluid::default()
         },
         fluid_flow: Some(FluidFlowBlock { blocks_motion: f[11].parse().unwrap(), solid_faces: std::array::from_fn(|i| faces & (1<<i) != 0) }),
-        inside: match f[13] { "none" => Inside::None, "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow, "honey" => Inside::Honey, _ => panic!("generated inside hook") },
+        inside: match f[13] {
+            "none" => Inside::None,
+            "cobweb" => Inside::Cobweb,
+            "powderSnow" => Inside::PowderSnow,
+            "honey" => Inside::Honey,
+            "bubbleColumnUp" => Inside::BubbleColumn { drag: false },
+            "bubbleColumnDown" => Inside::BubbleColumn { drag: true },
+            "cactus" => Inside::Cactus,
+            "campfire" => Inside::Campfire { soul: false },
+            "soulCampfire" => Inside::Campfire { soul: true },
+            "fire" => Inside::Fire { soul: false },
+            "soulFire" => Inside::Fire { soul: true },
+            "berryBush" => Inside::BerryBush { hurt: false },
+            "berryBushHurt" => Inside::BerryBush { hurt: true },
+            "extinguish" => Inside::Extinguish,
+            "lava" => Inside::Lava,
+            "endPortal" => Inside::EndPortal,
+            "netherPortal" => Inside::NetherPortal,
+            "witherRose" => Inside::WitherRose,
+            other => panic!("generated inside hook {other}"),
+        },
         grounded_contact: match f[14] { "none" => GroundedContact::None, "hotFloor" => GroundedContact::DamageUnlessCareful(ContactDamage::HotFloor), _ => panic!("generated step hook") },
         ..Block::default()
-    }
+    };
+    (block, parse_offset(f[21]))
 }
 
 /// Immutable inclusive box. All cells and chunks in this box are validated before
@@ -179,7 +266,13 @@ fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),Loa
 impl World for WorldSnapshot {
     fn block(&self, p: BlockPos) -> &Block {
         self.assert_covered(p);
-        &self.models.blocks[self.cells[index(self.min,self.widths,p)] as usize]
+        let id = self.cells[index(self.min, self.widths, p)] as usize;
+        if let Some(variants) = &self.models.offset_variants[id] {
+            let l = get_seed(p[0], 0, p[2]);
+            let key = (((l & 15) as usize) << 4) | (((l >> 8) & 15) as usize);
+            return &variants[key];
+        }
+        &self.models.blocks[id]
     }
     fn loaded(&self, p: BlockPos) -> bool { self.assert_covered(p); true }
     fn model_id(&self, p: BlockPos) -> Option<u16> { self.assert_covered(p); Some(self.cells[index(self.min,self.widths,p)]) }
@@ -246,6 +339,56 @@ mod tests {
         assert!(honey.suppresses_bounce);
         let slab=block("minecraft:stone_slab[type=bottom,waterlogged=true]");
         assert_eq!(slab.fluid.kind,FluidKind::Water);assert!(!slab.water_block);
+    }
+    #[test]
+    fn ported_hooks_fluids_and_fall_multipliers_are_present() {
+        for name in ["minecraft:water_cauldron", "minecraft:powder_snow_cauldron"] {
+            for level in 1..=3 {
+                let cauldron = block(&format!("{name}[level={level}]"));
+                assert_eq!(cauldron.inside, Inside::Extinguish);
+                assert!(!cauldron.world_hook);
+                let top = cauldron.inside_shape.as_ref().unwrap();
+                assert!(top.intersects(Aabb::new(0.2, 0.3, 0.2, 0.8, 0.5625 + (level - 1) as f64 * 0.1875, 0.8)));
+            }
+        }
+        let lava_cauldron = block("minecraft:lava_cauldron");
+        assert_eq!(lava_cauldron.inside, Inside::Lava);
+        assert_eq!(
+            lava_cauldron.inside_shape.as_ref().unwrap().coords,
+            block("minecraft:water_cauldron[level=3]").inside_shape.as_ref().unwrap().coords
+        );
+        let portal = block("minecraft:end_portal");
+        assert_eq!(portal.inside, Inside::EndPortal);
+        assert!(portal.end_portal_or_gateway);
+        assert_eq!(
+            portal.inside_shape.as_ref().unwrap().coords[1],
+            vec![0.375, 0.75]
+        );
+        let gateway = block("minecraft:end_gateway");
+        assert_eq!(gateway.inside, Inside::EndPortal);
+        assert!(gateway.end_portal_or_gateway);
+        assert!(gateway.inside_shape.as_ref().unwrap().is_block());
+        assert_eq!(block("minecraft:nether_portal[axis=x]").inside, Inside::NetherPortal);
+        assert_eq!(block("minecraft:wither_rose").inside, Inside::WitherRose);
+        for tilt in ["none", "unstable", "partial", "full"] {
+            let leaf = block(&format!("minecraft:big_dripleaf[facing=north,tilt={tilt},waterlogged=false]"));
+            assert_eq!(leaf.inside, Inside::None);
+            assert!(leaf.world_hook);
+            assert_eq!(leaf.shape.is_empty(), tilt == "full");
+        }
+        assert_eq!(block("minecraft:fire[age=0,east=false,north=false,south=false,up=false,west=false]").inside, Inside::Fire { soul: false });
+        assert_eq!(block("minecraft:soul_fire").inside, Inside::Fire { soul: true });
+        assert_eq!(block("minecraft:campfire[facing=north,lit=true,signal_fire=false,waterlogged=false]").inside, Inside::Campfire { soul: false });
+        assert_eq!(block("minecraft:soul_campfire[facing=north,lit=false,signal_fire=false,waterlogged=false]").inside, Inside::None);
+        assert_eq!(block("minecraft:cactus[age=0]").inside, Inside::Cactus);
+        assert!(block("minecraft:farmland[moisture=0]").world_hook);
+        let stalagmite = block("minecraft:pointed_dripstone[thickness=tip,vertical_direction=up,waterlogged=false]");
+        assert_eq!(stalagmite.fall_on_multiplier.to_bits(), 2.0f32.to_bits());
+        assert_eq!(block("minecraft:pointed_dripstone[thickness=base,vertical_direction=up,waterlogged=false]").fall_on_multiplier.to_bits(), 1.0f32.to_bits());
+        assert!(block("minecraft:wheat[age=0]").world_hook);
+        assert!(block("minecraft:detector_rail[powered=false,shape=north_south,waterlogged=false]").world_hook);
+        assert!(block("minecraft:redstone_ore[lit=false]").world_hook);
+        assert!(block("minecraft:turtle_egg[eggs=1,hatch=0]").world_hook);
     }
 }
 

@@ -49,18 +49,24 @@ fn clamp_axis(k: i64, max: f64) -> f64 {
     }
 }
 
+/// Computes the XZ offset directly from 4-bit seed nibbles `(kx, kz)` (`kx = l & 15`, `kz = (l >> 8) & 15`).
+#[inline]
+pub fn xz_offset_from_keys(kx: u8, kz: u8, max_horizontal_offset: f32) -> Vec3 {
+    let max = max_horizontal_offset as f64;
+    Vec3::new(
+        clamp_axis((kx & 15) as i64, max),
+        0.0,
+        clamp_axis((kz & 15) as i64, max),
+    )
+}
+
 /// `BlockBehaviour$Properties.lambda$offsetType$1` (`OffsetType.XZ`):
 /// computes `BlockStateBase.getOffset(BlockPos)` for `bamboo` (`0.25f`), `sulfur_spike` (`0.125f`),
 /// and `pointed_dripstone` (`0.125f`).
 #[inline]
 pub fn get_xz_offset(x: i32, z: i32, max_horizontal_offset: f32) -> Vec3 {
     let l = get_seed(x, 0, z);
-    let max = max_horizontal_offset as f64;
-    Vec3::new(
-        clamp_axis(l & 15, max),
-        0.0,
-        clamp_axis((l >> 8) & 15, max),
-    )
+    xz_offset_from_keys((l & 15) as u8, ((l >> 8) & 15) as u8, max_horizontal_offset)
 }
 
 /// `BambooLeaves` property (`BambooStalkBlock.getShape`).
@@ -167,20 +173,33 @@ pub fn speleothem_aabb(
     ))
 }
 
-/// Evaluates the local shifted `VoxelShape` for an `OffsetCollisionSpec` at `pos`.
-pub fn offset_collision_shape(spec: OffsetCollisionSpec, pos: BlockPos) -> Option<VoxelShape> {
+/// Evaluates the local shifted `VoxelShape` from 4-bit seed nibbles `(kx, kz)`.
+pub fn offset_collision_shape_for_keys(
+    spec: OffsetCollisionSpec,
+    kx: u8,
+    kz: u8,
+) -> Option<VoxelShape> {
     match spec {
         OffsetCollisionSpec::None => None,
-        OffsetCollisionSpec::Bamboo => Some(VoxelShape::boxes(&[bamboo_collision_aabb(pos)])),
+        OffsetCollisionSpec::Bamboo => Some(VoxelShape::boxes(&[block_column(3.0, 0.0, 16.0)
+            .moved(xz_offset_from_keys(kx, kz, BAMBOO_MAX_HORIZONTAL_OFFSET))])),
         OffsetCollisionSpec::Speleothem {
             thickness,
             tip_direction,
-        } => Some(VoxelShape::boxes(&[speleothem_aabb(
-            pos,
-            thickness,
-            tip_direction,
-        )])),
+        } => Some(VoxelShape::boxes(&[
+            speleothem_base_aabb(thickness, tip_direction).moved(xz_offset_from_keys(
+                kx,
+                kz,
+                SPELEOTHEM_MAX_HORIZONTAL_OFFSET,
+            )),
+        ])),
     }
+}
+
+/// Evaluates the local shifted `VoxelShape` for an `OffsetCollisionSpec` at `pos`.
+pub fn offset_collision_shape(spec: OffsetCollisionSpec, pos: BlockPos) -> Option<VoxelShape> {
+    let l = get_seed(pos[0], 0, pos[2]);
+    offset_collision_shape_for_keys(spec, (l & 15) as u8, ((l >> 8) & 15) as u8)
 }
 
 // ============================================================================
@@ -949,3 +968,233 @@ pub fn evaluate_fall_on(
         action,
     }
 }
+
+// ============================================================================
+// 4. Cauldron, BigDripleaf, WitherRose, and Portal block hooks (Mojang 26.2)
+// ============================================================================
+
+/// `LayeredCauldronBlock.MIN_FILL_LEVEL` and `MAX_FILL_LEVEL`.
+pub const CAULDRON_MIN_FILL_LEVEL: u8 = 1;
+pub const CAULDRON_MAX_FILL_LEVEL: u8 = 3;
+
+/// `LayeredCauldronBlock.getPixelContentHeight(level) / 16.0`: `(6.0 + 3.0 * level) / 16.0`.
+#[inline]
+pub fn layered_cauldron_content_height(level: u8) -> f64 {
+    (6.0 + 3.0 * (level as f64)) / 16.0
+}
+
+/// `LavaCauldronBlock.getContentHeight`: constant `0.9375` (`15.0 / 16.0`).
+pub const LAVA_CAULDRON_CONTENT_HEIGHT: f64 = 0.9375;
+
+/// `AbstractCauldronBlock.SHAPE` outer leg pillars (`0.0..1.0` on Y, unaffected by content level).
+const CAULDRON_LEG_AABBS: [Aabb; 8] = [
+    aabb(0.0, 0.0, 0.0, 0.125, 1.0, 0.25),
+    aabb(0.0, 0.0, 0.75, 0.125, 1.0, 1.0),
+    aabb(0.125, 0.0, 0.0, 0.25, 1.0, 0.125),
+    aabb(0.125, 0.0, 0.875, 0.25, 1.0, 1.0),
+    aabb(0.75, 0.0, 0.0, 1.0, 1.0, 0.125),
+    aabb(0.75, 0.0, 0.875, 1.0, 1.0, 1.0),
+    aabb(0.875, 0.0, 0.125, 1.0, 1.0, 0.25),
+    aabb(0.875, 0.0, 0.75, 1.0, 1.0, 0.875),
+];
+
+/// `LayeredCauldronBlock.FILLED_SHAPES[level - 1]` / `LavaCauldronBlock.FILLED_SHAPE` (at `level = 3`).
+pub fn cauldron_filled_inside_shape(level: u8) -> VoxelShape {
+    let top = layered_cauldron_content_height(level.clamp(CAULDRON_MIN_FILL_LEVEL, CAULDRON_MAX_FILL_LEVEL));
+    let mut boxes = Vec::with_capacity(15);
+    boxes.extend_from_slice(&CAULDRON_LEG_AABBS);
+    boxes.extend_from_slice(&[
+        aabb(0.0, 0.1875, 0.25, 1.0, top, 0.75),
+        aabb(0.125, 0.1875, 0.125, 0.875, top, 0.25),
+        aabb(0.125, 0.1875, 0.75, 0.875, top, 0.875),
+        aabb(0.25, 0.1875, 0.0, 0.75, 1.0, 0.125),
+        aabb(0.25, 0.1875, 0.875, 0.75, 1.0, 1.0),
+        aabb(0.0, top, 0.25, 0.125, 1.0, 0.75),
+        aabb(0.875, top, 0.25, 1.0, 1.0, 0.75),
+    ]);
+    VoxelShape::boxes(&boxes)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CauldronKind {
+    Water,
+    PowderSnow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CauldronFireInsideResult {
+    NoChange,
+    /// `WATER_CAULDRON` (or melted `POWDER_SNOW_CAULDRON`) with `LEVEL = level` (`1..=2`).
+    SetWaterLevel { level: u8 },
+    /// Level reached 0 -> `Blocks.CAULDRON` (`defaultBlockState()`).
+    EmptyCauldron,
+}
+
+/// `LayeredCauldronBlock.lambda$entityInside$0` + `handleEntityOnFireInside` + `lowerFillLevel`:
+/// executes inside `ServerLevel` before `EXTINGUISH` only when `entity.isOnFire() && mayInteract`.
+/// `SNOW` melts to `WATER_CAULDRON` at the same level, then both decrement via `lowerFillLevel`.
+#[inline]
+pub const fn layered_cauldron_fire_inside(
+    is_server_level: bool,
+    entity_is_on_fire: bool,
+    entity_may_interact: bool,
+    _kind: CauldronKind,
+    level: u8,
+) -> CauldronFireInsideResult {
+    if !is_server_level || !entity_is_on_fire || !entity_may_interact {
+        return CauldronFireInsideResult::NoChange;
+    }
+    if level <= 1 {
+        CauldronFireInsideResult::EmptyCauldron
+    } else {
+        CauldronFireInsideResult::SetWaterLevel { level: level - 1 }
+    }
+}
+
+/// `net.minecraft.world.level.block.state.properties.Tilt` (`BigDripleafBlock`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BigDripleafTilt {
+    None,
+    Unstable,
+    Partial,
+    Full,
+}
+
+impl BigDripleafTilt {
+    /// `BigDripleafBlock.DELAY_UNTIL_NEXT_TILT_STATE` (`UNSTABLE=10`, `PARTIAL=10`, `FULL=100`, `NONE=-1`).
+    #[inline]
+    pub const fn delay_until_next_state(self) -> i32 {
+        match self {
+            Self::None => -1,
+            Self::Unstable | Self::Partial => 10,
+            Self::Full => 100,
+        }
+    }
+
+    /// `Tilt.causesVibration()` (`NONE=true`, `UNSTABLE=false`, `PARTIAL=true`, `FULL=true`).
+    #[inline]
+    pub const fn causes_vibration(self) -> bool {
+        !matches!(self, Self::Unstable)
+    }
+}
+
+/// `BigDripleafBlock.ENTITY_DETECTION_MIN_Y = 11` (`11.0f / 16.0f == 0.6875f`).
+pub const BIG_DRIPLEAF_ENTITY_DETECTION_MIN_Y: f32 = 0.6875;
+
+/// `BigDripleafBlock.canEntityTilt` (`@0-33`):
+/// `entity.onGround() && entity.position().y > (double)((float)pos.getY() + 0.6875f)`.
+#[inline]
+pub fn big_dripleaf_can_entity_tilt(on_ground: bool, feet_y: f64, block_y: i32) -> bool {
+    on_ground && feet_y > (block_y as f32 + BIG_DRIPLEAF_ENTITY_DETECTION_MIN_Y) as f64
+}
+
+/// `BigDripleafBlock.SHAPE_LEAF` leaf collision AABB (`FULL` returns `None`, i.e. empty shape).
+#[inline]
+pub const fn big_dripleaf_collision_aabb(tilt: BigDripleafTilt) -> Option<Aabb> {
+    match tilt {
+        BigDripleafTilt::None | BigDripleafTilt::Unstable => Some(block_column(16.0, 11.0, 15.0)),
+        BigDripleafTilt::Partial => Some(block_column(16.0, 11.0, 13.0)),
+        BigDripleafTilt::Full => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BigDripleafTransition {
+    pub tilt: BigDripleafTilt,
+    pub schedule_delay: Option<i32>,
+    pub emit_block_change: bool,
+}
+
+fn schedule_tilt(old_tilt: BigDripleafTilt, new_tilt: BigDripleafTilt) -> BigDripleafTransition {
+    let delay = new_tilt.delay_until_next_state();
+    BigDripleafTransition {
+        tilt: new_tilt,
+        schedule_delay: (delay != -1).then_some(delay),
+        emit_block_change: new_tilt.causes_vibration() && new_tilt != old_tilt,
+    }
+}
+
+/// `BigDripleafBlock.entityInside` (`@0-49`): never mutates player; server-only tilt `NONE -> UNSTABLE`.
+#[inline]
+pub fn big_dripleaf_entity_inside(
+    is_client_side: bool,
+    tilt: BigDripleafTilt,
+    has_neighbor_signal: bool,
+    on_ground: bool,
+    feet_y: f64,
+    block_y: i32,
+) -> Option<BigDripleafTransition> {
+    if !is_client_side
+        && tilt == BigDripleafTilt::None
+        && big_dripleaf_can_entity_tilt(on_ground, feet_y, block_y)
+        && !has_neighbor_signal
+    {
+        Some(schedule_tilt(tilt, BigDripleafTilt::Unstable))
+    } else {
+        None
+    }
+}
+
+/// `BigDripleafBlock.tick` (`@0-89`): neighbor redstone signal resets to `NONE`; otherwise steps
+/// `UNSTABLE -> PARTIAL (10t) -> FULL (100t) -> NONE (-1)`.
+#[inline]
+pub fn big_dripleaf_tick(tilt: BigDripleafTilt, has_neighbor_signal: bool) -> BigDripleafTransition {
+    if has_neighbor_signal {
+        return schedule_tilt(tilt, BigDripleafTilt::None);
+    }
+    match tilt {
+        BigDripleafTilt::Unstable => schedule_tilt(tilt, BigDripleafTilt::Partial),
+        BigDripleafTilt::Partial => schedule_tilt(tilt, BigDripleafTilt::Full),
+        BigDripleafTilt::Full => schedule_tilt(tilt, BigDripleafTilt::None),
+        BigDripleafTilt::None => BigDripleafTransition {
+            tilt: BigDripleafTilt::None,
+            schedule_delay: None,
+            emit_block_change: false,
+        },
+    }
+}
+
+/// `EndPortalBlock.SHAPE` / `getEntityInsideCollisionShape` (`Block.column(16.0, 6.0, 12.0)`).
+#[inline]
+pub const fn end_portal_inside_aabb() -> Aabb {
+    block_column(16.0, 6.0, 12.0)
+}
+
+/// `Portal.getPortalTransitionTime()` default (`0` ticks for `EndPortalBlock` and `EndGatewayBlock`).
+pub const END_PORTAL_TRANSITION_TICKS: i32 = 0;
+
+/// `EndPortalBlock.entityInside` (`@0-64`): `canUsePortal(false)` & not showing End credits.
+#[inline]
+pub const fn end_portal_triggers(
+    can_use_portal: bool,
+    is_server_player_in_end_unseen_credits: bool,
+) -> bool {
+    can_use_portal && !is_server_player_in_end_unseen_credits
+}
+
+/// `EndGatewayBlock.entityInside` (`@0-61`).
+#[inline]
+pub const fn end_gateway_triggers(
+    can_use_portal: bool,
+    is_server_level: bool,
+    has_block_entity: bool,
+    is_cooling_down: bool,
+) -> bool {
+    can_use_portal && is_server_level && has_block_entity && !is_cooling_down
+}
+
+/// `WitherRoseBlock.getBeeInteractionEffect` (`MobEffects.WITHER`, `40` ticks, amplifier `0`).
+pub const WITHER_ROSE_EFFECT_DURATION_TICKS: i32 = 40;
+pub const WITHER_ROSE_EFFECT_AMPLIFIER: i32 = 0;
+
+/// `WitherRoseBlock.entityInside` (`@0-64`): server-only, non-peaceful, living, not wither-invulnerable.
+#[inline]
+pub const fn wither_rose_applies_effect(
+    is_server_level: bool,
+    difficulty: u8,
+    is_living: bool,
+    is_invulnerable_to_wither: bool,
+) -> bool {
+    is_server_level && difficulty != 0 && is_living && !is_invulnerable_to_wither
+}
+

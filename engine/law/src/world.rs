@@ -153,6 +153,11 @@ pub enum Inside {
     Campfire { soul: bool },
     BerryBush { hurt: bool },
     Cactus,
+    Extinguish,
+    Lava,
+    EndPortal,
+    NetherPortal,
+    WitherRose,
     Unsupported(String)
 }
 

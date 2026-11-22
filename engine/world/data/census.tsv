@@ -33,7 +33,7 @@ minecraft:attached_pumpkin_stem	modeled	4
 minecraft:azalea	modeled	1
 minecraft:azalea_leaves	modeled	28
 minecraft:azure_bluet	modeled	1
-minecraft:bamboo	offset collision	12
+minecraft:bamboo	modeled	12
 minecraft:bamboo_block	modeled	3
 minecraft:bamboo_button	modeled	24
 minecraft:bamboo_door	modeled	64
@@ -60,9 +60,9 @@ minecraft:beacon	modeled	1
 minecraft:bedrock	modeled	1
 minecraft:bee_nest	modeled	24
 minecraft:beehive	modeled	24
-minecraft:beetroots	hook entityInside CropBlock	4
+minecraft:beetroots	modeled	4
 minecraft:bell	modeled	32
-minecraft:big_dripleaf	hook entityInside BigDripleafBlock	32
+minecraft:big_dripleaf	modeled	32
 minecraft:big_dripleaf_stem	modeled	8
 minecraft:birch_button	modeled	24
 minecraft:birch_door	modeled	64
@@ -144,22 +144,22 @@ minecraft:brown_stained_glass_pane	modeled	32
 minecraft:brown_terracotta	modeled	1
 minecraft:brown_wall_banner	modeled	4
 minecraft:brown_wool	modeled	1
-minecraft:bubble_column	hook entityInside BubbleColumnBlock	2
+minecraft:bubble_column	modeled	2
 minecraft:bubble_coral	modeled	2
 minecraft:bubble_coral_block	modeled	1
 minecraft:bubble_coral_fan	modeled	2
 minecraft:bubble_coral_wall_fan	modeled	8
 minecraft:budding_amethyst	modeled	1
 minecraft:bush	modeled	1
-minecraft:cactus	hook entityInside CactusBlock	16
+minecraft:cactus	modeled	16
 minecraft:cactus_flower	modeled	1
 minecraft:cake	modeled	7
 minecraft:calcite	modeled	1
-minecraft:calibrated_sculk_sensor	hook stepOn SculkSensorBlock	384
-minecraft:campfire	hook entityInside CampfireBlock	32
+minecraft:calibrated_sculk_sensor	modeled	384
+minecraft:campfire	modeled	32
 minecraft:candle	modeled	16
 minecraft:candle_cake	modeled	2
-minecraft:carrots	hook entityInside CropBlock	8
+minecraft:carrots	modeled	8
 minecraft:cartography_table	modeled	1
 minecraft:carved_pumpkin	modeled	4
 minecraft:cauldron	modeled	1
@@ -212,7 +212,7 @@ minecraft:cinnabar_slab	modeled	6
 minecraft:cinnabar_stairs	modeled	80
 minecraft:cinnabar_wall	modeled	324
 minecraft:clay	modeled	1
-minecraft:closed_eyeblossom	hook entityInside EyeblossomBlock	1
+minecraft:closed_eyeblossom	modeled	1
 minecraft:coal_block	modeled	1
 minecraft:coal_ore	modeled	1
 minecraft:coarse_dirt	modeled	1
@@ -353,12 +353,12 @@ minecraft:deepslate_emerald_ore	modeled	1
 minecraft:deepslate_gold_ore	modeled	1
 minecraft:deepslate_iron_ore	modeled	1
 minecraft:deepslate_lapis_ore	modeled	1
-minecraft:deepslate_redstone_ore	hook stepOn RedStoneOreBlock	2
+minecraft:deepslate_redstone_ore	modeled	2
 minecraft:deepslate_tile_slab	modeled	6
 minecraft:deepslate_tile_stairs	modeled	80
 minecraft:deepslate_tile_wall	modeled	324
 minecraft:deepslate_tiles	modeled	1
-minecraft:detector_rail	hook entityInside DetectorRailBlock	24
+minecraft:detector_rail	modeled	24
 minecraft:diamond_block	modeled	1
 minecraft:diamond_ore	modeled	1
 minecraft:diorite	modeled	1
@@ -378,8 +378,8 @@ minecraft:dropper	modeled	12
 minecraft:emerald_block	modeled	1
 minecraft:emerald_ore	modeled	1
 minecraft:enchanting_table	modeled	1
-minecraft:end_gateway	hook entityInside EndGatewayBlock	1
-minecraft:end_portal	hook entityInside EndPortalBlock	1
+minecraft:end_gateway	modeled	1
+minecraft:end_portal	modeled	1
 minecraft:end_portal_frame	modeled	8
 minecraft:end_rod	modeled	6
 minecraft:end_stone	modeled	1
@@ -403,9 +403,9 @@ minecraft:exposed_cut_copper	modeled	1
 minecraft:exposed_cut_copper_slab	modeled	6
 minecraft:exposed_cut_copper_stairs	modeled	80
 minecraft:exposed_lightning_rod	modeled	24
-minecraft:farmland	hook fallOn FarmlandBlock	8
+minecraft:farmland	modeled	8
 minecraft:fern	modeled	1
-minecraft:fire	hook entityInside BaseFireBlock	512
+minecraft:fire	modeled	512
 minecraft:fire_coral	modeled	2
 minecraft:fire_coral_block	modeled	1
 minecraft:fire_coral_fan	modeled	2
@@ -415,7 +415,7 @@ minecraft:fletching_table	modeled	1
 minecraft:flower_pot	modeled	1
 minecraft:flowering_azalea	modeled	1
 minecraft:flowering_azalea_leaves	modeled	28
-minecraft:frogspawn	hook entityInside FrogspawnBlock	1
+minecraft:frogspawn	modeled	1
 minecraft:frosted_ice	modeled	4
 minecraft:furnace	modeled	8
 minecraft:gilded_blackstone	modeled	1
@@ -467,7 +467,7 @@ minecraft:heavy_core	modeled	2
 minecraft:heavy_weighted_pressure_plate	modeled	16
 minecraft:honey_block	modeled	1
 minecraft:honeycomb_block	modeled	1
-minecraft:hopper	hook entityInside HopperBlock	10
+minecraft:hopper	modeled	10
 minecraft:horn_coral	modeled	2
 minecraft:horn_coral_block	modeled	1
 minecraft:horn_coral_fan	modeled	2
@@ -515,8 +515,8 @@ minecraft:lapis_block	modeled	1
 minecraft:lapis_ore	modeled	1
 minecraft:large_amethyst_bud	modeled	12
 minecraft:large_fern	modeled	2
-minecraft:lava	fluid other than water	16
-minecraft:lava_cauldron	hook entityInside LavaCauldronBlock	1
+minecraft:lava	modeled	16
+minecraft:lava_cauldron	modeled	1
 minecraft:leaf_litter	modeled	16
 minecraft:lectern	modeled	16
 minecraft:lever	modeled	24
@@ -553,7 +553,7 @@ minecraft:light_weighted_pressure_plate	modeled	16
 minecraft:lightning_rod	modeled	24
 minecraft:lilac	modeled	2
 minecraft:lily_of_the_valley	modeled	1
-minecraft:lily_pad	hook entityInside LilyPadBlock	1
+minecraft:lily_pad	modeled	1
 minecraft:lime_banner	modeled	16
 minecraft:lime_bed	modeled	16
 minecraft:lime_candle	modeled	16
@@ -632,7 +632,7 @@ minecraft:nether_brick_stairs	modeled	80
 minecraft:nether_brick_wall	modeled	324
 minecraft:nether_bricks	modeled	1
 minecraft:nether_gold_ore	modeled	1
-minecraft:nether_portal	hook entityInside NetherPortalBlock	2
+minecraft:nether_portal	modeled	2
 minecraft:nether_quartz_ore	modeled	1
 minecraft:nether_sprouts	modeled	1
 minecraft:nether_wart	modeled	4
@@ -661,7 +661,7 @@ minecraft:oak_wood	modeled	3
 minecraft:observer	modeled	12
 minecraft:obsidian	modeled	1
 minecraft:ochre_froglight	modeled	3
-minecraft:open_eyeblossom	hook entityInside EyeblossomBlock	1
+minecraft:open_eyeblossom	modeled	1
 minecraft:orange_banner	modeled	16
 minecraft:orange_bed	modeled	16
 minecraft:orange_candle	modeled	16
@@ -739,12 +739,12 @@ minecraft:pink_wall_banner	modeled	4
 minecraft:pink_wool	modeled	1
 minecraft:piston	modeled	12
 minecraft:piston_head	modeled	24
-minecraft:pitcher_crop	hook entityInside PitcherCropBlock	10
+minecraft:pitcher_crop	modeled	10
 minecraft:pitcher_plant	modeled	2
 minecraft:player_head	modeled	32
 minecraft:player_wall_head	modeled	8
 minecraft:podzol	modeled	2
-minecraft:pointed_dripstone	hook fallOn PointedDripstoneBlock	20
+minecraft:pointed_dripstone	modeled	20
 minecraft:polished_andesite	modeled	1
 minecraft:polished_andesite_slab	modeled	6
 minecraft:polished_andesite_stairs	modeled	80
@@ -782,7 +782,7 @@ minecraft:polished_tuff_slab	modeled	6
 minecraft:polished_tuff_stairs	modeled	80
 minecraft:polished_tuff_wall	modeled	324
 minecraft:poppy	modeled	1
-minecraft:potatoes	hook entityInside CropBlock	8
+minecraft:potatoes	modeled	8
 minecraft:potent_sulfur	modeled	5
 minecraft:potted_acacia_sapling	modeled	1
 minecraft:potted_allium	modeled	1
@@ -823,7 +823,7 @@ minecraft:potted_warped_roots	modeled	1
 minecraft:potted_white_tulip	modeled	1
 minecraft:potted_wither_rose	modeled	1
 minecraft:powder_snow	modeled	1
-minecraft:powder_snow_cauldron	hook entityInside LayeredCauldronBlock	3
+minecraft:powder_snow_cauldron	modeled	3
 minecraft:powered_rail	modeled	24
 minecraft:prismarine	modeled	1
 minecraft:prismarine_brick_slab	modeled	6
@@ -889,7 +889,7 @@ minecraft:red_wall_banner	modeled	4
 minecraft:red_wool	modeled	1
 minecraft:redstone_block	modeled	1
 minecraft:redstone_lamp	modeled	2
-minecraft:redstone_ore	hook stepOn RedStoneOreBlock	2
+minecraft:redstone_ore	modeled	2
 minecraft:redstone_torch	modeled	2
 minecraft:redstone_wall_torch	modeled	8
 minecraft:redstone_wire	modeled	1296
@@ -913,8 +913,8 @@ minecraft:sandstone_wall	modeled	324
 minecraft:scaffolding	modeled	32
 minecraft:sculk	modeled	1
 minecraft:sculk_catalyst	modeled	2
-minecraft:sculk_sensor	hook stepOn SculkSensorBlock	96
-minecraft:sculk_shrieker	hook stepOn SculkShriekerBlock	8
+minecraft:sculk_sensor	modeled	96
+minecraft:sculk_shrieker	modeled	8
 minecraft:sculk_vein	modeled	128
 minecraft:sea_lantern	modeled	1
 minecraft:sea_pickle	modeled	8
@@ -945,8 +945,8 @@ minecraft:smooth_stone_slab	modeled	6
 minecraft:sniffer_egg	modeled	3
 minecraft:snow	modeled	8
 minecraft:snow_block	modeled	1
-minecraft:soul_campfire	hook entityInside CampfireBlock	32
-minecraft:soul_fire	hook entityInside BaseFireBlock	1
+minecraft:soul_campfire	modeled	32
+minecraft:soul_fire	modeled	1
 minecraft:soul_lantern	modeled	4
 minecraft:soul_sand	modeled	1
 minecraft:soul_soil	modeled	1
@@ -1016,13 +1016,13 @@ minecraft:sulfur_brick_stairs	modeled	80
 minecraft:sulfur_brick_wall	modeled	324
 minecraft:sulfur_bricks	modeled	1
 minecraft:sulfur_slab	modeled	6
-minecraft:sulfur_spike	offset collision	20
+minecraft:sulfur_spike	modeled	20
 minecraft:sulfur_stairs	modeled	80
 minecraft:sulfur_wall	modeled	324
 minecraft:sunflower	modeled	2
 minecraft:suspicious_gravel	modeled	4
 minecraft:suspicious_sand	modeled	4
-minecraft:sweet_berry_bush	hook entityInside SweetBerryBushBlock	4
+minecraft:sweet_berry_bush	modeled	4
 minecraft:tall_dry_grass	modeled	1
 minecraft:tall_grass	modeled	2
 minecraft:tall_seagrass	modeled	2
@@ -1034,7 +1034,7 @@ minecraft:tinted_glass	modeled	1
 minecraft:tnt	modeled	2
 minecraft:torch	modeled	1
 minecraft:torchflower	modeled	1
-minecraft:torchflower_crop	hook entityInside CropBlock	2
+minecraft:torchflower_crop	modeled	2
 minecraft:trapped_chest	modeled	24
 minecraft:trial_spawner	modeled	12
 minecraft:tripwire	modeled	128
@@ -1051,7 +1051,7 @@ minecraft:tuff_bricks	modeled	1
 minecraft:tuff_slab	modeled	6
 minecraft:tuff_stairs	modeled	80
 minecraft:tuff_wall	modeled	324
-minecraft:turtle_egg	hook stepOn TurtleEggBlock	12
+minecraft:turtle_egg	modeled	12
 minecraft:twisting_vines	modeled	26
 minecraft:twisting_vines_plant	modeled	1
 minecraft:vault	modeled	32
@@ -1080,7 +1080,7 @@ minecraft:warped_wall_hanging_sign	modeled	8
 minecraft:warped_wall_sign	modeled	8
 minecraft:warped_wart_block	modeled	1
 minecraft:water	modeled	16
-minecraft:water_cauldron	hook entityInside LayeredCauldronBlock	3
+minecraft:water_cauldron	modeled	3
 minecraft:waxed_chiseled_copper	modeled	1
 minecraft:waxed_copper_bars	modeled	32
 minecraft:waxed_copper_block	modeled	1
@@ -1159,7 +1159,7 @@ minecraft:weathered_lightning_rod	modeled	24
 minecraft:weeping_vines	modeled	26
 minecraft:weeping_vines_plant	modeled	1
 minecraft:wet_sponge	modeled	1
-minecraft:wheat	hook entityInside CropBlock	8
+minecraft:wheat	modeled	8
 minecraft:white_banner	modeled	16
 minecraft:white_bed	modeled	16
 minecraft:white_candle	modeled	16
@@ -1176,7 +1176,7 @@ minecraft:white_tulip	modeled	1
 minecraft:white_wall_banner	modeled	4
 minecraft:white_wool	modeled	1
 minecraft:wildflowers	modeled	16
-minecraft:wither_rose	hook entityInside WitherRoseBlock	1
+minecraft:wither_rose	modeled	1
 minecraft:wither_skeleton_skull	modeled	32
 minecraft:wither_skeleton_wall_skull	modeled	8
 minecraft:yellow_banner	modeled	16

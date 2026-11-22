@@ -3516,3 +3516,412 @@ fn jar_player_elytra_damage() {
     }
     assert_eq!(count, 280);
 }
+
+#[test]
+fn jar_cauldron_and_redstone() {
+    use law::{block_hooks::*, player, redstone::*, tick, try_tick, BoxWorld, Block, Input, Inside, PlayerState, Vec3, VoxelShape};
+
+    let h64 = |s: &str| -> f64 { f64::from_bits(u64::from_str_radix(s, 16).unwrap()) };
+    let bit = |s: &str| -> bool {
+        match s {
+            "1" | "true" => true,
+            "0" | "false" => false,
+            _ => panic!("bad bit {s}"),
+        }
+    };
+    let parse_shape = |raw: &str| -> VoxelShape {
+        let boxes: Vec<Aabb> = raw
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|b| {
+                let c: Vec<f64> = b.split(',').map(&h64).collect();
+                assert_eq!(c.len(), 6);
+                Aabb::new(c[0], c[1], c[2], c[3], c[4], c[5])
+            })
+            .collect();
+        VoxelShape::boxes(&boxes)
+    };
+    let assert_shape_eq = |actual: &VoxelShape, expected: &VoxelShape, ctx: &str| {
+        for axis in 0..3 {
+            let a_bits: Vec<u64> = actual.coords[axis].iter().map(|v| v.to_bits()).collect();
+            let e_bits: Vec<u64> = expected.coords[axis].iter().map(|v| v.to_bits()).collect();
+            assert_eq!(a_bits, e_bits, "{ctx} axis {axis}");
+        }
+        let n = |a: usize| expected.coords[a].len().saturating_sub(1);
+        for x in 0..n(0) {
+            for y in 0..n(1) {
+                for z in 0..n(2) {
+                    assert_eq!(actual.is_full([x, y, z]), expected.is_full([x, y, z]), "{ctx} cell [{x},{y},{z}]");
+                }
+            }
+        }
+    };
+    let parse_sched = |s: &str| -> Option<(i32, TickPriority)> {
+        if s == "none" || s == "-1" {
+            return None;
+        }
+        let (d, p) = s.split_once(':').unwrap();
+        let prio = match p.parse::<i32>().unwrap() {
+            -3 => TickPriority::ExtremelyHigh,
+            -2 => TickPriority::VeryHigh,
+            -1 => TickPriority::High,
+            0 => TickPriority::Normal,
+            other => panic!("unexpected priority {other}"),
+        };
+        Some((d.parse().unwrap(), prio))
+    };
+    let parse_tilt = |s: &str| -> BigDripleafTilt {
+        match s {
+            "none" => BigDripleafTilt::None,
+            "unstable" => BigDripleafTilt::Unstable,
+            "partial" => BigDripleafTilt::Partial,
+            "full" => BigDripleafTilt::Full,
+            other => panic!("unexpected tilt {other}"),
+        }
+    };
+
+    let mut count = 0usize;
+    for (idx, row) in include_str!("data/cauldron_redstone.tsv").lines().enumerate() {
+        if row.is_empty() {
+            continue;
+        }
+        count += 1;
+        let c: Vec<&str> = row.split('\t').collect();
+        match c[0] {
+            "CAULDRON_HEIGHT" => {
+                let name = c[1];
+                let lvl: u8 = c[2].parse().unwrap();
+                let exp = h64(c[3]);
+                let got = if name == "lava_cauldron" {
+                    LAVA_CAULDRON_CONTENT_HEIGHT
+                } else {
+                    layered_cauldron_content_height(lvl)
+                };
+                assert_eq!(got.to_bits(), exp.to_bits(), "row {idx}: {row}");
+            }
+            "CAULDRON_SHAPE" => {
+                let lvl: u8 = c[2].parse().unwrap();
+                let expected = parse_shape(c[3]);
+                let actual = cauldron_filled_inside_shape(lvl);
+                assert_shape_eq(&actual, &expected, row);
+            }
+            "CAULDRON_INSIDE" => {
+                let kind = if c[1] == "powder_snow_cauldron" {
+                    CauldronKind::PowderSnow
+                } else {
+                    CauldronKind::Water
+                };
+                let lvl: u8 = c[2].parse().unwrap();
+                let on_fire = bit(c[3]);
+                let may_interact = bit(c[4]);
+                assert_eq!(c[5], "EXTINGUISH", "row {idx}: {row}");
+                let exp_block = c[6];
+                let exp_lvl: u8 = c[7].parse().unwrap();
+                let expected = match exp_block {
+                    "cauldron" => CauldronFireInsideResult::EmptyCauldron,
+                    "water_cauldron" if on_fire && may_interact => {
+                        CauldronFireInsideResult::SetWaterLevel { level: exp_lvl }
+                    }
+                    _ => CauldronFireInsideResult::NoChange,
+                };
+                assert_eq!(
+                    layered_cauldron_fire_inside(true, on_fire, may_interact, kind, lvl),
+                    expected,
+                    "row {idx}: {row}"
+                );
+                let mut w = BoxWorld::default();
+                w.set(
+                    [0, 64, 0],
+                    Block {
+                        air: false,
+                        inside: Inside::Extinguish,
+                        inside_shape: Some(cauldron_filled_inside_shape(lvl)),
+                        ..Block::default()
+                    },
+                );
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.25, 0.5),
+                    remaining_fire_ticks: if on_fire { 100 } else { -5 },
+                    ..PlayerState::default()
+                };
+                assert_eq!(player::clear_fire_ticks(s.remaining_fire_ticks), if on_fire { 0 } else { -5 }, "row {idx} clearFire: {row}");
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.remaining_fire_ticks, if on_fire { 0 } else { -20 }, "row {idx} extinguish: {row}");
+                assert_eq!(s.ticks_frozen, 0, "row {idx} no freeze: {row}");
+            }
+            "LAVA_CAULDRON_INSIDE" => {
+                assert_eq!(c[1], "apply:CLEAR_FREEZE;apply:LAVA_IGNITE;after:LAVA_IGNITE");
+                // Verify player movement execution matches LavaFluid collector semantics on lava_cauldron shape.
+                let mut w = BoxWorld::default();
+                w.set(
+                    [0, 64, 0],
+                    Block {
+                        air: false,
+                        inside: Inside::Lava,
+                        inside_shape: Some(cauldron_filled_inside_shape(3)),
+                        ..Block::default()
+                    },
+                );
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.25, 0.5),
+                    ticks_frozen: 50,
+                    remaining_fire_ticks: 10,
+                    ..PlayerState::default()
+                };
+                tick(&mut s, &w, &Input::default());
+                assert_eq!(s.ticks_frozen, 0);
+                assert_eq!(s.remaining_fire_ticks, 300);
+                assert_eq!(s.health.to_bits(), 16.0f32.to_bits());
+
+                // Longer fire duration is never shortened by LavaIgnite.
+                let mut s_hot = PlayerState {
+                    position: Vec3::new(0.5, 64.25, 0.5),
+                    remaining_fire_ticks: 500,
+                    fire_resistance: true,
+                    effects: true,
+                    ..PlayerState::default()
+                };
+                tick(&mut s_hot, &w, &Input::default());
+                // Entity.baseTick decrements 500 -> 499; LavaIgnite never shortens a longer fire.
+                assert_eq!(s_hot.remaining_fire_ticks, 499);
+                assert_eq!(s_hot.health.to_bits(), 20.0f32.to_bits());
+            }
+            "BIG_DRIPLEAF_META" => {
+                let tilt = parse_tilt(c[1]);
+                let exp_delay: i32 = c[2].parse().unwrap();
+                let exp_vib = bit(c[3]);
+                let expected_shape = parse_shape(c[4]);
+                assert_eq!(tilt.delay_until_next_state(), exp_delay, "row {idx}: {row}");
+                assert_eq!(tilt.causes_vibration(), exp_vib, "row {idx}: {row}");
+                let actual_shape = match big_dripleaf_collision_aabb(tilt) {
+                    Some(a) => VoxelShape::boxes(&[a]),
+                    None => VoxelShape::default(),
+                };
+                assert_shape_eq(&actual_shape, &expected_shape, row);
+            }
+            "BIG_DRIPLEAF_INSIDE" => {
+                let by: i32 = c[1].parse().unwrap();
+                let y = h64(c[2]);
+                let on_ground = bit(c[3]);
+                let has_sig = bit(c[4]);
+                let is_client = bit(c[5]);
+                let exp_tilt = parse_tilt(c[6]);
+                let exp_sched = parse_sched(c[7]);
+                let got = big_dripleaf_entity_inside(is_client, BigDripleafTilt::None, has_sig, on_ground, y, by);
+                if exp_tilt == BigDripleafTilt::None {
+                    assert_eq!(got, None, "row {idx}: {row}");
+                } else {
+                    let tr = got.expect("expected tilt transition");
+                    assert_eq!(tr.tilt, exp_tilt, "row {idx}: {row}");
+                    assert_eq!(tr.schedule_delay, exp_sched.map(|(d, _)| d), "row {idx}: {row}");
+                }
+            }
+            "BIG_DRIPLEAF_TICK" => {
+                let tilt = parse_tilt(c[1]);
+                let has_sig = bit(c[2]);
+                let exp_tilt = parse_tilt(c[3]);
+                let exp_delay = parse_sched(c[4]).map(|(d, _)| d);
+                let tr = big_dripleaf_tick(tilt, has_sig);
+                assert_eq!(tr.tilt, exp_tilt, "row {idx}: {row}");
+                assert_eq!(tr.schedule_delay, exp_delay, "row {idx}: {row}");
+            }
+            "WITHER_ROSE_EFFECT" => {
+                assert_eq!(c[1].parse::<i32>().unwrap(), WITHER_ROSE_EFFECT_DURATION_TICKS);
+                assert_eq!(c[2].parse::<i32>().unwrap(), WITHER_ROSE_EFFECT_AMPLIFIER);
+            }
+            "WITHER_ROSE_GATE" => {
+                let diff: u8 = c[1].parse().unwrap();
+                let invuln = bit(c[2]);
+                let exp_applied = bit(c[3]);
+                assert_eq!(
+                    wither_rose_applies_effect(true, diff, true, invuln),
+                    exp_applied,
+                    "row {idx}: {row}"
+                );
+                let mut w = BoxWorld::default();
+                w.difficulty = diff;
+                w.set(
+                    [0, 64, 0],
+                    Block {
+                        air: false,
+                        inside: Inside::WitherRose,
+                        inside_shape: Some(VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)])),
+                        ..Block::default()
+                    },
+                );
+                let mut s = PlayerState {
+                    position: Vec3::new(0.5, 64.0, 0.5),
+                    invulnerable: invuln,
+                    ..PlayerState::default()
+                };
+                let res = try_tick(&mut s, &w, &Input::default());
+                assert_eq!(res.is_err(), exp_applied, "row {idx} wither tick gate: {row}");
+            }
+            "WITHER_EFFECT_TICK" => {
+                let dur: i32 = c[1].parse().unwrap();
+                let amp: i32 = c[2].parse().unwrap();
+                let exp = bit(c[3]);
+                assert_eq!(player::wither_should_apply_effect_tick(dur, amp), exp, "row {idx}: {row}");
+            }
+            "PORTAL" => {
+                let name = c[1];
+                let exp_tt: i32 = c[2].parse().unwrap();
+                assert_eq!(exp_tt, END_PORTAL_TRANSITION_TICKS, "row {idx}: {row}");
+                let exp_shape = parse_shape(c[3]);
+                let got_shape = if name == "end_portal" {
+                    VoxelShape::boxes(&[end_portal_inside_aabb()])
+                } else {
+                    Block::full().shape
+                };
+                assert_shape_eq(&got_shape, &exp_shape, row);
+                if name == "end_portal" {
+                    // Feet above y=0.75 do not touch end_portal's [6/16..12/16] trigger volume.
+                    let mut w = BoxWorld::default();
+                    w.set(
+                        [0, 64, 0],
+                        Block {
+                            air: false,
+                            inside: Inside::EndPortal,
+                            inside_shape: Some(got_shape),
+                            end_portal_or_gateway: true,
+                            ..Block::default()
+                        },
+                    );
+                    let mut high = PlayerState {
+                        position: Vec3::new(0.5, 64.8, 0.5),
+                        ..PlayerState::default()
+                    };
+                    assert!(try_tick(&mut high, &w, &Input::default()).is_ok());
+                    let mut in_portal = PlayerState {
+                        position: Vec3::new(0.5, 64.5, 0.5),
+                        ..PlayerState::default()
+                    };
+                    assert!(try_tick(&mut in_portal, &w, &Input::default()).is_err());
+                }
+            }
+            "TICK_PRIORITY" => {
+                let exp: i32 = c[2].parse().unwrap();
+                let p = match c[1] {
+                    "EXTREMELY_HIGH" => TickPriority::ExtremelyHigh,
+                    "VERY_HIGH" => TickPriority::VeryHigh,
+                    "HIGH" => TickPriority::High,
+                    "NORMAL" => TickPriority::Normal,
+                    other => panic!("unexpected priority {other}"),
+                };
+                assert_eq!(tick_priority_value(p), exp, "row {idx}: {row}");
+            }
+            "REPEATER_DELAY" => {
+                let setting: i32 = c[1].parse().unwrap();
+                let exp: i32 = c[2].parse().unwrap();
+                assert_eq!(repeater_game_delay(setting), exp, "row {idx}: {row}");
+            }
+            "REPEATER_NEIGHBOR" => {
+                let locked = bit(c[1]);
+                let powered = bit(c[2]);
+                let should_turn_on = bit(c[3]);
+                let will_tick = bit(c[4]);
+                let prioritize = feeds_into_diode(bit(c[5]), bit(c[5]));
+                let exp = parse_sched(c[6]);
+                assert_eq!(
+                    diode_neighbor_schedule(repeater_game_delay(2), locked, powered, should_turn_on, will_tick, prioritize),
+                    exp,
+                    "row {idx}: {row}"
+                );
+            }
+            "REPEATER_TICK" => {
+                let locked = bit(c[1]);
+                let powered = bit(c[2]);
+                let should_turn_on = bit(c[3]);
+                let exp_powered = bit(c[4]);
+                let exp_updated = bit(c[5]);
+                let exp_held = parse_sched(c[6]);
+                let expected = if locked {
+                    DiodeTick::IgnoredLocked
+                } else {
+                    match (powered, should_turn_on, exp_powered, exp_updated, exp_held) {
+                        (true, false, false, true, None) => DiodeTick::TurnOff,
+                        (true, true, true, false, None) => DiodeTick::NoChange,
+                        (false, _, true, true, held) => DiodeTick::TurnOn { held_off_after: held },
+                        other => panic!("unexpected repeater tick expectation {other:?} in {row}"),
+                    }
+                };
+                assert_eq!(
+                    diode_tick(locked, powered, should_turn_on, repeater_game_delay(3)),
+                    expected,
+                    "row {idx}: {row}"
+                );
+            }
+            "OBSERVER_ARMS" => {
+                let obs_side = bit(c[1]);
+                let powered = bit(c[2]);
+                let has_sched = bit(c[3]);
+                let cli = bit(c[4]);
+                let exp = parse_sched(c[5]);
+                assert_eq!(observer_arms(obs_side, powered, has_sched, cli), exp, "row {idx}: {row}");
+            }
+            "OBSERVER_TICK" => {
+                let powered = bit(c[1]);
+                let exp_powered = bit(c[2]);
+                let exp_sched = parse_sched(c[3]);
+                let expected = match (powered, exp_powered, exp_sched) {
+                    (true, false, None) => ObserverTick::PowerOff,
+                    (false, true, Some((2, TickPriority::Normal))) => ObserverTick::PowerOn { off_after: 2 },
+                    other => panic!("unexpected observer tick {other:?} in {row}"),
+                };
+                assert_eq!(observer_tick(powered), expected, "row {idx}: {row}");
+            }
+            "DISPENSER_NEIGHBOR" => {
+                let triggered = bit(c[1]);
+                let sig_here = bit(c[2]);
+                let sig_above = bit(c[3]);
+                let exp_trig = bit(c[4]);
+                let exp_upd = bit(c[5]);
+                let exp_sched = parse_sched(c[6]);
+                let expected = match (exp_trig, exp_upd, exp_sched) {
+                    (true, true, Some((4, TickPriority::Normal))) => DispenserEdge::Arm { dispense_after: 4 },
+                    (false, true, None) => DispenserEdge::Disarm,
+                    (_, false, None) => DispenserEdge::NoChange,
+                    other => panic!("unexpected dispenser edge {other:?} in {row}"),
+                };
+                assert_eq!(
+                    dispenser_neighbor_changed(triggered, sig_here, sig_above),
+                    expected,
+                    "row {idx}: {row}"
+                );
+            }
+            "OFFSET_BAMBOO" => {
+                let x: i32 = c[1].parse().unwrap();
+                let z: i32 = c[2].parse().unwrap();
+                let expected = parse_shape(c[3]);
+                let actual = offset_collision_shape(OffsetCollisionSpec::Bamboo, [x, 64, z]).unwrap();
+                assert_shape_eq(&actual, &expected, row);
+            }
+            "OFFSET_SPELEOTHEM" => {
+                let x: i32 = c[1].parse().unwrap();
+                let z: i32 = c[2].parse().unwrap();
+                let thickness = match c[3] {
+                    "tip_merge" => SpeleothemThickness::TipMerge,
+                    "tip" => SpeleothemThickness::Tip,
+                    "frustum" => SpeleothemThickness::Frustum,
+                    "middle" => SpeleothemThickness::Middle,
+                    "base" => SpeleothemThickness::Base,
+                    other => panic!("unexpected thickness {other}"),
+                };
+                let tip_direction = match c[4] {
+                    "up" => TipDirection::Up,
+                    "down" => TipDirection::Down,
+                    other => panic!("unexpected tip direction {other}"),
+                };
+                let expected = parse_shape(c[5]);
+                let actual = offset_collision_shape(
+                    OffsetCollisionSpec::Speleothem { thickness, tip_direction },
+                    [x, 64, z],
+                ).unwrap();
+                assert_shape_eq(&actual, &expected, row);
+            }
+            other => panic!("unknown tag {other}"),
+        }
+    }
+    assert_eq!(count, 326);
+}
+

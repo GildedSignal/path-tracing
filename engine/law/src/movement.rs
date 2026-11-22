@@ -1057,12 +1057,25 @@ fn check_fall_damage(state: &mut PlayerState, world: &impl World, block: &Block,
                 refuse!("BlockState.fallOn: {name}");
             }
             if !read_state!(world, state.mayfly) {
-                let multiplier=if block.slime || block.inside==Inside::PowderSnow {
-                    0.0
+                let (distance, multiplier) = if block.slime || block.inside == Inside::PowderSnow {
+                    (read_state!(world, state.fall_distance), 0.0)
+                } else if block.fall_on_multiplier == 2.0 {
+                    let (dist, mult, _) = player::dripstone_fall_on_args(
+                        read_state!(world, state.fall_distance),
+                        true,
+                        true,
+                    );
+                    (dist, mult)
                 } else {
-                    block.fall_on_multiplier
+                    (
+                        if block.bed {
+                            read_state!(world, state.fall_distance) * 0.5
+                        } else {
+                            read_state!(world, state.fall_distance)
+                        },
+                        block.fall_on_multiplier,
+                    )
                 };
-                let distance = if block.bed { read_state!(world, state.fall_distance)*0.5 } else { read_state!(world, state.fall_distance) };
                 let _ = (read_state!(world, state.safe_fall_distance), read_state!(world, state.fall_damage_multiplier));
                 let damage=calculate_fall_damage(state, distance, multiplier).max(0);
                 if damage>0 {
@@ -1492,6 +1505,22 @@ fn inside_block(
                 .then_some(ContactDamage::SweetBerryBush)
         },
         Inside::Cactus => Some(ContactDamage::Cactus),
+        Inside::Extinguish => {
+            collector.apply(InsideBlockEffectType::Extinguish);
+            None
+        },
+        Inside::Lava => {
+            collector.record_lava_cell();
+            None
+        },
+        Inside::EndPortal => refuse!("EndPortalBlock/EndGatewayBlock.entityInside: setAsInsidePortal leaves the dimension"),
+        Inside::NetherPortal => refuse!("NetherPortalBlock.entityInside: setAsInsidePortal enters portal"),
+        Inside::WitherRose => {
+            if world.difficulty() != 0 && !read_state!(world, state.invulnerable) {
+                refuse!("WitherRoseBlock.entityInside: adds 40-tick WITHER effect (server, non-peaceful)");
+            }
+            None
+        },
         Inside::Unsupported(name) => refuse!("BlockState.entityInside: {name}"),
     };
     Ok(damage)
