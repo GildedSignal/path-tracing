@@ -271,3 +271,7 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T09:45:21+01:00**
 > new day, alright lunch two of you sub-agents and glms
+
+---
+**2026-11-22T11:45:09+01:00**
+> use another sub agent

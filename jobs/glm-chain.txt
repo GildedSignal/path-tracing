@@ -1,8 +1,6 @@
 port-air-drowning-and-breath
 port-status-effect-tick-and-periodic
-port-projectiles-arrow-bow-crossbow
 port-shield-crit-sweep-and-mace
 port-item-entity-and-inventory
-port-redstone-torch-comparator-bulb
 port-bed-respawn-and-void-damage
 port-ridden-mounts-and-portal-forcer
