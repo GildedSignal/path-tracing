@@ -10,6 +10,8 @@ mod movement;
 pub mod blocks;
 pub mod math;
 pub mod shapes;
+pub mod breath;
+pub mod mounts;
 mod state;
 mod world;
 pub use movement::{
@@ -72,6 +74,7 @@ pub mod interact;
 pub mod pearl;
 pub mod place;
 pub mod player;
+pub use player::death::{below_world, respawn, FELL_OUT_OF_WORLD};
 pub mod portal;
 pub mod world_hooks;
 

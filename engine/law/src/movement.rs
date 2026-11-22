@@ -1582,6 +1582,10 @@ pub enum ServerResourceEvent {
     Damage(f32),
     /// ServerPlayer.tick, once before the connection's ServerPlayer.doTick.
     HurtCooldownTick,
+    /// LivingEntity.onBelowWorld after Entity.checkBelowWorld found
+    /// `getY() < (minY - 64)`: the void's 4.0 hit after the cooldown tick. Bypasses
+    /// armor, resistance, invulnerability (creative included) and knockback; exhaustion 0.0.
+    FellOutOfWorld,
     /// Predict the contact debit and its exhaustion in place of the observed events.
     /// Requires normal survival, fire damage enabled, stock damage data and a
     /// loaded, non-invulnerable player without gear, effects or absorption.
@@ -1599,6 +1603,15 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
         ServerResourceEvent::HurtCooldownTick => {
             if read_state!(world, state.hurt_cooldown).remaining_ticks > 0 {
                 modify_state!(world, state.hurt_cooldown).remaining_ticks -= 1;
+            }
+        }
+        ServerResourceEvent::FellOutOfWorld => {
+            // Player.hurtServer's isDeadOrDying gate; out_of_world is in
+            // bypasses_invulnerability/armor/resistance, so the raw hit is the debit.
+            if read_state!(world, state.health) > 0.0
+                && let Some(amount) = accept_raw_hit(&mut modify_state!(world, state.hurt_cooldown), crate::player::death::FELL_OUT_OF_WORLD)
+            {
+                write_state!(world, state.health) = (read_state!(world, state.health) - amount).max(0.0);
             }
         }
         ServerResourceEvent::UnmodifiedContactDamage(request) => {

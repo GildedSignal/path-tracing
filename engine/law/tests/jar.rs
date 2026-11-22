@@ -4790,3 +4790,319 @@ fn jar_world_sim() {
         }
     }
 }
+
+#[test]
+fn jar_mounts_breath_void() {
+    use law::breath::{tick_air, BreathEffects, BreathRandom};
+    use law::mounts::{
+        boost_factor, execute_riders_jump_camel, execute_riders_jump_horse,
+        player_jump_pending_scale, ridden_input_happy_ghast, ridden_input_horse,
+        ridden_speed, tick_ridden_happy_ghast, MountState,
+    };
+    use law::player::death::{
+        below_world, respawn, respawn_anchor_charge, respawn_anchor_find_and_use,
+        respawn_anchor_use, BedRule, RespawnAnchorUse, BAD_RESPAWN_EXPLOSION_RADIUS,
+        BED_BOUNCE_RESTITUTION, BED_FALL_DISTANCE_MULTIPLIER, FELL_OUT_OF_WORLD,
+        RESPAWN_ANCHOR_MAX_CHARGES, RESPAWN_ANCHOR_MIN_CHARGES,
+    };
+    use law::portal::{
+        create_portal, find_closest_portal_position, spiral_around, DimensionHeightBounds,
+        PortalAxis, PortalBlock, PortalWorld, WorldBorderBounds,
+    };
+    use law::{apply_server_resource_event, BlockPos, BoxWorld, PlayerState, ServerResourceEvent};
+
+    let h32 = |s: &str| u32::from_str_radix(s, 16).unwrap();
+    let h64 = |s: &str| u64::from_str_radix(s, 16).unwrap();
+    let p_pos = |s: &str| -> BlockPos {
+        let v: Vec<i32> = s.split(',').map(|x| x.parse().unwrap()).collect();
+        [v[0], v[1], v[2]]
+    };
+
+    #[derive(Clone, Copy)]
+    enum TerrainKind {
+        Flat,
+        Bumpy,
+        Solid,
+    }
+    struct TestPortalWorld {
+        kind: TerrainKind,
+        dims: DimensionHeightBounds,
+        border: WorldBorderBounds,
+        writes: usize,
+        hash: u64,
+    }
+    impl TestPortalWorld {
+        fn ground(&self, x: i32, z: i32) -> i32 {
+            match self.kind {
+                TerrainKind::Flat => 64,
+                TerrainKind::Bumpy => 60 + (x * 7 + z * 13).rem_euclid(8),
+                TerrainKind::Solid => 318,
+            }
+        }
+    }
+    impl PortalWorld for TestPortalWorld {
+        fn dims(&self) -> DimensionHeightBounds { self.dims }
+        fn border(&self) -> WorldBorderBounds { self.border }
+        fn height(&self, x: i32, z: i32) -> i32 { self.ground(x, z) }
+        fn within_border(&self, _pos: BlockPos) -> bool { true }
+        fn replaceable(&self, pos: BlockPos) -> bool {
+            match self.kind {
+                TerrainKind::Solid => false,
+                _ => pos[1] >= self.ground(pos[0], pos[2]),
+            }
+        }
+        fn solid(&self, pos: BlockPos) -> bool {
+            match self.kind {
+                TerrainKind::Solid => true,
+                _ => pos[1] < self.ground(pos[0], pos[2]),
+            }
+        }
+        fn has_horizontal_axis(&self, _pos: BlockPos) -> bool { true }
+        fn set_block(&mut self, pos: BlockPos, block: PortalBlock, flag: i32) {
+            self.writes += 1;
+            let b = match block {
+                PortalBlock::Obsidian => "OBSIDIAN",
+                PortalBlock::Air => "AIR",
+                PortalBlock::Portal(PortalAxis::X) => "PORTAL_X",
+                PortalBlock::Portal(PortalAxis::Z) => "PORTAL_Z",
+            };
+            let line = format!("{flag}|{b}|{}|{}|{}\n", pos[0], pos[1], pos[2]);
+            for byte in line.as_bytes() {
+                self.hash ^= *byte as u64;
+                self.hash = self.hash.wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+
+    let mut rows = 0usize;
+    for (idx, raw) in include_str!("data/mounts_breath_void.tsv").lines().enumerate() {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        rows += 1;
+        let f: Vec<_> = raw.split('\t').collect();
+        match f[0] {
+            "jump_scale" => {
+                let c: i32 = f[1].parse().unwrap();
+                assert_eq!(player_jump_pending_scale(c).to_bits(), h32(f[2]), "row {idx} jump_scale");
+            }
+            "boost" => {
+                let t: i32 = f[1].parse().unwrap();
+                let total: i32 = f[2].parse().unwrap();
+                assert_eq!(boost_factor(true, t, total).to_bits(), h32(f[3]), "row {idx} boost");
+            }
+            "horse_input" => {
+                let m = MountState::horse();
+                let xxa = f32::from_bits(h32(f[1]));
+                let zza = f32::from_bits(h32(f[2]));
+                let v = ridden_input_horse(&m, xxa, zza);
+                assert_eq!(v.x.to_bits(), h64(f[3]), "row {idx} horse_input x");
+                assert_eq!(v.z.to_bits(), h64(f[4]), "row {idx} horse_input z");
+            }
+            "horse_jump" => {
+                let c: i32 = f[1].parse().unwrap();
+                let yaw = f32::from_bits(h32(f[2]));
+                let scale = player_jump_pending_scale(c);
+                let mut m_fwd = MountState::horse();
+                m_fwd.yaw = yaw;
+                execute_riders_jump_horse(&mut m_fwd, scale, 1.0);
+                assert_eq!(m_fwd.velocity.x.to_bits(), h64(f[3]), "row {idx} horse_jump fx");
+                assert_eq!(m_fwd.velocity.y.to_bits(), h64(f[4]), "row {idx} horse_jump fy");
+                assert_eq!(m_fwd.velocity.z.to_bits(), h64(f[5]), "row {idx} horse_jump fz");
+                let mut m_still = MountState::horse();
+                m_still.yaw = yaw;
+                execute_riders_jump_horse(&mut m_still, scale, 0.0);
+                assert_eq!(m_still.velocity.y.to_bits(), h64(f[6]), "row {idx} horse_jump ny");
+            }
+            "pig_speed" => {
+                let mut m = MountState::pig();
+                m.boosting = true;
+                m.boost_time = f[1].parse().unwrap();
+                m.boost_time_total = 140;
+                assert_eq!(ridden_speed(&m, false, false).to_bits(), h32(f[2]), "row {idx} pig_speed");
+            }
+            "strider_speed" => {
+                let mut m = MountState::strider();
+                m.boosting = true;
+                m.boost_time = f[1].parse().unwrap();
+                m.boost_time_total = 140;
+                let suff = f[2] == "1";
+                assert_eq!(ridden_speed(&m, false, suff).to_bits(), h32(f[3]), "row {idx} strider_speed");
+            }
+            "horse_speed" => {
+                let m = MountState::horse();
+                assert_eq!(ridden_speed(&m, false, false).to_bits(), h32(f[1]), "row {idx} horse_speed");
+            }
+            "camel_speed" => {
+                let mut m = MountState::camel();
+                let sp = f[1] == "1";
+                m.dash_cooldown = f[2].parse().unwrap();
+                assert_eq!(ridden_speed(&m, sp, false).to_bits(), h32(f[3]), "row {idx} camel_speed");
+                assert_eq!(m.speed_attribute.to_bits(), h64(f[4]), "row {idx} camel attr");
+            }
+            "camel_dash" => {
+                let c: i32 = f[1].parse().unwrap();
+                let yaw = f32::from_bits(h32(f[2]));
+                let mut m = MountState::camel();
+                m.yaw = yaw;
+                execute_riders_jump_camel(&mut m, player_jump_pending_scale(c));
+                assert_eq!(m.velocity.x.to_bits(), h64(f[3]), "row {idx} camel_dash x");
+                assert_eq!(m.velocity.y.to_bits(), h64(f[4]), "row {idx} camel_dash y");
+                assert_eq!(m.velocity.z.to_bits(), h64(f[5]), "row {idx} camel_dash z");
+                assert_eq!(m.dash_cooldown, 55);
+            }
+            "ghast_in" => {
+                let pitch = f32::from_bits(h32(f[1]));
+                let zza = f32::from_bits(h32(f[2]));
+                let jmp = f[3] == "1";
+                let m = MountState::happy_ghast();
+                let v = ridden_input_happy_ghast(0.5, zza, pitch, jmp, m.speed_attribute);
+                assert_eq!(v.x.to_bits(), h64(f[4]), "row {idx} ghast_in x");
+                assert_eq!(v.y.to_bits(), h64(f[5]), "row {idx} ghast_in y");
+                assert_eq!(v.z.to_bits(), h64(f[6]), "row {idx} ghast_in z");
+            }
+            "ghast_yaw" => {
+                let mut m = MountState::happy_ghast();
+                m.yaw = f32::from_bits(h32(f[1]));
+                let tgt = f32::from_bits(h32(f[2]));
+                tick_ridden_happy_ghast(&mut m, tgt, 0.0);
+                assert_eq!(m.yaw.to_bits(), h32(f[3]), "row {idx} ghast_yaw");
+            }
+            "spiral" => {
+                let ctr = [f[1].parse().unwrap(), f[2].parse().unwrap(), f[3].parse().unwrap()];
+                let pts = spiral_around(ctr, 16);
+                assert_eq!(pts.len(), f[4].parse::<usize>().unwrap(), "row {idx} spiral count");
+                let mut h: u64 = 0xcbf29ce484222325;
+                for p in pts {
+                    let s = format!("{}|{}|{}\n", p[0], p[1], p[2]);
+                    for b in s.as_bytes() {
+                        h ^= *b as u64;
+                        h = h.wrapping_mul(0x100000001b3);
+                    }
+                }
+                assert_eq!(h, h64(f[5]), "row {idx} spiral hash");
+            }
+            "poi" => {
+                let is_nether = f[1] == "1";
+                let origin = [f[2].parse().unwrap(), f[3].parse().unwrap(), f[4].parse().unwrap()];
+                let pois: Vec<BlockPos> = f[5].split(';').map(p_pos).collect();
+                let expected = if f[6] == "none" { None } else { Some(p_pos(f[6])) };
+                let w = TestPortalWorld {
+                    kind: TerrainKind::Flat,
+                    dims: DimensionHeightBounds { min_y: -64, max_y: 319, logical_height: 384 },
+                    border: WorldBorderBounds::default_mc(),
+                    writes: 0,
+                    hash: 0xcbf29ce484222325,
+                };
+                assert_eq!(find_closest_portal_position(&w, origin, is_nether, &pois), expected, "row {idx} poi");
+            }
+            "portal" => {
+                let kind = match f[1] {
+                    "flat" => TerrainKind::Flat,
+                    "bumpy" => TerrainKind::Bumpy,
+                    "solid" => TerrainKind::Solid,
+                    other => panic!("bad terrain {other}"),
+                };
+                let dims = DimensionHeightBounds {
+                    min_y: f[2].parse().unwrap(),
+                    max_y: f[3].parse().unwrap(),
+                    logical_height: f[4].parse().unwrap(),
+                };
+                let axis = match f[5] {
+                    "X" => PortalAxis::X,
+                    "Z" => PortalAxis::Z,
+                    other => panic!("bad axis {other}"),
+                };
+                let origin = [f[6].parse().unwrap(), f[7].parse().unwrap(), f[8].parse().unwrap()];
+                let expected = if f[9] == "none" { None } else { Some(p_pos(f[9])) };
+                let mut w = TestPortalWorld {
+                    kind,
+                    dims,
+                    border: WorldBorderBounds::default_mc(),
+                    writes: 0,
+                    hash: 0xcbf29ce484222325,
+                };
+                let got = create_portal(&mut w, origin, axis).map(|r| r.min_corner);
+                assert_eq!(got, expected, "row {idx} portal base");
+                assert_eq!(w.writes, f[10].parse::<usize>().unwrap(), "row {idx} portal writes");
+                assert_eq!(w.hash, h64(f[11]), "row {idx} portal hash");
+            }
+            "air" => {
+                let seed: i64 = f[1].parse().unwrap();
+                let mut air: i32 = f[2].parse().unwrap();
+                let mode: i32 = f[3].parse().unwrap();
+                let bonus = f64::from_bits(h64(f[4]));
+                let ticks: u32 = f[5].parse().unwrap();
+                let hit_ticks: Vec<u32> = f[6].split(',').filter(|s| !s.is_empty()).map(|s| s.parse().unwrap()).collect();
+                let final_air: i32 = f[7].parse().unwrap();
+                let traj = h64(f[8]);
+                let effects = BreathEffects {
+                    water_breathing: mode == 2,
+                    conduit_power: false,
+                    breath_of_the_nautilus: mode == 3,
+                };
+                let bubble = mode == 1;
+                let invuln = mode == 4;
+                let mut rng = BreathRandom::new(seed);
+                let mut h: u64 = 0xcbf29ce484222325;
+                let mut got_hits = Vec::new();
+                for t in 1..=ticks {
+                    let (a, hit) = tick_air(air, t <= 600, bubble, &effects, bonus, invuln, false, &mut rng);
+                    air = a;
+                    if hit.is_some() {
+                        got_hits.push(t);
+                    }
+                    h ^= air as u32 as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                assert_eq!(got_hits, hit_ticks, "row {idx} air hits");
+                assert_eq!(air, final_air, "row {idx} final air");
+                assert_eq!(h, traj, "row {idx} air traj");
+            }
+            "void" => {
+                let min_y: i32 = f[1].parse().unwrap();
+                let y = f64::from_bits(h64(f[2]));
+                assert_eq!(below_world(y, min_y), f[3] == "1", "row {idx} void");
+            }
+            "bed_const" => {
+                assert_eq!(BED_BOUNCE_RESTITUTION.to_bits(), h32(f[1]));
+                assert_eq!(BED_FALL_DISTANCE_MULTIPLIER.to_bits(), h64(f[2]));
+                assert_eq!(BAD_RESPAWN_EXPLOSION_RADIUS.to_bits(), h32(f[3]));
+                assert_eq!(RESPAWN_ANCHOR_MIN_CHARGES, f[4].parse::<u8>().unwrap());
+                assert_eq!(RESPAWN_ANCHOR_MAX_CHARGES, f[5].parse::<u8>().unwrap());
+                assert!(!BedRule::CAN_SLEEP_WHEN_DARK.explodes);
+                assert!(BedRule::CAN_SLEEP_WHEN_DARK.can_sleep.test(true));
+                assert!(!BedRule::CAN_SLEEP_WHEN_DARK.can_sleep.test(false));
+                assert!(BedRule::EXPLODES.explodes);
+                assert_eq!(respawn_anchor_charge(3), Some(4));
+                assert_eq!(respawn_anchor_charge(4), None);
+                assert_eq!(respawn_anchor_use(0, false), RespawnAnchorUse::Pass);
+                assert_eq!(respawn_anchor_use(1, true), RespawnAnchorUse::SetSpawn);
+                assert_eq!(respawn_anchor_use(1, false), RespawnAnchorUse::Explode { radius: 5.0, fire: true });
+                assert_eq!(respawn_anchor_find_and_use(2, false, true, false), Some(1));
+                assert_eq!(respawn_anchor_find_and_use(0, false, true, false), None);
+                assert_eq!(respawn_anchor_find_and_use(0, true, true, false), Some(0));
+            }
+            other => panic!("unexpected row tag {other}"),
+        }
+    }
+    assert_eq!(rows, 593, "expected all 593 jar witness rows");
+
+    // Void 10-tick cadence (FellOutOfWorld + HurtCooldownTick) and respawn reset.
+    let world = BoxWorld::default();
+    let mut state = PlayerState { invulnerable: true, ..Default::default() };
+    apply_server_resource_event(&mut state, &world, ServerResourceEvent::FellOutOfWorld);
+    assert_eq!(state.health.to_bits(), (20.0f32 - FELL_OUT_OF_WORLD).to_bits());
+    for _ in 0..9 {
+        apply_server_resource_event(&mut state, &world, ServerResourceEvent::HurtCooldownTick);
+        apply_server_resource_event(&mut state, &world, ServerResourceEvent::FellOutOfWorld);
+        assert_eq!(state.health.to_bits(), 16.0f32.to_bits());
+    }
+    apply_server_resource_event(&mut state, &world, ServerResourceEvent::HurtCooldownTick);
+    apply_server_resource_event(&mut state, &world, ServerResourceEvent::FellOutOfWorld);
+    assert_eq!(state.health.to_bits(), 12.0f32.to_bits());
+    respawn(&mut state, &world);
+    assert_eq!((state.health.to_bits(), state.food_level, state.saturation.to_bits(), state.exhaustion.to_bits()),
+        (20.0f32.to_bits(), 20, 5.0f32.to_bits(), 0.0f32.to_bits()));
+    assert_eq!((state.hurt_cooldown.remaining_ticks, state.hurt_cooldown.last_raw_hit.to_bits()), (0, 0.0f32.to_bits()));
+}

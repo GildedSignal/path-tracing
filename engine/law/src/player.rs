@@ -1205,3 +1205,143 @@ mod part7_to_part10_tests {
         assert_eq!(travel_in_air_forward_tick(Vec3::default(), true, BLUE_ICE_FRICTION, 1.0, 1.0, 0.2, true, 0.07, false, false).z.to_bits(), 0x3fa4_93f5_ec74_7540);
     }
 }
+
+/// Void damage and respawn reset (26.2 Entity.checkBelowWorld, ServerPlayer.restoreFrom).
+pub mod death {
+    //! The death side of the player law: the void's threshold and toll, and the reset
+    //! a respawn performs. Anchors are the 26.2 server jar: `Entity.checkBelowWorld`,
+    //! `LivingEntity.onBelowWorld`, `Player.hurtServer`, `PlayerList.respawn`,
+    //! `ServerPlayer.restoreFrom`; the offsets sit in the run dossier.
+
+    use crate::state_reads::{modify_state, write_state};
+    use crate::{PlayerState, Vec3, World};
+
+    /// LivingEntity.onBelowWorld: hurt(damageSources().fellOutOfWorld(), 4.0f).
+    /// out_of_world bypasses armor, resistance, invulnerability and knockback, and
+    /// carries 0.0 exhaustion, so the raw hit is the debit for any player without
+    /// protective enchantments (data/minecraft/damage_type/out_of_world.json and the
+    /// tags bypasses_armor, bypasses_invulnerability, bypasses_resistance, no_knockback).
+    pub const FELL_OUT_OF_WORLD: f32 = 4.0;
+
+    /// Entity.checkBelowWorld: `getY() < (double)(level.getMinY() - 64)`, asked every
+    /// Entity.baseTick. Strict: the overworld (minY -64) reads -128.0 and a player at
+    /// exactly -128.0 is still in the world.
+    pub fn below_world(y: f64, min_y: i32) -> bool {
+        y < (min_y - 64) as f64
+    }
+
+    /// PlayerList.respawn into a fresh ServerPlayer with restoreFrom(keepEverything=false):
+    /// health to the maximum (20.0 for the stock player), FoodData to its constructor
+    /// (foodLevel 20, saturationLevel 5.0f, exhaustion 0.0f), and a new entity's zero for
+    /// the hurt cooldown, fire, freezing, fall distance, velocity and effects. The
+    /// position is the respawn teleport the caller performs: death is a teleport with a
+    /// toll (S189), and this reset is the toll's ledger, not the teleport.
+    pub fn respawn(state: &mut PlayerState, world: &impl World) {
+        write_state!(world, state.health) = 20.0;
+        write_state!(world, state.food_level) = 20;
+        write_state!(world, state.saturation) = 5.0;
+        write_state!(world, state.exhaustion) = 0.0;
+        write_state!(world, state.food_tick_timer) = 0;
+        write_state!(world, state.velocity) = Vec3::default();
+        write_state!(world, state.fall_distance) = 0.0;
+        write_state!(world, state.remaining_fire_ticks) = 0;
+        write_state!(world, state.ticks_frozen) = 0;
+        write_state!(world, state.effects) = false;
+        modify_state!(world, state.hurt_cooldown).remaining_ticks = 0;
+        modify_state!(world, state.hurt_cooldown).last_raw_hit = 0.0;
+    }
+
+    /// `Blocks.lambda$static$39` (26.2): bed `bounceRestitution = 0.75f`.
+    pub const BED_BOUNCE_RESTITUTION: f32 = 0.75;
+    /// `BedBlock.fallOn`: `fallDistance * 0.5d`.
+    pub const BED_FALL_DISTANCE_MULTIPLIER: f64 = 0.5;
+    /// `BedBlock.useWithoutItem` / `RespawnAnchorBlock.explode`: explosion power `5.0f` with fire.
+    pub const BAD_RESPAWN_EXPLOSION_RADIUS: f32 = 5.0;
+    pub const RESPAWN_ANCHOR_MIN_CHARGES: u8 = 0;
+    pub const RESPAWN_ANCHOR_MAX_CHARGES: u8 = 4;
+
+    /// `BedRule.Rule` (`net.minecraft.world.attribute.BedRule`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BedRuleGate {
+        Always,
+        WhenDark,
+        Never,
+    }
+
+    impl BedRuleGate {
+        pub const fn test(self, is_dark_outside: bool) -> bool {
+            match self {
+                Self::Always => true,
+                Self::WhenDark => is_dark_outside,
+                Self::Never => false,
+            }
+        }
+    }
+
+    /// `BedRule` environment attribute (`CAN_SLEEP_WHEN_DARK` vs `EXPLODES`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct BedRule {
+        pub can_sleep: BedRuleGate,
+        pub can_set_spawn: BedRuleGate,
+        pub explodes: bool,
+    }
+
+    impl BedRule {
+        pub const CAN_SLEEP_WHEN_DARK: Self = Self {
+            can_sleep: BedRuleGate::WhenDark,
+            can_set_spawn: BedRuleGate::Always,
+            explodes: false,
+        };
+        pub const EXPLODES: Self = Self {
+            can_sleep: BedRuleGate::Never,
+            can_set_spawn: BedRuleGate::Never,
+            explodes: true,
+        };
+    }
+
+    /// `RespawnAnchorBlock.useWithoutItem` outcome.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum RespawnAnchorUse {
+        Pass,
+        SetSpawn,
+        Explode { radius: f32, fire: bool },
+    }
+
+    /// `RespawnAnchorBlock.useItemOn` + `charge`: glowstone charges up to `MAX_CHARGES = 4`.
+    pub const fn respawn_anchor_charge(charges: u8) -> Option<u8> {
+        if charges < RESPAWN_ANCHOR_MAX_CHARGES {
+            Some(charges + 1)
+        } else {
+            None
+        }
+    }
+
+    /// `RespawnAnchorBlock.useWithoutItem`: `charge == 0` passes; else `works` sets spawn or explodes (`5.0f`, fire).
+    pub const fn respawn_anchor_use(charges: u8, works: bool) -> RespawnAnchorUse {
+        if charges == RESPAWN_ANCHOR_MIN_CHARGES {
+            RespawnAnchorUse::Pass
+        } else if works {
+            RespawnAnchorUse::SetSpawn
+        } else {
+            RespawnAnchorUse::Explode { radius: BAD_RESPAWN_EXPLOSION_RADIUS, fire: true }
+        }
+    }
+
+    /// `ServerPlayer.findRespawnAndUseSpawnBlock` for a respawn anchor:
+    /// accepted when `(forced || charges > 0) && works`; consumes 1 charge when `!keep_everything && charges > 0`.
+    pub const fn respawn_anchor_find_and_use(
+        charges: u8,
+        forced: bool,
+        works: bool,
+        keep_everything: bool,
+    ) -> Option<u8> {
+        if !(forced || charges > 0) || !works {
+            return None;
+        }
+        if !keep_everything && charges > 0 {
+            Some(charges - 1)
+        } else {
+            Some(charges)
+        }
+    }
+}

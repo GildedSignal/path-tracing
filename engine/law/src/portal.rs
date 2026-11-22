@@ -378,6 +378,234 @@ pub fn create_portal_fallback_base(
     Some(border.clamp_to_bounds(offset))
 }
 
+
+// ---------------------------------------------------------------------------
+// PortalForcer.findClosestPortalPosition / createPortal (26.2 spiral rewrite).
+//
+// `findClosestPortalPosition(pos, isNether, border)`: radius `isNether ? 16 : 128`;
+// `PoiManager.getInSquare` keeps records with `|dx| <= r && |dz| <= r`; then
+// `.filter(border::isWithinBounds).filter(hasProperty(HORIZONTAL_AXIS))` and
+// `.min(comparingDouble(distSqr).thenComparingInt(getY))` (no getLargestRectangleAround).
+// `createPortal(pos, axis)`: `BlockPos.spiralAround(pos, 16, EAST, SOUTH)` (1089 columns),
+// `canHostFrame` at offsets 0 (candidate) and -1/+1 (full candidate), `distSqr` decides;
+// no candidate -> emergency fallback box; then the 4x5 obsidian ring (setBlock flag 3) and
+// the 2x3 portal (flag 18). The fallback base reuses `create_portal_fallback_base`.
+// ---------------------------------------------------------------------------
+
+pub const NETHER_PORTAL_SEARCH_RADIUS: i32 = 16;
+pub const OVERWORLD_PORTAL_SEARCH_RADIUS: i32 = 128;
+pub const CREATE_PORTAL_SPIRAL_RADIUS: i32 = 16;
+
+/// `Vec3i.distSqr` in double arithmetic, as the jar computes it.
+pub fn dist_sqr(a: BlockPos, b: BlockPos) -> f64 {
+    let dx = (a[0] - b[0]) as f64;
+    let dy = (a[1] - b[1]) as f64;
+    let dz = (a[2] - b[2]) as f64;
+    dx * dx + dy * dy + dz * dz
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortalBlock {
+    Obsidian,
+    Air,
+    /// NetherPortalBlock with the createPortal axis.
+    Portal(PortalAxis),
+}
+
+/// What `PortalForcer` asks of the world; answers are the kit-class answers.
+pub trait PortalWorld {
+    fn dims(&self) -> DimensionHeightBounds;
+    fn border(&self) -> WorldBorderBounds;
+    /// MOTION_BLOCKING heightmap value at the column.
+    fn height(&self, x: i32, z: i32) -> i32;
+    fn within_border(&self, pos: BlockPos) -> bool;
+    /// canPortalReplaceBlock: canBeReplaced && fluid empty.
+    fn replaceable(&self, pos: BlockPos) -> bool;
+    /// BlockState.isSolid.
+    fn solid(&self, pos: BlockPos) -> bool;
+    /// BlockState.hasProperty(HORIZONTAL_AXIS), the POI filter.
+    fn has_horizontal_axis(&self, pos: BlockPos) -> bool;
+    fn set_block(&mut self, pos: BlockPos, block: PortalBlock, flag: i32);
+}
+
+fn axis_step(axis: PortalAxis) -> (i32, i32) {
+    match axis {
+        PortalAxis::X => (1, 0),
+        PortalAxis::Z => (0, 1),
+    }
+}
+
+/// `Direction.get(POSITIVE, axis).getClockWise()`: EAST->SOUTH `(0,1)`, SOUTH->WEST `(-1,0)`.
+fn clockwise_step(axis: PortalAxis) -> (i32, i32) {
+    match axis {
+        PortalAxis::X => (0, 1),
+        PortalAxis::Z => (-1, 0),
+    }
+}
+
+/// `candidates` are the NETHER_PORTAL POI records of the engine's store.
+pub fn find_closest_portal_position(
+    world: &impl PortalWorld,
+    pos: BlockPos,
+    is_nether: bool,
+    candidates: &[BlockPos],
+) -> Option<BlockPos> {
+    let radius = if is_nether { NETHER_PORTAL_SEARCH_RADIUS } else { OVERWORLD_PORTAL_SEARCH_RADIUS };
+    let mut best: Option<BlockPos> = None;
+    for &p in candidates {
+        if (p[0] - pos[0]).abs() > radius || (p[2] - pos[2]).abs() > radius {
+            continue;
+        }
+        if !world.within_border(p) || !world.has_horizontal_axis(p) {
+            continue;
+        }
+        // Stream.min keeps the first on comparator ties: replace only on a strict win.
+        let take = match best {
+            None => true,
+            Some(b) => {
+                let (d_new, d_old) = (dist_sqr(p, pos), dist_sqr(b, pos));
+                d_new < d_old || (d_new == d_old && p[1] < b[1])
+            }
+        };
+        if take {
+            best = Some(p);
+        }
+    }
+    best
+}
+
+/// `BlockPos.spiralAround(center, radius, EAST, SOUTH)`: start one step SOUTH, legs
+/// [EAST, SOUTH, WEST, NORTH] with sizes 1,1,2,2,3,3,...
+pub fn spiral_around(center: BlockPos, radius: i32) -> Vec<BlockPos> {
+    let (mut x, mut z) = (center[0], center[2] + 1);
+    let mut leg: i32 = -1;
+    let mut leg_size: i32 = 0;
+    let mut leg_index: i32 = 0;
+    let legs = 4 * radius;
+    let mut out = Vec::new();
+    loop {
+        match ((leg + 4) % 4 + 4) % 4 {
+            3 => z -= 1,
+            0 => x += 1,
+            1 => z += 1,
+            _ => x -= 1,
+        }
+        if leg_index >= leg_size {
+            if leg >= legs {
+                break;
+            }
+            leg += 1;
+            leg_index = 0;
+            leg_size = leg / 2 + 1;
+        }
+        leg_index += 1;
+        out.push([x, center[1], z]);
+    }
+    out
+}
+
+fn can_host_frame(world: &impl PortalWorld, pos: BlockPos, dir: PortalAxis, offset: i32) -> bool {
+    let (dx, dz) = axis_step(dir);
+    let (cx, cz) = clockwise_step(dir);
+    for a in -1..3i32 {
+        for b in -1..4i32 {
+            let p = [pos[0] + a * dx + offset * cx, pos[1] + b, pos[2] + a * dz + offset * cz];
+            if b < 0 && !world.solid(p) {
+                return false;
+            }
+            if b >= 0 && !world.replaceable(p) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `PortalForcer.createPortal(BlockPos, Axis)`: every block write in the jar's order.
+pub fn create_portal(world: &mut impl PortalWorld, pos: BlockPos, axis: PortalAxis) -> Option<FoundRectangle> {
+    let (dx, dz) = axis_step(axis);
+    let dims = world.dims();
+    let mut d0 = -1.0f64;
+    let mut best: Option<BlockPos> = None;
+    let mut d1 = -1.0f64;
+    let mut fallback_best: Option<BlockPos> = None;
+    let top = top_usable(dims);
+    for m in spiral_around(pos, CREATE_PORTAL_SPIRAL_RADIUS) {
+        let j = top.min(world.height(m[0], m[2]));
+        if !world.within_border(m) || !world.within_border([m[0] + dx, m[1], m[2] + dz]) {
+            continue;
+        }
+        let mut m = m;
+        let mut k = j;
+        while k >= dims.min_y {
+            m[1] = k;
+            if !world.replaceable(m) {
+                k -= 1;
+                continue;
+            }
+            let orig_y = k;
+            while k > dims.min_y && world.replaceable([m[0], k - 1, m[2]]) {
+                k -= 1;
+            }
+            if k + 4 > top {
+                k -= 1;
+                continue;
+            }
+            let d = orig_y - k;
+            if d > 0 && d < 3 {
+                k -= 1;
+                continue;
+            }
+            m[1] = k;
+            if !can_host_frame(world, m, axis, 0) {
+                k -= 1;
+                continue;
+            }
+            let dist = dist_sqr(pos, m);
+            if can_host_frame(world, m, axis, -1) && can_host_frame(world, m, axis, 1) && (d0 == -1.0 || d0 > dist) {
+                d0 = dist;
+                best = Some(m);
+            }
+            if d0 == -1.0 && (d1 == -1.0 || d1 > dist) {
+                d1 = dist;
+                fallback_best = Some(m);
+            }
+            k -= 1;
+        }
+    }
+    if d0 == -1.0 && d1 != -1.0 {
+        best = fallback_best;
+    }
+    let base = match best {
+        Some(b) => b,
+        None => {
+            let p = create_portal_fallback_base(pos, [dx, dz], dims, world.border())?;
+            let (cx, cz) = clockwise_step(axis);
+            for b in -1..2i32 {
+                for a in 0..2i32 {
+                    for y in -1..3i32 {
+                        let block = if y < 0 { PortalBlock::Obsidian } else { PortalBlock::Air };
+                        world.set_block([p[0] + a * dx + b * cx, p[1] + y, p[2] + a * dz + b * cz], block, 3);
+                    }
+                }
+            }
+            p
+        }
+    };
+    for a in -1..3i32 {
+        for y in -1..4i32 {
+            if a == -1 || a == 2 || y == -1 || y == 3 {
+                world.set_block([base[0] + a * dx, base[1] + y, base[2] + a * dz], PortalBlock::Obsidian, 3);
+            }
+        }
+    }
+    for a in 0..2i32 {
+        for y in 0..3i32 {
+            world.set_block([base[0] + a * dx, base[1] + y, base[2] + a * dz], PortalBlock::Portal(axis), 18);
+        }
+    }
+    Some(FoundRectangle { min_corner: base, axis1_size: 2, axis2_size: 3 })
+}
 #[cfg(test)]
 mod part12_tests {
     use super::*;
