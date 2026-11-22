@@ -4249,4 +4249,544 @@ fn jar_projectiles_and_redstone() {
     assert_eq!(count, 547);
 }
 
+#[test]
+fn jar_world_sim() {
+    use law::boat::{self, BoatStatus, Controls as BoatControls};
+    use law::fluid::{FlowKind, FluidCell};
+    use law::footprint::RecordingWorld;
+    use law::interact::{AttachFace, Direction as InteractDir, DoorHalf};
+    use law::neighbor::{Direction, update_flags};
+    use law::place::{DoorHinge, DoorPlaceState, Half};
+    use law::sim::{
+        BlockPalette, CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldOverlay,
+    };
+    use law::world_hooks::BucketContent;
+    use law::{Block, BlockPos, BoxWorld, PlayerState, Vec3, World};
 
+    fn parse_h64(s: &str) -> u64 {
+        u64::from_str_radix(s, 16).unwrap_or_else(|e| panic!("bad h64 {s:?}: {e}"))
+    }
+    fn parse_h32(s: &str) -> u32 {
+        u32::from_str_radix(s, 16).unwrap_or_else(|e| panic!("bad h32 {s:?}: {e}"))
+    }
+    fn dir_name(d: Direction) -> &'static str {
+        match d {
+            Direction::Down => "down",
+            Direction::Up => "up",
+            Direction::North => "north",
+            Direction::South => "south",
+            Direction::West => "west",
+            Direction::East => "east",
+        }
+    }
+    fn sim_block_tag<W: World>(sim: &SimWorld<'_, W>, pos: BlockPos) -> String {
+        let cell = sim.cell(pos);
+        let p = sim.palette();
+        match cell.state {
+            CellState::Empty => "air".to_owned(),
+            CellState::Plain => {
+                if cell.id == p.stone {
+                    "stone".to_owned()
+                } else if cell.id == p.cobblestone {
+                    "cobblestone".to_owned()
+                } else if cell.id == p.obsidian {
+                    "obsidian".to_owned()
+                } else if cell.id == p.slime_block {
+                    "slime".to_owned()
+                } else if cell.id == p.honey_block {
+                    "honey".to_owned()
+                } else if cell.id == p.torch {
+                    "torch".to_owned()
+                } else {
+                    "solid".to_owned()
+                }
+            }
+            CellState::Fluid { kind, cell: fc } => {
+                let name = match kind {
+                    FlowKind::Water => "water",
+                    FlowKind::Lava { .. } => "lava",
+                };
+                format!("{name}:{}:{}", u8::from(fc.source), fc.amount)
+            }
+            CellState::Falling(FallingKind::Sand) => "sand".to_owned(),
+            CellState::Falling(FallingKind::ConcretePowder) => "concrete_powder".to_owned(),
+            CellState::Falling(FallingKind::Anvil { .. }) => {
+                if cell.id == p.anvil {
+                    "anvil".to_owned()
+                } else if cell.id == p.chipped_anvil {
+                    "chipped_anvil".to_owned()
+                } else {
+                    "damaged_anvil".to_owned()
+                }
+            }
+            CellState::MovingPiston { facing, .. } => {
+                format!("moving_piston:{}", dir_name(facing))
+            }
+            CellState::PistonHead { facing, .. } => format!("piston_head:{}", dir_name(facing)),
+            CellState::Piston { sticky, extended, .. } => {
+                let prefix = if sticky { "sticky_piston" } else { "piston" };
+                format!("{prefix}:{}", u8::from(extended))
+            }
+            CellState::Door(d) => format!("iron_door:{}:{}", u8::from(d.open), u8::from(d.powered)),
+            CellState::TrapDoor {
+                open,
+                powered,
+                waterlogged,
+                ..
+            } => format!(
+                "oak_trapdoor:{}:{}:{}",
+                u8::from(open),
+                u8::from(powered),
+                u8::from(waterlogged)
+            ),
+            CellState::RedstoneWire { power } => format!("wire:{power}"),
+            CellState::Lever(l) => format!("lever:{}", u8::from(l.powered)),
+            _ => "other".to_owned(),
+        }
+    }
+    fn boat_status_name(s: Option<BoatStatus>) -> &'static str {
+        match s {
+            Some(BoatStatus::InWater) => "IN_WATER",
+            Some(BoatStatus::UnderWater) => "UNDER_WATER",
+            Some(BoatStatus::UnderFlowingWater) => "UNDER_FLOWING_WATER",
+            Some(BoatStatus::OnLand) => "ON_LAND",
+            Some(BoatStatus::InAir) => "IN_AIR",
+            None => "NONE",
+        }
+    }
+    fn pig_entity(x: f64, y: f64, z: f64) -> SimLivingEntity {
+        SimLivingEntity {
+            position: Vec3::new(x, y, z),
+            width: 0.9,
+            height: 0.9,
+            eye_height: 0.765,
+            health: 10.0,
+            ..SimLivingEntity::default()
+        }
+    }
+    fn floor_stone<W: World>(sim: &mut SimWorld<'_, W>, x0: i32, z0: i32, x1: i32, z1: i32, y: i32) {
+        let stone = SimCell::stone(sim.palette().stone);
+        for x in x0..=x1 {
+            for z in z0..=z1 {
+                sim.set_cell_raw([x, y, z], stone.clone());
+            }
+        }
+    }
+
+    let raw = include_str!("data/world_sim.tsv");
+    let rows: Vec<Vec<&str>> = raw
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|l| l.split('\t').collect())
+        .collect();
+    assert_eq!(rows.len(), 63, "expected 63 witness rows in world_sim.tsv");
+
+    let base = BoxWorld::default();
+    let pal = BlockPalette::default();
+
+    // -------------------------------------------------------------------------
+    // WorldOverlay + Footprint invalidation check
+    // -------------------------------------------------------------------------
+    {
+        let mut ov = WorldOverlay::new(&base);
+        ov.set_block([5, 64, 5], Block::full());
+        let rec = RecordingWorld::new(&ov);
+        let mut player = PlayerState {
+            position: Vec3::new(5.5, 65.0, 5.5),
+            ..PlayerState::default()
+        };
+        law::tick(&mut player, &rec, &law::Input::default());
+        let fp = rec.footprint();
+        ov.clear_dirty();
+        assert!(!ov.invalidates_footprint(&fp));
+        ov.set_block([5, 64, 5], Block::default());
+        assert!(ov.invalidates_footprint(&fp));
+        assert!(ov.dirty_positions().contains(&[5, 64, 5]));
+        assert_eq!(ov.dirty_bounds(), Some(([5, 64, 5], [5, 64, 5])));
+    }
+
+    // -------------------------------------------------------------------------
+    // SCENARIO A: Lever -> Redstone Wire -> Iron Door + Waterlogged Trapdoor
+    // -------------------------------------------------------------------------
+    {
+        let a_rows: Vec<_> = rows.iter().filter(|r| r[0] == "A_CASCADE").collect();
+        assert_eq!(a_rows.len(), 9);
+        let mut sim = SimWorld::with_palette(&base, pal);
+        floor_stone(&mut sim, -2, -2, 13, 5, 64);
+        let lever_pos = [0, 65, 0];
+        sim.set_cell_raw(
+            lever_pos,
+            SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false),
+        );
+        for i in 1..=8 {
+            sim.set_cell_raw([i, 65, 0], SimCell::redstone_wire(pal.redstone_wire, 0));
+        }
+        let branch_wire = [2, 65, 1];
+        sim.set_cell_raw(branch_wire, SimCell::redstone_wire(pal.redstone_wire, 0));
+        let door_low = [9, 65, 0];
+        let door_high = [9, 66, 0];
+        sim.set_cell_raw(
+            door_low,
+            SimCell::door(DoorPlaceState {
+                block_id: pal.iron_door,
+                facing: InteractDir::North,
+                half: DoorHalf::Lower,
+                hinge: DoorHinge::Left,
+                open: false,
+                powered: false,
+            }),
+        );
+        sim.set_cell_raw(
+            door_high,
+            SimCell::door(DoorPlaceState {
+                block_id: pal.iron_door,
+                facing: InteractDir::North,
+                half: DoorHalf::Upper,
+                hinge: DoorHinge::Left,
+                open: false,
+                powered: false,
+            }),
+        );
+        let trap_pos = [2, 65, 2];
+        sim.set_cell_raw(
+            trap_pos,
+            SimCell::trapdoor(
+                pal.oak_trapdoor,
+                Direction::North,
+                Half::Bottom,
+                false,
+                false,
+                true,
+            ),
+        );
+        sim.set_cell_raw([1, 65, 2], SimCell::stone(pal.stone));
+        sim.set_cell_raw([2, 65, 3], SimCell::stone(pal.stone));
+
+        let check_a = |sim: &SimWorld<'_, BoxWorld>, row: &[&str]| {
+            assert_eq!(sim_block_tag(sim, lever_pos), row[3], "row {row:?} lever");
+            assert_eq!(sim_block_tag(sim, [1, 65, 0]), row[4], "row {row:?} wire1");
+            assert_eq!(sim_block_tag(sim, [8, 65, 0]), row[5], "row {row:?} wire8");
+            assert_eq!(sim_block_tag(sim, branch_wire), row[6], "row {row:?} branch_wire");
+            assert_eq!(sim_block_tag(sim, door_low), row[7], "row {row:?} door_low");
+            assert_eq!(sim_block_tag(sim, door_high), row[8], "row {row:?} door_high");
+            assert_eq!(sim_block_tag(sim, trap_pos), row[9], "row {row:?} trap");
+            assert_eq!(sim_block_tag(sim, [3, 65, 2]), row[10], "row {row:?} east_water");
+        };
+
+        let (powered, _) = sim.pull_lever(lever_pos);
+        assert!(powered);
+        check_a(&sim, a_rows[0]);
+        for row in &a_rows[1..=7] {
+            sim.step_tick();
+            check_a(&sim, row);
+        }
+        let (powered, _) = sim.pull_lever(lever_pos);
+        assert!(!powered);
+        check_a(&sim, a_rows[8]);
+    }
+
+    // -------------------------------------------------------------------------
+    // SCENARIO B: Bucket -> Fluid Spread, Hole Attraction, 2-Source, Lava Contact
+    // -------------------------------------------------------------------------
+    {
+        let b_rows: Vec<_> = rows.iter().filter(|r| r[0] == "B_FLUID").collect();
+        assert_eq!(b_rows.len(), 7);
+        let mut sim = SimWorld::with_palette(&base, pal);
+        floor_stone(&mut sim, 62, -2, 72, 16, 63);
+        floor_stone(&mut sim, 62, -2, 72, 16, 64);
+        let stone = SimCell::stone(pal.stone);
+        for x in 64..=70 {
+            sim.set_cell_raw([x, 65, -1], stone.clone());
+            sim.set_cell_raw([x, 65, 1], stone.clone());
+        }
+        sim.set_cell_raw([64, 65, 0], stone.clone());
+        sim.set_cell_raw([70, 65, 0], stone.clone());
+        sim.set_cell_raw([68, 64, 0], SimCell::air(pal.air));
+
+        for x in 64..=68 {
+            sim.set_cell_raw([x, 65, 3], stone.clone());
+            sim.set_cell_raw([x, 65, 5], stone.clone());
+        }
+        sim.set_cell_raw([64, 65, 4], stone.clone());
+        sim.set_cell_raw([68, 65, 4], stone.clone());
+
+        for x in 64..=68 {
+            sim.set_cell_raw([x, 65, 7], stone.clone());
+            sim.set_cell_raw([x, 65, 9], stone.clone());
+        }
+        sim.set_cell_raw([64, 65, 8], stone.clone());
+        sim.set_cell_raw([67, 65, 8], stone.clone());
+        sim.set_cell_raw([66, 65, 8], SimCell::lava(pal.lava, false, FluidCell::WATER_SOURCE));
+
+        for x in 64..=68 {
+            sim.set_cell_raw([x, 65, 10], stone.clone());
+            sim.set_cell_raw([x, 65, 12], stone.clone());
+            sim.set_cell_raw([x, 65, 13], stone.clone());
+            sim.set_cell_raw([x, 65, 15], stone.clone());
+            sim.set_cell_raw([x, 66, 13], stone.clone());
+            sim.set_cell_raw([x, 66, 15], stone.clone());
+        }
+        sim.set_cell_raw([64, 65, 11], stone.clone());
+        sim.set_cell_raw([68, 65, 11], stone.clone());
+        sim.set_cell_raw([64, 65, 14], stone.clone());
+        sim.set_cell_raw([66, 65, 14], stone.clone());
+        sim.set_cell_raw([64, 66, 14], stone.clone());
+        sim.set_cell_raw([66, 66, 14], stone.clone());
+
+        assert!(sim.empty_bucket_at(BucketContent::Water, [65, 65, 0], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Water, [65, 65, 4], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Water, [67, 65, 4], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Water, [65, 65, 8], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Water, [65, 65, 11], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Lava, [67, 65, 11], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Water, [65, 65, 14], None, false));
+        assert!(sim.empty_bucket_at(BucketContent::Lava, [65, 66, 14], None, false));
+
+        for t in 0..=35usize {
+            if t > 0 {
+                sim.step_tick();
+            }
+            if let Some(row) = b_rows.iter().find(|r| r[1].parse::<usize>().unwrap() == t) {
+                assert_eq!(sim_block_tag(&sim, [66, 65, 0]), row[2], "B t={t} (66,65,0)");
+                assert_eq!(sim_block_tag(&sim, [67, 65, 0]), row[3], "B t={t} (67,65,0)");
+                assert_eq!(sim_block_tag(&sim, [68, 65, 0]), row[4], "B t={t} (68,65,0)");
+                assert_eq!(sim_block_tag(&sim, [68, 64, 0]), row[5], "B t={t} (68,64,0)");
+                assert_eq!(sim_block_tag(&sim, [69, 65, 0]), row[6], "B t={t} (69,65,0)");
+                assert_eq!(sim_block_tag(&sim, [66, 65, 4]), row[7], "B t={t} (66,65,4)");
+                assert_eq!(sim_block_tag(&sim, [66, 65, 8]), row[8], "B t={t} (66,65,8)");
+                assert_eq!(sim_block_tag(&sim, [66, 65, 11]), row[9], "B t={t} (66,65,11)");
+                assert_eq!(sim_block_tag(&sim, [65, 65, 14]), row[10], "B t={t} (65,65,14)");
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SCENARIO C: Pistons (extend/retract + MovingPiston + Slime bounce + Honey drag)
+    // -------------------------------------------------------------------------
+    {
+        let c_rows: Vec<_> = rows.iter().filter(|r| r[0] == "C_PISTON").collect();
+        assert_eq!(c_rows.len(), 11);
+        let mut sim = SimWorld::with_palette(&base, pal);
+        floor_stone(&mut sim, 126, -2, 134, 10, 63);
+        floor_stone(&mut sim, 126, -2, 134, 10, 64);
+
+        sim.set_cell_raw([128, 64, 4], SimCell::piston(pal.sticky_piston, true, Direction::Up, false));
+        sim.set_cell_raw([128, 65, 4], SimCell::slime(pal.slime_block));
+        let c1_lever = [127, 65, 4];
+        sim.set_cell_raw(c1_lever, SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false));
+        let pig_c1 = sim.spawn_living(pig_entity(128.5, 66.0, 4.5));
+
+        sim.set_cell_raw([128, 65, 0], SimCell::piston(pal.sticky_piston, true, Direction::East, false));
+        sim.set_cell_raw([129, 65, 0], SimCell::honey(pal.honey_block));
+        sim.set_cell_raw([129, 65, 1], SimCell::slime(pal.slime_block));
+        sim.set_cell_raw([130, 65, 0], SimCell::stone(pal.stone));
+        let c2_lever = [127, 65, 0];
+        sim.set_cell_raw(c2_lever, SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false));
+        let pig_c2 = sim.spawn_living(pig_entity(129.5, 66.0, 0.5));
+
+        sim.pull_lever(c1_lever);
+        sim.pull_lever(c2_lever);
+        for t in 1..=11usize {
+            if t == 7 {
+                sim.pull_lever(c1_lever);
+                sim.pull_lever(c2_lever);
+            }
+            sim.step_tick();
+            let row = c_rows[t - 1];
+            assert_eq!(sim_block_tag(&sim, [128, 65, 4]), row[3], "C t={t} (128,65,4)");
+            assert_eq!(sim_block_tag(&sim, [128, 66, 4]), row[4], "C t={t} (128,66,4)");
+            assert_eq!(sim_block_tag(&sim, [129, 65, 0]), row[5], "C t={t} (129,65,0)");
+            assert_eq!(sim_block_tag(&sim, [130, 65, 0]), row[6], "C t={t} (130,65,0)");
+            assert_eq!(sim_block_tag(&sim, [131, 65, 0]), row[7], "C t={t} (131,65,0)");
+            assert_eq!(sim_block_tag(&sim, [129, 65, 1]), row[8], "C t={t} (129,65,1)");
+            let e1 = &sim.living_entities[pig_c1];
+            assert_eq!(e1.position.x.to_bits(), parse_h64(row[9]), "C t={t} pig1 x");
+            assert_eq!(e1.position.y.to_bits(), parse_h64(row[10]), "C t={t} pig1 y");
+            assert_eq!(e1.position.z.to_bits(), parse_h64(row[11]), "C t={t} pig1 z");
+            assert_eq!(e1.velocity.x.to_bits(), parse_h64(row[12]), "C t={t} pig1 vx");
+            assert_eq!(e1.velocity.y.to_bits(), parse_h64(row[13]), "C t={t} pig1 vy");
+            assert_eq!(e1.velocity.z.to_bits(), parse_h64(row[14]), "C t={t} pig1 vz");
+            let e2 = &sim.living_entities[pig_c2];
+            assert_eq!(e2.position.x.to_bits(), parse_h64(row[15]), "C t={t} pig2 x");
+            assert_eq!(e2.position.y.to_bits(), parse_h64(row[16]), "C t={t} pig2 y");
+            assert_eq!(e2.position.z.to_bits(), parse_h64(row[17]), "C t={t} pig2 z");
+            assert_eq!(e2.velocity.x.to_bits(), parse_h64(row[18]), "C t={t} pig2 vx");
+            assert_eq!(e2.velocity.y.to_bits(), parse_h64(row[19]), "C t={t} pig2 vy");
+            assert_eq!(e2.velocity.z.to_bits(), parse_h64(row[20]), "C t={t} pig2 vz");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SCENARIO D: Falling Sand / Anvil / Torch Refuse / Concrete Powder Solidify
+    // -------------------------------------------------------------------------
+    {
+        let d_rows: Vec<_> = rows.iter().filter(|r| r[0] == "D_FALL").collect();
+        assert_eq!(d_rows.len(), 22);
+        let mut sim = SimWorld::with_palette(&base, pal);
+        sim.set_rng_seed(0x9e37_79b9_7f4a_7c15);
+        floor_stone(&mut sim, 190, -2, 206, 2, 64);
+
+        let d1_sup = [192, 69, 0];
+        let d1_sand = [192, 70, 0];
+        sim.set_cell_raw(d1_sup, SimCell::stone(pal.stone));
+        sim.set_cell_raw(d1_sand, SimCell::sand(pal.sand));
+
+        let d2_sup = [196, 68, 0];
+        let d2_anvil = [196, 69, 0];
+        sim.set_cell_raw(d2_sup, SimCell::stone(pal.stone));
+        sim.set_cell_raw(d2_anvil, SimCell::anvil(pal.anvil, false, law::falling::AnvilStage::Intact));
+        let pig_d2 = sim.spawn_living(pig_entity(196.5, 65.0, 0.5));
+
+        let d3_torch = [200, 65, 0];
+        let d3_sup = [200, 67, 0];
+        let d3_sand = [200, 68, 0];
+        sim.set_cell_raw(d3_torch, SimCell::torch(pal.torch));
+        sim.set_cell_raw(d3_sup, SimCell::stone(pal.stone));
+        sim.set_cell_raw(d3_sand, SimCell::sand(pal.sand));
+
+        let d4_water = [204, 65, 0];
+        sim.set_cell_raw([203, 65, 0], SimCell::stone(pal.stone));
+        sim.set_cell_raw([205, 65, 0], SimCell::stone(pal.stone));
+        sim.set_cell_raw([204, 65, -1], SimCell::stone(pal.stone));
+        sim.set_cell_raw([204, 65, 1], SimCell::stone(pal.stone));
+        sim.set_cell_raw(d4_water, SimCell::water(pal.water, FluidCell::WATER_SOURCE));
+        let d4_sup = [204, 67, 0];
+        let d4_powder = [204, 68, 0];
+        sim.set_cell_raw(d4_sup, SimCell::stone(pal.stone));
+        sim.set_cell_raw(d4_powder, SimCell::concrete_powder(pal.concrete_powder));
+
+        let air = SimCell::air(pal.air);
+        sim.set_cell_with_flags(d1_sup, air.clone(), update_flags::ALL);
+        sim.set_cell_with_flags(d2_sup, air.clone(), update_flags::ALL);
+        sim.set_cell_with_flags(d3_sup, air.clone(), update_flags::ALL);
+        sim.set_cell_with_flags(d4_sup, air, update_flags::ALL);
+
+        for t in 1..=22usize {
+            sim.step_tick();
+            let row = d_rows[t - 1];
+            let fb_sand = sim
+                .falling_blocks
+                .iter()
+                .find(|fb| !fb.removed && (fb.pos.x - 192.5).abs() < 0.1);
+            let fb_anvil = sim
+                .falling_blocks
+                .iter()
+                .find(|fb| !fb.removed && (fb.pos.x - 196.5).abs() < 0.1);
+
+            if row[2] == "LANDED" {
+                assert!(fb_sand.is_none(), "D t={t} expected sand landed");
+            } else {
+                let fb = fb_sand.unwrap_or_else(|| panic!("D t={t} expected sand airborne"));
+                assert_eq!(fb.pos.y.to_bits(), parse_h64(row[2]), "D t={t} sand y");
+                assert_eq!(fb.vel.y.to_bits(), parse_h64(row[3]), "D t={t} sand vy");
+                assert_eq!(fb.time.to_string(), row[4], "D t={t} sand time");
+            }
+            assert_eq!(sim_block_tag(&sim, [192, 65, 0]), row[5], "D t={t} sand block");
+            if row[6] == "LANDED" {
+                assert!(fb_anvil.is_none(), "D t={t} expected anvil landed");
+            } else {
+                let fb = fb_anvil.unwrap_or_else(|| panic!("D t={t} expected anvil airborne"));
+                assert_eq!(fb.pos.y.to_bits(), parse_h64(row[6]), "D t={t} anvil y");
+                assert_eq!(fb.vel.y.to_bits(), parse_h64(row[7]), "D t={t} anvil vy");
+            }
+            assert_eq!(
+                sim.living_entities[pig_d2].health.to_bits(),
+                parse_h32(row[8]),
+                "D t={t} pigD2 hp"
+            );
+            let anvil_tag = sim_block_tag(&sim, [196, 65, 0]);
+            if row[9] == "anvil" {
+                assert!(
+                    anvil_tag == "anvil" || anvil_tag == "chipped_anvil",
+                    "D t={t} anvil block {anvil_tag}"
+                );
+            } else {
+                assert_eq!(anvil_tag, row[9], "D t={t} anvil block");
+            }
+            assert_eq!(sim_block_tag(&sim, d3_torch), row[10], "D t={t} torch");
+            let d4_tag = sim_block_tag(&sim, d4_water);
+            if row[11] == "white_concrete" {
+                assert_eq!(d4_tag, "stone", "D t={t} concrete solidified");
+            } else {
+                assert_eq!(d4_tag, row[11], "D t={t} concrete water");
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SCENARIO E: Boat Water-Snap + Paddle + Living Entity Crowd Push
+    // -------------------------------------------------------------------------
+    {
+        let e1_rows: Vec<_> = rows.iter().filter(|r| r[0] == "E_BOAT_CROWD").collect();
+        let e2_rows: Vec<_> = rows.iter().filter(|r| r[0] == "E_PADDLE").collect();
+        assert_eq!(e1_rows.len(), 8);
+        assert_eq!(e2_rows.len(), 6);
+
+        let mut sim = SimWorld::with_palette(&base, pal);
+        floor_stone(&mut sim, 253, -3, 275, 5, 63);
+        floor_stone(&mut sim, 253, -3, 275, 5, 64);
+        for x in 254..=260 {
+            for z in -2..=2 {
+                sim.set_cell_raw([x, 64, z], SimCell::water(pal.water, FluidCell::WATER_SOURCE));
+            }
+        }
+
+        let b_idx = sim.spawn_boat(Vec3::new(256.5, 65.8, 0.5), 0.0);
+        sim.boats[b_idx].body.boat.velocity = Vec3::new(0.15, 0.0, 0.25);
+
+        let p0 = sim.spawn_living(pig_entity(270.5, 65.0, 0.5));
+        let p1 = sim.spawn_living(pig_entity(270.6, 65.0, 0.5));
+        let p2 = sim.spawn_living(pig_entity(270.5, 65.0, 0.65));
+        let p3 = sim.spawn_living(pig_entity(270.4, 65.0, 0.4));
+
+        for t in 1..=8usize {
+            sim.step_tick();
+            let row = e1_rows[t - 1];
+            let b = &sim.boats[b_idx].body;
+            assert_eq!(b.boat.position.x.to_bits(), parse_h64(row[2]), "E1 t={t} bx");
+            assert_eq!(b.boat.position.y.to_bits(), parse_h64(row[3]), "E1 t={t} by");
+            assert_eq!(b.boat.position.z.to_bits(), parse_h64(row[4]), "E1 t={t} bz");
+            assert_eq!(b.boat.velocity.x.to_bits(), parse_h64(row[5]), "E1 t={t} bvx");
+            assert_eq!(b.boat.velocity.y.to_bits(), parse_h64(row[6]), "E1 t={t} bvy");
+            assert_eq!(b.boat.velocity.z.to_bits(), parse_h64(row[7]), "E1 t={t} bvz");
+            assert_eq!(b.boat.yaw.to_bits(), parse_h32(row[8]), "E1 t={t} byaw");
+            let mut b_status_probe = b.clone();
+            let cur_status = Some(boat::get_status(&mut b_status_probe, &sim.as_boat_query()));
+            assert_eq!(boat_status_name(cur_status), row[9], "E1 t={t} status");
+            assert_eq!(sim.living_entities[p0].position.x.to_bits(), parse_h64(row[10]), "E1 t={t} p0x");
+            assert_eq!(sim.living_entities[p0].position.z.to_bits(), parse_h64(row[11]), "E1 t={t} p0z");
+            assert_eq!(sim.living_entities[p1].position.x.to_bits(), parse_h64(row[12]), "E1 t={t} p1x");
+            assert_eq!(sim.living_entities[p1].position.z.to_bits(), parse_h64(row[13]), "E1 t={t} p1z");
+            assert_eq!(sim.living_entities[p2].position.x.to_bits(), parse_h64(row[14]), "E1 t={t} p2x");
+            assert_eq!(sim.living_entities[p2].position.z.to_bits(), parse_h64(row[15]), "E1 t={t} p2z");
+            assert_eq!(sim.living_entities[p3].position.x.to_bits(), parse_h64(row[16]), "E1 t={t} p3x");
+            assert_eq!(sim.living_entities[p3].position.z.to_bits(), parse_h64(row[17]), "E1 t={t} p3z");
+        }
+
+        sim.boats[b_idx].removed = true;
+        let pb_idx = sim.spawn_boat(Vec3::new(257.5, 64.9, 0.5), 30.0);
+        sim.boats[pb_idx].controls = BoatControls {
+            left: true,
+            right: false,
+            forward: true,
+            backward: false,
+        };
+        sim.boats[pb_idx].player_controlling = true;
+        sim.boats[pb_idx].apply_controls = true;
+        sim.boats[pb_idx].server_side = false;
+
+        for t in 1..=6usize {
+            sim.step_tick();
+            let row = e2_rows[t - 1];
+            let b = &sim.boats[pb_idx].body;
+            assert_eq!(b.boat.position.x.to_bits(), parse_h64(row[2]), "E2 t={t} bx");
+            assert_eq!(b.boat.position.y.to_bits(), parse_h64(row[3]), "E2 t={t} by");
+            assert_eq!(b.boat.position.z.to_bits(), parse_h64(row[4]), "E2 t={t} bz");
+            assert_eq!(b.boat.velocity.x.to_bits(), parse_h64(row[5]), "E2 t={t} bvx");
+            assert_eq!(b.boat.velocity.y.to_bits(), parse_h64(row[6]), "E2 t={t} bvy");
+            assert_eq!(b.boat.velocity.z.to_bits(), parse_h64(row[7]), "E2 t={t} bvz");
+            assert_eq!(b.boat.yaw.to_bits(), parse_h32(row[8]), "E2 t={t} byaw");
+            assert_eq!(boat_status_name(b.status), row[9], "E2 t={t} status");
+        }
+    }
+}

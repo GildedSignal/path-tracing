@@ -85,3 +85,4 @@ pub mod redstone;
 pub use state::player_state_copies;
 
 pub mod solve_meter;
+pub mod sim;
