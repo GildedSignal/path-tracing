@@ -275,3 +275,19 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T11:45:09+01:00**
 > use another sub agent
+
+---
+**2026-11-22T15:18:51+01:00**
+> can you have an sonnet as a subagent doing something?
+
+---
+**2026-11-22T15:20:20+01:00**
+> medium on port builder
+
+---
+**2026-11-22T15:28:18+01:00**
+> switch to a hydrogen to finish the fold
+
+---
+**2026-11-22T15:37:53+01:00**
+> once done push to github
