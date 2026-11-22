@@ -339,3 +339,15 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T17:05:23+01:00**
 > sounds like a good plan, update the doc 
+
+---
+**2026-11-22T17:09:52+01:00**
+> would be funny if I manage ES style billions of entities across the whole minecraft map 
+
+---
+**2026-11-22T17:16:36+01:00**
+> @[c:\Users\PASCAL\Downloads\Minecraft PvP AI Strategy Analysis (2).txt] this is a document (read everything) about this project that i had in parallel of this chat how does that help everything we've talked about so far and how does it incorporate with our project? does it changes things fundamentally? most of it is for later but we still need the right fundations. 
+
+---
+**2026-11-22T17:21:01+01:00**
+> update the doc that needs to be updated based on that new information and add this document as a reference at the right place in the map for when it will be needed to be referenced

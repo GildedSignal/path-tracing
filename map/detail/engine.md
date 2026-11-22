@@ -98,6 +98,8 @@ Between events, motion is a closed-form recurrence: velocity is a geometric seri
 - **Class-major calendar & canonical ties:** schedule by generator class with canonical `(tick, id, kind)` tie-breaking instead of per-entity heaps, keeping sparse certificates and lockstep SIMD/GPU execution bit-identical.
 - **Zero compounding approximations:** derive closed-form skips strictly within proven binade bounds (never linear-derivative jets or nearest-cell LUTs), and use quantized keys for cache lookup only — never to re-round canonical IEEE state.
 - **No silent silo creep:** factor new rules onto shared generators + data tables + thin scars, proved bit-identical by jar witnesses and live flights.
+- **Multi-entity, reversible `WorldMut` and observer-filterable state:** keep the unified `World`/`WorldMut` + footprint interface multi-entity native, reversible, and filterable by an observer's light cone (`k`-tick discrete delay, revealed items/sound), with explicit `refuse!` on unmodeled rules.
+- **Two-regime singularity cut for combat:** run dense contact solving on the same `k = 1` tick generator kernel strictly outside the movement word contract, leaving word certificates pure (`found / forbidden / searched / refused`); design notebook in [pvp-strategy-2026-11-22.txt](../../archive/research/pvp-strategy-2026-11-22.txt).
 
 ## The contract
 
