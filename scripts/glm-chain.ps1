@@ -79,7 +79,7 @@ while ($true) {
       $start = Get-Date
       try {
         $proc = Start-Process powershell -ArgumentList @(
-          '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $glmLocal, '-Lenses', $job, '-Minutes', "$Minutes"
+          '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\glm-local.ps1', '-Lenses', $job, '-Minutes', "$Minutes"
         ) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
         $active += [pscustomobject]@{ Job = $job; Proc = $proc; Start = $start }
         Write-Log "start: $job (active=$($active.Count)/$Parallel)"
