@@ -12,7 +12,7 @@
 | Sonnet (Antigravity, or native) | judges GPT's and Google's work |
 | Argon (Antigravity) | tooling builds, reading primary sources, linting the map against his words |
 | Hydrogen (Antigravity) | builds, digests, premise checks |
-| GLM (Z.ai, omp) | port code against the jar, from a prompt the integrator writes |
+| GLM (Z.ai, omp) | parameter table rows, Mojang scars, and jar witnesses against the generator basis, plus compiled `lab/wiki/` pages |
 
 A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/launch.ps1 <job> <who> [-Worktree D:\path-tracing-wt\<name>] [-Base <ref>]`; a job is `jobs/<id>/prompt.md` in, `last.md` out. Meters: `scripts/meters.ps1`.
 
@@ -47,3 +47,4 @@ An edge that never fires or never catches anything is deleted. A new failure cha
 - When he asks to explain, explain and do not act (S179).
 - After a judge passes: merge to `main`, print net lines, push the same hour.
 - Disk: toolchain, builds and worktrees on D: (`PATH=D:\rust\cargo\bin`, `RUSTUP_HOME=D:\rust\rustup`, `CARGO_HOME=D:\rust\cargo`). PowerShell 5.1 garbles UTF-8: edit text with the Edit tool.
+- Component state is derived, never declared: `Sketch` (branch/jar only) -> `Flying` (wired and flown on `main`) -> `Load-bearing` -> `Frozen`. Feature branches open with a `clean:` commit removing dead code in their area.

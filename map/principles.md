@@ -10,7 +10,7 @@ His words are the source; each line names its turn (the register and the verbati
 4. **Question the requirement, delete, then simplify** (S235). "The simplest form possible, we're looking at many things but the resulting idea will be genuinely simple" (X4).
 5. **Representation first, so the search is trivial** (X2, X4: "they shall be trivial"). Shape the space so the problem solves itself, like clay shaped into a mug (X6).
 6. **One mechanism.** No terrain kind gets its own path; a special case means the representation is wrong (S161, ES 19).
-7. **Store the generator, not the generated** (S6, ES 6). Known things are never relearned: the aim, a start speed or a place are inputs, not keys (S230).
+7. **Store the generator, not the generated** (S6, ES 6). Known things are never relearned: the aim, a start speed or a place are inputs, not keys (S230). The law itself is a small basis of composable, parameterized generators plus data tables and thin Mojang scars rather than a mirror of Mojang's class tree: running a generator for `k = 1` tick gives the exact tick law, and running it to an exit event `k = Δt` gives the time-skipping word.
 8. **The best compute is no compute** (X2). Compute only surprises; reuse what is known; repair locally, never a whole region for one block (X2).
 9. **Capabilities shape the space.** A tool changes the space, placing it is movement, not thought (X5). Order matters and amounts are limited (X4).
 10. **A causal chain bounded by light cones** (S6, X2). Only what can reach the bot, or what the bot can reach, matters.
@@ -30,7 +30,7 @@ His words are the source; each line names its turn (the register and the verbati
 
 19. **Fly early, then iterate by the bottleneck** (X4: the SpaceX loop; S20: cathedral for the law and the representation). Every step ends in a flight he can use.
 20. **Every meter works** (S241: GLM "waiting doing nothing for now which is bad"). The bottleneck on the goal comes first; idle companions take the next useful work.
-21. **Less code is better on every level** (S44, S49). Each step ends by deleting what it made dead.
+21. **Less code is better on every level** (S44, S49). Smaller kernels keep the hot loop in L1/L3 cache and let the whole law fit inside one agent's context window; any deletion that leaves every jar witness, replay, and flight unchanged is proven sound (ES method). Each step ends by deleting what it made dead.
 22. **Agency for the companions** (S237): a clear job, conditions and gate; how they reach it is theirs. Only what cannot be undone stays closed.
 23. **The right mind for the job; a smaller model never writes for a bigger one** (S10, S12, S174, S210).
 24. **Think together first, then build fast** (X1, S8). When he asks to explain, explain and do not act (S179).

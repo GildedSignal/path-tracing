@@ -18,10 +18,12 @@ The planner has to know what the bot's inputs will do, far faster than the game'
 
 ## How the law grows (S46)
 
-The port covers everything the bot can interact with, and everything that can interact with the bot. Rendering, sound and textures are out. It grows from three sources ([architecture.md](../architecture.md) section 1):
-1. **The ground layer.** The obvious mechanical laws (shapes for every block state, fluids, placement, breaking, item use, entity hitboxes and pushing, damage, effects, boats, elytra). GLM lanes write them, one rule each, read from the bytecode with a witness. An independent GLM checks each, and Terra integrates them in batches.
-2. **Deviations.** Inside the server, every prediction of a server-owned outcome is compared with what the server did. Each mismatch becomes an anomaly with a minimal witness, then a law delta and a regression test.
-3. **Demand.** A new word needs a law that isn't there yet.
+The port covers everything the bot can interact with, and everything that can interact with the bot. Rendering, sound and textures are out. Rather than mirroring Mojang's class hierarchy file-by-file, **the law is organized as a small basis of composable, parameterized generators plus data tables and thin Mojang scars**:
+
+1. **The generator basis (`engine/law`):** ~5–6 core kernels (`affine_body`, `aabb_sweep`, `ray_dda`, resource/cooldown clocks, `cell_rewrite` + a class-major event calendar) parameterize almost every entity, item, projectile, fluid, and block tick; true non-affine mechanisms (`elytra` trig/drag, `piston` push graphs, `PortalForcer`) stay clean separate kernels. Each generator exposes two faces: `k = 1` tick (the bit-exact oracle at contacts) and `k = Δt` to the next exit event (the time-skipping **word**).
+2. **Data tables & GLM lanes:** `census` + `ModelTable` hold block properties; GLM lanes extract **parameter rows, Mojang quirks/scars, `server-26.2.jar` bit-witness TSVs, and short `lab/wiki/` pages** instead of standalone per-class Rust silos. Compression merges and deletions are proven lossless against the full jar witness suite (`tests/jar.rs`), replays, and `bench`.
+3. **Deviations.** Inside the server, every prediction of a server-owned outcome is compared with what the server did. Each mismatch becomes an anomaly with a minimal witness, then a law delta and a regression test.
+4. **Demand.** A new word or missing flight capability pulls only the parameter row or scar it needs.
 
 Deviations only catch the law's false positives. A law that wrongly says "impossible" never shows up, because the planner never tries it. So the ground layer is checked against the jar directly, and R&D runs candidate words on a sandbox copy of the server.
 - **Arithmetic copies Java exactly** (never a fused multiply-add; [architecture.md](../architecture.md) section 1).
@@ -87,9 +89,15 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 
 ## Continuous where it helps
 
-Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine jumps from event to event (S118: "ticks are just an execution layer that's premeditated and only breaks when the certificate does"). The ticked law stays the oracle: a certificate is checked against it once, when it is made, and each ported mechanic gets an event form certified bit-exact against it (S148; `jobs/event-forms/report.md`).
+Between events, motion is a closed-form recurrence: velocity is a geometric series per tick, with ratio friction × 0.91 on the ground. So the engine jumps from event to event (S118: "ticks are just an execution layer that's premeditated and only breaks when the certificate does"). The ticked generator (`k = 1`) stays the oracle: a certificate is checked against it once, when it is made, and each generator gets an event form (`k = Δt`) certified bit-exact against it within binade scope (S148; `jobs/event-forms/report.md`).
 
-**Store the generator, not the generated** (ES 6). What is stored is the recurrence and its parameters (friction, drag, jump power, a ladder's rectangle, the modifiers), keyed by those parameters and shared by every place and bot that uses them. Arcs and trajectories are derived when looked at, never stored tick by tick. Differences below `aiStep`'s thresholds (9×10⁻⁶ on h², 0.003 vertically) vanish in the law itself, so states that differ only there merge.
+**Store the generator, not the generated** (ES 6). What is stored is the recurrence and its parameters (friction, drag, jump power, a ladder's rectangle, the modifiers, scars), keyed by those parameters and shared by every place and bot that uses them. Arcs and trajectories are derived lazily when looked at, never precomputed or stored tick by tick. Differences below `aiStep`'s thresholds (9×10⁻⁶ on h², 0.003 vertically) vanish in the law itself, so states that differ only there merge.
+
+**Guardrails learned from ES:**
+- **Intern static profile, compact hot state (`shipmem` pattern):** separate invariant gear/attributes from the moving kinematic tuple (~24–32 B logical view), demoting certified bots/projectiles/items between events and promoting only at contacts.
+- **Class-major calendar & canonical ties:** schedule by generator class with canonical `(tick, id, kind)` tie-breaking instead of per-entity heaps, keeping sparse certificates and lockstep SIMD/GPU execution bit-identical.
+- **Zero compounding approximations:** derive closed-form skips strictly within proven binade bounds (never linear-derivative jets or nearest-cell LUTs), and use quantized keys for cache lookup only — never to re-round canonical IEEE state.
+- **No silent silo creep:** factor new rules onto shared generators + data tables + thin scars, proved bit-identical by jar witnesses and live flights.
 
 ## The contract
 

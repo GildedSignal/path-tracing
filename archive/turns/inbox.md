@@ -291,3 +291,51 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T15:37:53+01:00**
 > once done push to github
+
+---
+**2026-11-22T15:47:45+01:00**
+> how far am i from the full port? 
+
+---
+**2026-11-22T15:55:34+01:00**
+> so where in terms of % of the work done till everything flown in game are we? 
+
+---
+**2026-11-22T15:59:37+01:00**
+> then once the port is fully done what does that help me for what's the goal? we will have what 40K lines of code? i guess we could reduce that a lot once done. we could have classes to make compute cheaper and so exploration and changing the world via tools? what else? 
+
+---
+**2026-11-22T16:09:45+01:00**
+> then how do other pathfindings in minecraft are able to move things without such fancy things? how does their method limit them? 
+
+---
+**2026-11-22T16:13:37+01:00**
+> what is the best minecraft path finding that's dynamical, is there some?
+
+---
+**2026-11-22T16:34:00+01:00**
+> i underestimated the work needed for the full port, i expected it to be way faster, did not realize the shear number of things but also interactions. 
+>
+> I do believe that reducing the number of lines of codes of our port will be useful but i can't quite put it into words, would it change the cost of calling functions? the delay? the memory? anything? because i think that most of these things have the same generators with some variations in the parameters, a cube and a rectangle have the same generator cheaply, while you could make a sphere with the generator recursively it would not make sense but also generators functions could be composed, which makes me realize that i'm just discovering words from first principles they are generators of functions so with just the words you can run the whole game with time, i expected words to be subcases but maybe the port is a subcase in some aspects of a certain set of words. 
+
+---
+**2026-11-22T16:41:46+01:00**
+> But also the less LOC the more context is free for LLMs working of them the more they unbundle the knitting ball the easier it becomes we could greatly reduce this. "hey were the Rosetta Stone to extract Mojang's exact parameter tables and scars from the jar" wow great metaphor. 
+>
+> So from what has been changed, what does it change in how we operate with the port? 
+
+---
+**2026-11-22T16:46:54+01:00**
+> so that's a huge simplification, a great sign in my book, what does it unlock for us? 
+
+---
+**2026-11-22T16:52:08+01:00**
+> now what can we learn from ES repo? 
+
+---
+**2026-11-22T17:00:42+01:00**
+> alright what's the new updated plan for this project then? 
+
+---
+**2026-11-22T17:05:23+01:00**
+> sounds like a good plan, update the doc 
