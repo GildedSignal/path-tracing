@@ -363,3 +363,7 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T17:26:08+01:00**
 > patch and make another pass just in case
+
+---
+**2026-11-22T17:28:15+01:00**
+> the readme is bad too fix that i don't see the philosophy, ethic, principles and so on, the goal is to make people understand scope ambitions and so on it's the front end of the store
