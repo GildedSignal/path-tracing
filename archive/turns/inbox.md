@@ -351,3 +351,15 @@ ok wow i saw them building but it was so fast was it accelerated? one issue i sa
 ---
 **2026-11-22T17:21:01+01:00**
 > update the doc that needs to be updated based on that new information and add this document as a reference at the right place in the map for when it will be needed to be referenced
+
+---
+**2026-11-22T17:23:45+01:00**
+> is the github pushed? 
+
+---
+**2026-11-22T17:25:12+01:00**
+> from now on any AI getting back on the project will work on the new direction without issues? 
+
+---
+**2026-11-22T17:26:08+01:00**
+> patch and make another pass just in case

@@ -27,7 +27,7 @@ Hold a **stick**: right-click a block and the bot goes to the face you pointed a
 
 **Tracks:** `/track` creates and races his courses from A to B; `/map` switches between the imported maps. The track clock times a run from leaving A to touching B, the same for him and for the bot.
 
-**Flights:** `scripts\play-track.ps1 -Track <name> -Mode solve` (being built in `jobs/flat-ground`) has the bot play the planner's plan for a track in his game; `scripts\flight-scoreboard.ps1` compares the clock's T with the prediction and with his best time.
+**Flights:** `scripts\play-track.ps1 -Track <name> -Mode solve` plays the planner's plan for a track in his game; `scripts\flight-scoreboard.ps1` compares the clock's T with the prediction and with his best time.
 
 ## How it is put together
 

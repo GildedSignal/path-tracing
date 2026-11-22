@@ -35,14 +35,14 @@ The goal, the two extremes and the one mechanism are in [goal.md](../goal.md); t
 | 4 | **The bot's runner** | the client plays word × count, checks at events, re-anchors on the server's packets, and changes goal mid-run | **the goal changed again and again during a run** (S189), and first move never waits on thinking; a new goal at tick 1000 |
 | 5 | **Editing the world** | place, break and interact as words; every edit owes its undo (the ledger) | his five tracks that need it |
 | 6 | **The far map** | long trips: shared tables by content, landmarks, far detail kept by its effect on T | a planted one-block bridge 1,000 blocks away is kept |
-| 7 | **Other players** | their light cones on the timing wheel; only the parts they can reach are rethought | a player crosses the corridor, one segment is rethought |
+| 7 | **Other players** | their light cones on the timing wheel; only the parts they can reach are rethought (two-regime singularity boundary once contact is entered: pure crystal outside, dense `k = 1` solver inside; reference [pvp-strategy-2026-11-22.txt](../../archive/research/pvp-strategy-2026-11-22.txt)) | a player crosses the corridor, one segment is rethought |
 | 8 | **Carried movement and wormholes** | boat, elytra, pearl, Nether portal | a route with a pearl, boat or elytra never beats the kit's lower bound |
 | 9 | **The whole machine** | threads for the loop's parts, then the GPU for learning's batches, each only after a measured gain | cost per bot at N bots |
 
 ## Tracks, the port, and current floors
 
 - **His maps:** imported as dimensions, switched with `/map`: `infinity_tower`, `diversity_parkour`, `parkour_race`, `frosted_ices`, `easy_dropper`, `the_drop_2`, `delightful_dropper_2`, `elytra_challenge_2`, `elytra_challenge_3`, `parkour_rectangle_3`, `race_the_rainbow`. Wanted next: droppers, elytra courses and maps whose progression survives the import (S192).
-- **The port, by a better method** (S207–S211): the game itself judges a port, through a differential harness running Mojang's methods headless against the Rust law. A coverage map from the jar measures what is done. Every meter works a ranked backlog, and a speed pass is certified by the same harness. GLM writes port code against the harness; Argon builds the tooling.
+- **The port, by a better method** (S207–S211): the game itself and `server-26.2.jar` bit-witnesses judge the port; that witness suite proves compression and deletion onto shared generators + data tables + thin Mojang scars lossless. GLM extracts parameter rows, scars, jar witnesses, and short `lab/wiki/` notes on demand; builders compress and wire; live flights decide merges to `main`.
 - **Every new command on flat ground in microseconds, in total** (S225): [goal.md](../goal.md) holds the current floor and gap; [`jobs/hundred-ns/report.md`](../../jobs/hundred-ns/report.md) (S212–S214) gives the how (a yaw-free generator, data shaped for the read, one walk per axis) and the floors (~10 µs for a new direction, ~1 µs after; 300 ns keeps 10⁴ bots under the server's ~3 ms).
 
 Who does what and what is in flight live in [work.md](../work.md) and [now.md](../now.md).

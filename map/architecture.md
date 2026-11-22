@@ -7,6 +7,7 @@ The structure, in the order it is built (bottom up, S191). Each part links to it
 - **Nature and the judge** are Mojang's 26.2 code and the server. **The law** is the Rust structure we write to reproduce them (S46), bit-exact for player movement and collision, server-exact for health, food and breaking, behaviour-exact for fluids, mobs and redstone.
 - It comes at **three grains**: the tick recurrence (verification), the word (exact costs between events), the medium (bounds over regions).
 - It grows from three sources: the obvious mechanics read from the jar, deviations seen against the game, and what a new word needs (S46).
+- **Generator basis & compression:** the law is structured as ~5–6 composable, parameterized generators plus data tables and thin Mojang scars (dual-face: `k = 1` tick oracle at contacts and `k = Δt` event word; true non-affine kernels like elytra, pistons, `PortalForcer` stay separate). Keeping the core compact preserves L1/L3 cache and one agent's context window; deletions are proven sound against jar witnesses, replays, and live flights.
 - Arithmetic copies Java exactly: IEEE floats and doubles, the 65,536-entry sine table, the same operation order.
 
 ## 2. The space under a kit: a crystal with defects (detail/representation.md section 10)
@@ -23,6 +24,7 @@ Four folds remove the raw problem's dimensions:
 - **Words live in velocity space:** on ground each horizontal axis is `v ← (v + input(yaw)) × friction × drag`, a contraction onto the gait; position is its running sum, read by exact integer maps per binade.
 - **The objects:** a **zone** is where one word's certificate holds, found by one corridor query; a **joint** is where one word may end and another begin (an event at a face); a **set** at a joint holds the arriving states from which a known sentence reaches the target, as **families** cut into **pieces**, **points** and **holds** at the law's own comparisons; a **site** is joints closer than momentum's memory, handing up a portal table; a **label** is a joint's T to and from hubs; a **field** is T-to-go for one goal, shared by every bot going there.
 - **A tool is a law input you carry** (bucket = water block, block = floor, pearl = teleporter, boat = a surface that ignores falls). An edit is a toll with a debt (its undo); a portal or a pearl is a wormhole. No tool gets search code.
+- **Two-regime singularity boundary (other players):** outside contact, the crystal stays pure (`(word, count)`, `(min, +)`, `(max, +)`) and chooses where and when contact happens; inside melee reach, an autonomous rival acts as a branching singularity handed off to a short-horizon dense solver on the same `k = 1` generator kernel, leaving `Word` certificates strictly pure (`found / forbidden / searched / refused`; reference [pvp-strategy-2026-11-22.txt](../archive/research/pvp-strategy-2026-11-22.txt)).
 
 ## 3. The one loop: acting on every terrain (detail/learning.md section 0)
 
