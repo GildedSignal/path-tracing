@@ -146,3 +146,41 @@ pub fn settle(p: &mut Vec3, v: &mut Vec3, moved: Vec3) -> Moved {
     m.restitute(v, 0.0, 0.0, || (0.0, 1.0));
     m
 }
+
+/// A body's first velocity and facing from an aim (`Projectile.shoot`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Launch { pub velocity: Vec3, pub y_rot: f32, pub x_rot: f32 }
+
+/// `RandomSource.triangle(0.0, 0.0172275 * inaccuracy)` on x, y, z (6 `nextDouble` draws).
+pub fn spread(inaccuracy: f32, draws: [f64; 6]) -> Vec3 {
+    let extent = 0.0172275 * (inaccuracy as f64);
+    Vec3::new(0.0 + extent * (draws[0] - draws[1]), 0.0 + extent * (draws[2] - draws[3]), 0.0 + extent * (draws[4] - draws[5]))
+}
+
+/// `Projectile.getMovementToShoot`: `(direction.normalize() + spread) * power`; the add
+/// is kept at zero spread, so `-0.0` becomes `+0.0`.
+#[inline]
+pub fn shoot(direction: Vec3, power: f32, spread: Vec3) -> Vec3 { direction.normalize().plus(spread).scale(power as f64) }
+
+/// `Projectile.shoot @25-88`: the facing `(yRot, xRot)` of a shot velocity, through `Mth.atan2`.
+pub fn facing(v: Vec3) -> (f32, f32) {
+    let deg = (180.0f32 / (std::f64::consts::PI as f32)) as f64;
+    ((crate::math::atan2(v.x, v.z) * deg) as f32, (crate::math::atan2(v.y, v.horizontal_sqr().sqrt()) * deg) as f32)
+}
+
+/// `Projectile.shootFromRotation @0-113`: the shot along the aim (the roll offsets the
+/// pitch of the vertical only), plus the thrower's known movement (its y only in the air).
+pub fn shoot_from_rotation(pitch: f32, yaw: f32, roll: f32, power: f32, spread: Vec3, known: Vec3, on_ground: bool) -> Vec3 {
+    let (y, p, r) = ((yaw * 0.017453292f32) as f64, (pitch * 0.017453292f32) as f64, ((pitch + roll) * 0.017453292f32) as f64);
+    use crate::math::{cos, sin};
+    let direction = Vec3::new((-sin(y) * cos(p)) as f64, (-sin(r)) as f64, (cos(y) * cos(p)) as f64);
+    shoot(direction, power, spread).plus(Vec3::new(known.x, if on_ground { 0.0 } else { known.y }, known.z))
+}
+
+/// The launch of every projectile row: the shot, its facing taken before the thrower's
+/// movement is added, then the velocity with it.
+pub fn launch(pitch: f32, yaw: f32, roll: f32, power: f32, inaccuracy: f32, draws: [f64; 6], known: Vec3, on_ground: bool) -> Launch {
+    let s = spread(inaccuracy, draws);
+    let (y_rot, x_rot) = facing(shoot_from_rotation(pitch, yaw, roll, power, s, Vec3::default(), true));
+    Launch { velocity: shoot_from_rotation(pitch, yaw, roll, power, s, known, on_ground), y_rot, x_rot }
+}

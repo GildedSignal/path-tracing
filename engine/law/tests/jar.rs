@@ -3950,24 +3950,24 @@ fn jar_projectiles_and_redstone() {
                 let yaw = f32b(c[3]);
                 let speed = bow_release(t).unwrap().speed;
                 let known = Vec3::new(0.12, -0.0784, -0.08);
-                let still = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, Vec3::default(), true);
+                let still = law::basis::body::launch(pitch, yaw + 0.0, 0.0, speed, BOW_INACCURACY, zero_draws, Vec3::default(), true);
                 vec3_bits(still.velocity, &c[4..7], &format!("row {line} still"));
                 assert_eq!(still.y_rot.to_bits(), h32(c[7]), "row {line} y_rot");
                 assert_eq!(still.x_rot.to_bits(), h32(c[8]), "row {line} x_rot");
 
-                let ground = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, known, true);
+                let ground = law::basis::body::launch(pitch, yaw + 0.0, 0.0, speed, BOW_INACCURACY, zero_draws, known, true);
                 vec3_bits(ground.velocity, &c[9..12], &format!("row {line} ground"));
                 assert_eq!(ground.y_rot.to_bits(), h32(c[7]), "row {line} ground y_rot");
                 assert_eq!(ground.x_rot.to_bits(), h32(c[8]), "row {line} ground x_rot");
 
-                let air = bow_launch(pitch, yaw, 0.0, speed, BOW_INACCURACY, zero_draws, known, false);
+                let air = law::basis::body::launch(pitch, yaw + 0.0, 0.0, speed, BOW_INACCURACY, zero_draws, known, false);
                 vec3_bits(air.velocity, &c[12..15], &format!("row {line} air"));
                 assert_eq!(air.y_rot.to_bits(), h32(c[7]), "row {line} air y_rot");
                 assert_eq!(air.x_rot.to_bits(), h32(c[8]), "row {line} air x_rot");
             }
             "BOW_SPREAD" => {
                 let draws = [0.8, 0.2, 0.3, 0.7, 0.75, 0.25];
-                let launch = bow_launch(-30.5, 17.0, 0.0, 3.0, BOW_INACCURACY, draws, Vec3::default(), true);
+                let launch = law::basis::body::launch(-30.5, 17.0, 0.0, 3.0, BOW_INACCURACY, draws, Vec3::default(), true);
                 vec3_bits(launch.velocity, &c[1..4], &format!("row {line} spread"));
                 assert_eq!(launch.y_rot.to_bits(), h32(c[4]), "row {line} spread y_rot");
                 assert_eq!(launch.x_rot.to_bits(), h32(c[5]), "row {line} spread x_rot");
@@ -4006,7 +4006,7 @@ fn jar_projectiles_and_redstone() {
                 let tick: i32 = c[2].parse().unwrap();
                 let slot = if water { &mut arrow_water } else { &mut arrow_air };
                 if tick == 1 {
-                    let init = bow_launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
+                    let init = law::basis::body::launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
                     *slot = Some(ArrowState {
                         pos: Vec3::new(0.5, 65.62, -0.5),
                         vel: init.velocity,
@@ -4021,7 +4021,7 @@ fn jar_projectiles_and_redstone() {
             "ARROW_TRANSITION" => {
                 let water_before = c[1] == "1";
                 let water_after = c[2] == "1";
-                let init = bow_launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
+                let init = law::basis::body::launch(-30.5, 17.0, 0.0, 3.0, 0.0, zero_draws, Vec3::default(), true);
                 let mut a = ArrowState {
                     pos: Vec3::new(0.0, 64.5, 0.0),
                     vel: init.velocity,
@@ -4036,7 +4036,7 @@ fn jar_projectiles_and_redstone() {
                 let tick: i32 = c[2].parse().unwrap();
                 let slot = if water { &mut throw_water } else { &mut throw_air };
                 if tick == 1 {
-                    let init = throwable_launch(-30.5, 17.0, SNOWBALL_SHOOT_POWER, 0.0, zero_draws, Vec3::default(), true);
+                    let init = law::basis::body::launch(-30.5, 17.0, 0.0, SNOWBALL_SHOOT_POWER, 0.0, zero_draws, Vec3::default(), true);
                     *slot = Some((Vec3::new(0.5, 65.52, -0.5), init.velocity));
                 }
                 let (p, v) = slot.as_mut().unwrap();

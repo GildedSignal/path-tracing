@@ -11,7 +11,7 @@
 //! owner to `oldPosition()` (start-of-impact-tick position) with no clamp or
 //! chunk check, then calls `resetFallDistance()` before `hurtServer(5.0f)`.
 
-use crate::{explosion, interact, Aabb, CollisionContext, Vec3, World};
+use crate::{interact, Aabb, CollisionContext, Vec3, World};
 
 pub const PEARL_SHOOT_POWER: f32 = 1.5;
 pub const PEARL_INACCURACY: f32 = 1.0;
@@ -19,7 +19,6 @@ pub const PEARL_PITCH_OFFSET: f32 = 0.0;
 pub const PEARL_SPAWN_EYE_DROP: f64 = 0.1f32 as f64;
 pub const PEARL_COOLDOWN_SECONDS: f32 = 1.0;
 pub const PEARL_COOLDOWN_TICKS: i32 = (PEARL_COOLDOWN_SECONDS * 20.0f32) as i32;
-const RAD_TO_DEG_F64: f64 = (180.0f32 / (std::f64::consts::PI as f32)) as f64;
 
 pub const PEARL_DAMAGE: f32 = 5.0;
 pub const PEARL_WIDTH: f32 = 0.25;
@@ -33,106 +32,6 @@ pub fn spawn_origin(owner_pos: Vec3, eye_height: f32) -> Vec3 {
         interact::get_eye_position(owner_pos, eye_height).y - PEARL_SPAWN_EYE_DROP,
         owner_pos.z,
     )
-}
-
-/// `RandomSource.triangle(0.0, 0.0172275 * inaccuracy)` for x, y, z (6 `nextDouble` draws).
-pub fn triangular_spread(inaccuracy: f32, draws: [f64; 6]) -> Vec3 {
-    let extent = explosion::PROJECTILE_SPREAD_SCALE * (inaccuracy as f64);
-    Vec3::new(
-        0.0 + extent * (draws[0] - draws[1]),
-        0.0 + extent * (draws[2] - draws[3]),
-        0.0 + extent * (draws[4] - draws[5]),
-    )
-}
-
-/// `Projectile.shootFromRotation` for the pearl (`pitchOffset = 0.0f`, `velocity = 1.5f`,
-/// `inaccuracy = 1.0f`), delegating to the shared `explosion::shoot_from_rotation` law.
-pub fn throw_velocity(
-    x_rot: f32,
-    y_rot: f32,
-    known_movement: Vec3,
-    on_ground: bool,
-    draws: [f64; 6],
-) -> Vec3 {
-    explosion::shoot_from_rotation(
-        x_rot,
-        y_rot,
-        PEARL_PITCH_OFFSET,
-        PEARL_SHOOT_POWER,
-        triangular_spread(PEARL_INACCURACY, draws),
-        known_movement,
-        on_ground,
-    )
-}
-
-/// `Mth.fastInvSqrt(double) @0-41`.
-fn fast_inv_sqrt(x: f64) -> f64 {
-    let half = 0.5 * x;
-    let bits = 6910469410427058090i64.wrapping_sub((x.to_bits() as i64) >> 1);
-    let est = f64::from_bits(bits as u64);
-    est * (1.5 - half * est * est)
-}
-
-/// `Mth.atan2(double y, double x)` using `FRAC_BIAS`, `ASIN_TAB`, and `COS_TAB`.
-fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
-    const FRAC_BIAS: f64 = f64::from_bits(4805340802404319232);
-    static TABS: std::sync::OnceLock<([f64; 257], [f64; 257])> = std::sync::OnceLock::new();
-    let (asin_tab, cos_tab) = TABS.get_or_init(|| {
-        let mut a = [0.0; 257];
-        let mut c = [0.0; 257];
-        for i in 0..257 {
-            let asin = ((i as f64) / 256.0).asin();
-            c[i] = asin.cos();
-            a[i] = asin;
-        }
-        (a, c)
-    });
-
-    let d0 = x * x + y * y;
-    if d0.is_nan() {
-        return f64::NAN;
-    }
-    let neg_y = y < 0.0;
-    if neg_y {
-        y = -y;
-    }
-    let neg_x = x < 0.0;
-    if neg_x {
-        x = -x;
-    }
-    let y_gt_x = y > x;
-    if y_gt_x {
-        std::mem::swap(&mut x, &mut y);
-    }
-    let inv = fast_inv_sqrt(d0);
-    x *= inv;
-    y *= inv;
-    let biased = FRAC_BIAS + y;
-    let idx = (biased.to_bits() as u32) as usize;
-    let tab_asin = asin_tab[idx];
-    let tab_cos = cos_tab[idx];
-    let tab_sin = biased - FRAC_BIAS;
-    let diff = y * tab_cos - x * tab_sin;
-    let corr = (6.0 + diff * diff) * diff * 0.16666666666666666;
-    let mut angle = tab_asin + corr;
-    if y_gt_x {
-        angle = 1.5707963267948966 - angle;
-    }
-    if neg_x {
-        angle = 3.141592653589793 - angle;
-    }
-    if neg_y {
-        angle = -angle;
-    }
-    angle
-}
-
-/// `Projectile.shoot @25-88`: pearl's initial `(yRot, xRot)` set before thrower momentum add.
-pub fn shoot_facing_from_velocity(shoot_vel: Vec3) -> (f32, f32) {
-    let horiz = shoot_vel.horizontal_sqr().sqrt();
-    let y_rot = (mth_atan2(shoot_vel.x, shoot_vel.z) * RAD_TO_DEG_F64) as f32;
-    let x_rot = (mth_atan2(shoot_vel.y, horiz) * RAD_TO_DEG_F64) as f32;
-    (y_rot, x_rot)
 }
 
 /// `ItemCooldowns.isOnCooldown @16-28` / `ItemCooldowns.tick @71-110`: active while `endTime > tickCount`.
@@ -184,18 +83,10 @@ pub fn use_ender_pearl(input: &PearlUseInput) -> PearlUseResult {
     {
         return PearlUseResult::Pass;
     }
-    let wrapped_x_rot = crate::math::wrap_degrees(input.x_rot);
-    let wrapped_y_rot = crate::math::wrap_degrees(input.y_rot);
     let pos = spawn_origin(input.owner_pos, input.owner_eye_height);
-    let shoot_only = throw_velocity(wrapped_x_rot, wrapped_y_rot, Vec3::default(), true, input.draws);
-    let (y_rot, x_rot) = shoot_facing_from_velocity(shoot_only);
-    let vel = throw_velocity(
-        wrapped_x_rot,
-        wrapped_y_rot,
-        input.known_movement,
-        input.on_ground,
-        input.draws,
-    );
+    let shot = crate::basis::body::launch(crate::math::wrap_degrees(input.x_rot), crate::math::wrap_degrees(input.y_rot),
+        PEARL_PITCH_OFFSET, PEARL_SHOOT_POWER, PEARL_INACCURACY, input.draws, input.known_movement, input.on_ground);
+    let (vel, y_rot, x_rot) = (shot.velocity, shot.y_rot, shot.x_rot);
     let remaining_stack = if input.has_infinite_materials {
         input.stack_count
     } else {

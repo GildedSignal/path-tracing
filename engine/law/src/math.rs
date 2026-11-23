@@ -135,3 +135,65 @@ impl JavaRandom {
         }
     }
 }
+/// `Mth.fastInvSqrt(double) @0-41`.
+pub fn fast_inv_sqrt(x: f64) -> f64 {
+    let half = 0.5 * x;
+    let bits = 6910469410427058090i64.wrapping_sub((x.to_bits() as i64) >> 1);
+    let est = f64::from_bits(bits as u64);
+    est * (1.5 - half * est * est)
+}
+
+/// `Mth.atan2(double y, double x)` using `FRAC_BIAS`, `ASIN_TAB`, and `COS_TAB`.
+pub fn atan2(mut y: f64, mut x: f64) -> f64 {
+    const FRAC_BIAS: f64 = f64::from_bits(4805340802404319232);
+    static TABS: std::sync::OnceLock<([f64; 257], [f64; 257])> = std::sync::OnceLock::new();
+    let (asin_tab, cos_tab) = TABS.get_or_init(|| {
+        let mut a = [0.0; 257];
+        let mut c = [0.0; 257];
+        for i in 0..257 {
+            let asin = ((i as f64) / 256.0).asin();
+            c[i] = asin.cos();
+            a[i] = asin;
+        }
+        (a, c)
+    });
+
+    let d0 = x * x + y * y;
+    if d0.is_nan() {
+        return f64::NAN;
+    }
+    let neg_y = y < 0.0;
+    if neg_y {
+        y = -y;
+    }
+    let neg_x = x < 0.0;
+    if neg_x {
+        x = -x;
+    }
+    let y_gt_x = y > x;
+    if y_gt_x {
+        std::mem::swap(&mut x, &mut y);
+    }
+    let inv = fast_inv_sqrt(d0);
+    x *= inv;
+    y *= inv;
+    let biased = FRAC_BIAS + y;
+    let idx = (biased.to_bits() as u32) as usize;
+    let tab_asin = asin_tab[idx];
+    let tab_cos = cos_tab[idx];
+    let tab_sin = biased - FRAC_BIAS;
+    let diff = y * tab_cos - x * tab_sin;
+    let corr = (6.0 + diff * diff) * diff * 0.16666666666666666;
+    let mut angle = tab_asin + corr;
+    if y_gt_x {
+        angle = 1.5707963267948966 - angle;
+    }
+    if neg_x {
+        angle = 3.141592653589793 - angle;
+    }
+    if neg_y {
+        angle = -angle;
+    }
+    angle
+}
+

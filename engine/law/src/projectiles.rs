@@ -1,74 +1,9 @@
-//! Bow, crossbow, arrow, throwable (snowball/egg), and fishing-hook laws
-//! ported bit-for-bit from Mojang 26.2 `server-26.2.jar` + JOML 1.10.8.
-//!
-//! Reuses `crate::explosion::shoot_from_rotation`,
-//! `crate::pearl::{spawn_origin, triangular_spread, shoot_facing_from_velocity}`,
-//! and `crate::math::*` directly so projectile trig/normalization/facing math
-//! has a single owner.
+//! Bow, crossbow, arrow, throwable (snowball/egg), and fishing-hook laws ported
+//! bit-for-bit from Mojang 26.2 `server-26.2.jar` + JOML 1.10.8. Every launch is
+//! `basis::body::launch` with the item's power, inaccuracy and roll.
 
-use crate::{explosion, math, pearl, Vec3};
-
-// ============================================================================
-// Shared launch result & helpers
-// ============================================================================
-
-/// Result of launching a projectile: initial velocity vector and initial
-/// `(y_rot, x_rot)` set by `Projectile.shoot` before thrower-momentum add.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ProjectileLaunch {
-    pub velocity: Vec3,
-    pub y_rot: f32,
-    pub x_rot: f32,
-}
-
-/// `Projectile.getMovementToShoot @0-74`:
-/// `(direction.normalize() + spread) * (double) velocity`.
-/// Notice `.plus(spread)` is kept even at zero spread so `-0.0` becomes `+0.0`.
-#[inline]
-pub fn movement_to_shoot(direction: Vec3, velocity: f32, spread: Vec3) -> Vec3 {
-    direction.normalize().plus(spread).scale(velocity as f64)
-}
-
-/// `Projectile.shootFromRotation @0-113` + `Projectile.shoot @25-88`:
-/// computes `(y_rot, x_rot)` from the shooter-independent shot velocity via
-/// `pearl::shoot_facing_from_velocity`, and full launch velocity (with
-/// `known_movement` added after) via `explosion::shoot_from_rotation`.
-pub fn shoot_from_rotation(
-    x_rot: f32,
-    y_rot: f32,
-    roll_offset: f32,
-    velocity: f32,
-    inaccuracy: f32,
-    draws: [f64; 6],
-    known_movement: Vec3,
-    on_ground: bool,
-) -> ProjectileLaunch {
-    let spread = pearl::triangular_spread(inaccuracy, draws);
-    let shoot_only = explosion::shoot_from_rotation(
-        x_rot,
-        y_rot,
-        roll_offset,
-        velocity,
-        spread,
-        Vec3::default(),
-        true,
-    );
-    let (proj_y_rot, proj_x_rot) = pearl::shoot_facing_from_velocity(shoot_only);
-    let final_vel = explosion::shoot_from_rotation(
-        x_rot,
-        y_rot,
-        roll_offset,
-        velocity,
-        spread,
-        known_movement,
-        on_ground,
-    );
-    ProjectileLaunch {
-        velocity: final_vel,
-        y_rot: proj_y_rot,
-        x_rot: proj_x_rot,
-    }
-}
+use crate::{math, Vec3};
+use crate::basis::body::{facing, shoot, spread, Launch};
 
 /// `Entity.calculateViewVector @0-67` in `f32`:
 /// `(Mth.sin(-rot_b * r) * Mth.cos(rot_a * r), -Mth.sin(rot_a * r), Mth.cos(-rot_b * r) * Mth.cos(rot_a * r))`,
@@ -148,30 +83,6 @@ pub fn bow_release(charge_ticks: i32) -> Option<BowRelease> {
     })
 }
 
-/// `BowItem.shootProjectile @0-21`:
-/// calls `Projectile.shootFromRotation(shooter, xRot, yRot + angle, 0.0f, velocity, inaccuracy)`.
-#[inline]
-pub fn bow_launch(
-    x_rot: f32,
-    y_rot: f32,
-    angle_deg: f32,
-    speed: f32,
-    inaccuracy: f32,
-    draws: [f64; 6],
-    known_movement: Vec3,
-    on_ground: bool,
-) -> ProjectileLaunch {
-    shoot_from_rotation(
-        x_rot,
-        y_rot + angle_deg,
-        0.0f32,
-        speed,
-        inaccuracy,
-        draws,
-        known_movement,
-        on_ground,
-    )
-}
 
 // ============================================================================
 // CrossbowItem & ProjectileWeaponItem
@@ -290,7 +201,7 @@ pub fn crossbow_launch(
     speed: f32,
     inaccuracy: f32,
     draws: [f64; 6],
-) -> ProjectileLaunch {
+) -> Launch {
     let up = calculate_up_vector(x_rot, y_rot);
     let view = calculate_view_vector(x_rot, y_rot);
     let q = joml_quaternion_axis_angle(
@@ -300,18 +211,9 @@ pub fn crossbow_launch(
         up.2 as f64,
     );
     let shot = joml_rotate_vec3f(view, q);
-    let spread = pearl::triangular_spread(inaccuracy, draws);
-    let vel = movement_to_shoot(
-        Vec3::new(shot.0 as f64, shot.1 as f64, shot.2 as f64),
-        speed,
-        spread,
-    );
-    let (proj_y_rot, proj_x_rot) = pearl::shoot_facing_from_velocity(vel);
-    ProjectileLaunch {
-        velocity: vel,
-        y_rot: proj_y_rot,
-        x_rot: proj_x_rot,
-    }
+    let velocity = shoot(Vec3::new(shot.0 as f64, shot.1 as f64, shot.2 as f64), speed, spread(inaccuracy, draws));
+    let (y_rot, x_rot) = facing(velocity);
+    Launch { velocity, y_rot, x_rot }
 }
 
 // ============================================================================
@@ -504,29 +406,6 @@ pub fn arrow_punch_push(
 /// `SnowballItem.PROJECTILE_SHOOT_POWER` & `EggItem.use @74`.
 pub const SNOWBALL_SHOOT_POWER: f32 = 1.5;
 
-/// `SnowballItem.use @63-77` / `EggItem.use @63-77`:
-/// `Projectile.spawnProjectileFromRotation(..., roll=0.0f, velocity=1.5f, inaccuracy=1.0f)`.
-#[inline]
-pub fn throwable_launch(
-    x_rot: f32,
-    y_rot: f32,
-    velocity: f32,
-    inaccuracy: f32,
-    draws: [f64; 6],
-    known_movement: Vec3,
-    on_ground: bool,
-) -> ProjectileLaunch {
-    shoot_from_rotation(
-        x_rot,
-        y_rot,
-        0.0f32,
-        velocity,
-        inaccuracy,
-        draws,
-        known_movement,
-        on_ground,
-    )
-}
 
 // ============================================================================
 // FishingHook

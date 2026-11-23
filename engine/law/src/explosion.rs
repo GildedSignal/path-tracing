@@ -18,7 +18,6 @@ pub const WIND_CHARGE_HEIGHT: f32 = 0.3125;
 pub const WIND_CHARGE_AABB_Y_OFFSET: f64 = 0.15f32 as f64;
 pub const WIND_CHARGE_HIT_BLOCK_OFFSET: f64 = 0.25;
 pub const WIND_CHARGE_MAX_Y_MARGIN: i32 = 30;
-pub const PROJECTILE_SPREAD_SCALE: f64 = 0.0172275;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExplosionProfile {
@@ -197,34 +196,7 @@ pub fn wind_charge_aabb(pos: Vec3) -> Aabb {
     Aabb::new(pos.x - half_w, y0, pos.z - half_w, pos.x + half_w, y1, pos.z + half_w)
 }
 
-/// Exact `Projectile.shootFromRotation` + `Projectile.getMovementToShoot` (`@0-113`, `@0-74`).
-/// Pass `spread = Vec3::ZERO` for zero-inaccuracy expectation or 3 triangular draws
-/// `random.triangle(0.0, 0.0172275 * inaccuracy)` along X, Y, Z.
-pub fn shoot_from_rotation(
-    pitch: f32,
-    yaw: f32,
-    roll_offset: f32,
-    power: f32,
-    spread: Vec3,
-    thrower_known_movement: Vec3,
-    thrower_on_ground: bool,
-) -> Vec3 {
-    let y_rad = (yaw * 0.017453292f32) as f64;
-    let p_rad = (pitch * 0.017453292f32) as f64;
-    let r_rad = ((pitch + roll_offset) * 0.017453292f32) as f64;
-
-    let fx = -math::sin(y_rad) * math::cos(p_rad);
-    let fy = -math::sin(r_rad);
-    let fz = math::cos(y_rad) * math::cos(p_rad);
-
-    let shoot_vel = Vec3::new(fx as f64, fy as f64, fz as f64)
-        .normalize()
-        .plus(spread)
-        .scale(power as f64);
-
-    let known_y = if thrower_on_ground { 0.0 } else { thrower_known_movement.y };
-    shoot_vel.plus(Vec3::new(thrower_known_movement.x, known_y, thrower_known_movement.z))
-}
+pub use crate::basis::body::shoot_from_rotation;
 
 /// `AbstractWindCharge.onHitBlock @39-53`: `hit_location + face.unit_vec * 0.25`.
 #[inline]
