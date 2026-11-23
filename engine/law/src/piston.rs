@@ -158,11 +158,11 @@ pub struct Resolver {
 impl Resolver {
     pub fn new(piston_pos: BlockPos, piston_direction: Direction, extending: bool) -> Self {
         let (push_direction, start_pos) = if extending {
-            (piston_direction, piston_direction.relative(piston_pos, 1))
+            (piston_direction, piston_direction.relative_by(piston_pos, 1))
         } else {
             (
                 piston_direction.opposite(),
-                piston_direction.relative(piston_pos, 2),
+                piston_direction.relative_by(piston_pos, 2),
             )
         };
         Self {
@@ -263,7 +263,7 @@ impl Resolver {
         }
         let back = self.push_direction.opposite();
         while is_sticky(state.kind) {
-            let behind = back.relative(front, line as i32);
+            let behind = back.relative_by(front, line as i32);
             let previous = state;
             state = world.block(behind);
             if state.air {
@@ -284,13 +284,13 @@ impl Resolver {
             }
         }
         for offset in (0..line).rev() {
-            if !self.push_block(back.relative(front, offset as i32)) {
+            if !self.push_block(back.relative_by(front, offset as i32)) {
                 return false;
             }
         }
         let mut frontier = front;
         loop {
-            frontier = self.push_direction.relative(frontier, 1);
+            frontier = self.push_direction.relative_by(frontier, 1);
             if let Some(seam) = self.to_push().iter().position(|p| *p == frontier) {
                 self.reorder_list_at_collision(line, seam);
                 let mut j = 0;
@@ -340,7 +340,7 @@ impl Resolver {
             if direction.axis() == self.push_direction.axis() {
                 continue;
             }
-            let side = direction.relative(origin, 1);
+            let side = direction.relative_by(origin, 1);
             let side_state = world.block(side);
             if !can_stick_to_each_other(side_state.kind, state.kind) {
                 continue;
@@ -449,7 +449,7 @@ pub fn trigger_event(
             Some(actions)
         }
         trigger::CONTRACT | trigger::DROP => {
-            let head = facing.relative(piston_pos, 1);
+            let head = facing.relative_by(piston_pos, 1);
             if view.front_moving_piston {
                 actions.push(TriggerAction::FinalTick { position: head });
             }
@@ -457,7 +457,7 @@ pub fn trigger_event(
                 flags: set_block_flags::RETRACT_BODY_TO_MOVING,
             });
             if sticky {
-                let front2 = facing.relative(head, 1);
+                let front2 = facing.relative_by(head, 1);
                 if view.front2_moving_piston_extending_same_direction {
                     actions.push(TriggerAction::FinalTick { position: front2 });
                 } else if event == trigger::CONTRACT
@@ -793,7 +793,7 @@ mod tests {
         fn line(dir: Direction, from: BlockPos, n: i32, block: PistonBlock) -> Self {
             let mut blocks = HashMap::new();
             for i in 1..=n {
-                blocks.insert(dir.relative(from, i), block);
+                blocks.insert(dir.relative_by(from, i), block);
             }
             Self { blocks }
         }

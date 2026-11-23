@@ -610,7 +610,7 @@ fn travel_fall_flying(state: &mut PlayerState, world: &impl World, movement: Vec
     let pre_h = vel.horizontal_sqr().sqrt();
     let g = effective_gravity(state, world, vel.y);
     let pitch = read_state!(world, state.pitch);
-    let look = crate::elytra::calculate_view_vector(read_state!(world, state.yaw), pitch);
+    let look = crate::math::calculate_view_vector(read_state!(world, state.yaw), pitch);
     let updated = crate::elytra::update_fall_flying_movement(vel, look, pitch, g);
     write_state!(world, state.velocity) = updated;
     let collision = move_player(state, world, updated)?;

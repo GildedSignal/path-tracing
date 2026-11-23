@@ -105,7 +105,7 @@ impl Direction {
     }
 
     #[inline]
-    pub const fn relative(self, [x, y, z]: BlockPos, n: i32) -> BlockPos {
+    pub const fn relative_by(self, [x, y, z]: BlockPos, n: i32) -> BlockPos {
         let [sx, sy, sz] = self.step();
         [x + sx * n, y + sy * n, z + sz * n]
     }
@@ -392,7 +392,7 @@ impl<B: Copy> NeighborQueue<B> {
                 idx,
             } => {
                 let dir = UPDATE_ORDER[*idx as usize];
-                let target = dir.relative(*origin, 1);
+                let target = dir.relative_by(*origin, 1);
                 let src = *source_block;
                 let skip_dir = *skip;
                 *idx += 1;
@@ -695,7 +695,7 @@ mod tests {
                             };
                             let mut incoming = [0u8; 4];
                             for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
-                                let npos = dir.relative(pos, 1);
+                                let npos = dir.relative_by(pos, 1);
                                 if let Some(Cell::Wire { power: np }) = world.get(&npos) {
                                     incoming[i] = *np;
                                 }
@@ -713,7 +713,7 @@ mod tests {
                             let mut sig = false;
                             for check_pos in [[pos[0], 1, 0], [pos[0], 2, 0]] {
                                 for dir in Direction::ALL {
-                                    let npos = dir.relative(check_pos, 1);
+                                    let npos = dir.relative_by(check_pos, 1);
                                     if matches!(world.get(&npos), Some(Cell::Wire { power }) if *power > 0) {
                                         sig = true;
                                     }
@@ -759,7 +759,7 @@ mod tests {
                 let prop_flags = update_flags::propagated_shape_flags(update_flags::ALL);
                 assert_eq!(prop_flags, update_flags::CLIENTS);
                 for dir in UPDATE_SHAPE_ORDER {
-                    let target = dir.relative([0, 64, 0], 1);
+                    let target = dir.relative_by([0, 64, 0], 1);
                     q.shape_update(dir.opposite(), 0u8, target, [0, 64, 0], prop_flags, 511);
                 }
             },
@@ -786,7 +786,7 @@ mod tests {
         assert!(!stats.overflowed);
         assert_eq!(
             shape_order_seen,
-            UPDATE_SHAPE_ORDER.map(|d| d.relative([0, 64, 0], 1))
+            UPDATE_SHAPE_ORDER.map(|d| d.relative_by([0, 64, 0], 1))
         );
 
         // Chained cap enforcement: max 3 drops the 4th update and records first_skipped_pos.

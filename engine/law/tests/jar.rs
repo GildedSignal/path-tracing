@@ -946,7 +946,7 @@ fn jar_world_hooks() {
             "PLATE_SIGNALS" => {
                 let p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 15 };
                 assert_eq!(p.own_signal(), 15);
-                let got: Vec<String> = Direction::VALUES.iter().map(|d| format!("{d:?}={}", p.direct_signal(*d)).to_ascii_uppercase()).collect();
+                let got: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", p.direct_signal(*d)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[2]);
             }
             "BUTTON_META" => {
@@ -1048,7 +1048,7 @@ fn jar_world_hooks() {
                 };
                 let mut ev = Vec::new();
                 button_press(&mut btn, [0, 64, 0], &mut ev);
-                let got_dirs: Vec<String> = Direction::VALUES.iter().map(|d| format!("{d:?}={}", btn.direct_signal(*d)).to_ascii_uppercase()).collect();
+                let got_dirs: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", btn.direct_signal(*d)).to_ascii_uppercase()).collect();
                 assert_eq!(got_dirs.join(","), f[3]);
                 assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &ev), f[4]);
             }
@@ -1247,7 +1247,7 @@ fn jar_world_hooks() {
             "TRIPWIRE_HOOK_SIGNAL" => {
                 let h = TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true };
                 assert_eq!(h.own_signal(), 15);
-                let got: Vec<String> = Direction::VALUES.iter().map(|d| format!("{d:?}={}", h.direct_signal(*d)).to_ascii_uppercase()).collect();
+                let got: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", h.direct_signal(*d)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[1]);
             }
             "BUBBLE" => {
@@ -3027,7 +3027,7 @@ fn jar_player_elytra_damage() {
                 let gravity = h64(c[3]);
                 let yaw = h32(c[4]);
                 let pitch = h32(c[5]);
-                let look = elytra::calculate_view_vector(yaw, pitch);
+                let look = law::math::calculate_view_vector(yaw, pitch);
                 assert_eq!(
                     (look.x.to_bits(), look.y.to_bits(), look.z.to_bits()),
                     (h64(c[6]).to_bits(), h64(c[7]).to_bits(), h64(c[8]).to_bits()),
@@ -4254,7 +4254,7 @@ fn jar_world_sim() {
     use law::boat::{self, BoatStatus, Controls as BoatControls};
     use law::fluid::{FlowKind, FluidCell};
     use law::footprint::RecordingWorld;
-    use law::interact::{AttachFace, Direction as InteractDir, DoorHalf};
+    use law::interact::{AttachFace, DoorHalf};
     use law::neighbor::{Direction, update_flags};
     use law::place::{DoorHinge, DoorPlaceState, Half};
     use law::sim::{
@@ -4416,7 +4416,7 @@ fn jar_world_sim() {
         let lever_pos = [0, 65, 0];
         sim.set_cell_raw(
             lever_pos,
-            SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false),
+            SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false),
         );
         for i in 1..=8 {
             sim.set_cell_raw([i, 65, 0], SimCell::redstone_wire(pal.redstone_wire, 0));
@@ -4429,7 +4429,7 @@ fn jar_world_sim() {
             door_low,
             SimCell::door(DoorPlaceState {
                 block_id: pal.iron_door,
-                facing: InteractDir::North,
+                facing: law::neighbor::Direction::North,
                 half: DoorHalf::Lower,
                 hinge: DoorHinge::Left,
                 open: false,
@@ -4440,7 +4440,7 @@ fn jar_world_sim() {
             door_high,
             SimCell::door(DoorPlaceState {
                 block_id: pal.iron_door,
-                facing: InteractDir::North,
+                facing: law::neighbor::Direction::North,
                 half: DoorHalf::Upper,
                 hinge: DoorHinge::Left,
                 open: false,
@@ -4573,7 +4573,7 @@ fn jar_world_sim() {
         sim.set_cell_raw([128, 64, 4], SimCell::piston(pal.sticky_piston, true, Direction::Up, false));
         sim.set_cell_raw([128, 65, 4], SimCell::slime(pal.slime_block));
         let c1_lever = [127, 65, 4];
-        sim.set_cell_raw(c1_lever, SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false));
+        sim.set_cell_raw(c1_lever, SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false));
         let pig_c1 = sim.spawn_living(pig_entity(128.5, 66.0, 4.5));
 
         sim.set_cell_raw([128, 65, 0], SimCell::piston(pal.sticky_piston, true, Direction::East, false));
@@ -4581,7 +4581,7 @@ fn jar_world_sim() {
         sim.set_cell_raw([129, 65, 1], SimCell::slime(pal.slime_block));
         sim.set_cell_raw([130, 65, 0], SimCell::stone(pal.stone));
         let c2_lever = [127, 65, 0];
-        sim.set_cell_raw(c2_lever, SimCell::lever(pal.lever, AttachFace::Floor, InteractDir::East, false));
+        sim.set_cell_raw(c2_lever, SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false));
         let pig_c2 = sim.spawn_living(pig_entity(129.5, 66.0, 0.5));
 
         sim.pull_lever(c1_lever);
@@ -4793,7 +4793,8 @@ fn jar_world_sim() {
 
 #[test]
 fn jar_mounts_breath_void() {
-    use law::breath::{tick_air, BreathEffects, BreathRandom};
+    use law::breath::{tick_air, BreathEffects};
+    use law::math::JavaRandom;
     use law::mounts::{
         boost_factor, execute_riders_jump_camel, execute_riders_jump_horse,
         player_jump_pending_scale, ridden_input_happy_ghast, ridden_input_horse,
@@ -5043,7 +5044,7 @@ fn jar_mounts_breath_void() {
                 };
                 let bubble = mode == 1;
                 let invuln = mode == 4;
-                let mut rng = BreathRandom::new(seed);
+                let mut rng = JavaRandom::new(seed);
                 let mut h: u64 = 0xcbf29ce484222325;
                 let mut got_hits = Vec::new();
                 for t in 1..=ticks {

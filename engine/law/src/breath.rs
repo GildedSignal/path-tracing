@@ -24,37 +24,6 @@ pub struct BreathEffects {
     pub breath_of_the_nautilus: bool,
 }
 
-/// RandomSource.create → LegacyRandomSource: the java.util.Random 48-bit LCG,
-/// the exact stream decreaseAirSupply draws from (BitRandomSource.nextDouble).
-#[derive(Clone, Debug)]
-pub struct BreathRandom {
-    seed: u64,
-}
-
-impl BreathRandom {
-    /// LegacyRandomSource(seed): setSeed stores (seed ^ 0x5DEECE66D) & (2^48 - 1).
-    pub fn new(seed: i64) -> Self {
-        Self {
-            seed: ((seed as u64) ^ 0x5DEECE66D) & ((1u64 << 48) - 1),
-        }
-    }
-
-    fn next(&mut self, bits: u32) -> i32 {
-        self.seed = self
-            .seed
-            .wrapping_mul(0x5DEECE66D)
-            .wrapping_add(0xB)
-            & ((1u64 << 48) - 1);
-        (self.seed >> (48 - bits)) as i32
-    }
-
-    /// ((next(26) << 27) + next(27)) * 2^-53.
-    pub fn next_double(&mut self) -> f64 {
-        let bits = (((self.next(26) as i64) << 27) + self.next(27) as i64) as u64;
-        bits as f64 * f64::from_bits(0x3CA0_0000_0000_0000)
-    }
-}
-
 /// MobEffectUtil.hasWaterBreathing: any of water breathing, conduit power,
 /// breath of the nautilus. All three stop air loss.
 pub fn has_water_breathing(effects: &BreathEffects) -> bool {
@@ -71,7 +40,7 @@ pub fn effects_refill_air_supply(effects: &BreathEffects) -> bool {
 /// Respiration level L contributes L.0 (enchantment/respiration.json: linear, base 1.0,
 /// per_level_above_first 1.0, add_value, head slot). The draw happens only when the
 /// bonus is positive, exactly as the bytecode orders it.
-pub fn decrease_air_supply(air: i32, oxygen_bonus: f64, random: &mut BreathRandom) -> i32 {
+pub fn decrease_air_supply(air: i32, oxygen_bonus: f64, random: &mut crate::math::JavaRandom) -> i32 {
     if oxygen_bonus > 0.0 && random.next_double() >= 1.0 / (oxygen_bonus + 1.0) {
         air
     } else {
@@ -110,7 +79,7 @@ pub fn tick_air(
     oxygen_bonus: f64,
     player_invulnerable: bool,
     can_breathe_underwater: bool,
-    random: &mut BreathRandom,
+    random: &mut crate::math::JavaRandom,
 ) -> (i32, Option<DrownHit>) {
     if eye_in_water && !eye_in_bubble_column {
         if !can_breathe_underwater && !has_water_breathing(effects) && !player_invulnerable {

@@ -1,6 +1,6 @@
 //! Interaction reach, eye ray / clip, and synchronous redstone interaction laws (26.2).
 
-use crate::{blocks, elytra, world, Aabb, Axis, BlockPos, Vec3, VoxelShape};
+use crate::{blocks, world, Aabb, BlockPos, Vec3, VoxelShape};
 
 /// `Player.DEFAULT_BLOCK_INTERACTION_RANGE` (`Attributes.BLOCK_INTERACTION_RANGE` base).
 pub const DEFAULT_BLOCK_INTERACTION_RANGE: f64 = 4.5;
@@ -14,52 +14,11 @@ pub const CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER: f64 = 2.0;
 /// `ServerGamePacketListenerImpl.handleUseItemOn` and `ServerPlayerGameMode.handleBlockBreakAction`.
 pub const SERVER_INTERACTION_RANGE_TOLERANCE: f64 = 1.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Direction {
-    Down = 0,
-    Up = 1,
-    North = 2,
-    South = 3,
-    West = 4,
-    East = 5,
-}
+pub use crate::neighbor::Direction;
 
 impl Direction {
-    /// `Direction.VALUES` declaration order.
-    pub const VALUES: [Self; 6] = [
-        Self::Down,
-        Self::Up,
-        Self::North,
-        Self::South,
-        Self::West,
-        Self::East,
-    ];
-
     /// `Direction.BY_2D_DATA` order (`[SOUTH, WEST, NORTH, EAST]`).
     pub const BY_2D: [Self; 4] = [Self::South, Self::West, Self::North, Self::East];
-
-    pub const fn opposite(self) -> Self {
-        match self {
-            Self::Down => Self::Up,
-            Self::Up => Self::Down,
-            Self::North => Self::South,
-            Self::South => Self::North,
-            Self::West => Self::East,
-            Self::East => Self::West,
-        }
-    }
-
-    pub const fn axis(self) -> Axis {
-        match self {
-            Self::Down | Self::Up => Axis::Y,
-            Self::North | Self::South => Axis::Z,
-            Self::West | Self::East => Axis::X,
-        }
-    }
-
-    pub const fn is_horizontal(self) -> bool {
-        matches!(self, Self::North | Self::South | Self::West | Self::East)
-    }
 
     pub const fn clock_wise(self) -> Self {
         match self {
@@ -78,17 +37,6 @@ impl Direction {
             Self::South => Self::East,
             Self::East => Self::North,
             Self::Down | Self::Up => panic!("unable to get CCW facing of vertical direction"),
-        }
-    }
-
-    pub const fn step(self) -> [i32; 3] {
-        match self {
-            Self::Down => [0, -1, 0],
-            Self::Up => [0, 1, 0],
-            Self::North => [0, 0, -1],
-            Self::South => [0, 0, 1],
-            Self::West => [-1, 0, 0],
-            Self::East => [1, 0, 0],
         }
     }
 
@@ -112,7 +60,7 @@ impl Direction {
     pub fn get_approximate_nearest_f32(x: f32, y: f32, z: f32) -> Self {
         let mut best = Self::North;
         let mut best_dot = f32::from_bits(1); // Float.MIN_VALUE = 1.4E-45f
-        for dir in Self::VALUES {
+        for dir in Self::ALL {
             let [nx, ny, nz] = dir.step();
             let dot = x * (nx as f32) + y * (ny as f32) + z * (nz as f32);
             if dot > best_dot {
@@ -233,11 +181,6 @@ pub fn is_within_block_interaction_range(
         (pos[2] + 1) as f64,
     );
     aabb_distance_to_sqr(box_pos, eye_pos) < d * d
-}
-
-/// `Entity.getViewVector` / `Entity.calculateViewVector` (`@0-67`).
-pub fn calculate_view_vector(yaw: f32, pitch: f32) -> Vec3 {
-    elytra::calculate_view_vector(yaw, pitch)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -680,7 +623,7 @@ pub trait RedstoneWorld {
 /// `SignalGetter.getDirectSignalTo(BlockPos)`.
 pub fn get_direct_signal_to(world: &impl RedstoneWorld, pos: BlockPos) -> u8 {
     let mut best = 0u8;
-    for dir in Direction::VALUES {
+    for dir in Direction::ALL {
         let neighbor = world.cell(dir.relative(pos));
         let sig = match neighbor.kind {
             RedstoneCellKind::Lever(l) => l.direct_signal(dir),
@@ -712,7 +655,7 @@ pub fn get_signal(world: &impl RedstoneWorld, pos: BlockPos, _dir: Direction) ->
 
 /// `SignalGetter.hasNeighborSignal(BlockPos)` (`@0-111`): scans `Direction.VALUES`.
 pub fn has_neighbor_signal(world: &impl RedstoneWorld, pos: BlockPos) -> bool {
-    for dir in Direction::VALUES {
+    for dir in Direction::ALL {
         if get_signal(world, dir.relative(pos), dir) > 0 {
             return true;
         }
@@ -963,7 +906,7 @@ mod part1_tests {
     #[test]
     fn view_math_directions_and_clip_witnesses() {
         // witness-run.txt:21-27
-        let v00 = calculate_view_vector(0.0, 0.0);
+        let v00 = crate::math::calculate_view_vector(0.0, 0.0);
         assert_eq!(v00.x.to_bits(), 0);
         assert_eq!(v00.y.to_bits(), 0x8000_0000_0000_0000); // -0.0
         assert_eq!(v00.z.to_bits(), 0x3ff0_0000_0000_0000);
@@ -1201,7 +1144,7 @@ mod part6_tests {
         // X7 signal table (checker-output.txt:18-25)
         let RedstoneCellKind::Lever(l_on) = w.cell([0, 64, 0]).kind else { unreachable!() };
         assert_eq!(l_on.signal(), 15);
-        for d in Direction::VALUES {
+        for d in Direction::ALL {
             assert_eq!(l_on.direct_signal(d), if d == Direction::East { 15 } else { 0 });
         }
         ev.clear();

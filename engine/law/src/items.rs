@@ -504,7 +504,7 @@ pub fn merge_survivor_state(age_a: i32, delay_a: i32, age_b: i32, delay_b: i32) 
 
 /// Spawner-constructor random motion (`ItemEntity.<init>(Level,x,y,z,ItemStack)` 23-61):
 /// `(r*0.2 - 0.1, 0.2, r*0.2 - 0.1)`.
-pub fn spawn_velocity(rng: &mut JavaRandom) -> Vec3 {
+pub fn spawn_velocity(rng: &mut math::JavaRandom) -> Vec3 {
     Vec3::new(rng.next_double() * 0.2 - 0.1, 0.2, rng.next_double() * 0.2 - 0.1)
 }
 
@@ -515,7 +515,7 @@ pub fn drop_origin(eye_y: f64) -> (f64, f64) {
 
 /// Aimed-throw velocity (the only branch `Player.drop(stack, boolean)` reaches:
 /// `drop(stack, false=false-around, includeThrowerName)`), 125-296.
-pub fn drop_velocity_aimed(pitch: f32, yaw: f32, rng: &mut JavaRandom) -> Vec3 {
+pub fn drop_velocity_aimed(pitch: f32, yaw: f32, rng: &mut math::JavaRandom) -> Vec3 {
     let f8 = math::sin((pitch * 0.017453292f32) as f64);
     let f9 = math::cos((pitch * 0.017453292f32) as f64);
     let f10 = math::sin((yaw * 0.017453292f32) as f64);
@@ -530,7 +530,7 @@ pub fn drop_velocity_aimed(pitch: f32, yaw: f32, rng: &mut JavaRandom) -> Vec3 {
 }
 
 /// Random-toss branch (`dropAround = true`; not reachable from `Player.drop`), 64-122.
-pub fn drop_velocity_toss(rng: &mut JavaRandom) -> Vec3 {
+pub fn drop_velocity_toss(rng: &mut math::JavaRandom) -> Vec3 {
     let f = rng.next_float() * 0.5f32;
     let t = rng.next_float() * 6.2831855f32;
     Vec3::new((-(math::sin(t as f64) * f)) as f64, 0.2, (math::cos(t as f64) * f) as f64)
@@ -668,7 +668,7 @@ pub fn unbreaking_remove_chance(is_armor: bool, level: i32) -> f32 {
 /// probability `chance`; for `damage > 128` with both binomial tails `>= 20` a Gaussian
 /// approximation (`floor(n*p) + nextGaussian() * sqrt(n*p*(1-p))`, clamped) is used instead.
 /// Returns the damage that survives (is dealt).
-pub fn remove_binomial(chance: f32, damage: i32, rng: &mut JavaRandom) -> i32 {
+pub fn remove_binomial(chance: f32, damage: i32, rng: &mut math::JavaRandom) -> i32 {
     let n = damage as f32;
     if n > 128.0 && (n * chance) >= 20.0 && (n * (1.0 - chance)) >= 20.0 {
         let mean = (n * chance) as f64; // Math.floor of the product
@@ -693,61 +693,12 @@ pub fn remove_binomial(chance: f32, damage: i32, rng: &mut JavaRandom) -> i32 {
 /// infinite-materials players; `amount <= 0` or unenchanted passes through unchanged; else
 /// Unbreaking runs. The returned damage is added to `damage_value` in `applyDamage`
 /// (item breaks when the new value reaches `maxDamage`).
-pub fn durability_change(is_damageable: bool, amount: i32, unbreaking_level: i32, is_armor: bool, rng: &mut JavaRandom) -> i32 {
+pub fn durability_change(is_damageable: bool, amount: i32, unbreaking_level: i32, is_armor: bool, rng: &mut math::JavaRandom) -> i32 {
     if !is_damageable || amount <= 0 || unbreaking_level <= 0 {
         return amount;
     }
     let chance = unbreaking_remove_chance(is_armor, unbreaking_level);
     remove_binomial(chance, amount, rng)
-}
-
-/// `SingleThreadedRandomSource` = the 48-bit java.util.Random LCG, as returned by
-/// `RandomSource.create(long)`: `seed = (s ^ 0x5DEECE66D) & (2^48 - 1)`,
-/// `next(bits) = seed' >>> (48 - bits)`, with `MarsagliaPolarGaussian` for gaussians.
-pub struct JavaRandom {
-    seed: u64,
-    next_gaussian: f64,
-    has_gaussian: bool,
-}
-
-impl JavaRandom {
-    pub fn new(seed: i64) -> Self {
-        Self { seed: (seed as u64 ^ 0x5DEECE66D) & 0xFFFF_FFFF_FFFF, next_gaussian: 0.0, has_gaussian: false }
-    }
-
-    fn next(&mut self, bits: u32) -> i32 {
-        self.seed = self.seed.wrapping_mul(0x5DEECE66D).wrapping_add(0xB) & 0xFFFF_FFFF_FFFF;
-        (self.seed >> (48 - bits)) as i32
-    }
-
-    /// RandomSource.nextFloat default: `next(24) / (1 << 24)`.
-    pub fn next_float(&mut self) -> f32 {
-        self.next(24) as f32 / (1 << 24) as f32
-    }
-
-    /// RandomSource.nextDouble default: `((next(26) << 27) + next(27)) * 2^-53`.
-    pub fn next_double(&mut self) -> f64 {
-        (((self.next(26) as i64) << 27) + self.next(27) as i64) as f64 / (1u64 << 53) as f64
-    }
-
-    /// MarsagliaPolarGaussian.nextGaussian 17-108.
-    pub fn next_gaussian(&mut self) -> f64 {
-        if self.has_gaussian {
-            self.has_gaussian = false;
-            return self.next_gaussian;
-        }
-        loop {
-            let d0 = 2.0 * self.next_double() - 1.0;
-            let d1 = 2.0 * self.next_double() - 1.0;
-            let s = d0 * d0 + d1 * d1;
-            if s < 1.0 && s > 0.0 {
-                let g = (-2.0 * s.ln() / s).sqrt();
-                self.next_gaussian = d1 * g;
-                self.has_gaussian = true;
-                return d0 * g;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -769,7 +720,7 @@ mod item_entity_tests {
 
     #[test]
     fn stone_motion_replays_jar() {
-        let mut rng = JavaRandom::new(0x262);
+        let mut rng = math::JavaRandom::new(0x262);
         let v0 = spawn_velocity(&mut rng);
         assert_eq!(bits_d(v0.x), 0x3FA217997C8B0898);
         assert_eq!(bits_d(v0.y), 0x3FC999999999999A);
@@ -876,7 +827,7 @@ mod item_entity_tests {
             (2, [0x00000000, 0x00000000, 0x3F800000, 0x00000000]),
             (3, [0x00000000, 0x3F800000, 0x00000000, 0x00000000]),
         ] {
-            let mut rng = JavaRandom::new(990001 + lvl as i64);
+            let mut rng = math::JavaRandom::new(990001 + lvl as i64);
             for e in expect {
                 assert_eq!(bits_f(remove_binomial(unbreaking_remove_chance(false, lvl), 1, &mut rng) as f32), e, "l{}", lvl);
             }
@@ -884,7 +835,7 @@ mod item_entity_tests {
         // take probabilities (harness: 0.49991/0.33379/0.24882 generic, 0.79883/0.73183/0.70079 armor)
         for (lvl, generic, armor) in [(1i32, 0.49991, 0.79883), (2, 0.33379, 0.73183), (3, 0.24882, 0.70079)] {
             for (is_armor, want) in [(false, generic), (true, armor)] {
-                let mut rng = JavaRandom::new(770001 + lvl as i64);
+                let mut rng = math::JavaRandom::new(770001 + lvl as i64);
                 let mut taken = 0i64;
                 for _ in 0..100_000 {
                     taken += durability_change(true, 1, lvl, is_armor, &mut rng) as i64;
@@ -894,7 +845,7 @@ mod item_entity_tests {
             }
         }
         // gaussian branch: damage 200, generic l3 -> mean ~50
-        let mut rng = JavaRandom::new(550001);
+        let mut rng = math::JavaRandom::new(550001);
         let mut sum = 0.0;
         for _ in 0..2000 {
             sum += durability_change(true, 200, 3, false, &mut rng) as f64;
@@ -904,7 +855,7 @@ mod item_entity_tests {
 
     #[test]
     fn drop_velocity_replays_jar() {
-        let mut rng = JavaRandom::new(0xD10);
+        let mut rng = math::JavaRandom::new(0xD10);
         let v = drop_velocity_aimed(30.0, 45.0, &mut rng);
         // y is pure table-trig float math: bit-exact. x/z mix in java.lang.Math.cos/sin on the
         // jitter angle, which may differ from Rust's libm by <= 1 ulp.

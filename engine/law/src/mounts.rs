@@ -39,18 +39,6 @@ pub fn boost_factor(boosting: bool, boost_time: i32, boost_time_total: i32) -> f
     }
 }
 
-/// `Mth.wrapDegrees(float)`: `% 360`, `>= 180 -> -360`, `< -180 -> +360`.
-fn wrap_degrees(mut f: f32) -> f32 {
-    f %= 360.0;
-    if f >= 180.0 {
-        f -= 360.0;
-    }
-    if f < -180.0 {
-        f += 360.0;
-    }
-    f
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MountKind {
     /// `AbstractHorse` family (horse, skeleton horse, zombie horse, donkey, mule).
@@ -246,7 +234,7 @@ pub fn execute_riders_jump_camel(m: &mut MountState, scale: f32) {
 /// `HappyGhast.tickRidden` — the mount's yaw chases the rider's by
 /// `0.08 * wrapDegrees(target - yaw)`.
 pub fn tick_ridden_happy_ghast(m: &mut MountState, player_yaw: f32, player_pitch: f32) {
-    let delta = wrap_degrees(player_yaw - m.yaw);
+    let delta = crate::math::wrap_degrees(player_yaw - m.yaw);
     m.yaw = m.yaw + delta * 0.08f32;
     let _ = player_pitch * 0.5f32;
 }

@@ -6,21 +6,10 @@
 
 use crate::{math, Vec3};
 
-/// `Entity.getLookAngle` -> `Entity.calculateViewVector(xRot, yRot)` (`@0-64`).
-pub fn calculate_view_vector(yaw: f32, pitch: f32) -> Vec3 {
-    let f = pitch * 0.017453292f32;
-    let g = -yaw * 0.017453292f32;
-    let sin_g = math::sin(g as f64);
-    let cos_g = math::cos(g as f64);
-    let sin_f = math::sin(f as f64);
-    let cos_f = math::cos(f as f64);
-    Vec3::new((sin_g * cos_f) as f64, (-sin_f) as f64, (cos_g * cos_f) as f64)
-}
-
 /// `FireworkRocketEntity.tick` (`@75-174`) velocity rewrite in Mojang's exact
 /// bytecode association: `v + look * 0.1 + (look * 1.5 - v) * 0.5`.
 pub fn firework_boost(vel: Vec3, yaw: f32, pitch: f32) -> Vec3 {
-    let look = calculate_view_vector(yaw, pitch);
+    let look = crate::math::calculate_view_vector(yaw, pitch);
     vel.plus(Vec3::new(
         look.x * 0.1 + (look.x * 1.5 - vel.x) * 0.5,
         look.y * 0.1 + (look.y * 1.5 - vel.y) * 0.5,
@@ -127,7 +116,7 @@ pub fn jvm_dcos(x: f64) -> f64 {
 }
 
 /// `LivingEntity.updateFallFlyingMovement` (`@0-262`): one tick of the glide velocity
-/// recurrence. `look` is `calculate_view_vector(yaw, pitch)`; `gravity` is `effective_gravity`.
+/// recurrence. `look` is `crate::math::calculate_view_vector(yaw, pitch)`; `gravity` is `effective_gravity`.
 pub fn update_fall_flying_movement(v: Vec3, look: Vec3, pitch: f32, gravity: f64) -> Vec3 {
     let f = f32_rad(pitch);
     // @14-36 d0 = sqrt(look.x*look.x + look.z*look.z)
@@ -793,7 +782,7 @@ mod tests {
     fn firework_look_and_3_tick_boost_witnesses() {
         let yaw = -30.0f32;
         let pitch = 15.0f32;
-        let look = calculate_view_vector(yaw, pitch);
+        let look = crate::math::calculate_view_vector(yaw, pitch);
         // witness.txt:3
         assert_eq!(look.x.to_bits(), 0x3fde_e88f_e000_0000);
         assert_eq!(look.y.to_bits(), 0xbfd0_8f7a_c000_0000);
@@ -809,7 +798,7 @@ mod tests {
             (33.3, -127.7, [0x3fd5_7caf_a000_0000, 0x3fe9_51bd_4000_0000, 0xbfe0_5acd_a000_0000]),
         ];
         for &(y, p, exp) in look_cases {
-            let l = calculate_view_vector(y, p);
+            let l = crate::math::calculate_view_vector(y, p);
             assert_eq!([l.x.to_bits(), l.y.to_bits(), l.z.to_bits()], exp, "yaw={y} pitch={p}");
         }
 

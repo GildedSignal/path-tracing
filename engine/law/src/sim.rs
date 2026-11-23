@@ -18,7 +18,7 @@ use crate::fluid::{
 };
 use crate::footprint::Footprint;
 use crate::interact::{
-    self, AttachFace, BlockId, Direction as InteractDir, DoorHalf,
+    self, AttachFace, BlockId, DoorHalf,
     FenceGateState, LeverState, RedstoneCell, RedstoneCellKind, RedstoneDoorState, RedstoneEvent,
     RedstoneWorld, TrapDoorState,
 };
@@ -51,34 +51,6 @@ use crate::world_hooks::{
 use crate::{
     Aabb, Block, BlockPos, CollisionContext, Fluid, FluidFlowBlock, FluidKind, Inside, Vec3, VoxelShape, World,
 };
-
-// ============================================================================
-// 1. Direction conversions (lossless between identical 0..=5 representations)
-// ============================================================================
-
-#[inline]
-pub const fn to_interact_dir(dir: Direction) -> InteractDir {
-    match dir {
-        Direction::Down => InteractDir::Down,
-        Direction::Up => InteractDir::Up,
-        Direction::North => InteractDir::North,
-        Direction::South => InteractDir::South,
-        Direction::West => InteractDir::West,
-        Direction::East => InteractDir::East,
-    }
-}
-
-#[inline]
-pub const fn from_interact_dir(dir: InteractDir) -> Direction {
-    match dir {
-        InteractDir::Down => Direction::Down,
-        InteractDir::Up => Direction::Up,
-        InteractDir::North => Direction::North,
-        InteractDir::South => Direction::South,
-        InteractDir::West => Direction::West,
-        InteractDir::East => Direction::East,
-    }
-}
 
 #[inline]
 fn zyx_key(p: BlockPos) -> (i32, i32, i32) {
@@ -763,7 +735,7 @@ impl SimCell {
         c
     }
 
-    pub fn lever(id: BlockId, face: AttachFace, facing: InteractDir, powered: bool) -> Self {
+    pub fn lever(id: BlockId, face: AttachFace, facing: Direction, powered: bool) -> Self {
         let mut c = Self {
             id,
             state: CellState::Lever(LeverState {
@@ -1238,7 +1210,7 @@ impl SimCell {
                 }
             }
             CellState::Door(d) => {
-                let b = door_collision_box(from_interact_dir(d.facing), d.hinge, d.open);
+                let b = door_collision_box(d.facing, d.hinge, d.open);
                 self.block = Block {
                     fluid_flow,
                     ..Block::boxes(&[b])
@@ -1291,7 +1263,7 @@ impl SimCell {
                 self.block = b;
             }
             CellState::Stair(s) => {
-                let boxes = stair_collision_boxes(from_interact_dir(s.facing), s.half);
+                let boxes = stair_collision_boxes(s.facing, s.half);
                 self.block = Block {
                     fluid: waterlogged_fluid(s.waterlogged),
                     fluid_flow,
@@ -1400,9 +1372,9 @@ fn door_collision_box(facing: Direction, hinge: DoorHinge, open: bool) -> Aabb {
     let eff = if !open {
         facing
     } else if hinge == DoorHinge::Left {
-        from_interact_dir(to_interact_dir(facing).clock_wise())
+        (facing).clock_wise()
     } else {
-        from_interact_dir(to_interact_dir(facing).counter_clock_wise())
+        (facing).counter_clock_wise()
     };
     let t = 3.0 / 16.0;
     match eff {
@@ -2082,7 +2054,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             let prop_flags = update_flags::propagated_shape_flags(flags);
             if let Some(q) = queue {
                 for dir in UPDATE_SHAPE_ORDER {
-                    let neighbor_pos = dir.relative(pos, 1);
+                    let neighbor_pos = dir.relative_by(pos, 1);
                     let neighbor = self.cell(neighbor_pos);
                     if update_flags::skip_shape_update_on_wire(
                         prop_flags,
@@ -2177,7 +2149,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 for dir in Direction::ALL {
                     self.enqueue_update_neighbors(
                         queue.as_deref_mut(),
-                        dir.relative(pos, 1),
+                        dir.relative_by(pos, 1),
                         old_cell.id,
                         None,
                     );
@@ -2211,7 +2183,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 for dir in [Direction::Up, Direction::Down] {
                     self.enqueue_update_neighbors(
                         queue.as_deref_mut(),
-                        dir.relative(pos, 1),
+                        dir.relative_by(pos, 1),
                         new_cell.id,
                         None,
                     );
@@ -2262,12 +2234,12 @@ impl<'a, W: World> SimWorld<'a, W> {
         wire_id: BlockId,
     ) {
         for dir in Direction::HORIZONTAL {
-            let side = dir.relative(pos, 1);
+            let side = dir.relative_by(pos, 1);
             self.enqueue_update_neighbors(queue.as_deref_mut(), side, wire_id, None);
             let target = if self.cell(side).props.is_redstone_conductor {
-                Direction::Up.relative(side, 1)
+                Direction::Up.relative_by(side, 1)
             } else {
-                Direction::Down.relative(side, 1)
+                Direction::Down.relative_by(side, 1)
             };
             self.enqueue_update_neighbors(queue.as_deref_mut(), target, wire_id, None);
         }
@@ -2305,8 +2277,8 @@ impl<'a, W: World> SimWorld<'a, W> {
                             return;
                         }
                         let other_pos = match door.half {
-                            DoorHalf::Lower => Direction::Up.relative(pos, 1),
-                            DoorHalf::Upper => Direction::Down.relative(pos, 1),
+                            DoorHalf::Lower => Direction::Up.relative_by(pos, 1),
+                            DoorHalf::Upper => Direction::Down.relative_by(pos, 1),
                         };
                         let sig = self.has_neighbor_signal(pos) || self.has_neighbor_signal(other_pos);
                         if let Some((new_powered, flags)) =
@@ -2414,7 +2386,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         let support = self.cell(neighbor_pos);
                         let sturdy = support.props.sturdy_faces[direction.opposite() as usize];
                         if neighbor::ladder_update_shape_pops(
-                            from_interact_dir(ladder.facing),
+                            ladder.facing,
                             direction,
                             sturdy,
                         ) {
@@ -2554,27 +2526,27 @@ impl<'a, W: World> SimWorld<'a, W> {
         match cell.props.survive_rule {
             SurviveRule::Always => true,
             SurviveRule::FloorSturdy => {
-                let below = self.cell(Direction::Down.relative(pos, 1));
+                let below = self.cell(Direction::Down.relative_by(pos, 1));
                 below.props.sturdy_faces[Direction::Up as usize]
             }
             SurviveRule::Attached => match cell.state {
                 CellState::Lever(l) => {
-                    let attach = from_interact_dir(l.connected_direction().opposite());
-                    let support = attach.relative(pos, 1);
+                    let attach = l.connected_direction().opposite();
+                    let support = attach.relative_by(pos, 1);
                     self.cell(support).props.sturdy_faces[attach.opposite() as usize]
                 }
                 CellState::Button(b) => {
-                    let attach = from_interact_dir(b.connected_direction().opposite());
-                    let support = attach.relative(pos, 1);
+                    let attach = b.connected_direction().opposite();
+                    let support = attach.relative_by(pos, 1);
                     self.cell(support).props.sturdy_faces[attach.opposite() as usize]
                 }
                 CellState::Ladder(l) => place::ladder_can_survive(pos, l.facing, |p, f| {
-                    self.cell(p).props.sturdy_faces[from_interact_dir(f) as usize]
+                    self.cell(p).props.sturdy_faces[(f) as usize]
                 }),
                 CellState::TripwireHook(h) => {
-                    let attach = from_interact_dir(h.facing.opposite());
-                    let support = attach.relative(pos, 1);
-                    self.cell(support).props.sturdy_faces[from_interact_dir(h.facing) as usize]
+                    let attach = h.facing.opposite();
+                    let support = attach.relative_by(pos, 1);
+                    self.cell(support).props.sturdy_faces[(h.facing) as usize]
                 }
                 _ => true,
             },
@@ -2587,23 +2559,23 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     fn wire_has_connections(&self, pos: BlockPos) -> [bool; 4] {
         let above_conductor = self
-            .cell(Direction::Up.relative(pos, 1))
+            .cell(Direction::Up.relative_by(pos, 1))
             .props
             .is_redstone_conductor;
         let mut conn = [false; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
-            let side = dir.relative(pos, 1);
+            let side = dir.relative_by(pos, 1);
             let sc = self.cell(side);
             let flat = matches!(sc.state, CellState::RedstoneWire { .. }) || sc.props.is_signal_source;
             if flat {
                 conn[i] = true;
             } else if sc.props.is_redstone_conductor {
                 if !above_conductor {
-                    let up = Direction::Up.relative(side, 1);
+                    let up = Direction::Up.relative_by(side, 1);
                     conn[i] = matches!(self.cell(up).state, CellState::RedstoneWire { .. });
                 }
             } else {
-                let down = Direction::Down.relative(side, 1);
+                let down = Direction::Down.relative_by(side, 1);
                 conn[i] = matches!(self.cell(down).state, CellState::RedstoneWire { .. });
             }
         }
@@ -2662,10 +2634,10 @@ impl<'a, W: World> SimWorld<'a, W> {
                     0
                 }
             }
-            CellState::Lever(l) => l.direct_signal(to_interact_dir(dir)),
-            CellState::Button(b) => b.direct_signal(to_interact_dir(dir)),
-            CellState::PressurePlate(p) => p.direct_signal(to_interact_dir(dir)),
-            CellState::TripwireHook(h) => h.direct_signal(to_interact_dir(dir)),
+            CellState::Lever(l) => l.direct_signal(dir),
+            CellState::Button(b) => b.direct_signal(dir),
+            CellState::PressurePlate(p) => p.direct_signal(dir),
+            CellState::TripwireHook(h) => h.direct_signal(dir),
             _ => 0,
         }
     }
@@ -2673,7 +2645,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     pub fn get_direct_signal_to(&self, pos: BlockPos, wire_should_signal: bool) -> u8 {
         let mut best = 0u8;
         for dir in Direction::ALL {
-            let sig = self.get_direct_signal(dir.relative(pos, 1), dir, wire_should_signal);
+            let sig = self.get_direct_signal(dir.relative_by(pos, 1), dir, wire_should_signal);
             if sig >= 15 {
                 return 15;
             }
@@ -2687,7 +2659,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     pub fn get_best_neighbor_signal(&self, pos: BlockPos, wire_should_signal: bool) -> u8 {
         let mut best = 0u8;
         for dir in Direction::ALL {
-            let sig = self.get_signal(dir.relative(pos, 1), dir, wire_should_signal);
+            let sig = self.get_signal(dir.relative_by(pos, 1), dir, wire_should_signal);
             if sig >= 15 {
                 return 15;
             }
@@ -2700,7 +2672,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     pub fn has_neighbor_signal(&self, pos: BlockPos) -> bool {
         for dir in Direction::ALL {
-            if self.get_signal(dir.relative(pos, 1), dir, true) > 0 {
+            if self.get_signal(dir.relative_by(pos, 1), dir, true) > 0 {
                 return true;
             }
         }
@@ -2709,16 +2681,16 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     fn piston_has_neighbor_signal(&self, pos: BlockPos, facing: Direction) -> bool {
         for dir in Direction::ALL {
-            if dir != facing && self.get_signal(dir.relative(pos, 1), dir, true) > 0 {
+            if dir != facing && self.get_signal(dir.relative_by(pos, 1), dir, true) > 0 {
                 return true;
             }
         }
         if self.get_signal(pos, Direction::Down, true) > 0 {
             return true;
         }
-        let above = Direction::Up.relative(pos, 1);
+        let above = Direction::Up.relative_by(pos, 1);
         for dir in Direction::ALL {
-            if dir != Direction::Down && self.get_signal(dir.relative(above, 1), dir, true) > 0 {
+            if dir != Direction::Down && self.get_signal(dir.relative_by(above, 1), dir, true) > 0 {
                 return true;
             }
         }
@@ -2735,22 +2707,22 @@ impl<'a, W: World> SimWorld<'a, W> {
         };
         let block_sig = self.get_best_neighbor_signal(pos, false);
         let above_conductor = self
-            .cell(Direction::Up.relative(pos, 1))
+            .cell(Direction::Up.relative_by(pos, 1))
             .props
             .is_redstone_conductor;
         let mut incoming = [0u8; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
-            let side = dir.relative(pos, 1);
+            let side = dir.relative_by(pos, 1);
             let side_cell = self.cell(side);
             let flat = match side_cell.state {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
-            let up_wire = match self.cell(Direction::Up.relative(side, 1)).state {
+            let up_wire = match self.cell(Direction::Up.relative_by(side, 1)).state {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
-            let down_wire = match self.cell(Direction::Down.relative(side, 1)).state {
+            let down_wire = match self.cell(Direction::Down.relative_by(side, 1)).state {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
@@ -2776,7 +2748,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             let mut fan = Vec::with_capacity(7);
             fan.push(pos);
             for dir in Direction::ALL {
-                let np = dir.relative(pos, 1);
+                let np = dir.relative_by(pos, 1);
                 if !fan.contains(&np) {
                     fan.push(np);
                 }
@@ -2809,7 +2781,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 Direction::East,
                 Direction::West,
             ] {
-                let nc = self.cell(dir.relative(pos, 1));
+                let nc = self.cell(dir.relative_by(pos, 1));
                 if nc.fluid_info().is_some_and(|(k, _)| matches!(k, FlowKind::Water)) {
                     water_above_or_beside = true;
                 }
@@ -2818,7 +2790,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 }
             }
         }
-        let soul_soil_below = self.cell(Direction::Down.relative(pos, 1)).props.soul_soil;
+        let soul_soil_below = self.cell(Direction::Down.relative_by(pos, 1)).props.soul_soil;
         let (contact, should_sched) = fluid::should_spread_liquid(
             is_lava,
             cell.source,
@@ -2925,7 +2897,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let mut max_neighbor = 0u8;
         let mut source_neighbors = 0u8;
         for dir in Direction::HORIZONTAL {
-            let np = dir.relative(pos, 1);
+            let np = dir.relative_by(pos, 1);
             let nc = self.cell(np);
             if let Some((nk, nfluid)) = nc.fluid_info() {
                 if Self::same_fluid_kind(kind, nk) && self.can_pass_through_wall(dir, pos, np) {
@@ -2936,14 +2908,14 @@ impl<'a, W: World> SimWorld<'a, W> {
                 }
             }
         }
-        let above = Direction::Up.relative(pos, 1);
+        let above = Direction::Up.relative_by(pos, 1);
         let fed_from_above = self
             .cell(above)
             .fluid_info()
             .is_some_and(|(ak, _)| Self::same_fluid_kind(kind, ak))
             && self.can_pass_through_wall(Direction::Up, pos, above);
 
-        let below_pos = Direction::Down.relative(pos, 1);
+        let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
         let below_solid_or_same_source = !below_cell.is_air() && below_cell.props.blocks_motion
             || below_cell
@@ -2963,7 +2935,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn source_neighbor_count(&self, pos: BlockPos, kind: FlowKind) -> u8 {
         let mut count = 0u8;
         for dir in Direction::HORIZONTAL {
-            let np = dir.relative(pos, 1);
+            let np = dir.relative_by(pos, 1);
             if let Some((nk, nf)) = self.cell(np).fluid_info() {
                 if Self::same_fluid_kind(kind, nk) && nf.source {
                     count += 1;
@@ -3049,7 +3021,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
 
         // `FlowingFluid.spread`: check downward first
-        let below_pos = Direction::Down.relative(pos, 1);
+        let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
         let below_fluid = below_cell.fluid_info();
         let can_maybe_down = !below_fluid
@@ -3081,7 +3053,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             let mut side_eligible = [false; 4];
             let mut side_replaceable = [false; 4];
             for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
-                let np = dir.relative(pos, 1);
+                let np = dir.relative_by(pos, 1);
                 let nc = self.cell(np);
                 let nf = nc.fluid_info();
                 let maybe = !nf
@@ -3134,7 +3106,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
             for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
                 if (mask & (1 << i)) != 0 {
-                    let np = dir.relative(pos, 1);
+                    let np = dir.relative_by(pos, 1);
                     self.spread_fluid_to(np, dir, kind, side_targets[i]);
                 }
             }
@@ -3161,7 +3133,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 self.queue_block_event(pos, block_id, piston_trigger::EXTEND, facing as i32);
             }
         } else if !has_signal && extended {
-            let front2 = facing.relative(pos, 2);
+            let front2 = facing.relative_by(pos, 2);
             let mut event = piston_trigger::CONTRACT;
             if let Some(entry) = self.moving_pistons.get(&front2) {
                 if entry.moving.direction == facing
@@ -3193,8 +3165,8 @@ impl<'a, W: World> SimWorld<'a, W> {
             } = cell.state
             {
                 let dir = Direction::from_3d_data(ev.param as u8);
-                let head_pos = dir.relative(ev.pos, 1);
-                let front2_pos = dir.relative(ev.pos, 2);
+                let head_pos = dir.relative_by(ev.pos, 1);
+                let front2_pos = dir.relative_by(ev.pos, 2);
                 let front_moving_piston =
                     matches!(self.cell(head_pos).state, CellState::MovingPiston { .. });
                 let front2_moving_piston_extending_same_direction =
@@ -3290,7 +3262,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         facing: Direction,
         extending: bool,
     ) -> bool {
-        let head_pos = facing.relative(piston_pos, 1);
+        let head_pos = facing.relative_by(piston_pos, 1);
         if !extending && matches!(self.cell(head_pos).state, CellState::PistonHead { .. }) {
             let air = SimCell::air(self.palette.air);
             self.set_cell_with_flags(head_pos, air, set_block_flags::RETRACT_HEAD_TO_AIR);
@@ -3330,7 +3302,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         // Move pushed blocks in reverse order into MovingPiston destinations
         for (idx, &src_pos) in to_push.iter().enumerate().rev() {
             let old_state = orig_push_cells[idx].clone();
-            let dst_pos = push_dir.relative(src_pos, 1);
+            let dst_pos = push_dir.relative_by(src_pos, 1);
             map.remove(&dst_pos);
             let mp = SimCell::moving_piston(self.palette.moving_piston, sticky, facing);
             self.set_cell_with_flags(dst_pos, mp, set_block_flags::PUSHED_TO_MOVING);
@@ -3661,7 +3633,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 if !matches!(cell.state, CellState::Falling(_)) {
                     return;
                 }
-                let below = self.cell(Direction::Down.relative(pos, 1));
+                let below = self.cell(Direction::Down.relative_by(pos, 1));
                 let below_is_free = falling::is_free(
                     below.is_air(),
                     false,
@@ -3718,7 +3690,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 if let CellState::Scaffolding(mut sc) = cell.state {
                     let dist = place::scaffolding_get_distance(pos, |p| self.scaffolding_cell(p));
                     let below_scaf = matches!(
-                        self.cell(Direction::Down.relative(pos, 1)).state,
+                        self.cell(Direction::Down.relative_by(pos, 1)).state,
                         CellState::Scaffolding(_)
                     );
                     let bottom = place::scaffolding_is_bottom(dist, below_scaf);
@@ -3836,7 +3808,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     Direction::East,
                 ];
                 for (di, d) in dirs.into_iter().enumerate() {
-                    let nc = self.cell(d.relative(bpos, 1));
+                    let nc = self.cell(d.relative_by(bpos, 1));
                     let has_w = nc
                         .fluid_info()
                         .is_some_and(|(k, _)| matches!(k, FlowKind::Water));
@@ -3848,7 +3820,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             };
 
             let landing_cell = self.cell(bpos);
-            let below_cell = self.cell(Direction::Down.relative(bpos, 1));
+            let below_cell = self.cell(Direction::Down.relative_by(bpos, 1));
             let below_is_free = falling::is_free(
                 below_cell.is_air(),
                 false,
@@ -4265,7 +4237,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self,
         content: BucketContent,
         pos: BlockPos,
-        hit: Option<(BlockPos, InteractDir)>,
+        hit: Option<(BlockPos, Direction)>,
         is_sneaking: bool,
     ) -> bool {
         let mut events = Vec::new();

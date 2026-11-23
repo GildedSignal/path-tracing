@@ -11,7 +11,7 @@
 //! owner to `oldPosition()` (start-of-impact-tick position) with no clamp or
 //! chunk check, then calls `resetFallDistance()` before `hurtServer(5.0f)`.
 
-use crate::{blocks, boat, explosion, interact, Aabb, CollisionContext, Vec3, VoxelShape, World};
+use crate::{blocks, explosion, interact, Aabb, CollisionContext, Vec3, VoxelShape, World};
 
 pub const PEARL_SHOOT_POWER: f32 = 1.5;
 pub const PEARL_INACCURACY: f32 = 1.0;
@@ -187,8 +187,8 @@ pub fn use_ender_pearl(input: &PearlUseInput) -> PearlUseResult {
     {
         return PearlUseResult::Pass;
     }
-    let wrapped_x_rot = boat::wrap_degrees(input.x_rot);
-    let wrapped_y_rot = boat::wrap_degrees(input.y_rot);
+    let wrapped_x_rot = crate::math::wrap_degrees(input.x_rot);
+    let wrapped_y_rot = crate::math::wrap_degrees(input.y_rot);
     let pos = spawn_origin(input.owner_pos, input.owner_eye_height);
     let shoot_only = throw_velocity(wrapped_x_rot, wrapped_y_rot, Vec3::default(), true, input.draws);
     let (y_rot, x_rot) = shoot_facing_from_velocity(shoot_only);

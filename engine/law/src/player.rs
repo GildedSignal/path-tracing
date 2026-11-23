@@ -257,20 +257,11 @@ pub const LAVA_IGNITE_SECONDS: f32 = 15.0;
 pub const LAVA_DAMAGE: f32 = 4.0;
 pub const LAVA_EXHAUSTION: f32 = 0.1;
 
-/// `Mth.clamp(float, float, float)` (`@0-13`): `< min => min`, else `Math.min(value, max)`.
-pub fn mth_clamp_f32(value: f32, min: f32, max: f32) -> f32 {
-    if value < min {
-        min
-    } else {
-        value.min(max)
-    }
-}
-
 /// `CombatRules.getDamageAfterAbsorb(LivingEntity, float, DamageSource, float, float)` (`@0-99`),
 /// environmental branch (no weapon item). `armor` is `Mth.floor(generic.armor)`.
 pub fn damage_after_armor_absorb(damage: f32, armor: f32, toughness: f32) -> f32 {
     let f = 2.0f32 + toughness / 4.0f32;
-    let clamped = mth_clamp_f32(armor - damage / f, armor * 0.2f32, 20.0f32);
+    let clamped = crate::math::clamp_f32(armor - damage / f, armor * 0.2f32, 20.0f32);
     damage * (1.0f32 - clamped / 25.0f32)
 }
 
@@ -283,7 +274,7 @@ pub fn damage_after_resistance(damage: f32, amplifier: u8) -> f32 {
 
 /// `CombatRules.getDamageAfterMagicAbsorb(float, float)`: `damage * (1.0f - Mth.clamp(epf, 0.0f, 20.0f) / 25.0f)`.
 pub fn damage_after_magic_absorb(damage: f32, epf: f32) -> f32 {
-    damage * (1.0f32 - mth_clamp_f32(epf, 0.0f32, 20.0f32) / 25.0f32)
+    damage * (1.0f32 - crate::math::clamp_f32(epf, 0.0f32, 20.0f32) / 25.0f32)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

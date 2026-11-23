@@ -75,13 +75,8 @@ pub fn shoot_from_rotation(
 /// where `r = 0.017453292f` and `(rot_a, rot_b)` is `(xRot, yRot)`.
 #[inline]
 pub fn calculate_view_vector(x_rot: f32, y_rot: f32) -> (f32, f32, f32) {
-    let f3 = x_rot * 0.017453292f32;
-    let f4 = -y_rot * 0.017453292f32;
-    let f5 = math::cos(f4 as f64);
-    let f6 = math::sin(f4 as f64);
-    let f7 = math::cos(f3 as f64);
-    let f8 = math::sin(f3 as f64);
-    (f6 * f7, -f8, f5 * f7)
+    let v = math::calculate_view_vector(y_rot, x_rot);
+    (v.x as f32, v.y as f32, v.z as f32)
 }
 
 /// `Entity.calculateUpVector @0-10`: `calculateViewVector(x_rot - 90.0f, y_rot)`.
@@ -571,16 +566,6 @@ pub const FISHING_CAST_SPAWN_BACK_OFFSET: f64 = 0.3;
 /// `FishingHook.pullEntity @44`.
 pub const FISHING_PULL_SCALE: f64 = 0.1;
 
-/// `Mth.clamp(float, float, float) @0-13` (matches NaN behavior without Rust panicking).
-#[inline]
-fn mth_clamp_f32(v: f32, min: f32, max: f32) -> f32 {
-    if v < min {
-        min
-    } else {
-        v.min(max)
-    }
-}
-
 /// `FishingHook.<init>(Player, Level, int, int) @16-245`:
 /// returns `(spawn_pos, initial_velocity)`.
 /// `tri_draws` are the three per-axis `random.triangle(0.5d, 0.0103365d)` draws
@@ -604,7 +589,7 @@ pub fn fishing_cast(
         owner_eye_y,
         owner_pos.z - (f7 as f64) * FISHING_CAST_SPAWN_BACK_OFFSET,
     );
-    let dy = mth_clamp_f32(-(f10 / f9), -5.0f32, 5.0f32);
+    let dy = crate::math::clamp_f32(-(f10 / f9), -5.0f32, 5.0f32);
     let dir = Vec3::new((-f8) as f64, dy as f64, (-f7) as f64);
     let len = dir.length_sqr().sqrt();
     let base = FISHING_CAST_SPEED_BASE / len;

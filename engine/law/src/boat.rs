@@ -214,7 +214,7 @@ pub fn boat_pov_hit(
     block_interaction_range: f64,
     fluid_mode: ClipFluidMode,
 ) -> BlockHitResult {
-    let view = interact::calculate_view_vector(yaw, pitch);
+    let view = math::calculate_view_vector(yaw, pitch);
     let end = Vec3::new(
         eye_pos.x + view.x * block_interaction_range,
         eye_pos.y + view.y * block_interaction_range,
@@ -261,7 +261,7 @@ pub fn place_boat(
         return BoatPlaceResult::Pass;
     }
 
-    let view = interact::calculate_view_vector(yaw, pitch);
+    let view = math::calculate_view_vector(yaw, pitch);
     let search_box = player_bb
         .expand(view.scale(BOAT_EYE_OBSTRUCTION_RANGE))
         .deflate(-1.0);
@@ -681,18 +681,6 @@ pub fn add_passenger_seat<T: Copy>(
     true
 }
 
-/// `Mth.wrapDegrees(float)`.
-pub fn wrap_degrees(value: f32) -> f32 {
-    let mut f = value % 360.0f32;
-    if f >= 180.0f32 {
-        f -= 360.0f32;
-    }
-    if f < -180.0f32 {
-        f += 360.0f32;
-    }
-    f
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RiderRotation {
     pub y_rot: f32,
@@ -704,7 +692,7 @@ pub struct RiderRotation {
 /// `AbstractBoat.clampRotation` (`@0-64`).
 pub fn clamp_rotation(hull_yaw: f32, mut rot: RiderRotation) -> RiderRotation {
     rot.y_body_rot = hull_yaw;
-    let f = wrap_degrees(rot.y_rot - hull_yaw);
+    let f = math::wrap_degrees(rot.y_rot - hull_yaw);
     let f1 = f.clamp(-105.0f32, 105.0f32);
     rot.y_rot_o += f1 - f;
     rot.y_rot = (rot.y_rot + f1) - f;
@@ -1187,7 +1175,7 @@ mod tests {
             (90.0, 90.0, 90.0),
             (104.9, 104.9, 104.9),
             (105.0, 105.0, 105.0),
-            (105.1, (105.1f32 + 105.0f32) - wrap_degrees(105.1f32), 105.0),
+            (105.1, (105.1f32 + 105.0f32) - math::wrap_degrees(105.1f32), 105.0),
             (120.0, 105.0, 105.0),
             (-120.0, -105.0, -105.0),
             (180.0, 255.0, 255.0),
