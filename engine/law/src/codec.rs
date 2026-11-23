@@ -304,7 +304,7 @@ impl Same for crate::VoxelShape {fn same(&self,b:&Self)->bool {self.same_owner(b
 impl Same for crate::Fluid {fn same(&self,b:&Self)->bool {self.kind.same(&b.kind)&&self.height.same(&b.height)&&self.flow.same(&b.flow)&&self.raw_amount.same(&b.raw_amount)&&self.raw_falling.same(&b.raw_falling)}}
 
 fn model_same(a:&Block,b:&Block)->bool {
-    let Block {shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,air}=a;let _=(shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,air);
+    let Block {shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,lily_pad,air}=a;let _=(shape,inside_shape,water_block,above_shape,below_shape,sneak_shape,inside_cell_shape,friction,speed_factor,jump_factor,climbable,scaffolding,ladder_facing,open_trapdoor_facing,fluid,fluid_flow,inside,grounded_contact,stuck_multiplier,unsupported_fall_on,fall_on_multiplier,bed,suffocating,bounce,suppresses_bounce,slime,fence,wall_or_gate,resets_fall_distance,end_portal_or_gateway,world_hook,lily_pad,air);
         Same::same(&a.shape,&b.shape) &&
         Same::same(&a.inside_shape,&b.inside_shape) &&
         Same::same(&a.water_block,&b.water_block) &&
@@ -336,6 +336,7 @@ fn model_same(a:&Block,b:&Block)->bool {
         Same::same(&a.resets_fall_distance,&b.resets_fall_distance) &&
         Same::same(&a.end_portal_or_gateway,&b.end_portal_or_gateway) &&
         Same::same(&a.world_hook,&b.world_hook) &&
+        Same::same(&a.lily_pad,&b.lily_pad) &&
         Same::same(&a.air,&b.air)
 }
 

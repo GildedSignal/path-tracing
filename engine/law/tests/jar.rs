@@ -1328,34 +1328,7 @@ fn jar_vehicles_and_wormholes() {
     clip_world.set([2, 70, 4], Block::full());
     clip_world.set([2, 71, 4], Block::full());
 
-    // World for BOAT_STATUS (matching VehicleWormholeWitness.emitBoatSnapStatusAndPaddle)
-    struct FrictionWorld {
-        inner: BoxWorld,
-        lily: BlockPos,
-    }
-    impl World for FrictionWorld {
-        fn block(&self, pos: BlockPos) -> &Block {
-            self.inner.block(pos)
-        }
-        fn visit_collision_cells(
-            &self,
-            bounds: Aabb,
-            lo: BlockPos,
-            hi: BlockPos,
-            visit: impl FnMut(BlockPos) -> bool,
-        ) -> bool {
-            self.inner.visit_collision_cells(bounds, lo, hi, visit)
-        }
-    }
-    impl boat::BoatQuery for FrictionWorld {
-        fn skip_ground_friction(&self, pos: BlockPos) -> bool {
-            pos == self.lily
-        }
-    }
-    let mut fw = FrictionWorld {
-        inner: BoxWorld::default(),
-        lily: [200, 65, 200],
-    };
+    let mut fw = BoxWorld::default();
     let stone = Block {
         friction: f32::from_bits(0x3f19_999a),
         ..Block::full()
@@ -1364,11 +1337,11 @@ fn jar_vehicles_and_wormholes() {
         friction: f32::from_bits(0x3f7d_2f1b),
         ..Block::full()
     };
-    fw.inner.fill([90, 64, 90], [99, 64, 110], stone);
-    fw.inner.fill([100, 64, 90], [110, 64, 110], blue_ice);
-    fw.inner.set(
+    fw.fill([90, 64, 90], [99, 64, 110], stone);
+    fw.fill([100, 64, 90], [110, 64, 110], blue_ice);
+    fw.set(
         [200, 65, 200],
-        Block::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.09375, 0.9375)]),
+        Block { lily_pad: true, ..Block::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.09375, 0.9375)]) },
     );
 
     // Sea world for BOAT_SNAP (water at y <= 61)
@@ -1420,7 +1393,6 @@ fn jar_vehicles_and_wormholes() {
             true
         }
     }
-    impl boat::BoatQuery for SeaWorld {}
 
     let parse_boat_status = |s: &str| match s {
         "IN_WATER" => boat::BoatStatus::InWater,
@@ -4751,7 +4723,7 @@ fn jar_world_sim() {
             assert_eq!(b.boat.velocity.z.to_bits(), parse_h64(row[7]), "E1 t={t} bvz");
             assert_eq!(b.boat.yaw.to_bits(), parse_h32(row[8]), "E1 t={t} byaw");
             let mut b_status_probe = b.clone();
-            let cur_status = Some(boat::get_status(&mut b_status_probe, &sim.as_boat_query()));
+            let cur_status = Some(boat::get_status(&mut b_status_probe, sim.world()));
             assert_eq!(boat_status_name(cur_status), row[9], "E1 t={t} status");
             assert_eq!(sim.living_entities[p0].position.x.to_bits(), parse_h64(row[10]), "E1 t={t} p0x");
             assert_eq!(sim.living_entities[p0].position.z.to_bits(), parse_h64(row[11]), "E1 t={t} p0z");

@@ -366,7 +366,7 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         speed_factor, jump_factor, climbable, scaffolding, ladder_facing, open_trapdoor_facing,
         fluid, fluid_flow, inside, grounded_contact, stuck_multiplier, unsupported_fall_on,
         fall_on_multiplier, bed, suffocating, bounce, suppresses_bounce, slime, fence,
-        wall_or_gate, resets_fall_distance, end_portal_or_gateway, world_hook, air,
+        wall_or_gate, resets_fall_distance, end_portal_or_gateway, world_hook, lily_pad, air,
     } = block;
     let mut exact = true;
     bytes.push(groups);
@@ -404,7 +404,7 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         if let Some(shape) = inside_shape { exact &= encode_shape(bytes, shape, frame)?; }
         for value in [*friction, *speed_factor, *jump_factor, *fall_on_multiplier, *bounce] { bytes.extend(value.to_bits().to_le_bytes()); }
         for value in [*water_block, *climbable, *scaffolding, *bed, *suffocating, *suppresses_bounce, *slime,
-            *fence, *wall_or_gate, *resets_fall_distance, *end_portal_or_gateway, *world_hook, *air] { bytes.push(value as u8); }
+            *fence, *wall_or_gate, *resets_fall_distance, *end_portal_or_gateway, *world_hook, *lily_pad, *air] { bytes.push(value as u8); }
         bytes.extend([*ladder_facing, *open_trapdoor_facing].map(|f| f.map_or(255, |f| frame.facing(f))));
         bytes.push(match inside {
             Inside::None => 0,

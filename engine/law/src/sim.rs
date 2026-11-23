@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
-use crate::boat::{self, BoatBody, BoatQuery, Controls as BoatControls};
+use crate::boat::{self, BoatBody, Controls as BoatControls};
 use crate::entity_contact::{ContactEntity, ContactKind, SpatialCrowdIndex, TeamCollisionRule};
 use crate::falling::{self, AnvilStage, LandingContext, LandingOutcome};
 use crate::fluid::{
@@ -318,7 +318,6 @@ impl<W: World> World for WorldOverlay<'_, W> {
     }
 }
 
-impl<W: World> BoatQuery for WorldOverlay<'_, W> {}
 
 // ============================================================================
 // 3. Data-driven BlockPalette, CellProps, CellState, SimCell
@@ -1352,6 +1351,7 @@ impl SimCell {
                 self.block.fluid_flow = fluid_flow;
             }
         }
+        self.block.lily_pad = self.props.lily_pad;
     }
 }
 
@@ -1803,10 +1803,6 @@ impl<'a, W: World> SimWorld<'a, W> {
     #[inline]
     pub fn dirty_positions(&self) -> &BTreeSet<BlockPos> {
         self.overlay.dirty_positions()
-    }
-
-    pub fn as_boat_query(&self) -> SimBoatQuery<'_, 'a, W> {
-        SimBoatQuery { sim: self }
     }
 
     pub fn set_rng_seed(&mut self, seed: u64) {
@@ -3904,10 +3900,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     fn tick_boats(&mut self) -> usize {
         let mut ticked = 0usize;
-        let query = SimBoatQueryRef {
-            overlay: &self.overlay,
-            cells: &self.cells,
-        };
+        let query = &self.overlay;
         for boat in &mut self.boats {
             if boat.removed {
                 continue;
@@ -3915,7 +3908,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             ticked += 1;
             boat::tick_body(
                 &mut boat.body,
-                &query,
+                query,
                 boat.controls,
                 boat.server_side,
                 boat.player_controlling,
@@ -4447,75 +4440,6 @@ impl<'a, W: World> SimWorld<'a, W> {
 // ============================================================================
 // 6. Subsystem Trait Views over SimWorld (zero-duplication bridges)
 // ============================================================================
-
-pub struct SimBoatQuery<'s, 'a, W: World> {
-    sim: &'s SimWorld<'a, W>,
-}
-
-struct SimBoatQueryRef<'s, 'a, W: World> {
-    overlay: &'s WorldOverlay<'a, W>,
-    cells: &'s HashMap<BlockPos, SimCell>,
-}
-
-impl<W: World> World for SimBoatQueryRef<'_, '_, W> {
-    fn block(&self, position: BlockPos) -> &Block {
-        self.overlay.block(position)
-    }
-    fn loaded(&self, position: BlockPos) -> bool {
-        self.overlay.loaded(position)
-    }
-    fn min_y(&self) -> i32 {
-        self.overlay.min_y()
-    }
-    fn has_fluid(&self) -> bool {
-        self.overlay.has_fluid()
-    }
-    fn visit_collision_cells(
-        &self,
-        bounds: Aabb,
-        lo: BlockPos,
-        hi: BlockPos,
-        visit: impl FnMut(BlockPos) -> bool,
-    ) -> bool {
-        self.overlay.visit_collision_cells(bounds, lo, hi, visit)
-    }
-}
-
-impl<W: World> BoatQuery for SimBoatQueryRef<'_, '_, W> {
-    fn skip_ground_friction(&self, pos: BlockPos) -> bool {
-        self.cells.get(&pos).is_some_and(|c| c.props.lily_pad)
-    }
-}
-
-impl<W: World> World for SimBoatQuery<'_, '_, W> {
-    fn block(&self, position: BlockPos) -> &Block {
-        self.sim.overlay.block(position)
-    }
-    fn loaded(&self, position: BlockPos) -> bool {
-        self.sim.overlay.loaded(position)
-    }
-    fn min_y(&self) -> i32 {
-        self.sim.overlay.min_y()
-    }
-    fn has_fluid(&self) -> bool {
-        self.sim.overlay.has_fluid()
-    }
-    fn visit_collision_cells(
-        &self,
-        bounds: Aabb,
-        lo: BlockPos,
-        hi: BlockPos,
-        visit: impl FnMut(BlockPos) -> bool,
-    ) -> bool {
-        self.sim.overlay.visit_collision_cells(bounds, lo, hi, visit)
-    }
-}
-
-impl<W: World> BoatQuery for SimBoatQuery<'_, '_, W> {
-    fn skip_ground_friction(&self, pos: BlockPos) -> bool {
-        self.sim.cells.get(&pos).is_some_and(|c| c.props.lily_pad)
-    }
-}
 
 struct SimPistonView<'s, 'a, W: World> {
     sim: &'s SimWorld<'a, W>,

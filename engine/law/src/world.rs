@@ -246,6 +246,8 @@ pub struct Block {
     pub end_portal_or_gateway: bool,
     /// A hook that changes only the world when the player touches the block (a plate, a tripwire, a button).
     pub world_hook: bool,
+    /// `LilyPadBlock`: `AbstractBoat.getGroundFriction` skips it.
+    pub lily_pad: bool,
     pub air: bool,
 }
 impl Default for Block {
@@ -283,6 +285,7 @@ impl Default for Block {
             resets_fall_distance: false,
             end_portal_or_gateway: false,
             world_hook: false,
+            lily_pad: false,
             air: true
         }
     }

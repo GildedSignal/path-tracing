@@ -6,7 +6,6 @@ use crate::{
     world::block_pos,
     Aabb,
     BlockPos,
-    BoxWorld,
     CollisionContext,
     FluidKind,
     Pose,
@@ -95,22 +94,13 @@ pub enum BoatStatus {
     InAir,
 }
 
-/// Extra surface metadata read by `AbstractBoat` (`LilyPadBlock` exemption in
-/// `getGroundFriction` and `FluidState.isSource` in `isUnderwater`).
-pub trait BoatQuery: World {
-    fn skip_ground_friction(&self, _pos: BlockPos) -> bool {
-        false
-    }
-
-    fn is_water_source(&self, pos: BlockPos) -> bool {
-        let fluid = self.fluid_block(pos).fluid;
+/// `FluidState.isSource` for water, read by `AbstractBoat.isUnderwater`.
+fn is_water_source(world: &impl World, pos: BlockPos) -> bool {
+    let fluid = world.fluid_block(pos).fluid;
         fluid.kind == FluidKind::Water
             && fluid.raw_amount == Some(8)
             && fluid.raw_falling != Some(true)
-    }
 }
-
-impl BoatQuery for BoxWorld {}
 
 /// `VehicleEntity` hit/break state (`DATA_ID_HURT`, `DATA_ID_HURTDIR`, `DATA_ID_DAMAGE`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -341,7 +331,7 @@ fn empty_context(feet_y: f64) -> CollisionContext {
 }
 
 // AbstractBoat.getGroundFriction @5-340
-pub fn get_ground_friction(world: &impl BoatQuery, position: Vec3) -> f32 {
+pub fn get_ground_friction(world: &impl World, position: Vec3) -> f32 {
     let bb = boat_aabb(position);
     let probe = Aabb::new(bb.min.x, bb.min.y - 0.001, bb.min.z, bb.max.x, bb.min.y, bb.max.z);
     let x0 = math::floor(probe.min.x) - 1;
@@ -364,7 +354,7 @@ pub fn get_ground_friction(world: &impl BoatQuery, position: Vec3) -> f32 {
                     continue;
                 }
                 let pos = [x, y, z];
-                if world.skip_ground_friction(pos) {
+                if world.block(pos).lily_pad {
                     continue;
                 }
                 let shape = world.collision_shape(pos, context);
@@ -380,7 +370,7 @@ pub fn get_ground_friction(world: &impl BoatQuery, position: Vec3) -> f32 {
 }
 
 // AbstractBoat.isUnderwater @0-216
-fn is_underwater(world: &impl BoatQuery, bb: Aabb) -> Option<BoatStatus> {
+fn is_underwater(world: &impl World, bb: Aabb) -> Option<BoatStatus> {
     let top = bb.max.y + 0.001;
     let x0 = math::floor(bb.min.x);
     let x1 = bb.max.x.ceil() as i32;
@@ -397,7 +387,7 @@ fn is_underwater(world: &impl BoatQuery, bb: Aabb) -> Option<BoatStatus> {
                 if fluid.kind == FluidKind::Water {
                     let surface = (y as f32 + fluid.surface_height(world, pos)) as f64;
                     if top < surface {
-                        if world.is_water_source(pos) {
+                        if is_water_source(world, pos) {
                             under_source = true;
                         } else {
                             return Some(BoatStatus::UnderFlowingWater);
@@ -411,7 +401,7 @@ fn is_underwater(world: &impl BoatQuery, bb: Aabb) -> Option<BoatStatus> {
 }
 
 // AbstractBoat.checkInWater @0-220
-fn check_in_water(world: &impl BoatQuery, bb: Aabb, water_level: &mut f64) -> bool {
+fn check_in_water(world: &impl World, bb: Aabb, water_level: &mut f64) -> bool {
     let x0 = math::floor(bb.min.x);
     let x1 = bb.max.x.ceil() as i32;
     let y0 = math::floor(bb.min.y);
@@ -438,7 +428,7 @@ fn check_in_water(world: &impl BoatQuery, bb: Aabb, water_level: &mut f64) -> bo
 }
 
 // AbstractBoat.getWaterLevelAbove @0-207
-fn water_level_above(world: &impl BoatQuery, bb: Aabb, last_yd: f64) -> f32 {
+fn water_level_above(world: &impl World, bb: Aabb, last_yd: f64) -> f32 {
     let x0 = math::floor(bb.min.x);
     let x1 = bb.max.x.ceil() as i32;
     let y0 = math::floor(bb.max.y);
@@ -470,7 +460,7 @@ fn water_level_above(world: &impl BoatQuery, bb: Aabb, last_yd: f64) -> f32 {
 }
 
 // AbstractBoat.getStatus @0-56
-pub fn get_status(body: &mut BoatBody, world: &impl BoatQuery) -> BoatStatus {
+pub fn get_status(body: &mut BoatBody, world: &impl World) -> BoatStatus {
     let bb = boat_aabb(body.boat.position);
     if let Some(status) = is_underwater(world, bb) {
         body.water_level = bb.max.y;
@@ -519,7 +509,7 @@ pub fn water_entry(
 }
 
 // AbstractBoat.floatBoat @0-362
-fn float_boat(body: &mut BoatBody, world: &impl BoatQuery, player_controlling: bool) {
+fn float_boat(body: &mut BoatBody, world: &impl World, player_controlling: bool) {
     let mut d1 = if body.no_gravity { 0.0 } else { -0.04 };
     let mut d3 = 0.0;
     let f;
@@ -580,7 +570,7 @@ fn float_boat(body: &mut BoatBody, world: &impl BoatQuery, player_controlling: b
 /// Returns `true` if a passenger was ejected on this tick (`outOfControlTicks >= 60.0f` server-side).
 pub fn tick_body(
     body: &mut BoatBody,
-    world: &impl BoatQuery,
+    world: &impl World,
     input: Controls,
     server_side: bool,
     player_controlling: bool,
@@ -823,14 +813,13 @@ pub fn dismount_location(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BoxWorld;
     use crate::{Block, Fluid, FluidFlowBlock};
-    use std::collections::HashSet;
 
     struct BoatTestWorld {
         inner: BoxWorld,
         all_water: bool,
         water_source: bool,
-        lily_pads: HashSet<BlockPos>,
     }
 
     impl BoatTestWorld {
@@ -839,7 +828,6 @@ mod tests {
                 inner: BoxWorld::default(),
                 all_water: false,
                 water_source: true,
-                lily_pads: HashSet::new(),
             }
         }
     }
@@ -889,12 +877,6 @@ mod tests {
                 return true;
             }
             self.inner.visit_collision_cells(bounds, lo, hi, visit)
-        }
-    }
-
-    impl BoatQuery for BoatTestWorld {
-        fn skip_ground_friction(&self, pos: BlockPos) -> bool {
-            self.lily_pads.contains(&pos)
         }
     }
 
@@ -1123,11 +1105,10 @@ mod tests {
 
         // 11. LILY pad skipped -> NaN -> IN_AIR even while grounded (check-extra.out:27-40)
         let mut lily_world = BoatTestWorld::new();
-        let lily_box = Block::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.09375, 0.9375)]);
+        let lily_box = Block { lily_pad: true, ..Block::boxes(&[Aabb::new(0.0625, 0.0, 0.0625, 0.9375, 0.09375, 0.9375)]) };
         for x in 99..=101 {
             for z in 99..=101 {
                 lily_world.inner.set([x, 65, z], lily_box.clone());
-                lily_world.lily_pads.insert([x, 65, z]);
             }
         }
         let mut b = BoatBody {
