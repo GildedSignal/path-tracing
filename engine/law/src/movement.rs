@@ -115,7 +115,7 @@ mod swimming_witness {
         || !state.effect_book.is_empty()
 }
 
-fn tick_movement(
+pub fn tick_movement(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Result<(Option<(Vec3, Vec3)>, Option<ContactDamage>), Refusal> {
     world.observe_tick();

@@ -9,6 +9,7 @@ pub use attributes::{SpeedModifier, SpeedOperation};
 mod effects;
 pub use effects::{MobEffectInstance, EffectKind};
 mod movement;
+pub mod core;
 
 pub mod math;
 pub mod shapes;
@@ -16,6 +17,8 @@ pub mod breath;
 pub mod mounts;
 mod state;
 mod world;
+/// The frozen old law, kept as the oracle while the core is judged against it.
+pub use movement::tick_movement as oracle_step;
 pub use movement::{
     can_fall,
     ServerResourceEvent,
