@@ -273,12 +273,8 @@ fn hurt(player: &mut PlayerState, amount: f32) {
         return;
     }
     let amount = if amount.is_nan() { f32::MAX } else { amount };
-    if let Some(debit) = crate::movement::accept_raw_hit(&mut player.hurt_cooldown, amount) {
-        // actuallyHurt offsets 10-154 for a bare player (no armor, resistance or
-        // enchantment term): absorption eats f - max(f - absorption, 0), health pays.
-        let mut exhaustion = player.exhaustion;
-        crate::player::actually_hurt(&mut player.health, &mut player.absorption, &mut exhaustion, true, debit,
-            0.0, 0.0, None, 0.0, 0.0, true, true, true, true, false, 0.0);
+    if let Some(debit) = crate::core::window(&mut player.hurt_cooldown, amount) {
+        crate::core::mitigate(player, debit, crate::core::Hit::MAGIC);
     }
 }
 

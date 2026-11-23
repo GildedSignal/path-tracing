@@ -1835,7 +1835,8 @@ fn jar_movement_wired() {
                 );
             }
             "FLY_SPEED" => {
-                let actual = player::player_get_flying_speed(bit(c[1]), bit(c[2]), bit(c[3]), h32(c[4]));
+                let actual = law::core::air_speed(&PlayerState { flying: bit(c[1]), sprinting: bit(c[3]),
+                    profile: law::Profile { riding: bit(c[2]), flying_speed: h32(c[4]), ..Default::default() }.into(), ..PlayerState::default() });
                 assert_eq!(actual.to_bits(), h32(c[5]).to_bits(), "row {idx}: {row}");
             }
             "FLY_TRAVEL" => {
@@ -3202,20 +3203,9 @@ fn jar_player_elytra_damage() {
                     "onfire_fireres" => (1.0, true, true, false, 0.0, 0.0, 0.0, None, 0.0, 0.0, 0.0, true),
                     o => panic!("unknown mit case {o}"),
                 };
-                let mut ent = player::HurtEntityState {
-                    armor: arm,
-                    armor_toughness: tgh,
-                    resistance: res,
-                    protection_epf: prot,
-                    feather_falling_epf: fef,
-                    absorption: abs0,
-                    has_fire_resistance: fres,
-                    ..Default::default()
-                };
-                let ok = player::hurt_server_mitigated(
-                    &mut ent, true, raw, is_fire, false, false, bypass_armor, false, false, false, is_fall,
-                    player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, exh,
-                );
+                let mut ent = PlayerState { absorption: abs0, profile: law::Profile { armor: arm, armor_toughness: tgh, resistance: res,
+                    protection_epf: prot, feather_falling_epf: fef, fire_resistance: fres, ..Default::default() }.into(), ..PlayerState::default() };
+                let ok = law::core::hurt(&mut ent, law::core::Hit { amount: raw, fire: is_fire, armor: !bypass_armor, effects: true, fall: is_fall, exhaustion: exh });
                 assert_eq!(ok, allowed, "row {idx} allowed: {row}");
                 assert_eq!(
                     (ent.health.to_bits(), ent.absorption.to_bits(), ent.exhaustion.to_bits()),
@@ -3363,39 +3353,24 @@ fn jar_player_elytra_damage() {
                 let s = PlayerState::default();
                 let calc_dmg = calculate_fall_damage(&s, fd, 1.0);
                 assert_eq!(calc_dmg, exp_calc_dmg, "row {idx} farmland calc dmg: {row}");
-                let mut ent = player::HurtEntityState::default();
-                if calc_dmg > 0 {
-                    player::hurt_server_mitigated(
-                        &mut ent, true, calc_dmg as f32, false, false, false, true, false, false, false, true,
-                        player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, 0.0,
-                    );
-                }
+                let mut ent = PlayerState::default();
+                if calc_dmg > 0 { law::core::hurt(&mut ent, law::core::Hit { amount: calc_dmg as f32, ..law::core::Hit::FALL }); }
                 assert_eq!(ent.health.to_bits(), exp_hp.to_bits(), "row {idx} farmland hp: {row}");
             }
-            "FALL_DRIPSTONE" => {
-                let tip = c[1] == "tip";
-                let up = c[2] == "up";
-                let exp_dist = h64(c[3]);
-                let exp_mult = h32(c[4]);
-                let exp_stal = c[5] == "stalagmite";
-                let (d, m, is_stal) = player::dripstone_fall_on_args(5.0, up, tip);
-                assert_eq!((d.to_bits(), m.to_bits(), is_stal), (exp_dist.to_bits(), exp_mult.to_bits(), exp_stal), "row {idx} dripstone: {row}");
-            }
-            "FALL_DRIPSTONE_HP" => {
-                let tip = c[1] == "tip";
-                let up = c[2] == "up";
-                let exp_hp = h32(c[4]);
-                let (d, m, _is_stal) = player::dripstone_fall_on_args(5.0, up, tip);
-                let s = PlayerState::default();
-                let calc_dmg = calculate_fall_damage(&s, d, m).max(0);
-                let mut ent = player::HurtEntityState::default();
-                if calc_dmg > 0 {
-                    player::hurt_server_mitigated(
-                        &mut ent, true, calc_dmg as f32, false, false, false, true, false, false, false, true,
-                        player::DamageScaling::WhenCausedByLivingNonPlayer, false, 2, 0.0,
-                    );
+            "FALL_DRIPSTONE" | "FALL_DRIPSTONE_HP" => {
+                // The landing priced through the block's own row: pointed_dripstone[thickness, vertical_direction].
+                let block = world::model(&world::BlockState { name: "minecraft:pointed_dripstone".into(), properties: vec![
+                    ("thickness".into(), c[1].into()), ("vertical_direction".into(), c[2].into()), ("waterlogged".into(), "false".into())] }).unwrap();
+                let (d, m) = law::core::fall_on(block, 5.0);
+                if c[0] == "FALL_DRIPSTONE" {
+                    let (exp_dist, exp_mult, exp_stal) = (h64(c[3]), h32(c[4]), c[5] == "stalagmite");
+                    assert_eq!((d.to_bits(), m.to_bits(), m == 2.0), (exp_dist.to_bits(), exp_mult.to_bits(), exp_stal), "row {idx} dripstone: {row}");
+                } else {
+                    let calc_dmg = calculate_fall_damage(&PlayerState::default(), d, m).max(0);
+                    let mut ent = PlayerState::default();
+                    if calc_dmg > 0 { law::core::hurt(&mut ent, law::core::Hit { amount: calc_dmg as f32, ..law::core::Hit::FALL }); }
+                    assert_eq!(ent.health.to_bits(), h32(c[4]).to_bits(), "row {idx} dripstone hp: {row}");
                 }
-                assert_eq!(ent.health.to_bits(), exp_hp.to_bits(), "row {idx} dripstone hp: {row}");
             }
             other => panic!("unknown tag {other}"),
         }

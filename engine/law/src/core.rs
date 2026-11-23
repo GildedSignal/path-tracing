@@ -58,9 +58,7 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     // Cause: the fluids around the body.
     immerse(s, world);
     if s.in_lava { s.fall_distance *= 0.5; }
-    s.swimming = !s.flying && if s.swimming { s.sprinting && s.in_water } else {
-        s.sprinting && s.underwater && world.fluid_block(block_pos(s.position)).fluid.kind == FluidKind::Water
-    };
+    swim(s, world);
     // Cause: the fire clock (%20 checked before the decrement; negative grace untouched).
     let fire = s.remaining_fire_ticks;
     let burn = (fire > 0 && fire % 20 == 0 && !s.in_lava).then_some(ContactDamage::OnFire);
@@ -128,6 +126,13 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     food(s, world);
     s.t += 1;
     Ok(Effect { collision, contact })
+}
+
+// Player.updateSwimming: the swim flag machine.
+fn swim(s: &mut PlayerState, world: &impl World) {
+    s.swimming = !s.flying && if s.swimming { s.sprinting && s.in_water } else {
+        s.sprinting && s.underwater && world.fluid_block(block_pos(s.position)).fluid.kind == FluidKind::Water
+    };
 }
 
 /// The sprint flag machine (LocalPlayer.aiStep @0-484, canStartSprinting, shouldStopRunSprinting,
@@ -267,13 +272,16 @@ fn glide(s: &mut PlayerState, world: &impl World) -> Result<Option<(Vec3, Vec3)>
     Ok(collision)
 }
 
+/// Player.getFlyingSpeed: the acceleration off the ground.
+pub fn air_speed(s: &PlayerState) -> f32 {
+    if s.flying && !s.profile.riding { s.profile.flying_speed * if s.sprinting { 2.0f32 } else { 1.0 } } else if s.sprinting { 0.025999999f32 } else { 0.02f32 }
+}
+
 // LivingEntity.travelInAir; handleRelativeFrictionAndCalculateMovement; handleOnClimbable
 fn travel_air(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     let below = on_pos(s, world, 0.500001);
     let f = if s.on_ground { math::modified_friction(world.hook_block(below).friction, s.profile.friction_modifier) } else { 1.0 };
-    let acceleration = if !s.on_ground {
-        if s.flying { s.profile.flying_speed * if s.sprinting { 2.0f32 } else { 1.0 } } else if s.sprinting { 0.025999999f32 } else { 0.02f32 }
-    } else if f as f64 > 0.6 { s.speed * (0.21600002f32 / (f * f * f)) } else { s.speed };
+    let acceleration = if !s.on_ground { air_speed(s) } else if f as f64 > 0.6 { s.speed * (0.21600002f32 / (f * f * f)) } else { s.speed };
     s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.yaw));
     if climbable(s, world) {
         s.fall_distance = 0.0;
@@ -460,16 +468,20 @@ fn land(s: &mut PlayerState, block: &Block, dy: f64) -> Result<(), Refusal> {
     if s.fall_distance > 0.0 {
         if let Some(name) = &block.unsupported_fall_on { refuse!("BlockState.fallOn: {name}"); }
         if !s.profile.mayfly {
-            let fall = s.fall_distance;
-            let (distance, multiplier) = if block.slime || block.inside == Inside::PowderSnow { (fall, 0.0) }
-                else if block.fall_on_multiplier == 2.0 { (fall + 2.5, 2.0) }
-                else { (if block.bed { fall * 0.5 } else { fall }, block.fall_on_multiplier) };
+            let (distance, multiplier) = fall_on(block, s.fall_distance);
             let damage = calculate_fall_damage(s, distance, multiplier).max(0);
             if damage > 0 { hurt(s, Hit { amount: damage as f32, ..Hit::FALL }); }
         }
     }
     s.fall_distance = 0.0;
     Ok(())
+}
+/// Block.fallOn's row: the distance and multiplier a landing on `block` is priced at (slime and
+/// powder snow free, a bed halves, a stalagmite's tip adds 2.5 and doubles).
+pub fn fall_on(block: &Block, fall: f64) -> (f64, f32) {
+    if block.slime || block.inside == Inside::PowderSnow { (fall, 0.0) }
+    else if block.fall_on_multiplier == 2.0 { (fall + 2.5, 2.0) }
+    else { (if block.bed { fall * 0.5 } else { fall }, block.fall_on_multiplier) }
 }
 
 // EntityFluidInteraction.update; Entity.updateFluidInteraction; Player.isPushedByFluid
@@ -553,6 +565,36 @@ impl Collector {
         self.kinds = 0;
     }
     fn lava(&mut self) { self.add(CLEAR_FREEZE); self.add(LAVA_IGNITE); self.lava += 1; }
+    /// StepBasedCollector.applyAndClear on a server player, while alive; the first fire hurt is a request.
+    fn apply(mut self, s: &mut PlayerState) -> Option<ContactDamage> {
+        self.flush();
+        let mut fire_hit = None;
+        for op in self.run {
+            if s.health <= 0.0 { break; }
+            match op {
+                Op::Kind(FREEZE) => {
+                    s.in_powder_snow = true;
+                    if s.profile.game_mode != GameType::Spectator && !s.profile.leather_boots { s.ticks_frozen = (s.ticks_frozen + 1).min(140); }
+                }
+                Op::Kind(CLEAR_FREEZE) => s.ticks_frozen = 0,
+                // BaseFireBlock.fireIgnite: a server player gains one tick, then burns at least 8 seconds.
+                Op::Kind(FIRE_IGNITE) => {
+                    let next = crate::player::base_fire_ignite_ticks(s.remaining_fire_ticks, false, true);
+                    set_fire(s, next);
+                    if next >= 0 { s.ticks_frozen = 0; }
+                }
+                // Entity.lavaIgnite: 15 seconds, max-only.
+                Op::Kind(LAVA_IGNITE) => {
+                    if s.remaining_fire_ticks < 300 { set_fire(s, 300); }
+                    s.ticks_frozen = 0;
+                }
+                Op::Kind(_) => set_fire(s, crate::player::clear_fire_ticks(s.remaining_fire_ticks)),
+                Op::LavaHurt => { hurt(s, Hit::LAVA); }
+                Op::FireHurt(soul) => { fire_hit.get_or_insert(ContactDamage::InFire { soul }); }
+            }
+        }
+        fire_hit
+    }
 }
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks; the fire grace tail
@@ -577,36 +619,11 @@ fn cross(s: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<
             budget -= segment(s, world, start, s.position, &mut seen, &mut collector, 16, delta, &mut inside)?;
         }
         if budget <= 0 { segment(s, world, s.position, s.position, &mut seen, &mut collector, 1, delta, &mut inside)?; }
-        collector.flush();
-        let mut fire_hit = None;
-        for op in collector.run {
-            if s.health <= 0.0 { break; }
-            match op {
-                Op::Kind(FREEZE) => {
-                    s.in_powder_snow = true;
-                    if s.profile.game_mode != GameType::Spectator && !s.profile.leather_boots { s.ticks_frozen = (s.ticks_frozen + 1).min(140); }
-                }
-                Op::Kind(CLEAR_FREEZE) => s.ticks_frozen = 0,
-                // BaseFireBlock.fireIgnite: a server player gains one tick, then burns at least 8 seconds.
-                Op::Kind(FIRE_IGNITE) => {
-                    let next = s.remaining_fire_ticks + 1;
-                    let next = if next >= 0 { next.max(160) } else { next };
-                    set_fire(s, next);
-                    if next >= 0 { s.ticks_frozen = 0; }
-                }
-                Op::Kind(LAVA_IGNITE) => {
-                    if s.remaining_fire_ticks < 300 { set_fire(s, 300); }
-                    s.ticks_frozen = 0;
-                }
-                Op::Kind(_) => set_fire(s, s.remaining_fire_ticks.min(0)),
-                Op::LavaHurt => hurt(s, Hit { amount: 4.0, fire: true, armor: true, fall: false, exhaustion: 0.1, ..Hit::FALL }),
-                Op::FireHurt(soul) => { fire_hit.get_or_insert(ContactDamage::InFire { soul }); }
-            }
-        }
-        inside = inside.or(fire_hit);
+        inside = inside.or(collector.apply(s));
     }
     // Server players not on fire and not newly lit return to the 20-tick grace.
-    if fire_before < 0 && s.remaining_fire_ticks <= fire_before && s.remaining_fire_ticks != -20 { set_fire(s, -20); }
+    let after = s.remaining_fire_ticks;
+    if fire_before < 0 && crate::player::apply_effects_fire_tail(after, fire_before, true, false, true) != after { set_fire(s, -20); }
     Ok(contact.or(inside))
 }
 
@@ -711,19 +728,23 @@ fn inside_block(s: &mut PlayerState, world: &impl World, p: BlockPos, intersects
 /// invulnerability window, Player.actuallyHurt's armour, resistance, enchantment and absorption
 /// chain). Every hurt of the player runs here.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Hit { pub amount: f32, pub fire: bool, pub armor: bool, pub resistance: bool, pub fall: bool, pub exhaustion: f32 }
+pub struct Hit { pub amount: f32, pub fire: bool, pub armor: bool, pub effects: bool, pub fall: bool, pub exhaustion: f32 }
 impl Hit {
     /// data/minecraft/damage_type/fall.json: bypasses armour, exhaustion 0.
-    pub const FALL: Hit = Hit { amount: 0.0, fire: false, armor: false, resistance: true, fall: true, exhaustion: 0.0 };
+    pub const FALL: Hit = Hit { amount: 0.0, fire: false, armor: false, effects: true, fall: true, exhaustion: 0.0 };
+    /// Entity.lavaHurt: 4, fire, exhaustion 0.1, never scaled by difficulty.
+    pub const LAVA: Hit = Hit { amount: 4.0, fire: true, armor: true, effects: true, fall: false, exhaustion: 0.1 };
+    /// A status effect's tick (wither, poison): no armour, resistance or enchantment term.
+    pub const MAGIC: Hit = Hit { amount: 0.0, fire: false, armor: false, effects: false, fall: false, exhaustion: 0.0 };
     pub fn contact(c: ContactDamage) -> Hit {
-        Hit { amount: c.raw_amount(), fire: c.is_fire(), armor: !c.bypasses_armor(), resistance: true, fall: c.is_fall(), exhaustion: c.exhaustion() }
+        Hit { amount: c.raw_amount(), fire: c.is_fire(), armor: !c.bypasses_armor(), effects: true, fall: c.is_fall(), exhaustion: c.exhaustion() }
     }
 }
-/// The hurt itself; `armor` and `resistance` say whether those steps of the chain apply.
-pub fn hurt(s: &mut PlayerState, hit: Hit) {
-    if s.profile.invulnerable || s.health <= 0.0 || hit.fire && s.profile.fire_resistance { return; }
+/// The hurt itself; false when a gate (invulnerable, dead, fire resistance, the window) stops it.
+pub fn hurt(s: &mut PlayerState, hit: Hit) -> bool {
+    if s.profile.invulnerable || s.health <= 0.0 || hit.fire && s.profile.fire_resistance { return false; }
     let raw = if hit.amount < 0.0 { 0.0 } else if !hit.amount.is_finite() { f32::MAX } else { hit.amount };
-    if let Some(debit) = window(&mut s.hurt_cooldown, raw) { mitigate(s, debit, hit); }
+    window(&mut s.hurt_cooldown, raw).map(|debit| mitigate(s, debit, hit)).is_some()
 }
 /// LivingEntity.hurtServer's invulnerability window: the whole hit at 10 ticks or fewer, above
 /// that only the excess over the last raw hit.
@@ -742,11 +763,13 @@ pub(crate) fn mitigate(s: &mut PlayerState, mut amount: f32, hit: Hit) {
         let (armor, f) = (math::floor(p.armor as f64) as f32, 2.0f32 + p.armor_toughness / 4.0f32);
         amount *= 1.0f32 - math::clamp_f32(armor - amount / f, armor * 0.2f32, 20.0f32) / 25.0f32;
     }
-    if hit.resistance && let Some(amp) = p.resistance { amount = (amount * ((25 - (amp as i32 + 1) * 5) as f32) / 25.0f32).max(0.0f32); }
-    if amount <= 0.0f32 { amount = 0.0f32; }
-    else {
-        let epf = p.protection_epf + if hit.fall { p.feather_falling_epf } else { 0.0f32 };
-        if epf > 0.0f32 { amount *= 1.0f32 - math::clamp_f32(epf, 0.0f32, 20.0f32) / 25.0f32; }
+    if hit.effects {
+        if let Some(amp) = p.resistance { amount = (amount * ((25 - (amp as i32 + 1) * 5) as f32) / 25.0f32).max(0.0f32); }
+        if amount <= 0.0f32 { amount = 0.0f32; }
+        else {
+            let epf = p.protection_epf + if hit.fall { p.feather_falling_epf } else { 0.0f32 };
+            if epf > 0.0f32 { amount *= 1.0f32 - math::clamp_f32(epf, 0.0f32, 20.0f32) / 25.0f32; }
+        }
     }
     let to_health = (amount - s.absorption).max(0.0f32);
     s.absorption -= amount - to_health;
@@ -788,5 +811,336 @@ fn food(s: &mut PlayerState, world: &impl World) {
         0 => { let amount = s.saturation.min(6.0); s.health = (health + amount / 6.0).min(20.0); s.exhaustion = (s.exhaustion + amount).min(40.0); }
         1 => { s.health = (health + 1.0).min(20.0); s.exhaustion = (s.exhaustion + 6.0).min(40.0); }
         _ => if health > 10.0 || world.difficulty() == 3 || health > 1.0 && world.difficulty() == 2 { s.health = (health - 1.0).max(0.0); },
+    }
+}
+
+/// Ordered causes at the authoritative server resource boundaries, between the ticks.
+#[derive(Clone, Debug)]
+pub enum ServerResourceEvent {
+    /// A resolved LivingEntity.knockback: `x`, `z` are the direction after the server's jitter
+    /// loop (x² + z² ≥ 1e-5f), since the law draws no randomness; `resistance` is the attribute.
+    Knockback { strength: f64, resistance: f64, x: f64, z: f64 },
+    Exhaustion(f32),
+    /// Observed health debit; any observed exhaustion comes separately.
+    Damage(f32),
+    /// ServerPlayer.tick, once before the connection's ServerPlayer.doTick.
+    HurtCooldownTick,
+    /// LivingEntity.onBelowWorld below minY - 64: the void's 4.0 after the cooldown tick,
+    /// bypassing armour, resistance and invulnerability (creative included); exhaustion 0.
+    FellOutOfWorld,
+    /// The contact request and its exhaustion predicted in place of observed events (normal
+    /// survival, stock damage data, no gear, effects or absorption; anchor the cooldown first).
+    UnmodifiedContactDamage(ContactDamage),
+    Regeneration(i32),
+    FoodTick,
+}
+
+pub fn apply_server_resource_event(s: &mut PlayerState, world: &impl World, event: ServerResourceEvent) {
+    world.state_footprint(crate::state_reads::StateReads::ALL, crate::state_reads::StateReads(0));
+    match event {
+        // LivingEntity.knockback; a NaN strength does not return (dcmpg; ifgt), as in vanilla.
+        ServerResourceEvent::Knockback { strength, resistance, x, z } => {
+            let strength = strength * (1.0 - resistance);
+            if strength <= 0.0 { return; }
+            debug_assert!(!(x * x + z * z < 1.0e-5f32 as f64), "knockback direction must include server jitter");
+            let (impulse, v) = (Vec3::new(x, 0.0, z).normalize().scale(strength), s.velocity);
+            let y = if !s.on_ground { v.y } else { let y = v.y / 2.0 + strength; if y.is_nan() { y } else { 0.4f64.min(y) } };
+            s.velocity = Vec3::new(v.x / 2.0 - impulse.x, y, v.z / 2.0 - impulse.z);
+        }
+        ServerResourceEvent::Exhaustion(amount) => s.exhaustion = (s.exhaustion + amount).min(40.0f32),
+        ServerResourceEvent::Damage(amount) => s.health = (s.health - amount).max(0.0),
+        ServerResourceEvent::HurtCooldownTick => COOLDOWN.cool(&mut s.hurt_cooldown.remaining_ticks),
+        ServerResourceEvent::FellOutOfWorld => {
+            if s.health > 0.0 && let Some(amount) = window(&mut s.hurt_cooldown, crate::player::death::FELL_OUT_OF_WORLD) {
+                s.health = (s.health - amount).max(0.0);
+            }
+        }
+        ServerResourceEvent::UnmodifiedContactDamage(request) => {
+            assert!(world.difficulty() == 2 && !s.profile.unmodeled_effects && !(s.effects && !modeled_effects(s)),
+                "contact damage prediction requires unmodified normal survival");
+            hurt(s, Hit::contact(request));
+        }
+        ServerResourceEvent::Regeneration(tick) => regenerate(s, world, tick),
+        ServerResourceEvent::FoodTick => food(s, world),
+    }
+}
+
+/// Resources for a living, unmounted server player with default max health, at the server's
+/// Player.aiStep tickCount, with its exhaustion and damage already applied.
+pub fn tick_server_resources(s: &mut PlayerState, world: &impl World, server_player_tick: i32) {
+    world.state_footprint(crate::state_reads::StateReads::ALL, crate::state_reads::StateReads(0));
+    regenerate(s, world, server_player_tick);
+    food(s, world);
+}
+
+// ServerPlayer.tickRegeneration (peaceful with natural regeneration), before FoodData.tick.
+fn regenerate(s: &mut PlayerState, world: &impl World, tick: i32) {
+    if world.difficulty() != 0 || !world.natural_regeneration() { return; }
+    if tick % 20 == 0 {
+        if s.health > 0.0 && s.health < 20.0 { s.health = (s.health + 1.0).min(20.0); }
+        if s.saturation < 20.0 { s.saturation += 1.0; }
+    }
+    if tick % 10 == 0 && s.food_level < 20 { s.food_level += 1; }
+}
+
+/// The server's freeze clock after travel (LivingEntity.aiStep:697-768, removeFrost/tryAddFrost,
+/// getPercentFrozen, isFullyFrozen): the counter, the speed modifier and the damage request.
+pub fn server_freeze_step(ticks_frozen: i32, in_powder_snow: bool, can_freeze: bool, feet_non_air: bool, tick_count: i32) -> (i32, Option<f64>, Option<f32>) {
+    let frozen = if in_powder_snow && can_freeze { ticks_frozen } else { (ticks_frozen - 2).max(0) };
+    let frost = (feet_non_air && frozen > 0).then(|| (-0.05f32 * (frozen.min(140) as f32 / 140.0f32)) as f64);
+    (frozen, frost, (tick_count % 40 == 0 && frozen >= 140 && can_freeze).then_some(1.0f32))
+}
+
+#[cfg(test)]
+mod witnesses {
+    use super::*;
+    use crate::{BoxWorld, Fluid};
+
+    #[test]
+    fn swim_machine_oracle_cases() {
+        // Eight direct 26.2 oracle cases (flying, swimming, sprinting, underwater, in water, water at the feet → swimming).
+        // The two riding rows are refused by the tick before the swim machine runs (travelRidden).
+        for (flying, swimming, sprinting, underwater, in_water, water, expected) in [
+            (false, false, true, true, false, true, true), (false, false, true, true, false, false, false),
+            (false, true, true, false, true, true, true), (false, true, false, false, true, true, false),
+            (true, false, true, true, false, true, false), (true, true, true, false, true, true, false),
+        ] {
+            let mut s = PlayerState { flying, swimming, sprinting, underwater, in_water, ..Default::default() };
+            let mut world = BoxWorld::default();
+            if water { world.set(block_pos(s.position), Block { fluid: Fluid { kind: FluidKind::Water, ..Default::default() }, ..Block::default() }); }
+            swim(&mut s, &world);
+            assert_eq!(s.swimming, expected, "flying={flying} swimming={swimming}");
+        }
+        let mut s = PlayerState { profile: crate::Profile { riding: true, ..Default::default() }.into(), ..Default::default() };
+        assert_eq!(try_tick(&mut s, &BoxWorld::default(), &Input::default()), Err(Refusal("LivingEntity.travelRidden".into())));
+    }
+
+    #[test]
+    fn jar_sprint_latch_corpus() {
+        for row in include_str!("../tests/data/sprint.tsv").lines() {
+            let (bits, expected) = row.split_once(' ').unwrap();
+            let bits: u32 = bits.parse().unwrap();
+            let mut s = PlayerState {
+                sprinting: bits & 1 != 0, food_level: if bits & 4 != 0 { 20 } else { 6 }, in_water: bits & 8 != 0, underwater: bits & 16 != 0,
+                swimming: bits & 32 != 0, on_ground: bits & 64 != 0, horizontal_collision: bits & 256 != 0, minor_horizontal_collision: bits & 512 != 0,
+                ..PlayerState::default()
+            };
+            let input = Input { forward: bits & 2 != 0, sneak: bits & 128 != 0, sprint: bits & 2048 != 0, ..Input::default() };
+            sprint(&mut s, &input, bits & 1024 != 0, false, false);
+            assert_eq!(s.sprinting, expected == "true", "jar sprint case {bits}");
+        }
+    }
+
+    #[test]
+    fn sprint_window_food_and_item_witnesses() {
+        // check-reproduce-out.txt:225-299 and checkwitness-out.txt:1-66, as states and inputs.
+        let base = || PlayerState { sprint_window: 7, on_ground: true, ..PlayerState::default() };
+        let using = |s: &mut PlayerState, can_sprint: bool| { let p = &mut *s.profile; p.using_item = true; p.use_item_can_sprint = Some(can_sprint); };
+        let forward = Input { forward: true, ..Input::default() };
+        let idle = Input::default();
+        // S2: the double tap is killed by a bow or food.
+        let mut s = base();
+        sprint(&mut s, &forward, false, false, false);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (7, false));
+        using(&mut s, false);
+        sprint(&mut s, &forward, false, false, false);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (0, false));
+        // S3: it survives a spear (canSprint).
+        let mut s = base();
+        sprint(&mut s, &forward, false, false, false);
+        using(&mut s, true);
+        sprint(&mut s, &idle, false, false, true);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (6, false));
+        sprint(&mut s, &forward, false, false, false);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (5, true));
+        // S5 and S6: food 6 refuses in survival, mayfly allows; food 7 is enough.
+        let mut s = PlayerState { food_level: 6, ..base() };
+        sprint(&mut s, &Input { sprint: true, ..forward }, false, false, false);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (0, false));
+        let mut s = PlayerState { food_level: 7, ..base() };
+        sprint(&mut s, &Input { sprint: true, ..forward }, false, false, false);
+        assert!(s.sprinting);
+        let mut s = PlayerState { food_level: 6, profile: crate::Profile { mayfly: true, ..Default::default() }.into(), ..base() };
+        sprint(&mut s, &forward, false, false, false);
+        assert_eq!(s.sprint_trigger_time, 7);
+        sprint(&mut s, &idle, false, false, true);
+        sprint(&mut s, &forward, false, false, false);
+        assert!(s.sprinting);
+        // A1: a bow mid-sprint zeroes the window and keeps sprinting.
+        let mut s = PlayerState { sprint_trigger_time: 5, sprinting: true, ..base() };
+        using(&mut s, false);
+        sprint(&mut s, &forward, false, false, true);
+        assert_eq!((s.sprint_trigger_time, s.sprinting), (0, true));
+        // A3: a backward tap resets the window.
+        let mut s = PlayerState { sprint_trigger_time: 6, ..base() };
+        sprint(&mut s, &Input { back: true, ..idle }, false, false, false);
+        assert_eq!(s.sprint_trigger_time, 0);
+    }
+
+    #[test]
+    fn lava_hurt_and_collector_witnesses() {
+        // probe-output.txt:3-18 and mycheck-output.txt:1-7, on a server player.
+        let lava = |s: &mut PlayerState, cells: &[i32]| {
+            let mut c = Collector::default();
+            for &step in cells { c.at(step); c.lava(); }
+            c.apply(s);
+        };
+        let mut s = PlayerState::default();
+        lava(&mut s, &[0]);
+        assert_eq!((s.health.to_bits(), s.remaining_fire_ticks), (0x4180_0000, 300));
+        // The window: strict > 10 ticks, then only the excess over the last raw hit.
+        let mut s = PlayerState { hurt_cooldown: HurtCooldown { remaining_ticks: 10, last_raw_hit: 100.0 }, ..Default::default() };
+        assert!(hurt(&mut s, Hit::LAVA));
+        assert_eq!((s.health, s.hurt_cooldown.remaining_ticks, s.hurt_cooldown.last_raw_hit, s.exhaustion), (16.0, 20, 4.0, 0.1));
+        let mut s = PlayerState { hurt_cooldown: HurtCooldown { remaining_ticks: 11, last_raw_hit: 4.0 }, ..Default::default() };
+        assert!(!hurt(&mut s, Hit::LAVA));
+        assert_eq!((s.health, s.hurt_cooldown.remaining_ticks, s.exhaustion), (20.0, 11, 0.0));
+        let mut s = PlayerState { hurt_cooldown: HurtCooldown { remaining_ticks: 11, last_raw_hit: 2.0 }, ..Default::default() };
+        assert!(hurt(&mut s, Hit::LAVA));
+        assert_eq!((s.health, s.hurt_cooldown.remaining_ticks, s.hurt_cooldown.last_raw_hit, s.exhaustion), (18.0, 11, 4.0, 0.1));
+        // Two cells in one step or in two: two hurts, the window takes one.
+        for cells in [&[0, 0][..], &[0, 1][..]] {
+            let mut s = PlayerState::default();
+            lava(&mut s, cells);
+            assert_eq!(s.health, 16.0);
+        }
+        // FREEZE runs before CLEAR_FREEZE in one flush.
+        let mut c = Collector::default();
+        c.at(0);
+        c.add(CLEAR_FREEZE);
+        c.add(FREEZE);
+        let mut s = PlayerState { ticks_frozen: 10, ..Default::default() };
+        c.apply(&mut s);
+        assert_eq!(s.ticks_frozen, 0);
+        // Fire resistance blocks the damage and exhaustion while ignite and clearFreeze run.
+        let mut s = PlayerState { ticks_frozen: 10, profile: crate::Profile { fire_resistance: true, ..Default::default() }.into(), ..Default::default() };
+        lava(&mut s, &[0]);
+        assert_eq!((s.health, s.remaining_fire_ticks, s.ticks_frozen, s.hurt_cooldown.remaining_ticks, s.exhaustion), (20.0, 300, 0, 0, 0.0));
+        // Ignite is max-only.
+        for (before, after) in [(400, 400), (299, 300)] {
+            let mut s = PlayerState { remaining_fire_ticks: before, profile: crate::Profile { fire_resistance: true, ..Default::default() }.into(), ..Default::default() };
+            lava(&mut s, &[0]);
+            assert_eq!(s.remaining_fire_ticks, after);
+        }
+    }
+
+    #[test]
+    fn flying_speed_witnesses() {
+        // evidence/harness-output.txt:6-11: getFlyingSpeed by flying and sprinting.
+        for (flying, sprinting, bits) in [(true, false, 0x3d4c_cccd), (true, true, 0x3dcc_cccd), (false, true, 0x3cd4_fdf3), (false, false, 0x3ca3_d70a)] {
+            assert_eq!(air_speed(&PlayerState { flying, sprinting, ..Default::default() }).to_bits(), bits);
+        }
+    }
+
+    #[test]
+    fn push_out_direction_order_and_suffocation() {
+        let mut world = BoxWorld::default();
+        world.set([0, 0, 0], Block::full());
+        let mut s = PlayerState { position: Vec3::new(0.5, 0.0, 0.5), velocity: Vec3::new(0.7, 0.2, 0.8), ..PlayerState::default() };
+        push_out(&mut s, &world, 0.5, 0.5);
+        assert_eq!(s.velocity, Vec3::new(-0.1, 0.2, 0.8));
+        world.set([-1, 0, 0], Block::full());
+        push_out(&mut s, &world, 0.5, 0.5);
+        assert_eq!(s.velocity, Vec3::new(0.1, 0.2, 0.8));
+        world.set([0, 0, 0], Block { suffocating: false, ..Block::full() });
+        s.velocity = Vec3::default();
+        push_out(&mut s, &world, 0.5, 0.5);
+        assert_eq!(s.velocity, Vec3::default());
+    }
+
+    #[test]
+    fn fluid_only_intersection_is_visited_and_extinguishes() {
+        let mut world = BoxWorld::default();
+        let wet = Block { air: false, inside_shape: Some(VoxelShape::default()), fluid: Fluid { kind: FluidKind::Water, height: 1.0, ..Fluid::default() }, ..Block::default() };
+        world.set([0, 0, 0], wet);
+        let mut s = PlayerState { position: Vec3::new(0.5, 0.0, 0.5), remaining_fire_ticks: 10, ..PlayerState::default() };
+        let p = s.position;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut cross = |s: &mut PlayerState, world: &BoxWorld, seen: &mut std::collections::BTreeSet<BlockPos>| {
+            let mut c = Collector::default();
+            segment(s, world, p, p, seen, &mut c, 16, Vec3::default(), &mut None).unwrap();
+            c.apply(s);
+        };
+        cross(&mut s, &world, &mut seen);
+        assert!(seen.contains(&[0, 0, 0]));
+        assert_eq!(s.remaining_fire_ticks, 0);
+        s.remaining_fire_ticks = 10;
+        cross(&mut s, &world, &mut seen);
+        assert_eq!(s.remaining_fire_ticks, 10);
+        seen.clear();
+        world.set([0, 0, 0], Block { air: false, inside_shape: Some(VoxelShape::default()), ..Block::default() });
+        cross(&mut s, &world, &mut seen);
+        assert!(seen.is_empty());
+    }
+
+    // Jar anchors: Player.isPushedByFluid = !abilities.flying (Player.java.txt:4122); the feet cell
+    // water[amount=7] beside water[amount=4] gives one contributor, current (1,0,0) x 0.014.
+    #[test]
+    fn flying_takes_no_current() {
+        let water = |amount: u8| Block { fluid: Fluid { kind: FluidKind::Water, raw_amount: Some(amount), raw_falling: Some(false), ..Fluid::default() }, ..Block::default() };
+        let mut world = BoxWorld::default();
+        world.set([0, 0, 0], water(7));
+        world.set([1, 0, 0], water(4));
+        for (flying, x) in [(false, 0.014f64), (true, 0.0)] {
+            let mut s = PlayerState { position: Vec3::new(0.5, 0.0, 0.5), flying, ..PlayerState::default() };
+            immerse(&mut s, &world);
+            assert!(s.in_water);
+            assert_eq!(s.velocity.x.to_bits(), x.to_bits(), "flying={flying}");
+        }
+    }
+
+    // LivingEntity.knockback from the 26.2 bytecode: one case per branch.
+    #[test]
+    fn knockback_branches() {
+        let hit = |on_ground: bool, velocity: Vec3, strength: f64, resistance: f64, x: f64, z: f64| {
+            let mut s = PlayerState { on_ground, velocity, ..Default::default() };
+            apply_server_resource_event(&mut s, &BoxWorld::default(), ServerResourceEvent::Knockback { strength, resistance, x, z });
+            s.velocity
+        };
+        const S: f64 = 0.4f32 as f64;
+        let v = hit(true, Vec3::new(0.3, -0.08, 0.2), S, 0.0, 1.0, 0.0);
+        assert_eq!((v.x.to_bits(), v.y.to_bits(), v.z.to_bits()), ((0.3f64 / 2.0 - S).to_bits(), (-0.08f64 / 2.0 + S).to_bits(), (0.2f64 / 2.0).to_bits()));
+        assert_eq!(hit(true, Vec3::new(0.0, 0.2, 0.0), S, 0.0, 1.0, 0.0).y.to_bits(), 0.4f64.to_bits());
+        assert_eq!(hit(false, Vec3::new(0.0, 0.3, 0.0), S, 0.0, 1.0, 0.0).y.to_bits(), 0.3f64.to_bits());
+        let v0 = Vec3::new(0.3, -0.08, 0.2);
+        let v = hit(true, v0, S, 1.0, 1.0, 0.0);
+        assert_eq!((v.x.to_bits(), v.y.to_bits(), v.z.to_bits()), (v0.x.to_bits(), v0.y.to_bits(), v0.z.to_bits()));
+        let v = hit(false, Vec3::default(), S, 0.0, 1.0, 1.0);
+        let unit = 1.0f64 / 2.0f64.sqrt();
+        assert_eq!((v.x.to_bits(), v.z.to_bits()), ((0.0 - unit * S).to_bits(), (0.0 - unit * S).to_bits()));
+        assert!(hit(true, Vec3::default(), f64::NAN, 0.0, 1.0, 0.0).x.is_nan());
+    }
+
+    #[test]
+    fn server_resource_cadences_precede_food_data() {
+        let resources = |s: &PlayerState| (s.health, s.food_level, s.saturation, s.exhaustion, s.food_tick_timer);
+        for (difficulty, natural_regeneration, around_ten, around_twenty) in [
+            (0, true, [(19.0, 19, 19.5, 0.0, 9), (20.0, 20, 19.5, 6.0, 0), (20.0, 20, 18.5, 2.0, 0)],
+                [(19.0, 20, 20.0, 4.0, 9), (20.0, 20, 19.0, 0.25, 0), (20.0, 20, 19.0, 0.25, 0)]),
+            (2, true, [(19.0, 19, 19.5, 0.0, 9), (19.0, 19, 19.5, 0.0, 10), (19.0, 19, 19.5, 0.0, 11)],
+                [(19.0, 20, 20.0, 4.0, 9), (20.0, 20, 19.0, 6.25, 0), (20.0, 20, 18.0, 2.25, 0)]),
+            (0, false, [(19.0, 19, 19.5, 0.0, 0); 3],
+                [(19.0, 20, 20.0, 4.0, 0), (19.0, 20, 19.0, 0.25, 0), (19.0, 20, 19.0, 0.25, 0)]),
+        ] {
+            let mut world = BoxWorld::default();
+            world.difficulty = difficulty;
+            world.natural_regeneration = natural_regeneration;
+            let mut s = PlayerState { health: 19.0, food_level: 19, saturation: 19.5, food_tick_timer: 8, ..Default::default() };
+            for (tick, expected) in (9..=11).zip(around_ten) {
+                tick_server_resources(&mut s, &world, tick);
+                assert_eq!(resources(&s), expected, "difficulty {difficulty}, regen {natural_regeneration}, tick {tick}");
+            }
+            let mut s = PlayerState { health: 19.0, saturation: 20.0, exhaustion: 4.0, food_tick_timer: 8, ..Default::default() };
+            for (tick, expected) in (19..=21).zip(around_twenty) {
+                if tick == 20 { s.exhaustion += 0.25; }
+                tick_server_resources(&mut s, &world, tick);
+                assert_eq!(resources(&s), expected, "difficulty {difficulty}, regen {natural_regeneration}, tick {tick}");
+            }
+        }
+        let mut world = BoxWorld::default();
+        world.difficulty = 0;
+        let mut s = PlayerState { saturation: 19.5, ..Default::default() };
+        tick_server_resources(&mut s, &world, 20);
+        assert_eq!(s.saturation, 20.5);
     }
 }
