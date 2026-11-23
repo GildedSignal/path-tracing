@@ -4,5 +4,6 @@ GLM 5.4 (Z.ai, through omp; it spends less of the 5-hour window than 5.3) extrac
 
 - **Launch:** GLM never idles while it has queued work (S241): `scripts\glm-chain.ps1` drains `jobs\glm-chain.txt` using a rolling `-Parallel` worker pool, honoring Z.ai 5-hour cooldowns (`retry-after-ms`) and logging to `jobs\glm-chain.log`. One job by hand: `scripts\glm-local.ps1 -Lenses "<job-id>" -Minutes 60`. Commit the prompt first: lanes run from a checkout of HEAD. Results go to `lab\results\local-*`, which git ignores.
 - **Its limit** is Zai's 5-hour token window (`scripts\meters.ps1`).
-- **The key** is stored by `scripts\set-glm-key.ps1`, encrypted for Julien's account; it only enters an omp process's environment, and runners delete any output file that contains it.
+- **Mistral** runs through the same runner: `scripts\glm-local.ps1 -Lenses <id> -Model mistral/<id>` (Vibe subscription, no dollar cap).
+- **The key** is stored by `scripts\set-key.ps1 [-Provider zai|mistral]`, encrypted for Julien's account; it only enters an omp process's environment, and runners delete any output file that contains it.
 - **It is weak** (S173) and reads untrusted bytecode: its patches are read by the integrator before they are merged.

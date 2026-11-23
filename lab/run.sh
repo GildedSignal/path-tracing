@@ -25,7 +25,7 @@ phase() {
   # On Windows (S43, Git Bash), omp.exe needs a Windows path; "@" stops MSYS from converting it.
   if command -v cygpath >/dev/null; then prompt=$(cygpath -w "$prompt"); fi
   timeout --signal=TERM --kill-after=1m "${minutes}m" \
-    omp -p --model=zai/glm-5.4 --thinking=high --approval-mode=yolo --no-session \
+    omp -p --model="${LAB_MODEL:-zai/glm-5.4}" --thinking=high --approval-mode=yolo --no-session \
     --max-time="${minutes}m" "@$prompt" > "$scratch/$name.log" 2>&1
 }
 finish() {
@@ -48,7 +48,7 @@ main() {
   [[ $lens =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ && $lens != README ]] || die 'Invalid lens name'
   [[ $id =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die 'Invalid run id'
   [[ $minutes =~ ^[1-9][0-9]{0,2}$ ]] && (( minutes <= 180 )) || die 'author-minutes must be an integer from 1 to 180'
-  [[ -n ${ZAI_API_KEY:-} ]] || die 'ZAI_API_KEY is missing'
+  [[ -n ${LAB_KEY:-${ZAI_API_KEY:-}} ]] || die "the model's key is missing (LAB_KEY or ZAI_API_KEY)"
   command -v omp >/dev/null || die 'omp is missing; run bash lab/setup.sh on the Actions runner'
   cd "$(git rev-parse --show-toplevel)"
   [[ -f jobs/$lens/prompt.md ]] || die "Missing prompt: jobs/$lens/prompt.md"

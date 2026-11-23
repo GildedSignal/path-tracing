@@ -10,7 +10,7 @@ param([int]$WatchAt = 0, [int]$PollMinutes = 5)
 
 function Read-Meters {
   $m = [ordered]@{}
-  $key = Get-GlmKey
+  $key = Get-Key zai
   if ($key) {
     $env:ZAI_API_KEY = $key
     $line = & D:\path-tracing-deps\omp\omp.exe usage -p zai 2>$null | Select-String '5 Hours' | Select-Object -First 1

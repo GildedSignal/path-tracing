@@ -22,7 +22,7 @@ A fourth thing exists and is not a band: **orchestration**, one mind holding the
 
 ## 2. What a third family buys
 
-The clan has two families that build and judge, Anthropic and OpenAI, plus GLM's lab; Google is Julien's own tool (Antigravity, piloted by him). A third judging family would buy, beyond its tokens:
+The clan has two families that build and judge, Anthropic and OpenAI, plus GLM's lab, with Mistral (Vibe) beside it; Google is Julien's own tool (Antigravity, piloted by him). A third judging family would buy, beyond its tokens:
 
 1. **The judge can be chosen, not conceded.** For each builder, the judge is the family whose errors are least like the builder's. Which family that is, is a measurement, not an opinion (section 4).
 2. **What a machine cannot check can be put to three.** Two minds that disagree leave the integrator to break the tie by taste; three that disagree say the question is underspecified, which is information. Used only where no machine can check, because where one can, a vote is fake work.
@@ -41,6 +41,7 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209). Effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's with `Built-by:`. Copy git-ignored `engine/world/tests/fixtures/world` into a new worktree |
 | Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended; backfills the leftover ~20% of the Codex window (S209). ≤ 4 GPT; with Astra, one GPT job beside her (S15); same launch rules as Astra |
 | GLM | Z.ai | Checked (wide) | parameter table rows, Mojang scars, and jar bit-witnesses against the generator basis, plus compiled `lab/wiki/` notes ([lab/glm.md](../../lab/glm.md)); no second checker session — judged by jar witnesses, the integrator, and live flights. `.\scripts\glm-local.ps1 -Lenses "<job-id>"` (reads `jobs\<id>\prompt.md`): commit the prompt first, because lanes run from a checkout of HEAD |
+| Vibe | Mistral | none yet: the Checked band's bake-off first (section 4) | the same lane as GLM (table rows, scars, jar witnesses), a second family beside it whose rows check GLM's; runs through the same omp runner, `.scriptsglm-local.ps1 -Model mistral/<id>`, once his key is stored (`scriptsset-key.ps1 -Provider mistral`) |
 
 ## 4. The bake-off: no row stands on reputation
 
