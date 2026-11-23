@@ -41,3 +41,5 @@ His words are the source; each line names its turn (the register and the verbati
 ## From Emergent Space (ES, his engine)
 
 Worldtubes, certificates, light cones, generators, multipoles, programs plus scars, the slack allocator, local laws, symmetry found by hashing, "a fix signals the wrong representation" (ES 19). ES's "no ticks" does not carry over: Mojang's law ticks at 20 Hz, and a plan is checked against it (ES 14). Details: `detail/engine.md`.
+
+The philosophy carries too, not only the mechanisms. **Spartan on duplication:** every fact is held once and every value computed once; a second copy in memory or a second computation is a defect (ES 1, 24). **Think from the constraints, not from what is there:** a design starts from what the boundary demands (the witnesses, the exactness tier, T, the cache and the information floor) and is invented inside them; existing code is the oracle of what, never the template of how (ES 8, 18, 35). **The right incentives:** a job's metrics are chosen so that the cheapest way to score is the right work (ES 27, method §9).
