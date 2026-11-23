@@ -86,9 +86,7 @@ pub struct SprintTickInput {
 /// `LocalPlayer.aiStep` sprint machine (`@0-484`).
 pub fn step_ai_sprint(state: &mut SprintMachineState, input: &SprintTickInput) {
     // @0-14 decrement
-    if state.sprint_trigger_time > 0 {
-        state.sprint_trigger_time -= 1;
-    }
+    crate::basis::clock::COOLDOWN.cool(&mut state.sprint_trigger_time);
     // @67-85 pre-input.tick captures
     let was_shift = input.pre_shift_key_down;
     let was_forward = has_forward_impulse(input.pre_move_vector_y);

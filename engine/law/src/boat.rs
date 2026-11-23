@@ -166,9 +166,7 @@ impl BoatHurtState {
 
     /// `AbstractBoat.tick @79-112`: decays `hurtTime` and `damage` per tick.
     pub fn tick_decay(&mut self) {
-        if self.hurt_time > 0 {
-            self.hurt_time -= 1;
-        }
+        crate::basis::clock::COOLDOWN.cool(&mut self.hurt_time);
         if self.damage > 0.0f32 {
             self.damage -= BOAT_DAMAGE_DECAY;
         }

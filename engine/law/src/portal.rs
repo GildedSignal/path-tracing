@@ -279,9 +279,7 @@ impl PortalProcessState {
         cooldown_delay: i32,
         destination_exists: bool,
     ) -> PortalHandleOutcome {
-        if self.portal_cooldown > 0 {
-            self.portal_cooldown -= 1;
-        }
+        crate::basis::clock::COOLDOWN.cool(&mut self.portal_cooldown);
         if !self.has_processor {
             return PortalHandleOutcome::Idle;
         }

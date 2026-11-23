@@ -209,9 +209,7 @@ fn tick_movement(
         }
     }
     // Player.aiStep @0-14, @28-49
-    if state.jump_trigger_time > 0 {
-        state.jump_trigger_time -= 1;
-    }
+    clock::COOLDOWN.cool(&mut state.jump_trigger_time);
     if state.flying && !state.profile.riding {
         state.fall_distance = 0.0;
     }
@@ -220,9 +218,7 @@ fn tick_movement(
     if !state.flying && state.in_water && input.sneak {
         state.velocity.y -= 0.04f32 as f64;
     }
-    if state.no_jump_delay > 0 {
-        state.no_jump_delay -= 1;
-    }
+    clock::COOLDOWN.cool(&mut state.no_jump_delay);
     if state.velocity.horizontal_sqr() < 9.0e-6 {
         state.velocity.x = 0.0;
         state.velocity.z = 0.0;
@@ -1460,11 +1456,7 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
         ServerResourceEvent::Knockback { strength, resistance, x, z } => knockback(state, strength, resistance, x, z),
         ServerResourceEvent::Exhaustion(amount) => add_exhaustion(state, amount),
         ServerResourceEvent::Damage(amount) => state.health = (state.health - amount).max(0.0),
-        ServerResourceEvent::HurtCooldownTick => {
-            if state.hurt_cooldown.remaining_ticks > 0 {
-                state.hurt_cooldown.remaining_ticks -= 1;
-            }
-        }
+        ServerResourceEvent::HurtCooldownTick => clock::COOLDOWN.cool(&mut state.hurt_cooldown.remaining_ticks),
         ServerResourceEvent::FellOutOfWorld => {
             // Player.hurtServer's isDeadOrDying gate; out_of_world is in
             // bypasses_invulnerability/armor/resistance, so the raw hit is the debit.

@@ -274,9 +274,7 @@ pub fn arrow_free_tick(
     in_water_before: bool,
     in_water_after: bool,
 ) -> bool {
-    if arrow.shake_time > 0 {
-        arrow.shake_time -= 1;
-    }
+    crate::basis::clock::COOLDOWN.cool(&mut arrow.shake_time);
     if arrow.in_ground {
         arrow.life += 1;
         arrow.in_ground_time += 1;

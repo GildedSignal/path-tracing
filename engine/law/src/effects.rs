@@ -160,9 +160,7 @@ impl MobEffectInstance {
         if let Some(hidden) = self.hidden.as_deref_mut() {
             hidden.tick_down_duration();
         }
-        if self.duration > 0 {
-            self.duration -= 1;
-        }
+        crate::basis::clock::COOLDOWN.cool(&mut self.duration);
     }
 
     /// `MobEffectInstance.setDetailsFrom`: duration, amplifier, visibility flags.
