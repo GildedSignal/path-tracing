@@ -93,7 +93,7 @@ A job is `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out ([work.md](../work.md
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
 4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM extracts parameter rows, scars, jar witnesses, and `lab/wiki/` notes paced by `scripts/glm-chain.ps1`. A smaller model never writes for a bigger one (S210; [work.md](../work.md)).
-5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM) in the same message, before every launch** (S168). Launch no native sub-agent above 80% of the native 5-hour window.
+5. Read meters raw before stating them, naming which column is used or remaining. A reading older than its window's last reset (the Codex meter's `as of` is its newest session) is stale, not a fact: say so, and never hold a launch on it. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM) in the same message, before every launch** (S168). Launch no native sub-agent above 80% of the native 5-hour window.
 6. Read-only companions get their evidence made for them (failure lines, block dumps, logs).
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
 8. Script bugs beyond a couple of commands go to a Terra job, not into the integrator's context.
