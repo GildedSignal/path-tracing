@@ -17,7 +17,7 @@
 //! cooldown in the same pass. A tick here assumes that decrement already
 //! happened (`ServerResourceEvent::HurtCooldownTick`).
 
-use crate::state::{HurtCooldown, PlayerState};
+use crate::state::PlayerState;
 
 /// The kit's verbs for the effects the bot's plan consumes. A block is its
 /// answers to the kit's verbs; an effect is its answers to these.
@@ -136,7 +136,7 @@ impl MobEffectInstance {
             }
             // HungerMobEffect offsets 0-25: Player.causeFoodExhaustion(0.005f * (amp+1)).
             EffectKind::Hunger => {
-                add_exhaustion(player, 0.005f32 * (amp + 1) as f32);
+                player.exhaustion = crate::mining::add_exhaustion(player.exhaustion, 0.005f32 * (amp + 1) as f32);
                 true
             }
             // HealOrHarmMobEffect.applyEffectTick offsets 0-45: a player is not
@@ -307,11 +307,12 @@ fn hurt(player: &mut PlayerState, tick: EffectTick<'_>, amount: f32) {
         return;
     }
     let amount = if amount.is_nan() { f32::MAX } else { amount };
-    if let Some(debit) = accept_effect_hit(&mut player.hurt_cooldown, amount) {
-        // actuallyHurt offsets 27-48: absorption first, then health, floors 0.
-        let absorbed = debit.min(*tick.absorption);
-        *tick.absorption -= absorbed;
-        player.health = (player.health - (debit - absorbed)).max(0.0);
+    if let Some(debit) = crate::movement::accept_raw_hit(&mut player.hurt_cooldown, amount) {
+        // actuallyHurt offsets 10-154 for a bare player (no armor, resistance or
+        // enchantment term): absorption eats f - max(f - absorption, 0), health pays.
+        let mut exhaustion = player.exhaustion;
+        crate::player::actually_hurt(&mut player.health, tick.absorption, &mut exhaustion, true, debit,
+            0.0, 0.0, None, 0.0, 0.0, true, true, true, true, false, 0.0);
     }
 }
 
@@ -322,15 +323,6 @@ pub struct EffectTick<'a> {
     pub max_health: &'a mut f32,
 }
 
-// LivingEntity.hurtServer offsets 184-262: the invulnerability window, already
-// ported as movement.rs's accept_raw_hit from the same bytecode.
-fn accept_effect_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
-    crate::movement::accept_raw_hit(cooldown, amount)
-}
-// FoodData.addExhaustion offsets 0-15: capped at 40.0f.
-fn add_exhaustion(player: &mut PlayerState, amount: f32) {
-    player.exhaustion = (player.exhaustion + amount).min(40.0);
-}
 
 // FoodData.eat -> FoodConstants.saturationByModifier(i, f) = i as f32 * f * 2.0f,
 // then FoodData.add: food clamps to [0, 20], saturation to [0, food].

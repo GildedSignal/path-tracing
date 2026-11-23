@@ -1528,7 +1528,7 @@ fn inside_block(
 
 // FoodData.addExhaustion
 fn add_exhaustion(state: &mut PlayerState, world: &impl World, amount: f32) {
-    write_state!(world, state.exhaustion)=(read_state!(world, state.exhaustion)+amount).min(40.0);
+    write_state!(world, state.exhaustion)=crate::mining::add_exhaustion(read_state!(world, state.exhaustion), amount);
 }
 
 // Player.causeFoodExhaustion
