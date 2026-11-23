@@ -364,9 +364,6 @@ impl SpinAttack {
 // `Enchantment.modifyItemFilteredCount`, `effects.RemoveBinomial`, `data/minecraft/enchantment/unbreaking.json`,
 // verified against the staged 26.2 jar (see lab run local-20261122-145224-30192-1-0-port-item-entity-and-inventory).
 
-// ItemEntity 1-19 (constants), getDefaultGravity 0-3, Entity.getAirDrag 0-3 (0.98f, not overridden).
-pub const GRAVITY: f64 = 0.04;
-pub const AIR_DRAG: f32 = 0.98;
 pub const LIFETIME: i32 = 6000; // tick 544-551: despawn when age >= 6000 (server side)
 pub const INFINITE_LIFETIME_AGE: i32 = -32768; // setUnlimitedLifetime 0-7
 pub const INFINITE_PICKUP_DELAY: i32 = 32767; // setNeverPickUp 0-7
@@ -377,7 +374,6 @@ pub const REST_HORIZ_SPEED_SQR: f64 = 9.999999747378752E-6; // tick 235-238 (1.0
 pub const PICKUP_MIN_FLUID_HEIGHT: f64 = 0.10000000149011612; // tick 89/117 (0.1f as f64)
 pub const FLUID_RISE_VELOCITY: f64 = 0.05999999865889549; // setFluidMovement 20-23 (0.06f as f64)
 pub const FLUID_RISE_ACCEL: f64 = 5.0E-4f32 as f64; // setFluidMovement 27-30
-pub const WATER_DRAG: f64 = 0.99f32 as f64; // setUnderwaterMovement 1-4
 pub const LAVA_DRAG: f64 = 0.95f32 as f64; // setUnderLavaMovement 1-4
 pub const REST_MOVE_MODULUS: i32 = 4; // tick 251: (tickCount + id) % 4
 
@@ -425,10 +421,10 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
     }
     let old = body.position;
     match fluid {
-        Fluid::None => body.velocity.y -= GRAVITY, // applyGravity (Entity 3832-3850)
+        Fluid::None => crate::body::ITEM.gravity(&mut body.velocity), // applyGravity (Entity 3832-3850)
         Fluid::Water | Fluid::Lava => {
             // setFluidMovement: x,z *= drag; y += 5e-4f while y < 0.06f (gravity is NOT applied)
-            let drag = if fluid == Fluid::Water { WATER_DRAG } else { LAVA_DRAG };
+            let drag = if fluid == Fluid::Water { crate::body::ITEM.water_drag as f64 } else { LAVA_DRAG };
             body.velocity.x *= drag;
             body.velocity.z *= drag;
             if body.velocity.y < FLUID_RISE_VELOCITY {
@@ -455,7 +451,7 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
             body.position = body.position.plus(body.velocity);
             body.on_ground = false;
         }
-        let f = AIR_DRAG;
+        let f = crate::body::ITEM.air_drag;
         let f1 = if body.on_ground { f * friction } else { f };
         body.velocity.x *= f1 as f64;
         body.velocity.y *= f as f64;
@@ -711,8 +707,8 @@ mod item_entity_tests {
     // Harness run local-20261122-145224-30192-1-0: harness-output.txt.
     #[test]
     fn constants_match_jar() {
-        assert_eq!(bits_d(GRAVITY), 0x3FA47AE147AE147B);
-        assert_eq!(bits_f(AIR_DRAG), 0x3F7AE148);
+        assert_eq!(bits_d(crate::body::ITEM.gravity), 0x3FA47AE147AE147B);
+        assert_eq!(bits_f(crate::body::ITEM.air_drag), 0x3F7AE148);
         assert_eq!(bits_f(0.6f32), 0x3F19999A); // stone friction
         assert_eq!(bits_f(0.98f32 * 0.6f32), 0x3F16872C); // ground f1 = 0.588
         assert_eq!(bits_f(0.98f32 * 0.98f32), 0x3F75DCC7); // ice f1 = 0.9604

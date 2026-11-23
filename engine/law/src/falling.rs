@@ -9,12 +9,6 @@
 use crate::neighbor::update_flags;
 use crate::{math, Vec3};
 
-/// `FallingBlockEntity.getDefaultGravity 0-3`: plain double `0.04` subtracted before `move(SELF)`.
-pub const GRAVITY: f64 = 0.04;
-
-/// `Entity.getAirDrag 0-3`: float `0.98f` widened to `f64` (`0.9800000190734863`) in `FallingBlockEntity.tick @893`.
-pub const AIR_DRAG: f64 = 0.98f32 as f64;
-
 /// `FallingBlockEntity.fall(level, pos, state) 5-32`: center X/Z (`+ 0.5`), raw block Y, `Vec3::ZERO`.
 #[inline]
 pub fn spawn(x: i32, y: i32, z: i32) -> (f64, f64, f64) {
@@ -24,9 +18,9 @@ pub fn spawn(x: i32, y: i32, z: i32) -> (f64, f64, f64) {
 /// One free-air flight tick (vertical): `vy -= 0.04`, `y += vy`, `vy *= (double)0.98f`.
 #[inline]
 pub fn flight_tick(y: f64, vy: f64) -> (f64, f64) {
-    let vy = vy - GRAVITY;
-    let y = y + vy;
-    (y, vy * AIR_DRAG)
+    let (mut p, mut v) = (Vec3::new(0.0, y, 0.0), Vec3::new(0.0, vy, 0.0));
+    crate::body::FALLING_BLOCK.tick(&mut p, &mut v, false);
+    (p.y, v.y)
 }
 
 /// `FallingBlockEntity.tick 800-847`: timeout discard check after `time += 1` and `move`.

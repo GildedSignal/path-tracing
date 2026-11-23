@@ -160,8 +160,8 @@ fn jar_falling_block_flight() {
             assert!(!falling::discards(tick, 1000, -64, 320), "jar falling discard {_block} case {line}");
         }
     }
-    assert_eq!((-falling::GRAVITY * falling::AIR_DRAG).to_bits(), 0xbfa41205c28f5c29);
-    assert_ne!((-falling::GRAVITY * 0.98f64).to_bits(), 0xbfa41205c28f5c29);
+    assert_eq!((-law::body::FALLING_BLOCK.gravity * law::body::FALLING_BLOCK.air_drag as f64).to_bits(), 0xbfa41205c28f5c29);
+    assert_ne!((-law::body::FALLING_BLOCK.gravity * 0.98f64).to_bits(), 0xbfa41205c28f5c29);
     assert!(falling::discards(101, -65, -64, 320));
     assert!(falling::discards(101, 321, -64, 320));
     assert!(falling::discards(601, 100, -64, 320));
@@ -4045,7 +4045,7 @@ fn jar_projectiles_and_redstone() {
                     *slot = Some((Vec3::new(0.5, 65.52, -0.5), init.velocity));
                 }
                 let (p, v) = slot.as_mut().unwrap();
-                throwable_free_tick(p, v, water);
+                law::body::THROWABLE.tick(p, v, water);
                 vec3_bits(*p, &c[3..6], &format!("row {line} throw pos"));
                 vec3_bits(*v, &c[6..9], &format!("row {line} throw vel"));
             }

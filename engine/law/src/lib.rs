@@ -63,6 +63,7 @@ pub use world::{
 pub mod combat;
 pub mod entity_contact;
 pub mod explosion;
+pub mod body;
 pub mod falling;
 pub mod fluid;
 pub mod neighbor;

@@ -318,12 +318,6 @@ pub fn crossbow_launch(
 // AbstractArrow
 // ============================================================================
 
-/// `AbstractArrow.getAirDrag @0-3`.
-pub const ARROW_AIR_DRAG: f32 = 0.99;
-/// `AbstractArrow.getWaterInertia @0-3`.
-pub const ARROW_WATER_INERTIA: f32 = 0.6;
-/// `AbstractArrow.getDefaultGravity @0-3`.
-pub const ARROW_GRAVITY: f64 = 0.05;
 /// `AbstractArrow.<init> @24`.
 pub const ARROW_BASE_DAMAGE: f64 = 2.0;
 /// `AbstractArrow.tickDespawn @14`.
@@ -389,13 +383,13 @@ pub fn arrow_free_tick(
     arrow.in_ground_time = 0;
     let d = arrow.vel;
     if in_water_before {
-        arrow.vel = arrow.vel.scale(ARROW_WATER_INERTIA as f64);
+        crate::body::ARROW.drag(&mut arrow.vel, true);
     }
     arrow.pos = arrow.pos.plus(d);
     if !in_water_after {
-        arrow.vel = arrow.vel.scale(ARROW_AIR_DRAG as f64);
+        crate::body::ARROW.drag(&mut arrow.vel, false);
     }
-    arrow.vel.y -= ARROW_GRAVITY;
+    crate::body::ARROW.gravity(&mut arrow.vel);
     true
 }
 
@@ -507,12 +501,6 @@ pub fn arrow_punch_push(
 // ThrowableProjectile (Snowball, ThrownEgg, shared with EnderPearl)
 // ============================================================================
 
-/// `ThrowableProjectile.getAirDrag @0-3`.
-pub const THROWABLE_AIR_DRAG: f32 = pearl::PEARL_AIR_DRAG;
-/// `ThrowableProjectile.applyInertia @97-100`.
-pub const THROWABLE_WATER_DRAG: f32 = pearl::PEARL_WATER_DRAG;
-/// `ThrowableProjectile.getDefaultGravity @0-3`.
-pub const THROWABLE_GRAVITY: f64 = pearl::PEARL_GRAVITY;
 /// `SnowballItem.PROJECTILE_SHOOT_POWER` & `EggItem.use @74`.
 pub const SNOWBALL_SHOOT_POWER: f32 = 1.5;
 
@@ -538,21 +526,6 @@ pub fn throwable_launch(
         known_movement,
         on_ground,
     )
-}
-
-/// `ThrowableProjectile.tick @4-92` (miss path, no bubble column):
-/// gravity `-0.03` FIRST, then inertia (`0.8f` water / `0.99f` air), then `pos += vel`
-/// using the POST-drag velocity (opposite order of `AbstractArrow.tick`).
-#[inline]
-pub fn throwable_free_tick(pos: &mut Vec3, vel: &mut Vec3, in_water: bool) {
-    vel.y -= THROWABLE_GRAVITY;
-    let drag = if in_water {
-        THROWABLE_WATER_DRAG
-    } else {
-        THROWABLE_AIR_DRAG
-    };
-    *vel = vel.scale(drag as f64);
-    *pos = pos.plus(*vel);
 }
 
 // ============================================================================

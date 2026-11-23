@@ -3720,7 +3720,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 continue;
             }
             fb.time += 1;
-            fb.vel.y -= falling::GRAVITY;
+            crate::body::FALLING_BLOCK.gravity(&mut fb.vel);
 
             let bounds = fb.aabb();
             let wanted = fb.vel;
@@ -3870,7 +3870,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     if falling::discards(fb.time, bpos[1], self.min_y, self.max_y) {
                         fb.removed = true;
                     } else {
-                        fb.vel = fb.vel.scale(falling::AIR_DRAG);
+                        crate::body::FALLING_BLOCK.drag(&mut fb.vel, false);
                     }
                 }
             }

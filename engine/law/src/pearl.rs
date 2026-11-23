@@ -21,9 +21,6 @@ pub const PEARL_COOLDOWN_SECONDS: f32 = 1.0;
 pub const PEARL_COOLDOWN_TICKS: i32 = (PEARL_COOLDOWN_SECONDS * 20.0f32) as i32;
 const RAD_TO_DEG_F64: f64 = (180.0f32 / (std::f64::consts::PI as f32)) as f64;
 
-pub const PEARL_GRAVITY: f64 = 0.03;
-pub const PEARL_AIR_DRAG: f32 = 0.99;
-pub const PEARL_WATER_DRAG: f32 = 0.8;
 pub const PEARL_DAMAGE: f32 = 5.0;
 pub const PEARL_WIDTH: f32 = 0.25;
 pub const PEARL_HEIGHT: f32 = 0.25;
@@ -403,13 +400,8 @@ pub fn pearl_tick(
     pearl.old_pos = pearl.pos;
     pearl.tick_count += 1;
 
-    pearl.vel = pearl.vel.plus(Vec3::new(0.0, -PEARL_GRAVITY, 0.0));
-    let drag = if pearl.in_water {
-        PEARL_WATER_DRAG
-    } else {
-        PEARL_AIR_DRAG
-    };
-    pearl.vel = pearl.vel.scale(drag as f64);
+    crate::body::THROWABLE.gravity(&mut pearl.vel);
+    crate::body::THROWABLE.drag(&mut pearl.vel, pearl.in_water);
 
     let hit = pearl_raytrace(world, pearl, entities);
     pearl.pos = match hit {
