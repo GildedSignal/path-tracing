@@ -14,7 +14,7 @@ Pass 2 made `PlayerState` one declaration (296 B hot plus a shared 41-field prof
 
 ## The measure of this pass
 
-Lines deleted. A commit that adds a generator path without deleting the old path in the same commit, or the next one, is not done. Speed is held, not chased: the bench stays within the layout spread (±1.5%) of `d068260a`; do not spend the window tuning it.
+Lines deleted, measured on a log scale (his words, 23 November: "LOCs reduction should be measured in 1/log"): report `log10(before / after)` in decades for each commit and for the pass. The floor is the budgets' sum, ~1,500 lines of generators plus tables, about one decade below 21,403; pass 2 moved 0.009 decades. A commit that adds a generator path without deleting the old path in the same commit, or the next one, is not done. Speed is held, not chased: the bench stays within the layout spread (±1.5%) of `d068260a`; do not spend the window tuning it.
 
 ## In order
 
@@ -38,4 +38,4 @@ Stop only if the jar proves a behaviour cannot be a row of a generator without a
 
 ## Output
 
-Your final message is the report: commits (hash, one line), code lines before → after, the old files deleted and those left with their lines, lines per generator against its budget, the bench ratio with its spread, harness assertions rewritten, what is left, and the lines the map should change.
+Your final message is the report: commits (hash, one line), code lines before → after and in decades against the floor, the old files deleted and those left with their lines, lines per generator against its budget, the bench ratio with its spread, harness assertions rewritten, what is left, and the lines the map should change.

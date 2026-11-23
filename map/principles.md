@@ -6,7 +6,7 @@ His words are the source; each line names its turn (the register and the verbati
 
 1. **T is the one currency.** Everything is priced in ticks, thinking included; "coalesce everything into something holistically optimal" (X2).
 2. **First principles, by problem type** (X2). Feasibility is argued from first principles and Fermi estimates, never from precedent (S37: "you don't need to see someone having done it").
-3. **Fermi first, then measure.** The floor comes before the build; a gap of orders of magnitude is the signal that the representation is wrong, not a list of speed-ups (S83, S225, the idiot index).
+3. **Fermi first, then measure.** The floor comes before the build; a gap of orders of magnitude is the signal that the representation is wrong, not a list of speed-ups (S83, S225, the idiot index). Code shrinks on the same scale: a reduction is reported in decades, `log10(before / after)`, against the floor.
 4. **Question the requirement, delete, then simplify** (S235). "The simplest form possible, we're looking at many things but the resulting idea will be genuinely simple" (X4).
 5. **Representation first, so the search is trivial** (X2, X4: "they shall be trivial"). Shape the space so the problem solves itself, like clay shaped into a mug (X6).
 6. **One mechanism.** No terrain kind gets its own path; a special case means the representation is wrong (S161, ES 19).
