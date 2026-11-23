@@ -41,7 +41,7 @@ if [[ $* == usage ]]; then
   echo 'Synthetic quota: no API call'
   exit 0
 fi
-[[ $* == *'--model=zai/glm-5.3'* && $* == *'--thinking=high'* && $* == *'--approval-mode=yolo'* && $* == *'--no-session'* ]]
+[[ $* == *'--model=zai/glm-5.4'* && $* == *'--thinking=high'* && $* == *'--approval-mode=yolo'* && $* == *'--no-session'* ]]
 prompt=${!#}; prompt=${prompt#@}
 [[ -f $prompt ]]
 out=$(find lab/results -mindepth 1 -maxdepth 1 -type d | head -n 1)

@@ -7,12 +7,6 @@ Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.Com
   $c = [regex]::Match($_.CommandLine, '-C (\S+)').Groups[1].Value
   "  pid $($_.ProcessId) since $($_.CreationDate.ToString('HH:mm')) $m $c"
 }
-"== Antigravity (agy)"
-Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'gemini\.ps1' } | ForEach-Object {
-  $j = [regex]::Match($_.CommandLine, '-Job (\S+)').Groups[1].Value
-  $m = [regex]::Match($_.CommandLine, '-Model (\S+)').Groups[1].Value
-  "  pid $($_.ProcessId) since $($_.CreationDate.ToString('HH:mm')) $j $m"
-}
 "== GLM"
 $q = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'glm-queue' }
 "  queue runner: $(if ($q) { 'running' } else { 'NOT running' })"

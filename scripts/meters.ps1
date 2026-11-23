@@ -5,8 +5,6 @@
 #
 # Zai (GLM): `omp usage -p zai`, with the stored key. Codex (Terra, Astra): the newest rollout under
 # ~/.codex/sessions carries `rate_limits` on every token_count event, primary = 5 h, secondary = weekly.
-# Antigravity has no readout until a meter is spent; then a run's result.json or stderr says
-# RESOURCE_EXHAUSTED and names the reset, so a spent meter is reported as 100%.
 param([int]$WatchAt = 0, [int]$PollMinutes = 5)
 . "$PSScriptRoot\common.ps1"
 
@@ -33,26 +31,6 @@ function Read-Meters {
       $m['codex as of'] = $roll.LastWriteTime.ToString('HH:mm')
       break
     }
-  }
-  # Antigravity: its own `/usage` slash command, run headless on stdin, costs no model call and prints
-  # "<group>\t<label>\t<N>%\t<reset>" with N the share REMAINING (found 14 November, S112; the earlier
-  # "unreadable until spent" was never tested). Claude and GPT models share one meter; Argon has its own.
-  $agy = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
-  if (Test-Path $agy) {
-    $in = [IO.Path]::GetTempFileName(); $out = [IO.Path]::GetTempFileName()
-    Set-Content -LiteralPath $in '/usage' -Encoding ascii
-    $p = Start-Process $agy -ArgumentList @('--output-format','text','--print-timeout','60s') -RedirectStandardInput $in `
-      -RedirectStandardOutput $out -RedirectStandardError ([IO.Path]::GetTempFileName()) -NoNewWindow -Wait -PassThru
-    foreach ($line in Get-Content -LiteralPath $out) {
-      $f = $line -split "`t"
-      if ($f.Count -ge 3 -and $f[2] -match '^(\d+)%$') {
-        $used = 100 - [double]$Matches[1]   # read before any other -match overwrites $Matches
-        $group = if ($f[0] -match 'Argon') { 'agy argon' } elseif ($f[0] -match 'Claude') { 'agy claude+gpt' } elseif ($f[0] -match 'Gemini') { 'agy gemini' } else { "agy $($f[0])" }
-        $window = if ($f[1] -match 'Five Hour') { '5h' } else { 'week' }
-        $m["$group $window"] = $used
-      }
-    }
-    Remove-Item -LiteralPath $in, $out -ErrorAction SilentlyContinue
   }
   $m
 }

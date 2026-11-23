@@ -1,19 +1,14 @@
 # One way to start any companion on a job, detached, so it outlives the session that started it (S100).
 #   .\scripts\launch.ps1 <job-id> terra  [-Worktree D:\path-tracing-wt\<name>] [-Base <commit>]
 #   .\scripts\launch.ps1 <job-id> astra  -Worktree ...
-#   .\scripts\launch.ps1 <job-id> sonnet|opus|argon|hydrogen  [-ReadDir D:\path-tracing-wt\<name>]
-# Terra and Astra go through gpt.ps1 (Codex); the others through gemini.ps1 (Antigravity: the Claude slugs
-# there draw on Antigravity's meter and spare the native Anthropic plan, clan.md section 4).
+# Terra, Astra and Sol go through gpt.ps1 (Codex). Opus and Sonnet run natively through the integrator's Agent tool.
 # A GPT job's worktree is created from -Base (default main) on branch wt/<job-id> if it does not exist.
 # Every job leaves jobs/<id>/last.md; `.\scripts\status.ps1` shows what runs and what waits to be read.
 param(
   [Parameter(Mandatory, Position = 0)][string]$Job,
-  [Parameter(Mandatory, Position = 1)][ValidateSet('terra','astra','sol','sonnet','opus','argon','hydrogen')][string]$Who,
+  [Parameter(Mandatory, Position = 1)][ValidateSet('terra','astra','sol')][string]$Who,
   [string]$Worktree,
   [string]$Base = 'main',
-  [string[]]$ReadDir = @(),
-  # Argon or Hydrogen may run commands in a sandbox, writing only in -Worktree (made like a GPT one).
-  [switch]$Commands,
   # Check slots and print what would start, without starting it. Test changes to this script this way:
   # on 14 November a "test" of the slot fix launched a real duplicate job.
   [switch]$DryRun
@@ -21,8 +16,6 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 if (-not (Test-Path (Join-Path $Root "jobs\$Job\prompt.md"))) { throw "No spec: jobs\$Job\prompt.md" }
-# S115: Antigravity is Sonnet only. Opus work runs on the native plan, through the integrator's Agent tool.
-if ($Who -eq 'opus') { throw 'Opus does not run on Antigravity (S115): use a native Opus sub-agent from the integrator.' }
 
 if ($Who -in 'terra','astra','sol') {
   if (-not $Worktree) { throw 'A GPT job needs -Worktree' }
@@ -53,45 +46,6 @@ if ($Who -in 'terra','astra','sol') {
   }
   $model = @{ terra = 'gpt-6.1-terra'; astra = 'gpt-6.2-astra'; sol = 'gpt-6.2-sol' }[$Who]
   $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gpt.ps1",'-Job',$Job,'-Worktree',$Worktree,'-Model',$model)
-} else {
-  # S105: Antigravity's two meters each get a slot budget, counted in units: Gemini meter, one Argon (2)
-  # or two Hydrogen (1 each); Claude meter, one Opus (2) or two Sonnet (1 each). Adjust only on a
-  # measured drain (a 429 naming the reset), and write the change here and in clan.md.
-  # S125 (measured, agy /usage): Argon has its own weekly limit ("Gemini 4 Argon Weekly Limit", ~10% per
-  # big run), while Hydrogen draws only on the Gemini models meter (99% left after five Argon runs). So
-  # Argon runs one at a time on its own meter, and Hydrogen runs up to three lanes beside it.
-  # S129: no Antigravity job starts until scripts\test-antigravity.ps1 has passed against these exact
-  # scripts (a changed gemini.ps1 or launch.ps1 needs a new pass). The probe is what stands between a
-  # path-form or permission mistake and an empty Argon run.
-  $stamp = Join-Path $Root 'jobs\_probe-agy\passed.txt'
-  $hash = (Get-FileHash "$PSScriptRoot\gemini.ps1").Hash + (Get-FileHash "$PSScriptRoot\launch.ps1").Hash
-  if (-not (Test-Path $stamp) -or (Get-Content $stamp -TotalCount 1) -ne $hash) {
-    throw 'The Antigravity probe has not passed for these scripts: run .\scripts\test-antigravity.ps1 first (S129).'
-  }
-  $units = @{ argon = 2; hydrogen = 1; opus = 2; sonnet = 1 }
-  $meter = if ($Who -in 'opus','sonnet') { 'claude' } elseif ($Who -eq 'argon') { 'argon' } else { 'gemini' }
-  $limit = @{ claude = 2; argon = 2; gemini = 3 }[$meter]
-  $used = 0
-  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'gemini\.ps1' } | ForEach-Object {
-    $m = [regex]::Match($_.CommandLine, '-Model (\S+)').Groups[1].Value
-    $w = if ($m -match 'opus') { 'opus' } elseif ($m -match 'sonnet') { 'sonnet' } elseif ($m -match 'argon') { 'argon' } else { 'hydrogen' }
-    $wm = if ($w -in 'opus','sonnet') { 'claude' } elseif ($w -eq 'argon') { 'argon' } else { 'gemini' }
-    if ($wm -eq $meter) { $used += $units[$w] }
-  }
-  if ($used + $units[$Who] -gt $limit) { throw "Antigravity $meter meter full ($used of $limit units, S105/S125). Wait for the running job." }
-  $model = @{ sonnet = 'claude-sonnet-5-5-high'; opus = 'claude-opus-5-5-high'
-              argon = 'gemini-4-argon-high'; hydrogen = 'gemini-4-hydrogen-high' }[$Who]
-  $a = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gemini.ps1",'-Job',$Job,'-Model',$model)
-  if ($ReadDir) { $a += '-ReadDir'; $a += ($ReadDir -join ',') }
-  if ($Commands) {
-    if ($Who -notin 'argon','hydrogen') { throw '-Commands is for Argon and Hydrogen (S211)' }
-    if (-not $Worktree) { throw '-Commands needs -Worktree D:\path-tracing-wt\<name>' }
-    if (-not (Test-Path $Worktree) -and -not $DryRun) {
-      $ErrorActionPreference = 'Continue'; git -C $Root worktree add -b "wt/$Job" $Worktree $Base 2>&1 | Out-Null; $ErrorActionPreference = 'Stop'
-      if (-not (Test-Path $Worktree)) { throw "worktree failed: $Worktree from $Base" }
-    }
-    $a += @('-Write', $Worktree, '-Commands')
-  }
 }
 # Start-Process does not quote its arguments and this repo's path has a space (clan.md, trap 1).
 $q = $a | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }

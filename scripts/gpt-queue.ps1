@@ -48,7 +48,7 @@ foreach ($line in $lines) {
   Note "start: $job in $wt (from $base)"
   # Start-Process joins arguments with spaces and does not quote them, and this repo's path has a space,
   # so -File "...\path tracing\scripts\gpt.ps1" silently becomes two arguments and nothing runs. Quote
-  # anything with whitespace, exactly as gpt.ps1 and gemini.ps1 already do.
+  # anything with whitespace, exactly as gpt.ps1 already does.
   $wrapArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSScriptRoot\gpt.ps1",
                 '-Job',$job,'-Worktree',$wt,'-Model',$Model) |
               ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }

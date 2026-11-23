@@ -25,7 +25,7 @@ phase() {
   # On Windows (S43, Git Bash), omp.exe needs a Windows path; "@" stops MSYS from converting it.
   if command -v cygpath >/dev/null; then prompt=$(cygpath -w "$prompt"); fi
   timeout --signal=TERM --kill-after=1m "${minutes}m" \
-    omp -p --model=zai/glm-5.3 --thinking=high --approval-mode=yolo --no-session \
+    omp -p --model=zai/glm-5.4 --thinking=high --approval-mode=yolo --no-session \
     --max-time="${minutes}m" "@$prompt" > "$scratch/$name.log" 2>&1
 }
 finish() {

@@ -17,11 +17,11 @@ if ($Test) {
   # One request of at most one output token to the endpoint omp uses. Prints the outcome, never the key.
   if (-not (Test-Path $file)) { 'No GLM key is stored.'; return }
   $key = (Import-Clixml $file).GetNetworkCredential().Password
-  $body = '{"model":"glm-5.3","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
+  $body = '{"model":"glm-5.4","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'
   $headers = @{ 'x-api-key' = $key; 'anthropic-version' = '2023-06-01' }
   try {
     $null = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'https://api.z.ai/api/anthropic/v1/messages' -Headers $headers -ContentType 'application/json' -Body $body
-    'The key works: Z.ai answered a GLM-5.3 request.'
+    'The key works: Z.ai answered a GLM-5.4 request.'
   } catch {
     $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 'no response' }
     $detail = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { '' }
