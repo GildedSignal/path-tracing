@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "law"
 version = "0.1.0"
+dependencies = [
+ "world",
+]
 
 [[package]]
 name = "pathtracing_native"

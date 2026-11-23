@@ -361,12 +361,13 @@ fn assert_tick(state: &PlayerState, expected: &Object<'_>, tick: u64) {
     assert_eq!(state.fall_distance.to_bits(), hex(expected.required("fallDistanceBits"), 16), "tick {tick} fall distance");
 }
 
-fn recording_header(object: &Object<'_>) {
+/// The recorder options; the double-tap sprint window (7 in his own play) is a law input.
+fn recording_header(object: &Object<'_>) -> i32 {
     assert_eq!(object.string("type"), "recording");
     for option in ["autoJump", "toggleSprint", "toggleCrouch"] {
         assert!(!object.boolean(option), "unsupported recorder option {option}");
     }
-    assert_eq!(object.number("sprintWindow"), 0.0, "unsupported double-tap sprint window");
+    object.number("sprintWindow") as i32
 }
 
 fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64, Duration) {
@@ -379,7 +380,7 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
         let object = Object::parse(line);
         if object.get("type").is_some() {
             if line_index == 0 && object.string("type") == "recording" {
-                recording_header(&object);
+                state.sprint_window = recording_header(&object);
                 continue;
             }
             assert_eq!(object.string("type"), "end", "unexpected recording row type");
@@ -998,4 +999,62 @@ fn raw_exporter_oracle() {
         let duplicate = text.replace(one, &format!("{one}\n{one}"));
         assert!(std::panic::catch_unwind(|| parse_world(&duplicate)).is_err(), "duplicate raw cell accepted");
     }
+}
+
+/// His tracks' recordings (git-ignored, `recordings/` beside `engine/`, or `PATHTRACING_RECORDINGS`),
+/// replayed against the region fixture they were recorded in. The ones named in
+/// `data/track_gate.txt` must replay byte-identical; every other one prints why it is out.
+fn replay_track(path: &Path) -> Result<u64, String> {
+    let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let header = Object::parse(text.lines().next().ok_or("empty")?);
+    let mut state = load_state(&header.object("initialPlayer"));
+    let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
+    for line in text.lines().skip(1) {
+        let object = Object::parse(line);
+        if object.get("position").is_none() { continue; }
+        let p = vector(&object.object("position"));
+        for (axis, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+            lo[axis] = lo[axis].min(v.floor() as i32);
+            hi[axis] = hi[axis].max(v.floor() as i32);
+        }
+    }
+    let p = state.position;
+    for (axis, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+        lo[axis] = lo[axis].min(v.floor() as i32);
+        hi[axis] = hi[axis].max(v.floor() as i32);
+    }
+    let (min, max) = ([lo[0] - 4, (lo[1] - 4).max(-64), lo[2] - 4], [hi[0] + 4, hi[1] + 6, hi[2] + 4]);
+    // The committed fixture holds trimmed regions; `lab/track-world` (untracked) holds the whole ones.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = std::env::var_os("PATHTRACING_TRACK_WORLD").map(PathBuf::from)
+        .or_else(|| Some(manifest.join("../../lab/track-world")).filter(|p| p.exists()))
+        .unwrap_or_else(|| manifest.join("../world/tests/fixtures/world"));
+    let world = world::WorldSnapshot::load(&fixture, min, max).map_err(|e| format!("world: {e}"))?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay_text(&text, &world, &mut state).0))
+        .map_err(|failure| failure.downcast_ref::<String>().cloned()
+            .or_else(|| failure.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())
+}
+
+#[test]
+fn tracks() {
+    let root = std::env::var_os("PATHTRACING_RECORDINGS").map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recordings"));
+    let gate: Vec<&str> = include_str!("data/track_gate.txt").lines().filter(|l| !l.is_empty()).collect();
+    if !root.exists() {
+        println!("tracks: no recordings at {}; the track gate is not judged here", root.display());
+        return;
+    }
+    let mut files = Vec::new();
+    recordings(&root, &mut files);
+    files.sort();
+    let mut passed = Vec::new();
+    for file in &files {
+        let name = file.file_name().unwrap().to_str().unwrap().to_owned();
+        match replay_track(file) {
+            Ok(ticks) => { println!("PASS {name} {ticks}"); passed.push(name); }
+            Err(reason) => println!("OUT  {name}: {}", reason.lines().next().unwrap_or("")),
+        }
+    }
+    println!("tracks: {} of {} replay byte-identical", passed.len(), files.len());
+    for name in gate { assert!(passed.iter().any(|p| p == name), "gate recording {name} no longer replays"); }
 }
