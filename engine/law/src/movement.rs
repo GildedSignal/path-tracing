@@ -112,6 +112,7 @@ mod swimming_witness {
         || state.dolphins_grace
         || state.weaving
         || state.resistance.is_some()
+        || !state.effect_book.is_empty()
 }
 
 fn tick_movement(
@@ -1370,8 +1371,11 @@ fn inside_block(
         Inside::EndPortal => refuse!("EndPortalBlock/EndGatewayBlock.entityInside: setAsInsidePortal leaves the dimension"),
         Inside::NetherPortal => refuse!("NetherPortalBlock.entityInside: setAsInsidePortal enters portal"),
         Inside::WitherRose => {
-            if world.difficulty() != 0 && !state.invulnerable {
-                refuse!("WitherRoseBlock.entityInside: adds 40-tick WITHER effect (server, non-peaceful)");
+            // WitherRoseBlock.entityInside @0-64: the server adds WITHER to the book.
+            if crate::block_hooks::wither_rose_applies_effect(true, world.difficulty(), true, state.invulnerable) {
+                state.add_effect(crate::EffectKind::Wither, crate::block_hooks::WITHER_ROSE_EFFECT_DURATION_TICKS,
+                    crate::block_hooks::WITHER_ROSE_EFFECT_AMPLIFIER);
+                state.effects = true;
             }
             None
         },

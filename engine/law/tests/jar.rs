@@ -3721,8 +3721,10 @@ fn jar_cauldron_and_redstone() {
                     invulnerable: invuln,
                     ..PlayerState::default()
                 };
-                let res = try_tick(&mut s, &w, &Input::default());
-                assert_eq!(res.is_err(), exp_applied, "row {idx} wither tick gate: {row}");
+                try_tick(&mut s, &w, &Input::default()).expect("a wither rose is a row of the effect book");
+                let book: Vec<_> = s.effect_book.iter().map(|e| (e.kind, e.duration, e.amplifier)).collect();
+                let wither = vec![(law::EffectKind::Wither, WITHER_ROSE_EFFECT_DURATION_TICKS, WITHER_ROSE_EFFECT_AMPLIFIER)];
+                assert_eq!(book == wither, exp_applied, "row {idx} wither tick gate: {row}");
             }
             "WITHER_EFFECT_TICK" => {
                 let dur: i32 = c[1].parse().unwrap();

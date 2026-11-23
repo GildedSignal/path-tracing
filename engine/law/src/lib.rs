@@ -7,7 +7,7 @@ pub mod pattern;
 mod attributes;
 pub use attributes::{SpeedModifier, SpeedOperation};
 mod effects;
-pub use effects::{Effects, MobEffectInstance, EffectKind};
+pub use effects::{MobEffectInstance, EffectKind};
 mod movement;
 
 pub mod math;

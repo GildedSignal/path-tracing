@@ -1205,7 +1205,7 @@ pub mod death {
     pub fn respawn(state: &mut PlayerState, world: &impl World) {
         use crate::state_reads::{StateField as F, StateReads};
         world.state_footprint(StateReads(0), StateReads::of(&[F::health, F::food_level, F::saturation, F::exhaustion,
-            F::food_tick_timer, F::velocity, F::fall_distance, F::remaining_fire_ticks, F::ticks_frozen, F::effects, F::hurt_cooldown]));
+            F::food_tick_timer, F::velocity, F::fall_distance, F::remaining_fire_ticks, F::ticks_frozen, F::effects, F::effect_book, F::max_health, F::hurt_cooldown]));
         state.health = 20.0;
         state.food_level = 20;
         state.saturation = 5.0;
@@ -1216,6 +1216,8 @@ pub mod death {
         state.remaining_fire_ticks = 0;
         state.ticks_frozen = 0;
         state.effects = false;
+        state.effect_book.clear();
+        state.max_health = 20.0;
         state.hurt_cooldown.remaining_ticks = 0;
         state.hurt_cooldown.last_raw_hit = 0.0;
     }

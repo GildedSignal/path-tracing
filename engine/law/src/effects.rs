@@ -8,7 +8,7 @@
 //! `heal` / `hurtServer`+`actuallyHurt` semantics for a bare survival player
 //! (no armor, no resistance, no enchantments): the hurt cooldown window is the
 //! same `LivingEntity.hurtServer` offsets 184-258 law already ported as
-//! `HurtCooldown`/`accept_raw_hit` in `movement.rs`; `effects.absorption`
+//! `HurtCooldown`/`accept_raw_hit` in `movement.rs`; `p.absorption`
 //! covers `LivingEntity.actuallyHurt` offsets 27-144; health clamps are
 //! `LivingEntity.setHealth` (`Mth.clamp(v, 0, max)`).
 //!
@@ -64,7 +64,7 @@ impl MobEffectInstance {
     /// `MobEffectInstance.tickServer(ServerLevel, LivingEntity, Runnable)`,
     /// javap offsets 0-100. Returns the jar's boolean: false means the effect
     /// is removed (`tickEffects` iterator.remove + onEffectsRemoved).
-    pub fn tick_server(&mut self, player: &mut PlayerState, tick: EffectTick<'_>, tick_count: i32) -> bool {
+    pub fn tick_server(&mut self, player: &mut PlayerState, tick_count: i32) -> bool {
         // 0-8: hasRemainingDuration — infinite (-1) or duration > 0.
         if !(self.duration > 0 || self.duration == -1) {
             return false;
@@ -72,7 +72,7 @@ impl MobEffectInstance {
         // 9-27: the period test reads entity.tickCount while infinite.
         let clock = if self.duration == -1 { tick_count } else { self.duration };
         // 29-78: apply, and drop the effect if applyEffectTick returns false.
-        if self.should_apply_effect_tick_this_tick(clock) && !self.apply_effect_tick(player, tick) {
+        if self.should_apply_effect_tick_this_tick(clock) && !self.apply_effect_tick(player) {
             return false;
         }
         // 79-82: duration -= 1, but -1 and 0 map to themselves; hidden ticks first.
@@ -113,7 +113,7 @@ impl MobEffectInstance {
     /// `MobEffect.applyEffectTick(ServerLevel, LivingEntity, int amplifier)` for
     /// each subclass. Returns false where the jar's override returns false
     /// (only Absorption, once its shield is spent).
-    fn apply_effect_tick(&mut self, player: &mut PlayerState, tick: EffectTick<'_>) -> bool {
+    fn apply_effect_tick(&mut self, player: &mut PlayerState) -> bool {
         let amp = self.amplifier;
         match self.kind {
             // PoisonMobEffect offsets 0-24: only if health > 1.0f, then 1.0f
@@ -121,16 +121,16 @@ impl MobEffectInstance {
             // lands at 0.5; from 1.0 or below, nothing.
             EffectKind::Poison => {
                 if player.health > 1.0 {
-                    hurt(player, tick, 1.0);
+                    hurt(player, 1.0);
                 }
                 true
             }
             // WitherMobEffect offsets 0-15: unconditional 1.0f wither damage, lethal.
-            EffectKind::Wither => { hurt(player, tick, 1.0); true }
+            EffectKind::Wither => { hurt(player, 1.0); true }
             // RegenerationMobEffect offsets 0-18: heal(1.0f) only under max.
             EffectKind::Regeneration => {
-                if player.health < *tick.max_health {
-                    heal(player, tick, 1.0);
+                if player.health < player.max_health {
+                    heal(player, 1.0);
                 }
                 true
             }
@@ -141,15 +141,15 @@ impl MobEffectInstance {
             }
             // HealOrHarmMobEffect.applyEffectTick offsets 0-45: a player is not
             // inverted, so HEAL heals max(4 << amp, 0) and HARM deals 6 << amp magic.
-            EffectKind::InstantHealth => { heal(player, tick, (4i32 << (amp & 31)).max(0) as f32); true }
-            EffectKind::InstantDamage => { hurt(player, tick, (6i32 << (amp & 31)) as f32); true }
+            EffectKind::InstantHealth => { heal(player, (4i32 << (amp & 31)).max(0) as f32); true }
+            EffectKind::InstantDamage => { hurt(player, (6i32 << (amp & 31)) as f32); true }
             // SaturationMobEffect offsets 0-25: FoodData.eat(amp + 1, 1.0f).
             EffectKind::Saturation => {
                 eat(player, amp + 1, 1.0f32);
                 true
             }
             // AbsorptionMobEffect offsets 0-14: keep while any absorption remains.
-            EffectKind::Absorption => *tick.absorption > 0.0,
+            EffectKind::Absorption => player.absorption > 0.0,
             // Plain MobEffect base: return true.
             EffectKind::HealthBoost => true,
         }
@@ -199,48 +199,29 @@ impl MobEffectInstance {
     }
 }
 
-/// The effect book the server holds per entity: the active instances in the
-/// order `LivingEntity.activeEffects` would iterate them, plus the two
-/// effect-owned resources the rest of the law does not carry.
-#[derive(Clone, Debug)]
-pub struct Effects {
-    pub instances: Vec<MobEffectInstance>,
-    /// `LivingEntity.absorptionAmount`, floor 0, cap `max_absorption` = 4*(amp+1)
-    /// while ABSORPTION runs (MAX_ABSORPTION attribute, else 0).
-    pub absorption: f32,
-    /// MAX_HEALTH while HEALTH_BOOST runs; 20.0 bare.
-    pub max_health: f32,
-}
-
-impl Default for Effects {
-    fn default() -> Self {
-        Self { instances: Vec::new(), absorption: 0.0, max_health: 20.0 }
-    }
-}
-
-impl Effects {
+/// The effect book the server holds per entity lives in the player's state
+/// (`effect_book`, in the order `LivingEntity.activeEffects` iterates it), with the
+/// two effect-owned resources: `absorption` (`LivingEntity.absorptionAmount`, floor 0,
+/// cap 4*(amp+1) while ABSORPTION runs) and `max_health` (20.0 bare).
+impl PlayerState {
     /// `LivingEntity.addEffect` + `MobEffectInstance.onEffectStarted`:
     /// merge into a running instance of the same kind, else push; then the
     /// start hooks (AbsorptionMobEffect.onEffectStarted: absorption =
     /// max(absorption, 4*(amp+1)); HEALTH_BOOST's MAX_HEALTH modifier).
-    pub fn add(&mut self, kind: EffectKind, duration: i32, amplifier: i32, _player: &mut PlayerState) {
+    pub fn add_effect(&mut self, kind: EffectKind, duration: i32, amplifier: i32) {
         let fresh = MobEffectInstance::new(kind, duration, amplifier);
-        if let Some(existing) = self.instances.iter_mut().find(|i| i.kind == kind) {
+        if let Some(existing) = self.effect_book.iter_mut().find(|i| i.kind == kind) {
             existing.update(&fresh);
         } else {
-            self.instances.push(fresh);
+            self.effect_book.push(fresh);
         }
         let amp = amplifier.clamp(0, 255);
         match kind {
-            EffectKind::Absorption => {
-                // setAbsorptionAmount clamps to [0, max_absorption]; the modifier
-                // is already in place when onEffectStarted runs, so 4*(amp+1) fits.
-                self.absorption = self.absorption.max(4.0f32 * (amp + 1) as f32);
-            }
-            EffectKind::HealthBoost => {
-                // addAttributeModifiers: MAX_HEALTH + 4.0 * (amp+1), ADD_VALUE.
-                self.max_health = 20.0 + 4.0f32 * (amp + 1) as f32;
-            }
+            // setAbsorptionAmount clamps to [0, max_absorption]; the modifier
+            // is already in place when onEffectStarted runs, so 4*(amp+1) fits.
+            EffectKind::Absorption => self.absorption = self.absorption.max(4.0f32 * (amp + 1) as f32),
+            // addAttributeModifiers: MAX_HEALTH + 4.0 * (amp+1), ADD_VALUE.
+            EffectKind::HealthBoost => self.max_health = 20.0 + 4.0f32 * (amp + 1) as f32,
             _ => {}
         }
     }
@@ -249,59 +230,46 @@ impl Effects {
     /// server tick: every instance ticks; `false` removes it and runs the
     /// removal hooks (`onEffectsRemoved` -> removeAttributeModifiers ->
     /// refreshDirtyAttributes). The %600 branch only resyncs packets.
-    pub fn tick(&mut self, player: &mut PlayerState, tick_count: i32) {
-        let mut i = 0;
-        while i < self.instances.len() {
-            let Effects { instances, absorption, max_health } = self;
-            let kept = instances[i].tick_server(player, EffectTick { absorption, max_health }, tick_count);
-            if !kept {
-                let removed = self.instances.remove(i);
-                match removed.kind {
-                    // MAX_ABSORPTION modifier leaves: absorption clamps to 0.
-                    EffectKind::Absorption => self.absorption = 0.0,
-                    // MAX_HEALTH modifier leaves: max returns to 20.0 and health
-                    // clamps to it (attribute-changed handler).
-                    EffectKind::HealthBoost => {
-                        self.max_health = 20.0;
-                        player.health = player.health.min(self.max_health);
-                    }
-                    _ => {}
-                }
-            } else {
-                i += 1;
+    pub fn tick_effects(&mut self, tick_count: i32) {
+        let mut book = std::mem::take(&mut self.effect_book);
+        book.retain_mut(|instance| {
+            let kept = instance.tick_server(self, tick_count);
+            match (kept, instance.kind) {
+                // MAX_ABSORPTION modifier leaves: absorption clamps to 0.
+                (false, EffectKind::Absorption) => self.absorption = 0.0,
+                // MAX_HEALTH modifier leaves: max returns to 20.0 and health
+                // clamps to it (attribute-changed handler).
+                (false, EffectKind::HealthBoost) => { self.max_health = 20.0; self.health = self.health.min(20.0); }
+                _ => {}
             }
-        }
+            kept
+        });
+        self.effect_book = book;
     }
 
     /// `HealOrHarmMobEffect.applyInstantaneousEffect` (and the base default for
     /// Saturation, which ignores potency): `(int)(potency * (4|6 << amp) + 0.5)`.
-    pub fn apply_instantaneous(&mut self, kind: EffectKind, amplifier: i32, potency: f64, player: &mut PlayerState) {
+    pub fn apply_instantaneous(&mut self, kind: EffectKind, amplifier: i32, potency: f64) {
         let amp = amplifier.clamp(0, 255);
         match kind {
-            EffectKind::InstantHealth => {
-                let amount = (potency * ((4i32 << (amp & 31)) as f64) + 0.5) as i32;
-                heal(player, EffectTick { absorption: &mut self.absorption, max_health: &mut self.max_health }, amount as f32);
-            }
-            EffectKind::InstantDamage => {
-                let amount = (potency * ((6i32 << (amp & 31)) as f64) + 0.5) as i32;
-                hurt(player, EffectTick { absorption: &mut self.absorption, max_health: &mut self.max_health }, amount as f32);
-            }
-            EffectKind::Saturation => eat(player, amp + 1, 1.0f32),
+            EffectKind::InstantHealth => heal(self, (potency * ((4i32 << (amp & 31)) as f64) + 0.5) as i32 as f32),
+            EffectKind::InstantDamage => hurt(self, (potency * ((6i32 << (amp & 31)) as f64) + 0.5) as i32 as f32),
+            EffectKind::Saturation => eat(self, amp + 1, 1.0f32),
             _ => {}
         }
     }
 }
 
 // LivingEntity.heal offsets 0-18: only the living heal, and setHealth clamps.
-fn heal(player: &mut PlayerState, tick: EffectTick<'_>, amount: f32) {
+fn heal(player: &mut PlayerState, amount: f32) {
     if player.health > 0.0 {
-        player.health = (player.health + amount).clamp(0.0, *tick.max_health);
+        player.health = (player.health + amount).clamp(0.0, player.max_health);
     }
 }
 
 // LivingEntity.hurtServer offsets 0-10, 164-181, 184-262 + actuallyHurt offsets
 // 10-154 for a bare player: the hurt window gates, absorption eats, health pays.
-fn hurt(player: &mut PlayerState, tick: EffectTick<'_>, amount: f32) {
+fn hurt(player: &mut PlayerState, amount: f32) {
     // isDeadOrDying gate; NaN amounts cap to Float.MAX_VALUE in the jar.
     if player.health <= 0.0 {
         return;
@@ -311,16 +279,9 @@ fn hurt(player: &mut PlayerState, tick: EffectTick<'_>, amount: f32) {
         // actuallyHurt offsets 10-154 for a bare player (no armor, resistance or
         // enchantment term): absorption eats f - max(f - absorption, 0), health pays.
         let mut exhaustion = player.exhaustion;
-        crate::player::actually_hurt(&mut player.health, tick.absorption, &mut exhaustion, true, debit,
+        crate::player::actually_hurt(&mut player.health, &mut player.absorption, &mut exhaustion, true, debit,
             0.0, 0.0, None, 0.0, 0.0, true, true, true, true, false, 0.0);
     }
-}
-
-/// The two effect-owned resources a tick mutates, borrowed disjointly from
-/// `Effects` so one instance can tick while the book is iterated.
-pub struct EffectTick<'a> {
-    pub absorption: &'a mut f32,
-    pub max_health: &'a mut f32,
 }
 
 
@@ -329,6 +290,33 @@ pub struct EffectTick<'a> {
 fn eat(player: &mut PlayerState, food: i32, modifier: f32) {
     player.food_level = (player.food_level + food).clamp(0, 20);
     player.saturation = (player.saturation + food as f32 * modifier * 2.0f32).clamp(0.0, player.food_level as f32);
+}
+
+impl EffectKind {
+    const ALL: [Self; 9] = [Self::Poison, Self::Wither, Self::Regeneration, Self::Hunger, Self::InstantHealth,
+        Self::InstantDamage, Self::Saturation, Self::Absorption, Self::HealthBoost];
+}
+/// An instance on the wire: kind, duration, amplifier, then its hidden stack.
+impl crate::state::Wire for MobEffectInstance {
+    fn put(&self, out: &mut Vec<u64>) {
+        out.extend([self.kind as u64, self.duration as u64, self.amplifier as u64]);
+        self.hidden.is_some().put(out);
+        if let Some(hidden) = &self.hidden { hidden.put(out); }
+    }
+    fn take(b: &mut crate::state::Bits<'_>) -> Result<Self, crate::BitsRefusal> {
+        let kind = EffectKind::ALL[b.code(9, "effect kind")? as usize];
+        let (duration, amplifier) = (i32::take(b)?, i32::take(b)?);
+        let hidden = if bool::take(b)? { Some(Box::new(Self::take(b)?)) } else { None };
+        Ok(Self { kind, duration, amplifier, hidden })
+    }
+}
+impl crate::state::Wire for Vec<MobEffectInstance> {
+    fn put(&self, out: &mut Vec<u64>) { out.push(self.len() as u64); for i in self { i.put(out); } }
+    fn take(b: &mut crate::state::Bits<'_>) -> Result<Self, crate::BitsRefusal> {
+        let at = b.at; let count = b.word()?;
+        if count > (b.words.len() - b.at) as u64 / 4 { return Err(crate::BitsRefusal { position: at, reason: "effect count" }); }
+        (0..count).map(|_| MobEffectInstance::take(b)).collect()
+    }
 }
 
 #[cfg(test)]
@@ -373,10 +361,9 @@ mod jar_regression {
         ];
         for amp in 0..=3 {
             let mut p = player(20.0);
-            let mut effects = Effects::default();
-            effects.add(EffectKind::Hunger, 10, amp, &mut p);
+            p.add_effect(EffectKind::Hunger, 10, amp);
             for t in 0..5 {
-                effects.tick(&mut p, 0);
+                p.tick_effects(0);
                 assert_eq!(p.exhaustion.to_bits(), want[amp as usize][t as usize], "amp {amp} tick {}", t + 1);
             }
         }
@@ -388,11 +375,10 @@ mod jar_regression {
         let mut p = player(20.0);
         p.food_level = 0;
         p.saturation = 0.0;
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Saturation, 3, 3, &mut p);
+        p.add_effect(EffectKind::Saturation, 3, 3);
         for (food, sat, kept) in [(4i32, 4.0f32, true), (8, 8.0, true), (12, 12.0, false)] {
-            effects.tick(&mut p, 0);
-            assert_eq!((p.food_level, p.saturation.to_bits(), !effects.instances.is_empty()), (food, sat.to_bits(), kept));
+            p.tick_effects(0);
+            assert_eq!((p.food_level, p.saturation.to_bits(), !p.effect_book.is_empty()), (food, sat.to_bits(), kept));
         }
     }
 
@@ -400,12 +386,11 @@ mod jar_regression {
     #[test]
     fn regeneration_cadence_matches_the_jar() {
         let mut p = player(0.5);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Regeneration, 260, 2, &mut p);
+        p.add_effect(EffectKind::Regeneration, 260, 2);
         let mut changes = Vec::new();
         for t in 1..=260 {
             let before = p.health;
-            effects.tick(&mut p, 0);
+            p.tick_effects(0);
             if p.health != before {
                 changes.push((t, p.health));
             }
@@ -420,38 +405,34 @@ mod jar_regression {
     #[test]
     fn poison_floor_and_absorption_eat_like_the_jar() {
         let mut p = player(1.0);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Poison, 25, 0, &mut p);
-        effects.tick(&mut p, 0);
+        p.add_effect(EffectKind::Poison, 25, 0);
+        p.tick_effects(0);
         assert_eq!(p.health, 1.0, "the guard blocks at exactly 1.0f");
 
         let mut p = player(1.5);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Poison, 25, 0, &mut p);
-        effects.tick(&mut p, 0);
+        p.add_effect(EffectKind::Poison, 25, 0);
+        p.tick_effects(0);
         assert_eq!(p.health.to_bits(), 0.5f32.to_bits());
 
         let mut p = player(1.5);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Absorption, 100, 0, &mut p);
-        effects.add(EffectKind::Poison, 25, 0, &mut p);
-        effects.tick(&mut p, 0);
-        assert_eq!((p.health.to_bits(), effects.absorption.to_bits()), (1.5f32.to_bits(), 3.0f32.to_bits()));
+        p.add_effect(EffectKind::Absorption, 100, 0);
+        p.add_effect(EffectKind::Poison, 25, 0);
+        p.tick_effects(0);
+        assert_eq!((p.health.to_bits(), p.absorption.to_bits()), (1.5f32.to_bits(), 3.0f32.to_bits()));
     }
 
     /// Jar: wither is lethal; repeated 1.0f debits take a bare player to 0.
     #[test]
     fn wither_kills() {
         let mut p = player(20.0);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Wither, 1000, 0, &mut p);
+        p.add_effect(EffectKind::Wither, 1000, 0);
         let mut ticks = 0;
         while p.health > 0.0 && ticks < 1000 {
             // baseTick decrements the hurt window each server tick.
             if p.hurt_cooldown.remaining_ticks > 0 {
                 p.hurt_cooldown.remaining_ticks -= 1;
             }
-            effects.tick(&mut p, 0);
+            p.tick_effects(0);
             ticks += 1;
         }
         assert_eq!(p.health, 0.0);
@@ -463,32 +444,30 @@ mod jar_regression {
     fn absorption_lifecycle_matches_the_jar() {
         for amp in 0..=3 {
             let mut p = player(20.0);
-            let mut effects = Effects::default();
-            effects.add(EffectKind::Absorption, 10, amp, &mut p);
-            assert_eq!(effects.absorption, 4.0 * (amp + 1) as f32);
-            effects.add(EffectKind::Absorption, 10, amp, &mut p);
-            assert_eq!(effects.absorption, 4.0 * (amp + 1) as f32, "re-add is max()");
+            p.add_effect(EffectKind::Absorption, 10, amp);
+            assert_eq!(p.absorption, 4.0 * (amp + 1) as f32);
+            p.add_effect(EffectKind::Absorption, 10, amp);
+            assert_eq!(p.absorption, 4.0 * (amp + 1) as f32, "re-add is max()");
             // One raw 1.0f magic debit eats one absorption point.
-            super::hurt(&mut p, EffectTick { absorption: &mut effects.absorption, max_health: &mut effects.max_health }, 1.0);
-            assert_eq!((effects.absorption, p.health), (4.0 * (amp + 1) as f32 - 1.0, 20.0));
+            super::hurt(&mut p, 1.0);
+            assert_eq!((p.absorption, p.health), (4.0 * (amp + 1) as f32 - 1.0, 20.0));
             // Drain the shield the way the harness drained it with the jar's
             // actuallyHurt: repeated equal debits, outside the hurt window
             // (inside the window, 4.0 <= lastHurt 4.0 is refused).
-            while effects.absorption > 0.0 {
-                let debit = 4.0f32.min(effects.absorption);
-                effects.absorption -= debit;
+            while p.absorption > 0.0 {
+                let debit = 4.0f32.min(p.absorption);
+                p.absorption -= debit;
             }
-            effects.tick(&mut p, 0);
-            assert!(effects.instances.is_empty(), "drained absorption effect removes itself");
+            p.tick_effects(0);
+            assert!(p.effect_book.is_empty(), "drained absorption effect removes itself");
             // Duration expiry on a fresh book zeroes the shield via MAX_ABSORPTION.
             let mut p2 = player(20.0);
-            let mut effects2 = Effects::default();
-            effects2.add(EffectKind::Absorption, 3, amp, &mut p2);
+            p2.add_effect(EffectKind::Absorption, 3, amp);
             for _ in 0..5 {
-                effects2.tick(&mut p2, 0);
+                p2.tick_effects(0);
             }
-            assert!(effects2.instances.is_empty());
-            assert_eq!(effects2.absorption, 0.0, "onEffectsRemoved clamps the shield to the new max");
+            assert!(p2.effect_book.is_empty());
+            assert_eq!(p2.absorption, 0.0, "onEffectsRemoved clamps the shield to the new max");
         }
     }
 
@@ -498,8 +477,7 @@ mod jar_regression {
     fn instant_effects_scale_like_the_jar() {
         let heal_from_1 = |amp, potency| {
             let mut p = player(1.0);
-            let mut effects = Effects::default();
-            effects.apply_instantaneous(EffectKind::InstantHealth, amp, potency, &mut p);
+            p.apply_instantaneous(EffectKind::InstantHealth, amp, potency);
             p.health
         };
         assert_eq!(heal_from_1(0, 1.0), 5.0);
@@ -508,8 +486,7 @@ mod jar_regression {
         // 6<<amp magic through a fresh hurt window from full health.
         let harm_from_full = |amp| {
             let mut p = player(20.0);
-            let mut effects = Effects::default();
-            effects.apply_instantaneous(EffectKind::InstantDamage, amp, 1.0, &mut p);
+            p.apply_instantaneous(EffectKind::InstantDamage, amp, 1.0);
             p.health
         };
         assert_eq!(harm_from_full(0), 14.0);
@@ -521,14 +498,13 @@ mod jar_regression {
     fn health_boost_bounds_match_the_jar() {
         for amp in 0..=3 {
             let mut p = player(20.0);
-            let mut effects = Effects::default();
-            effects.add(EffectKind::HealthBoost, 100, amp, &mut p);
-            assert_eq!(effects.max_health, 20.0 + 4.0 * (amp + 1) as f32);
-            p.health = effects.max_health;
+            p.add_effect(EffectKind::HealthBoost, 100, amp);
+            assert_eq!(p.max_health, 20.0 + 4.0 * (amp + 1) as f32);
+            p.health = p.max_health;
             // Expire it: the MAX_HEALTH modifier leaves and health clamps to 20.
-            effects.instances[0].duration = 1;
-            effects.tick(&mut p, 0);
-            assert_eq!((effects.max_health, p.health), (20.0, 20.0));
+            p.effect_book[0].duration = 1;
+            p.tick_effects(0);
+            assert_eq!((p.max_health, p.health), (20.0, 20.0));
         }
     }
 
@@ -537,10 +513,9 @@ mod jar_regression {
     #[test]
     fn hidden_stack_downgrades_and_expires_like_the_jar() {
         let mut p = player(20.0);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Hunger, 100, 0, &mut p);
-        effects.add(EffectKind::Hunger, 10, 1, &mut p);
-        let stored = effects.instances.last().unwrap();
+        p.add_effect(EffectKind::Hunger, 100, 0);
+        p.add_effect(EffectKind::Hunger, 10, 1);
+        let stored = p.effect_book.last().unwrap();
         assert_eq!((stored.amplifier, stored.duration), (1, 10));
         assert!(stored.hidden().is_some(), "the weak dose is hidden, not dropped");
         let mut downgraded_at = None;
@@ -548,13 +523,13 @@ mod jar_regression {
         for t in 1..=120 {
             // The harness samples the amplifier before each tick, so its
             // downgradedAtTick is the tick after the in-tick downgrade.
-            if let Some(stored) = effects.instances.last() {
+            if let Some(stored) = p.effect_book.last() {
                 if downgraded_at.is_none() && stored.amplifier == 0 {
                     downgraded_at = Some(t);
                 }
             }
-            effects.tick(&mut p, 0);
-            if effects.instances.is_empty() {
+            p.tick_effects(0);
+            if p.effect_book.is_empty() {
                 expired_at = Some(t);
                 break;
             }
@@ -566,15 +541,26 @@ mod jar_regression {
     #[test]
     fn infinite_and_zero_durations_match_the_jar() {
         let mut p = player(20.0);
-        let mut effects = Effects::default();
-        effects.add(EffectKind::Hunger, -1, 0, &mut p);
+        p.add_effect(EffectKind::Hunger, -1, 0);
         for _ in 0..50 {
-            effects.tick(&mut p, 0);
+            p.tick_effects(0);
         }
-        assert_eq!(effects.instances[0].duration, -1);
+        assert_eq!(p.effect_book[0].duration, -1);
         let mut zero = MobEffectInstance::new(EffectKind::Hunger, 0, 0);
         let mut p = player(20.0);
-        let mut effects = Effects::default();
-        assert!(!zero.tick_server(&mut p, EffectTick { absorption: &mut effects.absorption, max_health: &mut effects.max_health }, 0));
+        assert!(!zero.tick_server(&mut p, 0));
+    }
+    /// The book rides the state's wire as its last tail, hidden stacks included.
+    #[test]
+    fn the_book_round_trips_on_the_wire() {
+        let mut p = player(20.0);
+        let spawn = p.bits().len();
+        p.add_effect(EffectKind::Hunger, 100, 0);
+        p.add_effect(EffectKind::Hunger, 10, 1);
+        p.add_effect(EffectKind::HealthBoost, 50, 2);
+        let bits = p.bits();
+        assert!(bits.len() > spawn + 26);
+        let back = PlayerState::from_bits(&bits).unwrap();
+        assert_eq!((back.bits(), back.effect_book, back.max_health), (bits, p.effect_book, p.max_health));
     }
 }

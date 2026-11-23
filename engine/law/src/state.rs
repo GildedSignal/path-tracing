@@ -165,6 +165,9 @@ player_state! {
     feather_falling_epf: f32 = 0.0,
     absorption: f32 = 0.0,
     soul_speed_active: bool = false,
+    /// The server's effect book (effects.rs) and the MAX_HEALTH it sets.
+    effect_book: Vec<crate::MobEffectInstance> = Vec::new(),
+    max_health: f32 = 20.0,
 }
 
 /// The wire order of `bits` (the bot's mod speaks it over its channel, Recorder.java):
@@ -205,6 +208,7 @@ wire! {
      sprint_window, jump_boost, speed_effect, slowness_effect, blindness, fire_resistance, unmodeled_effects]
     [levitation, slow_falling, dolphins_grace, weaving, resistance, armor, armor_toughness, protection_epf,
      feather_falling_epf, absorption, soul_speed_active]
+    [max_health, effect_book]
 }
 
 impl PlayerState {
@@ -259,15 +263,15 @@ impl PlayerState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refusal { pub position: usize, pub reason: &'static str }
 
-pub(crate) struct Bits<'a> { words: &'a [u64], at: usize }
+pub(crate) struct Bits<'a> { pub(crate) words: &'a [u64], pub(crate) at: usize }
 impl Bits<'_> {
-    fn word(&mut self) -> Result<u64, Refusal> {
+    pub(crate) fn word(&mut self) -> Result<u64, Refusal> {
         let at = self.at;
         let value = *self.words.get(at).ok_or(Refusal { position: at, reason: "missing word" })?;
         self.at += 1; Ok(value)
     }
     /// The next word as one of `n` codes.
-    fn code(&mut self, n: u64, reason: &'static str) -> Result<u64, Refusal> {
+    pub(crate) fn code(&mut self, n: u64, reason: &'static str) -> Result<u64, Refusal> {
         let at = self.at;
         let value = self.word()?;
         if value < n { Ok(value) } else { Err(Refusal { position: at, reason }) }
