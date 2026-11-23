@@ -18,9 +18,9 @@ pub struct Refusal(pub String);
 macro_rules! refuse { ($($rule:tt)*) => { return Err(Refusal(format!($($rule)*))) } }
 
 /// What one tick hands outward: the move asked of `Entity.collide` and what it gave, and the
-/// contact damage requested on the server's resource timeline.
+/// contact damage requested on the server's resource timeline, and whether the body jumped.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Effect { pub collision: Option<(Vec3, Vec3)>, pub contact: Option<ContactDamage> }
+pub struct Effect { pub collision: Option<(Vec3, Vec3)>, pub contact: Option<ContactDamage>, pub jumped: bool }
 
 /// The same tick as `tick`; an unported rule is returned instead of panicking.
 pub fn try_tick(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<(), Refusal> { step(s, world, input).map(|_| ()) }
@@ -103,6 +103,7 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
             s.no_jump_delay = 10;
         }
     } else { s.no_jump_delay = 0; }
+    let jumped = s.no_jump_delay == 10;
     if s.health <= 0.0 { movement = Vec3::default(); }
     if s.fall_flying {
         s.fall_distance = crate::elytra::check_fall_distance_accumulation(s.velocity.y, s.fall_distance);
@@ -125,7 +126,7 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     walked(s, s.position.minus(start));
     food(s, world);
     s.t += 1;
-    Ok(Effect { collision, contact })
+    Ok(Effect { collision, contact, jumped })
 }
 
 // Player.updateSwimming: the swim flag machine.
@@ -224,8 +225,9 @@ fn jump(s: &mut PlayerState, world: &impl World) {
             s.velocity = s.velocity.plus(Vec3::new((-math::sin(yaw)) as f64 * 0.2, 0.0, math::cos(yaw) as f64 * 0.2));
         }
     }
-    exhaust(s, if s.sprinting { 0.2 } else { 0.05 });
+    exhaust(s, jump_cost(s));
 }
+pub(crate) fn jump_cost(s: &PlayerState) -> f32 { if s.sprinting { 0.2 } else { 0.05 } }
 
 // LivingEntity.onClimbable; LivingEntity.trapdoorUsableAsLadder
 fn climbable(s: &PlayerState, world: &impl World) -> bool {
@@ -381,7 +383,7 @@ fn back_off(s: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
 }
 
 // CollisionGetter.findSupportingBlock; Entity.checkSupportingBlock
-fn support(s: &mut PlayerState, world: &impl World, moved: Vec3) {
+pub(crate) fn support(s: &mut PlayerState, world: &impl World, moved: Vec3) {
     if !s.on_ground { (s.on_ground_no_blocks, s.main_supporting_block) = (false, None); return; }
     let b = s.bounding_box();
     let foot = Aabb::new(b.min.x, b.min.y - 1.0e-6, b.min.z, b.max.x, b.min.y, b.max.z);
@@ -463,7 +465,7 @@ pub fn calculate_fall_damage(s: &PlayerState, distance: f64, multiplier: f32) ->
 
 // Entity.checkFallDamage; LivingEntity.checkFallDamage; Block.fallOn (bed halves, dripstone doubles plus 2.5)
 fn land(s: &mut PlayerState, block: &Block, dy: f64) -> Result<(), Refusal> {
-    if !s.in_water && dy < 0.0 { s.fall_distance -= (dy as f32) as f64; }
+    s.fall_distance = fallen(s, s.fall_distance, dy);
     if !s.on_ground { return Ok(()); }
     if s.fall_distance > 0.0 {
         if let Some(name) = &block.unsupported_fall_on { refuse!("BlockState.fallOn: {name}"); }
@@ -476,6 +478,8 @@ fn land(s: &mut PlayerState, block: &Block, dy: f64) -> Result<(), Refusal> {
     s.fall_distance = 0.0;
     Ok(())
 }
+/// The fall after a move of `dy`.
+pub(crate) fn fallen(s: &PlayerState, fall: f64, dy: f64) -> f64 { if !s.in_water && dy < 0.0 { fall - (dy as f32) as f64 } else { fall } }
 /// Block.fallOn's row: the distance and multiplier a landing on `block` is priced at (slime and
 /// powder snow free, a bed halves, a stalagmite's tip adds 2.5 and doubles).
 pub fn fall_on(block: &Block, fall: f64) -> (f64, f32) {
@@ -780,24 +784,22 @@ pub(crate) fn mitigate(s: &mut PlayerState, mut amount: f32, hit: Hit) {
 }
 
 // Player.causeFoodExhaustion; FoodData.addExhaustion
-fn exhaust(s: &mut PlayerState, amount: f32) { if !s.profile.invulnerable { s.exhaustion = (s.exhaustion + amount).min(40.0f32); } }
+fn exhaust(s: &mut PlayerState, amount: f32) { s.exhaustion = exhausted(s, s.exhaustion, amount); }
+pub(crate) fn exhausted(s: &PlayerState, e: f32, amount: f32) -> f32 { if s.profile.invulnerable { e } else { (e + amount).min(40.0f32) } }
 
 // ServerPlayer.checkMovementStatistics: centimetres walked, swum or sprinted, rounded.
-fn walked(s: &mut PlayerState, delta: Vec3) {
+fn walked(s: &mut PlayerState, delta: Vec3) { if let Some(cost) = walk_cost(s, delta) { exhaust(s, cost); } }
+pub(crate) fn walk_cost(s: &PlayerState, delta: Vec3) -> Option<f32> {
     let (distance, rate) = if s.swimming || s.eye_in_water { (delta.length_sqr().sqrt(), 0.01f32) }
         else if s.in_water { (delta.horizontal_sqr().sqrt(), 0.01f32) }
-        else if !s.on_climbable && s.on_ground && s.sprinting { (delta.horizontal_sqr().sqrt(), 0.1f32) } else { return };
+        else if !s.on_climbable && s.on_ground && s.sprinting { (delta.horizontal_sqr().sqrt(), 0.1f32) } else { return None };
     let cm = math::round(distance as f32 * 100.0);
-    if cm > 0 { exhaust(s, rate * cm as f32 * 0.01f32); }
+    (cm > 0).then(|| rate * cm as f32 * 0.01f32)
 }
 
 // FoodData.tick: exhaustion over 4 costs saturation, then food; one timer whose row the food state picks.
 fn food(s: &mut PlayerState, world: &impl World) {
-    if s.exhaustion > 4.0 {
-        s.exhaustion -= 4.0;
-        if s.saturation > 0.0 { s.saturation = (s.saturation - 1.0).max(0.0); }
-        else if world.difficulty() != 0 { s.food_level = (s.food_level - 1).max(0); }
-    }
+    (s.exhaustion, s.saturation, s.food_level) = drain(world, s.exhaustion, s.saturation, s.food_level);
     let (regen, hurt) = (world.natural_regeneration(), s.health > 0.0 && s.health < 20.0);
     let row = if regen && s.saturation > 0.0 && hurt && s.food_level >= 20 { (clock::FOOD_SATURATED, 0) }
         else if regen && s.food_level >= 18 && hurt { (clock::FOOD_FED, 1) }
@@ -812,6 +814,12 @@ fn food(s: &mut PlayerState, world: &impl World) {
         1 => { s.health = (health + 1.0).min(20.0); s.exhaustion = (s.exhaustion + 6.0).min(40.0); }
         _ => if health > 10.0 || world.difficulty() == 3 || health > 1.0 && world.difficulty() == 2 { s.health = (health - 1.0).max(0.0); },
     }
+}
+/// FoodData.tick's first cause: exhaustion over 4 costs saturation, then food.
+pub(crate) fn drain(world: &impl World, e: f32, saturation: f32, food: i32) -> (f32, f32, i32) {
+    if e <= 4.0 { (e, saturation, food) }
+    else if saturation > 0.0 { (e - 4.0, (saturation - 1.0).max(0.0), food) }
+    else { (e - 4.0, saturation, if world.difficulty() != 0 { (food - 1).max(0) } else { food }) }
 }
 
 /// Ordered causes at the authoritative server resource boundaries, between the ticks.

@@ -9,6 +9,7 @@ pub use attributes::{SpeedModifier, SpeedOperation};
 mod effects;
 pub use effects::{MobEffectInstance, EffectKind};
 pub mod core;
+pub mod face;
 
 pub mod math;
 pub mod shapes;
