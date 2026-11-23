@@ -11,7 +11,7 @@ use crate::{
         SprintTickInput,
         StepBasedCollector,
     },
-    basis::{body::{input_vector, AffineBody, LIVING}, sweep::axis_order as axis_step_order},
+    basis::{body::{input_vector, AffineBody, LIVING}, clock, sweep::axis_order as axis_step_order},
     world::block_pos,
     Aabb,
     Block,
@@ -1696,31 +1696,23 @@ fn food_tick(state: &mut PlayerState, world: &impl World) {
             write_state!(world, state.food_level)=(read_state!(world, state.food_level)-1).max(0);
         }
     }
-    if world.natural_regeneration() && read_state!(world, state.saturation)>0.0 && read_state!(world, state.health)>0.0 && read_state!(world, state.health)<20.0 && read_state!(world, state.food_level)>=20 {
-        modify_state!(world, state.food_tick_timer)+=1;
-        if read_state!(world, state.food_tick_timer)>=10 {
-            let amount=read_state!(world, state.saturation).min(6.0);
-            write_state!(world, state.health)=(read_state!(world, state.health)+amount/6.0).min(20.0);
-            add_exhaustion(state, world, amount);
-            write_state!(world, state.food_tick_timer)=0;
-        }
-    } else if world.natural_regeneration() && read_state!(world, state.food_level)>=18 && read_state!(world, state.health)>0.0 && read_state!(world, state.health)<20.0 {
-        modify_state!(world, state.food_tick_timer)+=1;
-        if read_state!(world, state.food_tick_timer)>=80 {
-            write_state!(world, state.health)=(read_state!(world, state.health)+1.0).min(20.0);
-            add_exhaustion(state, world, 6.0);
-            write_state!(world, state.food_tick_timer)=0;
-        }
-    } else if read_state!(world, state.food_level)<=0 {
-        modify_state!(world, state.food_tick_timer)+=1;
-        if read_state!(world, state.food_tick_timer)>=80 {
-            if read_state!(world, state.health)>10.0 || world.difficulty()==3 || read_state!(world, state.health)>1.0 && world.difficulty()==2 {
-                write_state!(world, state.health)=(read_state!(world, state.health)-1.0).max(0.0);
-            }
-            write_state!(world, state.food_tick_timer)=0;
-        }
-    } else {
-        write_state!(world, state.food_tick_timer)=0;
+    // The tick timer is one clock; the food state picks its row and what firing does.
+    let regen=world.natural_regeneration();
+    let row=if regen && read_state!(world, state.saturation)>0.0 && read_state!(world, state.health)>0.0 && read_state!(world, state.health)<20.0 && read_state!(world, state.food_level)>=20 {
+        Some((clock::FOOD_SATURATED, 0))
+    } else if regen && read_state!(world, state.food_level)>=18 && read_state!(world, state.health)>0.0 && read_state!(world, state.health)<20.0 {
+        Some((clock::FOOD_FED, 1))
+    } else if read_state!(world, state.food_level)<=0 { Some((clock::FOOD_FED, 2)) } else { None };
+    let Some((clock, fire))=row else { write_state!(world, state.food_tick_timer)=0; return; };
+    let mut timer=read_state!(world, state.food_tick_timer) as i32;
+    let fired=clock.tick(&mut timer);
+    write_state!(world, state.food_tick_timer)=timer as u32;
+    if !fired { return; }
+    let health=read_state!(world, state.health);
+    match fire {
+        0 => { let amount=read_state!(world, state.saturation).min(6.0); write_state!(world, state.health)=(health+amount/6.0).min(20.0); add_exhaustion(state, world, amount); }
+        1 => { write_state!(world, state.health)=(health+1.0).min(20.0); add_exhaustion(state, world, 6.0); }
+        _ => if health>10.0 || world.difficulty()==3 || health>1.0 && world.difficulty()==2 { write_state!(world, state.health)=(health-1.0).max(0.0); },
     }
 }
 

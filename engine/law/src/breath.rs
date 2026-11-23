@@ -10,8 +10,6 @@ pub const MAX_AIR_SUPPLY: i32 = 300;
 pub const DROWN_DAMAGE: f32 = 2.0;
 /// LivingEntity.increaseAirSupply — Math.min(air + 4, getMaxAirSupply()).
 pub const REFILL_PER_TICK: i32 = 4;
-/// LivingEntity.shouldTakeDrowningDamage — getAirSupply() <= -20.
-pub const DROWN_THRESHOLD: i32 = -20;
 
 /// The three effects the breath gates read (MobEffectUtil).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -83,11 +81,9 @@ pub fn tick_air(
 ) -> (i32, Option<DrownHit>) {
     if eye_in_water && !eye_in_bubble_column {
         if !can_breathe_underwater && !has_water_breathing(effects) && !player_invulnerable {
-            let air = decrease_air_supply(air, oxygen_bonus, random);
-            if air <= DROWN_THRESHOLD {
-                return (0, Some(DrownHit { damage: DROWN_DAMAGE }));
-            }
-            (air, None)
+            let (mut air, step) = (air, decrease_air_supply(air, oxygen_bonus, random) - air);
+            let drowns = crate::basis::clock::Clock { step, ..crate::basis::clock::AIR }.tick(&mut air);
+            (air, drowns.then_some(DrownHit { damage: DROWN_DAMAGE }))
         } else if air < MAX_AIR_SUPPLY && effects_refill_air_supply(effects) {
             (increase_air_supply(air), None)
         } else {
