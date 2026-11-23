@@ -47,7 +47,9 @@ const PERIOD: usize = 40;
 /// sweep pads its cell range by one, and a fence's shape reaches up from the cell below).
 const MARGIN: i32 = 2;
 
-struct Seen { state: PlayerState, effect: Effect, ground: Vec<u64>, free: Vec<u64> }
+/// A tick seen: the state, its effect, and its key (x, y, z and the fall, then a hash of the
+/// rest of the state its lanes left out, then that rest).
+struct Seen { state: PlayerState, effect: Effect, key: Vec<u64> }
 
 /// Holds `input` for at most `horizon` ticks, stopping at the first cause: byte-identical to
 /// that many core ticks.
@@ -61,34 +63,34 @@ pub fn advance(s: &mut PlayerState, world: &impl World, input: &Input, horizon: 
         seen.push_back(sample(s, effect));
         if ticks < retry { continue; }
         let last = seen.len() - 1;
-        for free in [false, true] {
-            let sig = |i: usize| if free { &seen[i].free } else { &seen[i].ground };
-            let Some(p) = (1..=last).find(|&p| sig(last)[0] == sig(last - p)[0] && sig(last) == sig(last - p)) else { continue };
-            let cycle: Vec<&Seen> = seen.range(last - p..).collect();
-            match jump(s, world, &cycle, free, horizon - ticks) {
-                Ok((jumped, cause)) => return Ok(Jump { ticks: ticks + jumped, jumped, cause, stepped }),
-                Err(why) => (stepped, retry) = (why, ticks + p as u64),
-            }
+        let (now, key) = (&seen[last].key, |p: usize| &seen[last - p].key);
+        let Some(p) = (1..=last).find(|&p| now[4] == key(p)[4] && now[4..] == key(p)[4..]) else { continue };
+        // The lane axes are the ones the cycle moved along; y carries the fall with it.
+        let axes = [0, 1, 2].map(|i| now[i] != key(p)[i]);
+        if !axes[1] && now[3] != key(p)[3] { continue; }
+        let cycle: Vec<&Seen> = seen.range(last - p..).collect();
+        match jump(s, world, &cycle, axes, horizon - ticks) {
+            Ok((jumped, cause)) => return Ok(Jump { ticks: ticks + jumped, jumped, cause, stepped }),
+            Err(why) => (stepped, retry) = (why, ticks + p as u64),
         }
     }
     Ok(Jump { ticks, jumped: 0, cause: Cause::Horizon, stepped })
 }
 
-/// The state's own facts, its lanes left out, on the ground (y clipped) and in a free fall
-/// (y and the fall are lanes too); each with a hash, so a repeat is found in one comparison.
+/// The tick's key: every fact of the state but its lanes (t, the food ledger, the support's
+/// column), with the position and the fall in front so a jump can leave its lane axes out.
 fn sample(s: &PlayerState, effect: Effect) -> Seen {
     use crate::state::StateField as F;
-    let (mut ground, mut free) = (vec![0], vec![0]);
+    let mut key = vec![s.position.x.to_bits(), s.position.y.to_bits(), s.position.z.to_bits(), s.fall_distance.to_bits(), 0];
     for &field in F::ALL {
         match field {
-            F::t | F::exhaustion | F::saturation | F::food_level => {}
-            F::position | F::fall_distance => ground.push(if field == F::position { s.position.y } else { s.fall_distance }.to_bits()),
-            F::main_supporting_block => for v in [&mut ground, &mut free] { v.push(s.main_supporting_block.map_or(u64::MAX, |p| p[1] as u64)); },
-            _ => for v in [&mut ground, &mut free] { s.push_field_bits(field, v); },
+            F::t | F::exhaustion | F::saturation | F::food_level | F::position | F::fall_distance => {}
+            F::main_supporting_block => key.push(s.main_supporting_block.map_or(u64::MAX, |p| p[1] as u64)),
+            _ => s.push_field_bits(field, &mut key),
         }
     }
-    for v in [&mut ground, &mut free] { v[0] = v[1..].iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &w| (h ^ w).wrapping_mul(0x100_0000_01b3)); }
-    Seen { state: s.clone(), effect, ground, free }
+    key[4] = key[5..].iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &w| (h ^ w).wrapping_mul(0x100_0000_01b3));
+    Seen { state: s.clone(), effect, key }
 }
 
 /// What a held input only accumulates.
@@ -103,14 +105,14 @@ impl Lanes {
 }
 
 /// The lanes after one tick of the phase that ends in `after`, and whether the food clock
-/// drained; None when the phase is not the lanes' own arithmetic (a clipped axis, a shifted
-/// fall). `free` adds y and the fall.
-fn lanes(after: &Seen, world: &impl World, mut l: Lanes, free: bool) -> Option<(Lanes, bool)> {
+/// drained; None when the phase is not the lanes' own arithmetic (a lane axis the move clips,
+/// a fall that shifts). An axis that is no lane, and the fall unless y is one, take the phase's.
+fn lanes(after: &Seen, world: &impl World, mut l: Lanes, axes: [bool; 3]) -> Option<(Lanes, bool)> {
     let a = &after.state;
     let (wanted, moved) = after.effect.collision?;
     let from = l.position;
-    for axis in [crate::Axis::X, crate::Axis::Y, crate::Axis::Z] {
-        if axis == crate::Axis::Y && !free { l.position.y = a.position.y; continue; }
+    for (i, axis) in [crate::Axis::X, crate::Axis::Y, crate::Axis::Z].into_iter().enumerate() {
+        if !axes[i] { l.position = l.position.with(axis, a.position.get(axis)); continue; }
         if wanted.get(axis).to_bits() != moved.get(axis).to_bits() { return None; }
         if a.movement_this_tick.is_some() { l.position = l.position.with(axis, l.position.get(axis) + moved.get(axis)); }
     }
@@ -118,22 +120,22 @@ fn lanes(after: &Seen, world: &impl World, mut l: Lanes, free: bool) -> Option<(
     if let Some(cost) = core::walk_cost(a, l.position.minus(from)) { l.exhaustion = core::exhausted(a, l.exhaustion, cost); }
     let drained = l.exhaustion > 4.0;
     (l.exhaustion, l.saturation, l.food) = core::drain(world, l.exhaustion, l.saturation, l.food);
-    l.fall = if free { if a.shift_key_down || a.fall_flying { return None; } core::fallen(a, l.fall, moved.y) } else { a.fall_distance };
+    l.fall = if axes[1] { if a.shift_key_down || a.fall_flying { return None; } core::fallen(a, l.fall, moved.y) } else { a.fall_distance };
     Some((l, drained))
 }
 
 /// Jumps along the cycle `cycle[0] → … → cycle[p]` (the last is `s`), at most `horizon` ticks.
-fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], free: bool, horizon: u64) -> Result<(u64, Cause), Stepped> {
+fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], axes: [bool; 3], horizon: u64) -> Result<(u64, Cause), Stepped> {
     let p = cycle.len() - 1;
     // The food lanes leave the law's branches alone only while the body is unhurt and fed above 6.
     let hungry = |a: &PlayerState, l: &Lanes| a.health > 0.0 && a.health < 20.0 || l.food <= 6;
     // The sample itself must be the lanes' arithmetic, phase by phase, bit for bit.
     for j in 1..=p {
         let (b, a) = (&cycle[j - 1].state, &cycle[j].state);
-        let (l, drained) = lanes(cycle[j], world, Lanes::of(b), free).ok_or(Stepped::Lanes)?;
+        let (l, drained) = lanes(cycle[j], world, Lanes::of(b), axes).ok_or(Stepped::Lanes)?;
         if l.bits() != Lanes::of(a).bits() || drained && hungry(a, &l) || cycle[j].effect.contact.is_some() { return Err(Stepped::Lanes); }
     }
-    let mut corridor = Corridor { refs: Vec::new(), free, context: CollisionContext::of(s), last: None };
+    let mut corridor = Corridor { refs: std::collections::HashMap::new(), axes, context: CollisionContext::of(s), last: None };
     for j in 1..=p {
         corridor.admit(world, cycle[j - 1].state.bounding_box(), cycle[j].state.bounding_box()).map_err(Stepped::Cell)?;
     }
@@ -142,7 +144,7 @@ fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], free: bool, ho
     while k < horizon {
         let j = (k as usize % p) + 1;
         let (b, a) = (&cycle[j - 1].state, &cycle[j].state);
-        let (next, drained) = lanes(cycle[j], world, l, free).expect("a certified phase");
+        let (next, drained) = lanes(cycle[j], world, l, axes).expect("a certified phase");
         if next.position.x.abs() >= 29_999_000.0 || next.position.z.abs() >= 29_999_000.0 { cause = Cause::Border; break; }
         if drained && hungry(a, &next) { cause = Cause::Food; break; }
         let (moved, to) = (Aabb::player(next.position, b.pose.height()), Aabb::player(next.position, a.pose.height()));
@@ -169,15 +171,15 @@ fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], free: bool, ho
     Ok((k, cause))
 }
 
-/// The cells the jump is certified on: each layer (or, in a free fall, every cell) answers as
-/// its first cell did, and no block effect counts its cells.
-struct Corridor<'w> { refs: Vec<(i32, &'w Block, bool, Option<u16>)>, free: bool, context: CollisionContext, last: Option<(BlockPos, BlockPos)> }
+/// The cells the jump is certified on: each answers as the first cell of its line along the lane
+/// axes did (a layer on the ground, every cell in a fall), and no block effect counts its cells.
+struct Corridor<'w> { refs: std::collections::HashMap<BlockPos, (&'w Block, bool, Option<u16>)>, axes: [bool; 3], context: CollisionContext, last: Option<(BlockPos, BlockPos)> }
 impl<'w> Corridor<'w> {
     fn admit(&mut self, world: &'w impl World, from: Aabb, to: Aabb) -> Result<(), BlockPos> {
         let hull = Aabb::new(from.min.x.min(to.min.x), from.min.y.min(to.min.y), from.min.z.min(to.min.z),
             from.max.x.max(to.max.x), from.max.y.max(to.max.y), from.max.z.max(to.max.z));
         let (lo, hi) = (block_pos(hull.min).map(|c| c - MARGIN), block_pos(hull.max).map(|c| c + MARGIN));
-        if self.last == Some((lo, hi)) { return Ok(()); }
+        if self.last == Some((lo, hi)) || self.axes == [false; 3] { return Ok(()); }
         let old = self.last.replace((lo, hi));
         let bounds = Aabb::new(lo[0] as f64, lo[1] as f64, lo[2] as f64, hi[0] as f64 + 1.0, hi[1] as f64 + 1.0, hi[2] as f64 + 1.0);
         if !world.visit_extra_collisions(bounds, self.context, |_| false) { self.last = old; return Err(lo); }
@@ -193,9 +195,9 @@ impl<'w> Corridor<'w> {
         let (hook, fluid) = (world.hook_block(p), world.fluid_block(p));
         let _ = world.collision_shape(p, self.context);
         if !std::ptr::eq(hook, block) || !std::ptr::eq(fluid, block) || !quiet(block) { return false; }
-        let layer = if self.free { 0 } else { p[1] };
-        let Some(&(_, first, first_loaded, first_model)) = self.refs.iter().find(|r| r.0 == layer) else {
-            self.refs.push((layer, block, loaded, model));
+        let key = [0, 1, 2].map(|i| if self.axes[i] { 0 } else { p[i] });
+        let Some(&(first, first_loaded, first_model)) = self.refs.get(&key) else {
+            self.refs.insert(key, (block, loaded, model));
             return true;
         };
         (loaded, model) == (first_loaded, first_model) && (std::ptr::eq(first, block)
