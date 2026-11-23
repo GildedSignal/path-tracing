@@ -4,7 +4,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
 };
-use crate::{Aabb, Block, BlockPos, CollisionContext, Input, PlayerState, VoxelShape, World, state_reads::{StateField, StateReads}};
+use crate::{Aabb, Block, BlockPos, CollisionContext, Input, PlayerState, VoxelShape, World, state_reads::StateReads};
 use crate::shapes::ShapeView;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,14 +259,10 @@ impl<W: World> World for RecordingWorld<'_, W> {
     fn observe_axis_contact(&self,c:crate::basis::sweep::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.world.observe_tick();}
     #[inline]
-    fn read_state(&self, field: StateField) {
-        self.state_reads.set(self.state_reads.get() | (1 << field as u8) & !self.written.get());
-          self.world.read_state(field);
-    }
-    #[inline]
-    fn write_state(&self, field: StateField) {
-        self.written.set(self.written.get() | 1 << field as u8);
-          self.world.write_state(field);
+    fn state_footprint(&self, read: StateReads, written: StateReads) {
+        self.state_reads.set(self.state_reads.get() | read.0 & !self.written.get());
+        self.written.set(self.written.get() | written.0);
+        self.world.state_footprint(read, written);
     }
 
     fn block(&self, p: BlockPos) -> &Block {

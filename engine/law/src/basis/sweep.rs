@@ -150,8 +150,7 @@ impl<W: World> World for ContactRecorder<'_, W> {
     fn fast_lava(&self) -> bool { self.world.fast_lava() }
     fn has_fluid(&self) -> bool { self.world.has_fluid() }
     fn has_inside_effects(&self) -> bool { self.world.has_inside_effects() }
-    fn read_state(&self, f: crate::state_reads::StateField) { self.world.read_state(f); }
-    fn write_state(&self, f: crate::state_reads::StateField) { self.world.write_state(f) }
+    fn state_footprint(&self, r: crate::state_reads::StateReads, w: crate::state_reads::StateReads) { self.world.state_footprint(r, w) }
     fn observe_region(&self, q: crate::footprint::Query, lo: BlockPos, hi: BlockPos) { self.world.observe_region(q, lo, hi) }
     fn observe_sweep(&self, a: Aabb, b: Aabb) { self.world.observe_sweep(a, b) }
     fn collision_cell_bounds(&self, b: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> { self.world.collision_cell_bounds(b, lo, hi) }

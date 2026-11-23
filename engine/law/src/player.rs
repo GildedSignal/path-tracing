@@ -1180,7 +1180,6 @@ pub mod death {
     //! `LivingEntity.onBelowWorld`, `Player.hurtServer`, `PlayerList.respawn`,
     //! `ServerPlayer.restoreFrom`; the offsets sit in the run dossier.
 
-    use crate::state_reads::{modify_state, write_state};
     use crate::{PlayerState, Vec3, World};
 
     /// LivingEntity.onBelowWorld: hurt(damageSources().fellOutOfWorld(), 4.0f).
@@ -1204,18 +1203,21 @@ pub mod death {
     /// position is the respawn teleport the caller performs: death is a teleport with a
     /// toll (S189), and this reset is the toll's ledger, not the teleport.
     pub fn respawn(state: &mut PlayerState, world: &impl World) {
-        write_state!(world, state.health) = 20.0;
-        write_state!(world, state.food_level) = 20;
-        write_state!(world, state.saturation) = 5.0;
-        write_state!(world, state.exhaustion) = 0.0;
-        write_state!(world, state.food_tick_timer) = 0;
-        write_state!(world, state.velocity) = Vec3::default();
-        write_state!(world, state.fall_distance) = 0.0;
-        write_state!(world, state.remaining_fire_ticks) = 0;
-        write_state!(world, state.ticks_frozen) = 0;
-        write_state!(world, state.effects) = false;
-        modify_state!(world, state.hurt_cooldown).remaining_ticks = 0;
-        modify_state!(world, state.hurt_cooldown).last_raw_hit = 0.0;
+        use crate::state_reads::{StateField as F, StateReads};
+        world.state_footprint(StateReads(0), StateReads::of(&[F::health, F::food_level, F::saturation, F::exhaustion,
+            F::food_tick_timer, F::velocity, F::fall_distance, F::remaining_fire_ticks, F::ticks_frozen, F::effects, F::hurt_cooldown]));
+        state.health = 20.0;
+        state.food_level = 20;
+        state.saturation = 5.0;
+        state.exhaustion = 0.0;
+        state.food_tick_timer = 0;
+        state.velocity = Vec3::default();
+        state.fall_distance = 0.0;
+        state.remaining_fire_ticks = 0;
+        state.ticks_frozen = 0;
+        state.effects = false;
+        state.hurt_cooldown.remaining_ticks = 0;
+        state.hurt_cooldown.last_raw_hit = 0.0;
     }
 
     /// `Blocks.lambda$static$39` (26.2): bed `bounceRestitution = 0.75f`.
