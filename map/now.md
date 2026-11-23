@@ -51,5 +51,5 @@ Each is folded when its step comes and a judge or a flight is there for it; ever
 
 - Entity push sits unwired on `wt/port-fold` (`Sketch` in `entity_contact.rs` / `sim.rs`), not yet flown on `main` (five bots on one crossing).
 - Sprint at an exactly axis-aligned wall depends on rounding in Mojang's own `acos` (`movement.rs:818`), ported faithfully.
-- On `main`'s checkout the test world's `r.0.0.mca` and `r.0.-1.mca` are whole untrimmed region files (3.8 and 3.4 MB), with the trimmed committed ones beside them as `.bak-20261114`; `launch.ps1` copies them into every Codex worktree. `Set GLM key.cmd` and `Stop GPT.cmd` are missing from the same checkout. Neither is committed.
+- On `main`'s checkout the test world's `r.0.0.mca` and `r.0.-1.mca` are whole untrimmed region files (3.8 and 3.4 MB), with the trimmed committed ones beside them as `.bak-20261114`; `launch.ps1` copies them into every Codex worktree. Uncommitted.
 - His bug S38: a track run deletes a sulfur spike from his inventory; never traced.

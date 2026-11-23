@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Source before starting agents, or run directly before artifact upload.
 scrub_results() {
-  local dir=$1 file status hits
-  [[ -n ${ZAI_API_KEY:-} ]] || { echo 'Cannot scrub: ZAI_API_KEY is missing' >&2; return 2; }
+  local dir=$1 file status hits key=${LAB_KEY:-${ZAI_API_KEY:-}}
+  # LAB_KEY is the key of the provider the run used (scripts/glm-local.ps1); Actions runs carry ZAI_API_KEY.
+  [[ -n $key ]] || { echo 'Cannot scrub: no key to scrub for (LAB_KEY or ZAI_API_KEY)' >&2; return 2; }
   [[ -d $dir && ! -L $dir ]] || { echo 'Cannot scrub: results directory is missing or a symlink' >&2; return 2; }
   # Never upload symlinks or special files. Five MB means five binary megabytes.
   find "$dir" -mindepth 1 ! -type d ! -type f -delete || return
@@ -23,14 +24,14 @@ scrub_results() {
     if [[ -s $list ]]; then
       # A grep that cannot read a file exits 2; turn that into 255 so xargs stops with 124, which
       # stays an error. Otherwise the hits file alone says whether any file held the key.
-      K="$ZAI_API_KEY" xargs -0 sh -c 'grep -laFZ -- "$K" "$@"; r=$?; [ $r -le 1 ] || exit 255' _ < "$list" > "$hits" && status=0 || status=$?
+      K="$key" xargs -0 sh -c 'grep -laFZ -- "$K" "$@"; r=$?; [ $r -le 1 ] || exit 255' _ < "$list" > "$hits" && status=0 || status=$?
       if [[ $status != 124 ]]; then [[ -s $hits ]] && status=0 || status=1; fi
     else
       status=1
     fi
     rm -f -- "$list"
   else
-    grep -rlaFZ -- "$ZAI_API_KEY" "$dir" > "$hits" && status=0 || status=$?
+    grep -rlaFZ -- "$key" "$dir" > "$hits" && status=0 || status=$?
   fi
   # 0: some files hold the key; 1: none do; anything else: a file could not be scanned.
   [[ $status == 0 || $status == 1 ]] || { rm -f -- "$hits" "$next"; echo 'Cannot scrub: a file could not be scanned' >&2; return 1; }
