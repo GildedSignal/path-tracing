@@ -87,8 +87,5 @@ pub mod minecart;
 pub mod projectiles;
 pub mod redstone;
 
-#[cfg(feature = "count-state-copies")]
-pub use state::player_state_copies;
-
 pub mod solve_meter;
 pub mod sim;

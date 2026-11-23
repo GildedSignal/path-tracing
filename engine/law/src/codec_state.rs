@@ -71,22 +71,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             F::movement_this_tick => words.push(answers(&[s.movement_this_tick.is_some()])), // movement.rs:980
             // The block table and the toolkit: parameters of the generator, by their bits.
             // The flags are already yes-or-no answers.
-            F::input | F::yaw | F::pitch | F::on_ground | F::horizontal_collision | F::vertical_collision
-            | F::vertical_collision_below | F::minor_horizontal_collision | F::sprinting | F::sprint_speed_modifier
-            | F::no_physics | F::shift_key_down | F::pose | F::in_water | F::in_lava | F::on_climbable
-            | F::stuck_speed_multiplier | F::on_ground_no_blocks | F::crouching | F::swimming | F::underwater
-            | F::eye_in_water | F::was_eye_in_water | F::in_powder_snow | F::was_in_powder_snow | F::leather_boots
-            | F::movement_speed_base | F::speed_modifiers | F::speed | F::jump_strength | F::gravity | F::step_height
-            | F::friction_modifier | F::air_drag_modifier | F::water_movement_efficiency | F::movement_efficiency
-            | F::sneaking_speed | F::safe_fall_distance | F::fall_damage_multiplier | F::bounciness | F::fall_flying
-            | F::riding | F::boat | F::effects | F::flying | F::using_item | F::use_item_speed_multiplier | F::use_item_can_sprint
-            | F::game_mode | F::mayfly | F::instabuild | F::invulnerable | F::may_build | F::flying_speed
-            | F::jump_trigger_time | F::sprint_trigger_time | F::sprint_window
-            | F::jump_boost | F::speed_effect | F::slowness_effect | F::blindness | F::fire_resistance
-            | F::unmodeled_effects
-            | F::levitation | F::slow_falling | F::dolphins_grace | F::weaving | F::resistance
-            | F::armor | F::armor_toughness | F::protection_epf | F::feather_falling_epf | F::absorption
-            | F::soul_speed_active => s.push_field_bits(field, &mut words),
+            _ => s.push_field_bits(field, &mut words),
         }
     }
     words.into()

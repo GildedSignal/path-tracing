@@ -5,7 +5,6 @@ edition = "2024"
 
 [features]
 solve-counters = []
-count-state-copies = []
 mutant-axis-tie = []
 mutant-step-up = []
 mutant-edge-backoff = []
