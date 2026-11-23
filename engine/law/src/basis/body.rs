@@ -80,3 +80,14 @@ impl AffineBody {
         }
     }
 }
+
+/// `Entity.getInputVector`: the input, normalised past length 1, scaled by the
+/// acceleration and turned by the yaw through the sine table.
+pub fn input_vector(input: Vec3, acceleration: f32, yaw: f32) -> Vec3 {
+    let length = input.length_sqr();
+    if length < 1.0e-7 { return Vec3::default(); }
+    let v = (if length > 1.0 { input.normalize() } else { input }).scale(acceleration as f64);
+    let r = (yaw * 0.017453292f32) as f64;
+    let (s, c) = (crate::math::sin(r) as f64, crate::math::cos(r) as f64);
+    Vec3::new(v.x * c - v.z * s, v.y, v.z * c + v.x * s)
+}

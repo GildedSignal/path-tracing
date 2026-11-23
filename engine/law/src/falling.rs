@@ -19,7 +19,7 @@ pub fn spawn(x: i32, y: i32, z: i32) -> (f64, f64, f64) {
 #[inline]
 pub fn flight_tick(y: f64, vy: f64) -> (f64, f64) {
     let (mut p, mut v) = (Vec3::new(0.0, y, 0.0), Vec3::new(0.0, vy, 0.0));
-    crate::body::FALLING_BLOCK.tick(&mut p, &mut v, false);
+    crate::basis::body::FALLING_BLOCK.tick(&mut p, &mut v, false);
     (p.y, v.y)
 }
 

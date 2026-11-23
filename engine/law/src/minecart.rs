@@ -158,7 +158,7 @@ impl Minecart {
     /// `c.on_ground` for `comeOffTrack`).
     pub fn tick(&mut self, rails: &(impl Rails + ?Sized), c: CartConditions) {
         if !c.no_gravity {
-            crate::body::MINECART.gravity(&mut self.velocity, c.in_water);
+            crate::basis::body::MINECART.gravity(&mut self.velocity, c.in_water);
         }
         let bx = math::floor(self.position.x);
         let by = math::floor(self.position.y);
@@ -303,7 +303,7 @@ impl Minecart {
             self.velocity.z * slowdown,
         );
         if c.in_water {
-            crate::body::MINECART.drag(&mut self.velocity, true);
+            crate::basis::body::MINECART.drag(&mut self.velocity, true);
         }
 
         // Rail-height y adjust (@1112-1237).
@@ -383,7 +383,7 @@ impl Minecart {
         }
         self.position = self.position.plus(self.velocity);
         if !c.on_ground {
-            crate::body::MINECART.drag(&mut self.velocity, false);
+            crate::basis::body::MINECART.drag(&mut self.velocity, false);
         }
     }
 

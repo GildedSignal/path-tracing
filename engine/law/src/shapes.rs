@@ -1,4 +1,4 @@
-use crate::math;
+
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vec3 {
@@ -89,18 +89,8 @@ pub enum Axis {
 pub fn face_comparisons(body:Aabb,axis:Axis,plane:f64)->[bool;9] {
     let lo=body.min.get(axis);let hi=body.max.get(axis);
     [lo+1.0e-7>=plane,hi-1.0e-7>=plane,lo>=plane,hi>=plane,
-     (lo+hi)*0.5>=plane,plane-hi<crate::contact::CONTACT_ZERO,lo-plane<crate::contact::CONTACT_ZERO,
-     plane-hi<crate::contact::CONTACT_HIT,lo-plane<crate::contact::CONTACT_HIT]
-}
-
-// Direction.axisStepOrder
-pub fn axis_step_order(v: Vec3) -> [Axis; 3] {
-    let z_first = v.x.abs() < v.z.abs() || (cfg!(feature = "mutant-axis-tie") && v.x.abs() == v.z.abs());
-    if z_first {
-        [Axis::Y, Axis::Z, Axis::X]
-    } else {
-        [Axis::Y, Axis::X, Axis::Z]
-    }
+     (lo+hi)*0.5>=plane,plane-hi<crate::basis::sweep::CONTACT_ZERO,lo-plane<crate::basis::sweep::CONTACT_ZERO,
+     plane-hi<crate::basis::sweep::CONTACT_HIT,lo-plane<crate::basis::sweep::CONTACT_HIT]
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -149,35 +139,10 @@ impl Aabb {
         p.x >= self.min.x && p.x < self.max.x && p.y >= self.min.y && p.y < self.max.y && p.z >= self.min.z && p.z < self.max.z
     }
 
-    // AABB.clip; AABB.getDirection; AABB.clipPoint
+    // AABB.clip
     pub fn clip(self, from: Vec3, to: Vec3) -> Option<Vec3> {
-        let delta = to.minus(from);
-        let mut nearest = 1.0;
-        let mut hit = false;
-        let axes = [Axis::X, Axis::Y, Axis::Z];
-        for a in 0..3 {
-            let axis = axes[a];
-            let movement = delta.get(axis);
-            if movement.abs() <= 1.0e-7 {
-                continue;
-            }
-            let plane = if movement > 0.0 {
-                self.min.get(axis)
-            } else {
-                self.max.get(axis)
-            };
-            let t = (plane - from.get(axis)) / movement;
-            let u = axes[(a+1)%3];
-            let v = axes[(a+2)%3];
-            let pu = from.get(u) + t * delta.get(u);
-            let pv = from.get(v) + t * delta.get(v);
-            if 0.0 < t && t < nearest && self.min.get(u)-1.0e-7 < pu && pu < self.max.get(u)+1.0e-7 &&
-            self.min.get(v)-1.0e-7 < pv && pv < self.max.get(v)+1.0e-7 {
-                nearest = t;
-                hit = true;
-            }
-        }
-        hit.then(|| from.plus(delta.scale(nearest)))
+        let mut t = 1.0;
+        crate::basis::ray::clip_face(self, from, to, &mut t, None).map(|_| from.plus(to.minus(from).scale(t)))
     }
 
     // AABB.collidedAlongVector
@@ -383,7 +348,7 @@ impl ShapeView<'_> {
     fn is_empty(self) -> bool { self.shape.is_empty() }
     fn is_full(self, p: [usize;3]) -> bool { self.shape.is_full(p) }
 
-    fn find_index(self, axis: usize, value: f64) -> i32 {
+    pub(crate) fn find_index(self, axis: usize, value: f64) -> i32 {
         // Same binary partition and comparisons as the materialized planes.
         let mut lo = 0;
         let mut hi = self.shape.coords[axis].len();
@@ -395,14 +360,14 @@ impl ShapeView<'_> {
     }
 
     pub fn collide(self, axis: Axis, b: Aabb, distance: f64) -> f64 {
-        self.collide_report(axis,b,distance,&mut crate::contact::Outcome::Free)
+        self.collide_report(axis,b,distance,&mut crate::basis::sweep::Outcome::Free)
     }
-    pub(crate) fn collide_report(self, axis:Axis,b:Aabb,mut distance:f64,outcome:&mut crate::contact::Outcome)->f64 {
+    pub(crate) fn collide_report(self, axis:Axis,b:Aabb,mut distance:f64,outcome:&mut crate::basis::sweep::Outcome)->f64 {
         if self.is_empty() {
             return distance;
         }
         if distance.abs() < 1.0e-7 {
-            *outcome=crate::contact::Outcome::Hold {plane:outcome.plane(),remainder:distance};
+            *outcome=crate::basis::sweep::Outcome::Hold {plane:outcome.plane(),remainder:distance};
             return 0.0;
         }
         let a = axis as usize;
@@ -424,8 +389,8 @@ impl ShapeView<'_> {
                 self.coord(a,1)-b.min.get(axis)
             };
             if distance>0.0 {
-                if delta>=-1.0e-7 {if delta<distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,0)};}distance=distance.min(delta);}
-            } else if delta<=1.0e-7 {if delta>distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,1)};}distance=distance.max(delta);}
+                if delta>=-1.0e-7 {if delta<distance {*outcome=crate::basis::sweep::Outcome::Clamp {plane:self.coord(a,0)};}distance=distance.min(delta);}
+            } else if delta<=1.0e-7 {if delta>distance {*outcome=crate::basis::sweep::Outcome::Clamp {plane:self.coord(a,1)};}distance=distance.max(delta);}
             return distance;
         }
         let sizes = self.sizes();
@@ -454,11 +419,11 @@ impl ShapeView<'_> {
                         };
                         if distance > 0.0 {
                             if delta >= -1.0e-7 {
-                                if delta<distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,i as usize)};}
+                                if delta<distance {*outcome=crate::basis::sweep::Outcome::Clamp {plane:self.coord(a,i as usize)};}
                                 distance = distance.min(delta);
                             }
                         } else if delta <= 1.0e-7 {
-                            if delta>distance {*outcome=crate::contact::Outcome::Clamp {plane:self.coord(a,i as usize+1)};}
+                            if delta>distance {*outcome=crate::basis::sweep::Outcome::Clamp {plane:self.coord(a,i as usize+1)};}
                                 distance = distance.max(delta);
                         }
                         return distance;
@@ -541,46 +506,6 @@ fn overlap_range(shape: ShapeView<'_>, axis: usize, lower: f64, upper: f64) -> s
     range
 }
 
-// Entity.collideWithShapes; Shapes.collide
-pub fn collide_with_shapes(wanted: Vec3, b: Aabb, shapes: &[VoxelShape]) -> Vec3 {
-    if shapes.is_empty() {
-        return wanted;
-    }
-    let mut result = Vec3::default();
-    for axis in axis_step_order(wanted) {
-        let mut d = wanted.get(axis);
-        if d == 0.0 {
-            continue;
-        }
-        let moved = b.moved(result);
-        for shape in shapes {
-            if d.abs() < 1.0e-7 {
-                d = 0.0;
-                break;
-            }
-            d = shape.collide(axis, moved, d);
-        }
-        result = result.with(axis, d);
-    }
-    result
-}
-
-// Entity.getInputVector
-pub fn input_vector(input: Vec3, acceleration: f32, yaw: f32) -> Vec3 {
-    let length = input.length_sqr();
-    if length < 1.0e-7 {
-        return Vec3::default();
-    }
-    let v = (if length > 1.0 {
-        input.normalize()
-    } else {
-        input
-    }).scale(acceleration as f64);
-    let r = (yaw * 0.017453292f32) as f64;
-    let s = math::sin(r) as f64;
-    let c = math::cos(r) as f64;
-    Vec3::new(v.x*c-v.z*s, v.y, v.z*c+v.x*s)
-}
 
 #[cfg(test)]
 mod fast_path_tests {

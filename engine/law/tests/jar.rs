@@ -1,9 +1,4 @@
-use law::{
-    Aabb, 
-    Vec3, 
-    VoxelShape, 
-    shapes::collide_with_shapes
-};
+use law::{Aabb, Vec3, VoxelShape, basis::sweep::shapes as collide_with_shapes};
 
 #[test]
 fn jar_collision_corpus(){
@@ -31,7 +26,7 @@ fn jar_intersection_corpus() {
             p.try_into().unwrap()
         }).collect();
         let mut actual=Vec::new();
-        law::blocks::for_each_intersected(Vec3::new(values[0], values[1], values[2]), Vec3::new(values[3], values[4], values[5]), 
+        law::basis::ray::cells_along(Vec3::new(values[0], values[1], values[2]), Vec3::new(values[3], values[4], values[5]), 
         Aabb::new(values[6], values[7], values[8], values[9], values[10], values[11]), |p, step| {
             actual.push([p[0], p[1], p[2], step]);
             true
@@ -66,7 +61,7 @@ fn jar_ray_traversal_and_clipping() {
             s.split(',').map(|v| v.parse().unwrap()).collect::<Vec<_>>().try_into().unwrap()
         }).collect();
         let mut actual = Vec::new();
-        law::blocks::traverse_blocks(from, to, |p| { actual.push(p); false });
+        law::basis::ray::cells(from, to, |p| { actual.push(p); false });
         assert_eq!(actual, expected, "jar ray visits {line}");
         let mut world = BoxWorld::default();
         world.set(target, Block {
@@ -160,8 +155,8 @@ fn jar_falling_block_flight() {
             assert!(!falling::discards(tick, 1000, -64, 320), "jar falling discard {_block} case {line}");
         }
     }
-    assert_eq!((-law::body::FALLING_BLOCK.gravity * law::body::FALLING_BLOCK.air_drag as f64).to_bits(), 0xbfa41205c28f5c29);
-    assert_ne!((-law::body::FALLING_BLOCK.gravity * 0.98f64).to_bits(), 0xbfa41205c28f5c29);
+    assert_eq!((-law::basis::body::FALLING_BLOCK.gravity * law::basis::body::FALLING_BLOCK.air_drag as f64).to_bits(), 0xbfa41205c28f5c29);
+    assert_ne!((-law::basis::body::FALLING_BLOCK.gravity * 0.98f64).to_bits(), 0xbfa41205c28f5c29);
     assert!(falling::discards(101, -65, -64, 320));
     assert!(falling::discards(101, 321, -64, 320));
     assert!(falling::discards(601, 100, -64, 320));
@@ -4045,7 +4040,7 @@ fn jar_projectiles_and_redstone() {
                     *slot = Some((Vec3::new(0.5, 65.52, -0.5), init.velocity));
                 }
                 let (p, v) = slot.as_mut().unwrap();
-                law::body::THROWABLE.tick(p, v, water);
+                law::basis::body::THROWABLE.tick(p, v, water);
                 vec3_bits(*p, &c[3..6], &format!("row {line} throw pos"));
                 vec3_bits(*v, &c[6..9], &format!("row {line} throw vel"));
             }

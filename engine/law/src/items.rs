@@ -421,10 +421,10 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
     }
     let old = body.position;
     match fluid {
-        Fluid::None => crate::body::ITEM.gravity(&mut body.velocity, false), // applyGravity (Entity 3832-3850)
+        Fluid::None => crate::basis::body::ITEM.gravity(&mut body.velocity, false), // applyGravity (Entity 3832-3850)
         Fluid::Water | Fluid::Lava => {
             // setFluidMovement: x,z *= drag; y += 5e-4f while y < 0.06f (gravity is NOT applied)
-            let drag = if fluid == Fluid::Water { crate::body::ITEM.water_drag as f64 } else { LAVA_DRAG };
+            let drag = if fluid == Fluid::Water { crate::basis::body::ITEM.water_drag as f64 } else { LAVA_DRAG };
             body.velocity.x *= drag;
             body.velocity.z *= drag;
             if body.velocity.y < FLUID_RISE_VELOCITY {
@@ -451,7 +451,7 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
             body.position = body.position.plus(body.velocity);
             body.on_ground = false;
         }
-        let f = crate::body::ITEM.air_drag;
+        let f = crate::basis::body::ITEM.air_drag;
         let f1 = if body.on_ground { f * friction } else { f };
         body.velocity.x *= f1 as f64;
         body.velocity.y *= f as f64;
@@ -707,8 +707,8 @@ mod item_entity_tests {
     // Harness run local-20261122-145224-30192-1-0: harness-output.txt.
     #[test]
     fn constants_match_jar() {
-        assert_eq!(bits_d(crate::body::ITEM.gravity), 0x3FA47AE147AE147B);
-        assert_eq!(bits_f(crate::body::ITEM.air_drag), 0x3F7AE148);
+        assert_eq!(bits_d(crate::basis::body::ITEM.gravity), 0x3FA47AE147AE147B);
+        assert_eq!(bits_f(crate::basis::body::ITEM.air_drag), 0x3F7AE148);
         assert_eq!(bits_f(0.6f32), 0x3F19999A); // stone friction
         assert_eq!(bits_f(0.98f32 * 0.6f32), 0x3F16872C); // ground f1 = 0.588
         assert_eq!(bits_f(0.98f32 * 0.98f32), 0x3F75DCC7); // ice f1 = 0.9604

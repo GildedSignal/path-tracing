@@ -347,7 +347,7 @@ pub trait World {
     fn observe_tick(&self) {}
     fn observe_air_travel(&self, _forward: f64, _drag: f32) {}
     fn observe_speed_factor(&self, _factor: f64) {}
-    fn observe_axis_contact(&self,_contact:crate::contact::AxisContact) {}
+    fn observe_axis_contact(&self,_contact:crate::basis::sweep::AxisContact) {}
     fn block(&self, position: BlockPos) -> &Block;
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
@@ -422,7 +422,7 @@ pub trait World {
             return false;
         }
         let inside_point = from.plus(movement.scale(0.001));
-        crate::blocks::traverse_blocks(from, to, |p| {
+        crate::basis::ray::cells(from, to, |p| {
             let block = self.hook_block(p);
             let height = if block.resets_fall_distance || block.end_portal_or_gateway {
                 1.0
@@ -517,38 +517,10 @@ pub trait World {
         &block.shape
     }
 
-    // Entity.collectCollidersIgnoringWorldBorder; BlockCollisions.computeNext
+    // Entity.collectCollidersIgnoringWorldBorder: the owned form of `visit_collisions`.
     fn collisions(&self, bounds: Aabb, context: CollisionContext) -> Vec<VoxelShape> {
-        let mut result = self.extra_collisions(bounds, context);
-        let lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
-        let hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
-        for z in lo[2]-1..=hi[2]+1 {
-            for y in lo[1]-1..=hi[1]+1 {
-                for x in lo[0]-1..=hi[0]+1 {
-                    let pos = [x, y, z];
-                    if !self.loaded(pos) {
-                        continue;
-                    }
-                    let local = self.collision_shape(pos, context);
-                    if local.is_empty() {
-                        continue;
-                    }
-                    let offset = Vec3::new(x as f64, y as f64, z as f64);
-                    if local.is_block() {
-                        if bounds.intersects(Aabb {
-                            min:offset, max:offset.plus(Vec3::new(1.0, 1.0, 1.0))
-                        }) {
-                            result.push(local.moved(offset));
-                        }
-                    } else {
-                        let shape = local.moved(offset);
-                        if shape.intersects(bounds) {
-                            result.push(shape);
-                        }
-                    }
-                }
-            }
-        }
+        let mut result = Vec::new();
+        self.visit_collisions(bounds, context, |s| { result.push(s.owned()); true });
         result
     }
 

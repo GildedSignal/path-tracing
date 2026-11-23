@@ -383,13 +383,13 @@ pub fn arrow_free_tick(
     arrow.in_ground_time = 0;
     let d = arrow.vel;
     if in_water_before {
-        crate::body::ARROW.drag(&mut arrow.vel, true);
+        crate::basis::body::ARROW.drag(&mut arrow.vel, true);
     }
     arrow.pos = arrow.pos.plus(d);
     if !in_water_after {
-        crate::body::ARROW.drag(&mut arrow.vel, false);
+        crate::basis::body::ARROW.drag(&mut arrow.vel, false);
     }
-    crate::body::ARROW.gravity(&mut arrow.vel, false);
+    crate::basis::body::ARROW.gravity(&mut arrow.vel, false);
     true
 }
 

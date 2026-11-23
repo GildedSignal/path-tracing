@@ -37,7 +37,7 @@ use crate::place::{
     self, DoorHinge, DoorPlaceState, Half, LadderPlaceState,
     ScaffoldingCell, ScaffoldingState, SlabState, SlabType, StairState,
 };
-use crate::shapes::collide_with_shapes;
+use crate::basis::sweep::shapes as collide_with_shapes;
 use crate::ticks::{
     ChunkPos, LevelTicks, MAX_TICKS_PER_TICK, ScheduledTick, SubTickCounter, TickPriority,
 };
@@ -3720,7 +3720,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 continue;
             }
             fb.time += 1;
-            crate::body::FALLING_BLOCK.gravity(&mut fb.vel, false);
+            crate::basis::body::FALLING_BLOCK.gravity(&mut fb.vel, false);
 
             let bounds = fb.aabb();
             let wanted = fb.vel;
@@ -3870,7 +3870,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     if falling::discards(fb.time, bpos[1], self.min_y, self.max_y) {
                         fb.removed = true;
                     } else {
-                        crate::body::FALLING_BLOCK.drag(&mut fb.vel, false);
+                        crate::basis::body::FALLING_BLOCK.drag(&mut fb.vel, false);
                     }
                 }
             }

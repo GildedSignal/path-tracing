@@ -11,7 +11,7 @@
 //! owner to `oldPosition()` (start-of-impact-tick position) with no clamp or
 //! chunk check, then calls `resetFallDistance()` before `hurtServer(5.0f)`.
 
-use crate::{blocks, explosion, interact, Aabb, CollisionContext, Vec3, VoxelShape, World};
+use crate::{explosion, interact, Aabb, CollisionContext, Vec3, World};
 
 pub const PEARL_SHOOT_POWER: f32 = 1.5;
 pub const PEARL_INACCURACY: f32 = 1.0;
@@ -281,48 +281,6 @@ fn clip_aabb_with_inside(aabb: Aabb, from: Vec3, to: Vec3) -> Option<Vec3> {
     }
 }
 
-fn clip_voxel_shape(shape: &VoxelShape, offset: Vec3, from: Vec3, to: Vec3) -> Option<Vec3> {
-    if shape.is_empty() {
-        return None;
-    }
-    let delta = to.minus(from);
-    if delta.length_sqr() < 1.0e-7 {
-        return None;
-    }
-    let inside_point = from.plus(delta.scale(0.001));
-    let nx = shape.coords[0].len().saturating_sub(1);
-    let ny = shape.coords[1].len().saturating_sub(1);
-    let nz = shape.coords[2].len().saturating_sub(1);
-    let mut best: Option<(f64, Vec3)> = None;
-    for x in 0..nx {
-        for y in 0..ny {
-            for z in 0..nz {
-                if !shape.is_full([x, y, z]) {
-                    continue;
-                }
-                let cell = Aabb::new(
-                    shape.coords[0][x] + offset.x,
-                    shape.coords[1][y] + offset.y,
-                    shape.coords[2][z] + offset.z,
-                    shape.coords[0][x + 1] + offset.x,
-                    shape.coords[1][y + 1] + offset.y,
-                    shape.coords[2][z + 1] + offset.z,
-                );
-                if cell.contains(inside_point) {
-                    return Some(from);
-                }
-                if let Some(hit) = cell.clip(from, to) {
-                    let dist = from.minus(hit).length_sqr();
-                    if best.is_none_or(|(best_dist, _)| dist < best_dist) {
-                        best = Some((dist, hit));
-                    }
-                }
-            }
-        }
-    }
-    best.map(|(_, hit)| hit)
-}
-
 /// `ProjectileUtil.getHitResultOnMoveVector` (`@0-32`) + `getHitResult` (`@0-85`):
 /// `ClipContext.Block.COLLIDER`, `ClipContext.Fluid.NONE`, entity sweep
 /// `bb.expandTowards(delta).inflate(1.0)` with `compute_margin`. Entity hit wins.
@@ -341,18 +299,8 @@ pub fn pearl_raytrace(
         leather_boots: false,
     };
 
-    let mut block_hit = None;
-    blocks::traverse_blocks(from, to, |pos| {
-        let shape = world.collision_shape(pos, ctx);
-        let offset = Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
-        if let Some(loc) = clip_voxel_shape(shape, offset, from, to) {
-            block_hit = Some(loc);
-            true
-        } else {
-            false
-        }
-    });
-
+    let hit = crate::basis::ray::clip(from, to, crate::basis::ray::ClipFluidMode::None, |pos| (world.collision_shape(pos, ctx), None, 0.0, false));
+    let block_hit = hit.is_hit().then(|| hit.location());
     let mut result = match block_hit {
         Some(location) => {
             to = location;
@@ -400,8 +348,8 @@ pub fn pearl_tick(
     pearl.old_pos = pearl.pos;
     pearl.tick_count += 1;
 
-    crate::body::THROWABLE.gravity(&mut pearl.vel, false);
-    crate::body::THROWABLE.drag(&mut pearl.vel, pearl.in_water);
+    crate::basis::body::THROWABLE.gravity(&mut pearl.vel, false);
+    crate::basis::body::THROWABLE.drag(&mut pearl.vel, pearl.in_water);
 
     let hit = pearl_raytrace(world, pearl, entities);
     pearl.pos = match hit {

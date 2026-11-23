@@ -27,7 +27,7 @@ impl<'a,W> MeteredWorld<'a,W> {
     pub fn take_ticks(&self)->u64 {self.ticks.replace(0)}
 }
 impl<W:World> World for MeteredWorld<'_,W> {
-    fn observe_axis_contact(&self,c:law::contact::AxisContact) {self.world.observe_axis_contact(c);}
+    fn observe_axis_contact(&self,c:law::basis::sweep::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.ticks.set(self.ticks.get()+1);self.world.observe_tick();}
     fn block(&self,p:BlockPos)->&Block {self.world.block(p)}
     fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}

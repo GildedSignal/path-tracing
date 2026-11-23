@@ -45,7 +45,7 @@ pub enum Image {Map(Vec<MappedExit>),Points(Vec<PlayerState>)}
 #[derive(Clone,Debug)]
 pub struct FamilyPiece {
     pub lo:u64,pub hi:u64,pub signature:Vec<u128>,pub outcomes:Vec<u8>,pub pin:Option<[PlayerState;2]>,
-    pub pin_outcome:Option<law::contact::Outcome>,pub image:Image,pub uses:UseInterval,pub ticks:(u32,u32),
+    pub pin_outcome:Option<law::basis::sweep::Outcome>,pub image:Image,pub uses:UseInterval,pub ticks:(u32,u32),
 }
 impl FamilyPiece {
     pub fn predict(&self,bits:u64)->Vec<PlayerState> {
@@ -63,27 +63,27 @@ impl FamilyPiece {
 }
 #[derive(Clone,Debug)]
 pub struct Family {pub entry:EntryTemplate,pub pieces:Vec<FamilyPiece>,pub law_hash:[u8;32],pub law_ticks:u64,pub map_probes:u64}
-struct Replay {states:Vec<PlayerState>,reads:Vec<law::footprint::Footprint>,map:AxisMap,signature:Vec<u128>,outcomes:Vec<u8>,contacts:Vec<law::contact::AxisContact>,pin:Option<usize>}
+struct Replay {states:Vec<PlayerState>,reads:Vec<law::footprint::Footprint>,map:AxisMap,signature:Vec<u128>,outcomes:Vec<u8>,contacts:Vec<law::basis::sweep::AxisContact>,pin:Option<usize>}
 fn mask()->u128 {NON_MONOTONE_FIELDS.iter().fold(0,|m,(f,_)|m|1u128<<*f as u8)}
 fn event(before:&PlayerState,after:&PlayerState)->u128 {words::segment::joint_events(before,after).0 & !mask()}
 fn coordinate(s:&PlayerState,axis:usize)->f64 {[s.position.x,s.position.y,s.position.z][axis]}
-fn letter(s:&PlayerState,c:law::contact::AxisContact)->u8 {if matches!(c.outcome,law::contact::Outcome::Hold {..}) {2} else if s.horizontal_collision {1} else {0}}
-fn operation(after:&PlayerState,c:law::contact::AxisContact,applied:f64)->AxisOp {
+fn letter(s:&PlayerState,c:law::basis::sweep::AxisContact)->u8 {if matches!(c.outcome,law::basis::sweep::Outcome::Hold {..}) {2} else if s.horizontal_collision {1} else {0}}
+fn operation(after:&PlayerState,c:law::basis::sweep::AxisContact,applied:f64)->AxisOp {
     // move_player resets this field, then writes it exactly when the native
     // vector addition runs. An unchanged rounded endpoint is not identity:
     // the neighbouring parity may move by two ulps under the same operand.
     if after.movement_this_tick.is_none() {return AxisOp::Hold;}
     match c.outcome {
-        law::contact::Outcome::Free=>AxisOp::Add(applied),
-        law::contact::Outcome::Clamp {plane}=>AxisOp::Clamp {plane,wanted:c.wanted},
-        law::contact::Outcome::Hold {..}=>AxisOp::Add(applied),
+        law::basis::sweep::Outcome::Free=>AxisOp::Add(applied),
+        law::basis::sweep::Outcome::Clamp {plane}=>AxisOp::Clamp {plane,wanted:c.wanted},
+        law::basis::sweep::Outcome::Hold {..}=>AxisOp::Add(applied),
     }
 }
 fn replay(w:&impl World,start:&PlayerState,axis:usize,x:f64,input:&Input,stop:&impl Fn(&PlayerState,u32)->bool,budget:u32)->Result<Replay,String> {
     let mut s=start.clone();match axis {0=>s.position.x=x,2=>s.position.z=x,_=>return Err("only horizontal free axes".into())};
     let mut states=vec![s.clone()];let mut reads=Vec::new();let recording=law::footprint::RecordingWorld::new(w);let mut ops=Vec::new();let mut signature=Vec::new();let mut outcomes=Vec::new();let mut contacts=Vec::new();let mut pin=None;
     for tick in 1..=budget {
-        let before=s.clone();let Some((_,moved,passes))=law::contact::tick(&mut s,&recording,input) else {return Err("no collision-law addition map".into());};reads.push(recording.take_world());
+        let before=s.clone();let Some((_,moved,passes))=law::basis::sweep::tick(&mut s,&recording,input) else {return Err("no collision-law addition map".into());};reads.push(recording.take_world());
         let contact=*passes.iter().find(|p|p.axis as usize==axis).ok_or("missing axis contact report")?;
         ops.push(operation(&s,contact,moved.get(contact.axis)));contacts.push(contact);
         signature.push(event(&before,&s));outcomes.push(letter(&s,contact));
@@ -175,7 +175,7 @@ impl Family {
                     let old=if axis==0 {state.position.x} else {state.position.z};
                     if axis==0 {state.position.x=x;} else {state.position.z=x;}
                     if let Some(mut support)=state.main_supporting_block {support[axis]+=x.floor() as i32-old.floor() as i32;state.main_supporting_block=Some(support);}
-                    let before=state.clone();let (_,_,passes)=law::contact::tick(&mut state,&counted,&input).ok_or("missing contact tick")?;let c=*passes.iter().find(|p|p.axis as usize==axis).ok_or("missing axis")?;
+                    let before=state.clone();let (_,_,passes)=law::basis::sweep::tick(&mut state,&counted,&input).ok_or("missing contact tick")?;let c=*passes.iter().find(|p|p.axis as usize==axis).ok_or("missing axis")?;
                     Ok::<_,String>(event(&before,&state)==expected && letter(&state,c)==left.outcomes[tick] && state.horizontal_collision==expected_pin && stop(&state,tick as u32+1)==expected_stop)
                 };
                 if !predicate(lo)? || predicate(hi)? {return Err("first event is not a monotone pullback on the witnessed prefix".into());}
@@ -185,13 +185,13 @@ impl Family {
             }
             let a=left.states.last().unwrap();let b=right.states.last().unwrap();
             let pin_outcome=left.pin.map(|_|left.contacts.last().unwrap().outcome);
-            let hold=matches!(pin_outcome,Some(law::contact::Outcome::Hold {..}));
+            let hold=matches!(pin_outcome,Some(law::basis::sweep::Outcome::Hold {..}));
             let (pin,image,ends,ticks)=if let Some(tick)=left.pin {
                 if right.pin!=Some(tick) || pinned_key_axis(a,hold.then_some(axis))!=pinned_key_axis(b,hold.then_some(axis)) {return Err("pin retains undeclared state information after contact cut".into());}
                 for (r,pinned) in [(&left,a),(&right,b)] {
                     if hold {
                         if coordinate(pinned,axis).to_bits()!=coordinate(&r.states[tick-1],axis).to_bits() {return Err("hold is not identity".into());}
-                    } else if let law::contact::Outcome::Clamp {plane}=r.contacts.last().unwrap().outcome {
+                    } else if let law::basis::sweep::Outcome::Clamp {plane}=r.contacts.last().unwrap().outcome {
                         let body=law::Aabb::player(Vec3::default(),pinned.pose.height());let radius=body.max.x;
                         let wanted=r.contacts.last().unwrap().wanted;
                         let expected=if wanted>0.0 {plane-radius} else {plane+radius};
@@ -209,7 +209,7 @@ impl Family {
                         let mut elapsed=tick as u32;
                         while !stop(&state,elapsed) {
                             if elapsed==budget {return Err("pinned tail budget exhausted".into());}
-                            let (_,moved,passes)=law::contact::tick(&mut state,&counted,&input).ok_or("no tail collision update")?;
+                            let (_,moved,passes)=law::basis::sweep::tick(&mut state,&counted,&input).ok_or("no tail collision update")?;
                             let c=*passes.iter().find(|p|p.axis as usize==axis).ok_or("no tail axis")?;
                             map.ops.push(operation(&state,c,moved.get(c.axis)));elapsed+=1;
                         }

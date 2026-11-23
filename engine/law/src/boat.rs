@@ -2,7 +2,7 @@
 use crate::{
     interact::{self, BlockHitResult, ClipFluidMode},
     math,
-    shapes::collide_with_shapes,
+
     world::block_pos,
     Aabb,
     BlockPos,
@@ -614,8 +614,7 @@ pub fn tick_body(
     let collided = if wanted.length_sqr() == 0.0 {
         wanted
     } else {
-        let shapes = world.collisions(bounds.expand(wanted), context);
-        collide_with_shapes(wanted, bounds, &shapes)
+        crate::basis::sweep::world(world, bounds.expand(wanted), context, wanted, bounds).moved
     };
     let moved_sqr = collided.length_sqr();
     if moved_sqr > 1.0e-7 || wanted.length_sqr() - moved_sqr < 1.0e-7 {

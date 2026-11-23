@@ -11,10 +11,7 @@ use crate::{
         SprintTickInput,
         StepBasedCollector,
     },
-    shapes::{
-        input_vector,
-        axis_step_order
-    },
+    basis::{body::input_vector, sweep::axis_order as axis_step_order},
     world::block_pos,
     Aabb,
     Block,
@@ -804,105 +801,12 @@ fn back_off(state: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
     v
 }
 
-// Entity.collide; Entity.collectCandidateStepUpHeights
-fn collide_in_world(world: &impl World, bounds: Aabb, context: CollisionContext, wanted: Vec3, b: Aabb) -> crate::contact::Pass {
-    // Inline storage is independent of terrain complexity. If it fills, stream
-    // the arbitrary-size query instead; no shape or result allocation is needed.
-    let mut colliders: [Option<crate::shapes::SharedCollider>;32] = std::array::from_fn(|_|None);
-    let mut len=0;
-    let complete=world.visit_collisions(bounds,context,|shape| {
-        if len==colliders.len() { return false; }
-        colliders[len]=Some(shape.shared()); len+=1; true
-    });
-    if complete {
-        if len==0 { return crate::contact::Pass::free(bounds,b,wanted); }
-        let mut result=Vec3::default();
-        let mut report=crate::contact::Pass::free(bounds,b,wanted);
-        for axis in axis_step_order(wanted) {
-            let mut d=wanted.get(axis);
-            if d==0.0 { continue; }
-            let moved=b.moved(result);
-            for shape in colliders[..len].iter().flatten() {
-                if d.abs()<1.0e-7 { report.axes[axis as usize].outcome=crate::contact::Outcome::Hold {plane:report.axes[axis as usize].outcome.plane(),remainder:d};d=0.0; break; }
-                d=shape.view().collide_report(axis,moved,d,&mut report.axes[axis as usize].outcome);
-            }
-            result=result.with(axis,d);report.axes[axis as usize].body=moved;report.axes[axis as usize].moved=d;
-        }
-        report.moved=result;return report;
-    }
-    let mut result = Vec3::default();
-    let mut any = false;
-    let mut report=crate::contact::Pass::free(bounds,b,wanted);
-    for axis in axis_step_order(wanted) {
-        let mut d = wanted.get(axis);
-        if d == 0.0 { continue; }
-        let moved = b.moved(result);
-        world.visit_collisions(bounds, context, |shape| {
-            any = true;
-            if d.abs() < 1.0e-7 { report.axes[axis as usize].outcome=crate::contact::Outcome::Hold {plane:report.axes[axis as usize].outcome.plane(),remainder:d};d=0.0; return false; }
-            d = shape.collide_report(axis, moved, d,&mut report.axes[axis as usize].outcome);
-            true
-        });
-        result = result.with(axis,d);report.axes[axis as usize].body=moved;report.axes[axis as usize].moved=d;
-    }
-    report.moved=if any {result} else {wanted};report
-}
-
+// Entity.collide, with the player's step height and ground.
 fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
-    let b = bounding_box(state, world);
-    let context = collision_context(state, world);
-    let report = if v.length_sqr() == 0.0 {
-        crate::contact::Pass::free(b,b,v)
-    } else {
-        collide_in_world(world, b.expand(v), context, v, b)
-    };
-    let result=report.moved;
-    let landed = v.y != result.y && v.y < 0.0;
-    let height = if cfg!(feature="mutant-step-up") {
-        f32::from_bits(read_state!(world, state.step_height).to_bits()+1)
-    } else {
-        read_state!(world, state.step_height)
-    };
-    if height > 0.0 && (landed || read_state!(world, state.on_ground)) && (v.x != result.x || v.z != result.z) {
-        let base = if landed {
-            b.moved(Vec3::new(0.0, result.y, 0.0))
-        } else {
-            b
-        };
-        let mut bounds = base.expand(Vec3::new(v.x, height as f64, v.z));
-        if !landed {
-            bounds = bounds.expand(Vec3::new(0.0, -1.0e-5f32 as f64, 0.0));
-        }
-        let previous_y = result.y as f32;
-        let mut last: Option<f32> = None;
-        loop {
-            let mut next: Option<f32> = None;
-            world.visit_collisions(bounds, context, |shape| {
-            for i in 0..shape.shape.coords[1].len() {
-                let candidate = (shape.coord(1,i)-base.min.y) as f32;
-                if candidate < 0.0 || candidate == previous_y {
-                    continue;
-                }
-                if candidate > height {
-                    break;
-                }
-                if last.is_some_and(|v| candidate == v || candidate.total_cmp(&v).is_le()) { continue; }
-                if next.is_none_or(|v| candidate.total_cmp(&v).is_lt()) {
-                    next=Some(candidate);
-                }
-            }
-            true
-            });
-            let Some(candidate) = next else { break; };
-            last=Some(candidate);
-            let step_report = collide_in_world(world, bounds, context, Vec3::new(v.x, candidate as f64, v.z), base);
-            let stepped=step_report.moved;
-            if stepped.horizontal_sqr() > result.horizontal_sqr() {
-                step_report.report(world);return stepped.minus(Vec3::new(0.0, b.min.y-base.min.y, 0.0));
-            }
-        }
-    }
-    report.report(world);result
+    let step = read_state!(world, state.step_height);
+    let step = if cfg!(feature="mutant-step-up") { f32::from_bits(step.to_bits()+1) } else { step };
+    let (b, context) = (bounding_box(state, world), collision_context(state, world));
+    crate::basis::sweep::collide(world, b, context, v, || read_state!(world, state.on_ground), step)
 }
 
 // CollisionGetter.findSupportingBlock; Entity.checkSupportingBlock
@@ -1245,7 +1149,7 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
         return Ok(contact);
     }
     let delta=read_state!(world, state.position).minus(start);
-    let mut visited=crate::blocks::SeenBlocks::new();
+    let mut visited=crate::basis::ray::SeenBlocks::new();
     let mut collector=StepBasedCollector::new();
     let mut inside_contact=None;
     let mut budget=16;
@@ -1365,7 +1269,7 @@ fn apply_collector(state: &mut PlayerState, world: &impl World, collector: &mut 
 // Entity.checkInsideBlocks; Entity.lambda$checkInsideBlocks$0
 #[allow(clippy::too_many_arguments)]
 fn inside_segment(state: &mut PlayerState, world: &impl World, from: Vec3, to: Vec3,
-visited: &mut impl crate::blocks::BlockSet, collector: &mut StepBasedCollector, budget: i32,
+visited: &mut impl crate::basis::ray::BlockSet, collector: &mut StepBasedCollector, budget: i32,
 delta: Vec3, damage: &mut Option<ContactDamage>) -> Result<i32, Refusal> {
     let bounds=Aabb::player(to, read_state!(world, state.pose).height()).deflate(1.0e-5f32 as f64);
     let large=from.minus(to).length_sqr()>(1.0-1.0e-5f32 as f64)*(1.0-1.0e-5f32 as f64);
@@ -1373,7 +1277,7 @@ delta: Vec3, damage: &mut Option<ContactDamage>) -> Result<i32, Refusal> {
     let movement=to.minus(from);
     let mut last_step=0;
     let mut refused=None;
-    crate::blocks::for_each_intersected(from, to, bounds, |p, step| {
+    crate::basis::ray::cells_along(from, to, bounds, |p, step| {
         if read_state!(world, state.health)<=0.0 || step>=budget {
             return false;
         }

@@ -256,7 +256,7 @@ fn cells(lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos)) {
 }
 
 impl<W: World> World for RecordingWorld<'_, W> {
-    fn observe_axis_contact(&self,c:crate::contact::AxisContact) {self.world.observe_axis_contact(c);}
+    fn observe_axis_contact(&self,c:crate::basis::sweep::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.world.observe_tick();}
     #[inline]
     fn read_state(&self, field: StateField) {
