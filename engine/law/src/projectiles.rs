@@ -389,7 +389,7 @@ pub fn arrow_free_tick(
     if !in_water_after {
         crate::body::ARROW.drag(&mut arrow.vel, false);
     }
-    crate::body::ARROW.gravity(&mut arrow.vel);
+    crate::body::ARROW.gravity(&mut arrow.vel, false);
     true
 }
 

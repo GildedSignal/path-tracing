@@ -123,18 +123,10 @@ pub const WATER_SLOPE_FACTOR: f64 = 0.2;
 pub const MAX_SPEED_LAND: f64 = 0.4;
 /// `OldMinecartBehavior.getMaxSpeed` in water.
 pub const MAX_SPEED_WATER: f64 = 0.2;
-/// `AbstractMinecart.getDefaultGravity` on land.
-pub const GRAVITY_LAND: f64 = 0.04;
-/// `AbstractMinecart.getDefaultGravity` in water.
-pub const GRAVITY_WATER: f64 = 0.005;
 /// `OldMinecartBehavior.getSlowdownFactor` when empty (`!isVehicle()`).
 pub const SLOWDOWN_EMPTY: f64 = 0.96;
 /// `OldMinecartBehavior.getSlowdownFactor` when occupied (`isVehicle()`).
 pub const SLOWDOWN_OCCUPIED: f64 = 0.997;
-/// `AbstractMinecart.applyNaturalSlowdown` in-water multiplier (`0.95f` widened to `f64`).
-pub const WATER_SLOWDOWN_FACTOR: f64 = 0.95f32 as f64;
-/// `AbstractMinecart.comeOffTrack` air drag (`getAirDrag()` = `0.95f` widened to `f64`).
-pub const AIR_DRAG: f64 = 0.95f32 as f64;
 /// `OldMinecartBehavior` rail-top vertical offset (`blockY + 0.0625`).
 pub const RAIL_TOP_OFFSET: f64 = 0.0625;
 /// Powered golden-rail boost magnitude (`0.06`) and speed gate (`> 0.01`).
@@ -166,7 +158,7 @@ impl Minecart {
     /// `c.on_ground` for `comeOffTrack`).
     pub fn tick(&mut self, rails: &(impl Rails + ?Sized), c: CartConditions) {
         if !c.no_gravity {
-            self.velocity.y -= if c.in_water { GRAVITY_WATER } else { GRAVITY_LAND };
+            crate::body::MINECART.gravity(&mut self.velocity, c.in_water);
         }
         let bx = math::floor(self.position.x);
         let by = math::floor(self.position.y);
@@ -311,7 +303,7 @@ impl Minecart {
             self.velocity.z * slowdown,
         );
         if c.in_water {
-            self.velocity = self.velocity.scale(WATER_SLOWDOWN_FACTOR);
+            crate::body::MINECART.drag(&mut self.velocity, true);
         }
 
         // Rail-height y adjust (@1112-1237).
@@ -391,7 +383,7 @@ impl Minecart {
         }
         self.position = self.position.plus(self.velocity);
         if !c.on_ground {
-            self.velocity = self.velocity.scale(AIR_DRAG);
+            crate::body::MINECART.drag(&mut self.velocity, false);
         }
     }
 

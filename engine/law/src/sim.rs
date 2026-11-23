@@ -3720,7 +3720,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 continue;
             }
             fb.time += 1;
-            crate::body::FALLING_BLOCK.gravity(&mut fb.vel);
+            crate::body::FALLING_BLOCK.gravity(&mut fb.vel, false);
 
             let bounds = fb.aabb();
             let wanted = fb.vel;

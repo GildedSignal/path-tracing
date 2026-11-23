@@ -421,7 +421,7 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
     }
     let old = body.position;
     match fluid {
-        Fluid::None => crate::body::ITEM.gravity(&mut body.velocity), // applyGravity (Entity 3832-3850)
+        Fluid::None => crate::body::ITEM.gravity(&mut body.velocity, false), // applyGravity (Entity 3832-3850)
         Fluid::Water | Fluid::Lava => {
             // setFluidMovement: x,z *= drag; y += 5e-4f while y < 0.06f (gravity is NOT applied)
             let drag = if fluid == Fluid::Water { crate::body::ITEM.water_drag as f64 } else { LAVA_DRAG };

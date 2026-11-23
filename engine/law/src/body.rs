@@ -21,6 +21,8 @@ pub enum Order {
 pub struct AffineBody {
     /// `getDefaultGravity`.
     pub gravity: f64,
+    /// `getDefaultGravity` while in water, where the class changes it.
+    pub water_gravity: f64,
     /// `getAirDrag`, widened to `f64` where it multiplies.
     pub air_drag: f32,
     /// `getWaterInertia` / `applyInertia`'s water branch.
@@ -29,22 +31,25 @@ pub struct AffineBody {
 }
 
 /// `FallingBlockEntity`: `getDefaultGravity 0-3` 0.04, `Entity.getAirDrag` 0.98f (`tick @893`).
-pub const FALLING_BLOCK: AffineBody = AffineBody { gravity: 0.04, air_drag: 0.98, water_drag: 0.98, order: Order::GravityMoveDrag };
+pub const FALLING_BLOCK: AffineBody = AffineBody { gravity: 0.04, water_gravity: 0.04, air_drag: 0.98, water_drag: 0.98, order: Order::GravityMoveDrag };
 /// `ThrowableProjectile` (snowball, egg, ender pearl): gravity 0.03, `getAirDrag` 0.99f,
 /// `applyInertia @97-100` water 0.8f.
-pub const THROWABLE: AffineBody = AffineBody { gravity: 0.03, air_drag: 0.99, water_drag: 0.8, order: Order::GravityDragMove };
+pub const THROWABLE: AffineBody = AffineBody { gravity: 0.03, water_gravity: 0.03, air_drag: 0.99, water_drag: 0.8, order: Order::GravityDragMove };
 /// `AbstractArrow`: `getDefaultGravity` 0.05, `getAirDrag` 0.99f, `getWaterInertia` 0.6f
 /// (its tick splits the drag around the move: the scar lives in `projectiles::arrow_free_tick`).
-pub const ARROW: AffineBody = AffineBody { gravity: 0.05, air_drag: 0.99, water_drag: 0.6, order: Order::GravityMoveDrag };
+pub const ARROW: AffineBody = AffineBody { gravity: 0.05, water_gravity: 0.05, air_drag: 0.99, water_drag: 0.6, order: Order::GravityMoveDrag };
 /// `ItemEntity`: `getDefaultGravity` 0.04, `Entity.getAirDrag` 0.98f, water `setUnderwaterMovement` 0.99f
 /// (its fluids replace gravity and its ground friction scales x/z: scars in `items::tick`).
-pub const ITEM: AffineBody = AffineBody { gravity: 0.04, air_drag: 0.98, water_drag: 0.99, order: Order::GravityMoveDrag };
+pub const ITEM: AffineBody = AffineBody { gravity: 0.04, water_gravity: 0.04, air_drag: 0.98, water_drag: 0.99, order: Order::GravityMoveDrag };
+/// `AbstractMinecart`: `getDefaultGravity` 0.04, 0.005 in water; `comeOffTrack` air drag and
+/// `applyNaturalSlowdown` water factor 0.95f (its rails and slowdown are scars in `minecart`).
+pub const MINECART: AffineBody = AffineBody { gravity: 0.04, water_gravity: 0.005, air_drag: 0.95, water_drag: 0.95, order: Order::GravityMoveDrag };
 
 impl AffineBody {
     /// `Entity.applyGravity`: `setDeltaMovement(getDeltaMovement().add(0.0, -g, 0.0))`.
     #[inline(always)]
-    pub fn gravity(&self, v: &mut Vec3) {
-        *v = v.plus(Vec3::new(0.0, -self.gravity, 0.0));
+    pub fn gravity(&self, v: &mut Vec3, in_water: bool) {
+        *v = v.plus(Vec3::new(0.0, -if in_water { self.water_gravity } else { self.gravity }, 0.0));
     }
 
     #[inline(always)]
@@ -55,7 +60,7 @@ impl AffineBody {
     /// One free tick (`k = 1`).
     #[inline(always)]
     pub fn tick(&self, p: &mut Vec3, v: &mut Vec3, in_water: bool) {
-        self.gravity(v);
+        self.gravity(v, in_water);
         match self.order {
             Order::GravityMoveDrag => {
                 *p = p.plus(*v);

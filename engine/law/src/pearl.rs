@@ -400,7 +400,7 @@ pub fn pearl_tick(
     pearl.old_pos = pearl.pos;
     pearl.tick_count += 1;
 
-    crate::body::THROWABLE.gravity(&mut pearl.vel);
+    crate::body::THROWABLE.gravity(&mut pearl.vel, false);
     crate::body::THROWABLE.drag(&mut pearl.vel, pearl.in_water);
 
     let hit = pearl_raytrace(world, pearl, entities);
