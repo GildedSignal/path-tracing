@@ -160,3 +160,9 @@ impl<W: World> World for ContactRecorder<'_, W> {
     fn extra_collisions(&self, b: Aabb, c: CollisionContext) -> Vec<VoxelShape> { self.world.extra_collisions(b, c) }
     fn visit_extra_collisions(&self, b: Aabb, c: CollisionContext, v: impl FnMut(ShapeView<'_>) -> bool) -> bool { self.world.visit_extra_collisions(b, c, v) }
 }
+
+/// `Entity.collide` for a body without step-up, unobserved: what `v` moves `b` by.
+#[inline]
+pub fn moved(world: &impl World, b: Aabb, context: CollisionContext, v: Vec3) -> Vec3 {
+    if v.length_sqr() == 0.0 { v } else { self::world(world, b.expand(v), context, v, b).moved }
+}

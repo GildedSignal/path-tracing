@@ -11,7 +11,7 @@ use crate::{
         SprintTickInput,
         StepBasedCollector,
     },
-    basis::{body::input_vector, sweep::axis_order as axis_step_order},
+    basis::{body::{input_vector, AffineBody, LIVING}, sweep::axis_order as axis_step_order},
     world::block_pos,
     Aabb,
     Block,
@@ -643,11 +643,10 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
         // (`isClientSide() == false` jumps directly to gravity) and dead even on 26.2 client.
         velocity.y - effective_gravity(state, world, pre_bump_vy)
     };
-    let drag = math::modified_friction(0.91, read_state!(world, state.air_drag_modifier));
-    let horizontal = f*drag;
-    world.observe_air_travel(movement.z * acceleration as f64, horizontal);
-    let vertical = math::modified_friction(0.98, read_state!(world, state.air_drag_modifier));
-    write_state!(world, state.velocity) = Vec3::new(velocity.x*horizontal as f64, vy*vertical as f64, velocity.z*horizontal as f64);
+    let m = read_state!(world, state.air_drag_modifier);
+    let row = AffineBody { air_drag: math::modified_friction(LIVING.air_drag, m), drag_y: math::modified_friction(LIVING.drag_y, m), ..LIVING };
+    world.observe_air_travel(movement.z * acceleration as f64, f * row.air_drag);
+    write_state!(world, state.velocity) = row.friction_drag(velocity, vy, f);
     Ok(collision)
 }
 
@@ -860,21 +859,19 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
         write_state!(world, state.velocity)=Vec3::default();
     }
     wanted = back_off(state, world, wanted);
-    let moved=collide(state, world, wanted);
-    let distance=moved.length_sqr();
-    if distance > 1.0e-7 || wanted.length_sqr()-distance < 1.0e-7 {
-        if read_state!(world, state.fall_distance) != 0.0 && distance >= 1.0 && fall_reset_ray(state, world, moved) {
+    let m=crate::basis::body::Moved::new(wanted, collide(state, world, wanted));
+    let moved=m.moved;
+    if m.applies() {
+        if read_state!(world, state.fall_distance) != 0.0 && moved.length_sqr() >= 1.0 && fall_reset_ray(state, world, moved) {
             write_state!(world, state.fall_distance)=0.0;
         }
         write_state!(world, state.movement_this_tick)=Some(wanted);
         write_state!(world, state.position)=read_state!(world, state.position).plus(moved);
     }
-    let hit_x=!math::equal(wanted.x, moved.x);
-    let hit_z=!math::equal(wanted.z, moved.z);
-    write_state!(world, state.horizontal_collision)=hit_x||hit_z;
-    write_state!(world, state.vertical_collision)=wanted.y!=moved.y;
-    write_state!(world, state.vertical_collision_below)=read_state!(world, state.vertical_collision)&&wanted.y<0.0;
-    write_state!(world, state.on_ground)=read_state!(world, state.vertical_collision_below);
+    write_state!(world, state.horizontal_collision)=m.horizontal();
+    write_state!(world, state.vertical_collision)=m.y;
+    write_state!(world, state.vertical_collision_below)=m.below();
+    write_state!(world, state.on_ground)=m.below();
     supporting_block(state, world, moved);
     write_state!(world, state.minor_horizontal_collision)=minor_collision(state, world, moved);
     if !read_state!(world, state.in_water) {
@@ -882,37 +879,14 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     }
     let block=world.hook_block(on_pos(state, world, 0.2));
     check_fall_damage(state, world, block, moved.y)?;
-    if wanted.y.abs()>0.0 && read_state!(world, state.vertical_collision) || read_state!(world, state.horizontal_collision) {
-        let mut bounce=if read_state!(world, state.shift_key_down) {
-            0.0
-        } else {
-            read_state!(world, state.bounciness)
-        };
-        let before=read_state!(world, state.velocity);
-        if hit_x {
-            modify_state!(world, state.velocity).x=-before.x*bounce;
-        }
-        if hit_z {
-            modify_state!(world, state.velocity).z=-before.z*bounce;
-        }
-        if read_state!(world, state.vertical_collision) {
-            if read_state!(world, state.vertical_collision_below) {
-                bounce=if -before.y < read_state!(world, state.gravity) || read_state!(world, state.shift_key_down) || block.suppresses_bounce {
-                    0.0
-                } else {
-                    bounce.max(block.bounce as f64)
-                };
-            }
-            let (gravity, drag)=if bounce>0.0 {
-                let fraction=moved.y/before.y;
-                (fraction*read_state!(world, state.gravity), 1.0+fraction*(math::modified_friction(0.98, read_state!(world, state.air_drag_modifier)) as f64-1.0))
-            } else {
-                (0.0, 1.0)
-            };
-            if !(cfg!(feature="mutant-ceiling") && wanted.y>0.0) {
-                modify_state!(world, state.velocity).y=(gravity-before.y)*drag*bounce;
-            }
-        }
+    if m.wanted.y.abs() > 0.0 && m.y || m.horizontal() {
+        let shift=read_state!(world, state.shift_key_down);
+        let bounce=if shift { 0.0 } else { read_state!(world, state.bounciness) };
+        let mut v=read_state!(world, state.velocity);
+        let vertical=if !m.below() { bounce }
+            else if -v.y < read_state!(world, state.gravity) || shift || block.suppresses_bounce { 0.0 } else { bounce.max(block.bounce as f64) };
+        m.restitute(&mut v, bounce, vertical, || (read_state!(world, state.gravity), math::modified_friction(0.98, read_state!(world, state.air_drag_modifier))));
+        write_state!(world, state.velocity)=v;
     }
     let factor=speed_factor(state, world);
     let factor=(factor+read_state!(world, state.movement_efficiency)*(1.0f32-factor)) as f64;

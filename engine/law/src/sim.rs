@@ -3736,10 +3736,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 let shapes = self.collect_world_collisions(bounds.expand(wanted), ctx);
                 collide_with_shapes(wanted, bounds, &shapes)
             };
-            if moved.length_sqr() > 1.0e-7 || wanted.length_sqr() - moved.length_sqr() < 1.0e-7 {
-                fb.pos = fb.pos.plus(moved);
-            }
-            fb.on_ground = wanted.y != moved.y && wanted.y < 0.0;
+            fb.on_ground = crate::basis::body::settle(&mut fb.pos, &mut fb.vel, moved).below();
 
             let bpos = block_pos(fb.pos);
             let is_concrete_powder =
@@ -4010,28 +4007,10 @@ impl<'a, W: World> SimWorld<'a, W> {
                         collide_with_shapes(wanted, bounds, &shapes)
                     };
                     let em = &mut self.living_entities[i];
-                    if moved.length_sqr() > 1.0e-7 || wanted.length_sqr() - moved.length_sqr() < 1.0e-7
-                    {
-                        em.position = em.position.plus(moved);
-                    }
-                    em.on_ground = wanted.y != moved.y && wanted.y < 0.0;
-                    if wanted.x != moved.x {
-                        em.velocity.x = 0.0;
-                    }
-                    if wanted.z != moved.z {
-                        em.velocity.z = 0.0;
-                    }
-                    if wanted.y != moved.y {
-                        em.velocity.y = 0.0;
-                    }
-                    let horiz_drag = if was_on_ground {
-                        (0.6f32 * 0.91f32) as f64
-                    } else {
-                        0.91f32 as f64
-                    };
-                    em.velocity.y = (em.velocity.y - 0.08) * (0.98f32 as f64);
-                    em.velocity.x *= horiz_drag;
-                    em.velocity.z *= horiz_drag;
+                    em.on_ground = crate::basis::body::settle(&mut em.position, &mut em.velocity, moved).below();
+                    // The default block friction 0.6 under it.
+                    let row = crate::basis::body::LIVING;
+                    em.velocity = row.friction_drag(em.velocity, em.velocity.y - row.gravity, if was_on_ground { 0.6 } else { 1.0 });
                 }
             }
 

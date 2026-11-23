@@ -607,33 +607,13 @@ pub fn tick_body(
         body.paddle_right = pr;
     }
 
-    let wanted = body.boat.velocity;
-    let bounds = boat_aabb(body.boat.position);
-    let context = empty_context(body.boat.position.y);
-    // AbstractBoat.maxUpStep() == 0.0f: no step-up candidate machinery.
-    let collided = if wanted.length_sqr() == 0.0 {
-        wanted
-    } else {
-        crate::basis::sweep::world(world, bounds.expand(wanted), context, wanted, bounds).moved
-    };
-    let moved_sqr = collided.length_sqr();
-    if moved_sqr > 1.0e-7 || wanted.length_sqr() - moved_sqr < 1.0e-7 {
-        body.boat.position = body.boat.position.plus(collided);
-    }
-    body.horizontal_collision = wanted.x != collided.x || wanted.z != collided.z;
-    body.on_ground = wanted.y != collided.y && wanted.y < 0.0;
-    // Entity.move @546 -> AbstractBoat.checkFallDamage @0-8 (runs before restitution).
+    // AbstractBoat.maxUpStep() == 0.0f: the sweep without step-up; Entity.move @546 ->
+    // AbstractBoat.checkFallDamage @0-8 reads the velocity before restitution.
+    let moved = crate::basis::sweep::moved(world, boat_aabb(body.boat.position), empty_context(body.boat.position.y), body.boat.velocity);
     body.last_yd = body.boat.velocity.y;
-    // Entity.restituteMovementAfterCollisions with getEntityBounciness() == 0.0.
-    if wanted.x != collided.x {
-        body.boat.velocity.x = -body.boat.velocity.x * 0.0;
-    }
-    if wanted.z != collided.z {
-        body.boat.velocity.z = -body.boat.velocity.z * 0.0;
-    }
-    if wanted.y != collided.y {
-        body.boat.velocity.y = (0.0 - body.boat.velocity.y) * 1.0 * 0.0;
-    }
+    let m = crate::basis::body::settle(&mut body.boat.position, &mut body.boat.velocity, moved);
+    body.horizontal_collision = m.horizontal();
+    body.on_ground = m.below();
     ejected
 }
 

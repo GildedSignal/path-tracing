@@ -451,11 +451,7 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
             body.position = body.position.plus(body.velocity);
             body.on_ground = false;
         }
-        let f = crate::basis::body::ITEM.air_drag;
-        let f1 = if body.on_ground { f * friction } else { f };
-        body.velocity.x *= f1 as f64;
-        body.velocity.y *= f as f64;
-        body.velocity.z *= f1 as f64;
+        body.velocity = crate::basis::body::ITEM.friction_drag(body.velocity, body.velocity.y, if body.on_ground { friction } else { 1.0 });
         if body.on_ground && body.velocity.y < 0.0 {
             body.velocity.y *= -0.5;
         }
