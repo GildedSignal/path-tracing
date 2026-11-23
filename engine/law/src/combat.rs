@@ -389,3 +389,349 @@ mod tests {
         assert!(r_half.knockback.attacker_sprinting);
     }
 }
+
+// ============================================================================
+// Shield blocking, crit and sweep gates, mace smash (folded from GLM dossier
+// local-20261122-145222-30104-1-0-port-shield-crit-sweep-and-mace)
+// ============================================================================
+// Melee combat laws from the 26.2 server jar: shield blocking
+// (`LivingEntity.applyItemBlocking`, `BlocksAttacks`), the crit and sweep
+// gates of `Player.attack`, and the mace smash (`MaceItem`). Every constant
+// and comparison is cited by class and bytecode offset; boundary values are
+// the jar's own, run by `lab/results/local-20261122-145222-30104-1-0-*
+// /evidence/harness-run.txt`. Knockback itself, attack-cooldown scaling and
+// `causeExtraKnockback` live in `movement.rs` and are not repeated here.
+
+
+// ---------------------------------------------------------------- shield ----
+
+// BlocksAttacks record, shield values read from the live registry
+// (Items.SHIELD, delayed BLOCKS_ATTACKS component): blockDelaySeconds=0.25,
+// disableCooldownScale=1.0, one DamageReduction{horizontalBlockingAngle=90.0,
+// base=0.0, factor=1.0}, itemDamage{threshold=3.0, base=1.0, factor=1.0},
+// bypassedBy = damage_type tag minecraft:bypasses_shield.
+pub const SHIELD_BLOCK_DELAY_SECONDS: f32 = 0.25;
+pub const SHIELD_DISABLE_COOLDOWN_SCALE: f32 = 1.0;
+pub const SHIELD_HORIZONTAL_BLOCKING_ANGLE: f32 = 90.0;
+pub const SHIELD_REDUCTION_BASE: f32 = 0.0;
+pub const SHIELD_REDUCTION_FACTOR: f32 = 1.0;
+// Weapon.AXE_DISABLES_BLOCKING_FOR_SECONDS; every axe item carries
+// Weapon{itemDamagePerAttack=2, disableBlockingForSeconds=5.0}, the mace and
+// swords carry 0.0 (they never disable a shield).
+pub const AXE_DISABLES_BLOCKING_FOR_SECONDS: f32 = 5.0;
+
+/// `BlocksAttacks.blockDelayTicks`: `Math.round(blockDelaySeconds * 20.0f)`.
+/// `Math.round(F)I` is floor(x + 0.5f); the codec pins the input non-negative.
+pub fn block_delay_ticks(block_delay_seconds: f32) -> i32 {
+    (block_delay_seconds * 20.0f32 + 0.5f32).floor() as i32
+}
+
+/// `LivingEntity.getItemBlockingWith` offsets 48-53: blocking is active once
+/// `getUseDuration(stack, self) - useItemRemaining >= blockDelayTicks()`.
+/// `ticks_used` is that elapsed use time.
+pub fn item_blocking_ready(ticks_used: i32, block_delay_seconds: f32) -> bool {
+    ticks_used >= block_delay_ticks(block_delay_seconds)
+}
+
+/// The incoming-angle of `LivingEntity.applyItemBlocking` offsets 108-170:
+/// `angle = acos(flat_dir.dot(view))` where `flat_dir` is the horizontal
+/// source-to-blocker direction normalized and `view` is the blocker's
+/// `calculateViewVector(0.0f, yHeadRot)`. A damage source with no position
+/// yields the float pi widened: 3.1415927410125732.
+pub fn incoming_angle(view: Vec3, source_pos: Option<Vec3>, blocker_pos: Vec3) -> f64 {
+    match source_pos {
+        Some(src) => {
+            let rel = src.minus(blocker_pos);
+            let flat = Vec3::new(rel.x, 0.0, rel.z).normalize();
+            (flat.x * view.x + flat.y * view.y + flat.z * view.z).acos()
+        }
+        None => 3.1415927410125732f64, // ldc2_w #1851
+    }
+}
+
+/// `BlocksAttacks$DamageReduction.resolve` offsets 0-14: the gate is
+/// `angle > (0.017453292f * horizontalBlockingAngle)` widened to double, so
+/// exactly-at-the-limit blocks. Then `Mth.clamp(base + factor * amount, 0, amount)`
+/// over the summed reductions (`BlocksAttacks.resolveBlockedDamage` offsets 0-59).
+pub fn blocked_amount(angle_rad: f64, amount: f32, base: f32, factor: f32,
+                      horizontal_blocking_angle: f32) -> f32 {
+    let limit = (0.017453292f32 * horizontal_blocking_angle) as f64;
+    if angle_rad > limit {
+        return 0.0;
+    }
+    (base + factor * amount).clamp(0.0, amount)
+}
+
+/// The full shield gate with the shipped shield's numbers: full block of any
+/// amount whose incoming angle is at most 90 degrees.
+pub fn shield_blocks(angle_rad: f64, amount: f32) -> f32 {
+    if amount <= 0.0 { return 0.0; } // applyItemBlocking offsets 0-7
+    blocked_amount(angle_rad, amount, SHIELD_REDUCTION_BASE, SHIELD_REDUCTION_FACTOR,
+                   SHIELD_HORIZONTAL_BLOCKING_ANGLE)
+}
+
+/// `BlocksAttacks.disableBlockingForTicks`: `s = seconds * disableCooldownScale`;
+/// `s > 0f ? Math.round(s * 20.0f) : 0`. An axe hit (5.0 s, scale 1.0) is 100
+/// ticks; 0.02 s rounds to 0 and disables nothing, 0.025 s is 1 tick.
+pub fn disable_ticks(disable_seconds: f32, disable_cooldown_scale: f32) -> i32 {
+    let s = disable_seconds * disable_cooldown_scale;
+    if s > 0.0f32 {
+        (s * 20.0f32 + 0.5f32).floor() as i32
+    } else {
+        0
+    }
+}
+
+/// The disable side of `Player.blockUsingItem` offsets 37-63: the ATTACKER's
+/// weapon carries the seconds (`LivingEntity.getSecondsToDisableBlocking`:
+/// `weapon.get(WEAPON).disableBlockingForSeconds()` when the weapon is the
+/// active item, else 0); the victim's shield scales it. `disable` then puts the
+/// victim's shield on its cooldown group for the ticks above (players only) and
+/// `stopUsingItem` — while the group is on cooldown the shield cannot be raised.
+pub fn axe_disables_shield(attacker_disable_seconds: f32,
+                           victim_disable_cooldown_scale: f32) -> i32 {
+    if attacker_disable_seconds <= 0.0f32 {
+        return 0; // offsets 43-47: seconds > 0f required
+    }
+    disable_ticks(attacker_disable_seconds, victim_disable_cooldown_scale)
+}
+
+// ------------------------------------------------------------- crit gate ----
+
+/// `Player.canCriticalAttack` (offsets 0-63) plus the strength gate of
+/// `Player.attack` offsets 101-115 (`getAttackStrengthScale(0.5f) > 0.9f`).
+/// `fallDistance > 0.0` is dcmpl/ifle: NaN compares as less, so NaN does not
+/// crit. `isMobilityRestricted` is exactly `hasEffect(MobEffects.BLINDNESS)`
+/// (`LivingEntity.isMobilityRestricted` offsets 0-7).
+pub struct CritGate {
+    pub fall_distance: f64,
+    pub on_ground: bool,
+    pub on_climbable: bool,
+    pub in_water: bool,
+    pub blind: bool,
+    pub passenger: bool,
+    pub target_is_living: bool,
+    pub sprinting: bool,
+}
+
+pub const STRONG_THRESHOLD: f32 = 0.9;
+
+pub fn is_critical(g: &CritGate) -> bool {
+    g.fall_distance > 0.0
+        && !g.on_ground
+        && !g.on_climbable
+        && !g.in_water
+        && !g.blind
+        && !g.passenger
+        && g.target_is_living
+        && !g.sprinting
+}
+
+// ------------------------------------------------------------ sweep gate ----
+
+/// `Player.isSweepAttack(boolean strong, boolean crit, boolean sprintKB)`
+/// offsets 0-63: needs a sword-tag main hand, and the attacker's known
+/// horizontal movement squared strictly under `square((double)getSpeed() * 2.5)`
+/// (`getSpeed` is the float `speed` field; `getKnownMovement` is
+/// `getDeltaMovement()` for a walking player, `Entity.getKnownMovement`
+/// offsets 0-33). `d == e^2` does not sweep (dcmpg/ifge at 46-47).
+pub const SWEEP_INFLATE: (f64, f64, f64) = (1.0, 0.25, 1.0); // AABB.inflate of the target box
+pub const SWEEP_MAX_ATTACKER_DISTANCE_SQR: f64 = 9.0;        // attacker.distanceToSqr(victim) < 9.0
+pub const SWEEP_KNOCKBACK: f64 = 0.4f32 as f64;              // ldc2_w #1695 = 0.4f widened
+pub const SWEEP_DAMAGE_BASE: f32 = 1.0;
+
+pub fn is_sweep(strong: bool, crit: bool, sprint_knockback: bool, on_ground: bool,
+                known_horizontal_sqr: f64, speed: f32, main_hand_is_sword: bool) -> bool {
+    strong && !crit && !sprint_knockback && on_ground && {
+        let limit = (speed as f64) * 2.5;
+        known_horizontal_sqr < limit * limit
+    } && main_hand_is_sword
+}
+
+/// `Player.doSweepAttack` offsets 32-44: `1.0f + SWEEPING_DAMAGE_RATIO * damage`
+/// where `damage` is the post-bonus, post-crit base damage (before the
+/// enchant add and before the attack-strength scale, which multiply the
+/// per-victim hurt at offsets 163-175).
+pub fn sweep_damage(sweeping_damage_ratio: f32, base_damage: f32) -> f32 {
+    SWEEP_DAMAGE_BASE + sweeping_damage_ratio * base_damage
+}
+
+// ------------------------------------------------------------ mace smash ----
+
+pub const SMASH_FALL_THRESHOLD: f64 = 1.5;   // MaceItem.SMASH_ATTACK_FALL_THRESHOLD
+pub const SMASH_HEAVY_FALL: f64 = 5.0;       // heavy sound; smash knockback power doubled
+pub const SMASH_KNOCKBACK_RADIUS: f64 = 3.5; // AABB inflate of the target box
+pub const SMASH_KNOCKBACK_POWER: f64 = 0.7f32 as f64;   // 0.699999988079071
+pub const SMASH_UPWARD_PUSH: f64 = 0.7f32 as f64;       // y push of the smash knockback
+pub const SMASH_Y_VELOCITY_AFTER_HIT: f64 = 0.01f32 as f64; // hurtEnemy offsets 16-30
+pub const IMPULSE_GRACE_TICKS: i32 = 40;     // setIgnoreFallDamageFromCurrentImpulse -> bipush 40
+
+/// `MaceItem.canSmashAttack`: `fallDistance > 1.5 && !isFallFlying()`
+/// (dcmpl/ifle, so NaN does not smash).
+pub fn can_smash(fall_distance: f64, fall_flying: bool) -> bool {
+    fall_distance > SMASH_FALL_THRESHOLD && !fall_flying
+}
+
+/// `MaceItem.getAttackDamageBonus` offsets 36-111: 4*fall up to 3.0,
+/// 12 + 2*(fall-3) up to 8.0, then 22 + fall - 8.
+pub fn smash_bonus(fall_distance: f64) -> f64 {
+    if fall_distance <= 3.0 {
+        4.0 * fall_distance
+    } else if fall_distance <= 8.0 {
+        12.0 + 2.0 * (fall_distance - 3.0)
+    } else {
+        22.0 + fall_distance - 8.0
+    }
+}
+
+/// Density from `data/minecraft/enchantment/density.json`: effect
+/// `minecraft:smash_damage_per_fallen_block`, add, linear
+/// base=0.5 per_level_above_first=0.5. `MaceItem.getAttackDamageBonus` offsets
+/// 135-156 add `modifyFallBasedDamage(...) * fallDistance`, i.e. the per-block
+/// value times the fall distance.
+pub fn density_per_fallen_block(density_level: i32) -> f32 {
+    if density_level <= 0 {
+        0.0
+    } else {
+        0.5 + 0.5 * (density_level as f32 - 1.0)
+    }
+}
+
+/// The mace's `Item.getAttackDamageBonus` total. Offsets 6-35 return 0 unless
+/// the direct entity is a `LivingEntity` passing `canSmashAttack` (NaN or
+/// gliding gives 0); the client branch (offsets 157-160) is `(float)bonus`,
+/// the Density term computed in float then widened.
+pub fn mace_attack_bonus(fall_distance: f64, fall_flying: bool, density_level: i32) -> f32 {
+    if !can_smash(fall_distance, fall_flying) {
+        return 0.0;
+    }
+    let bonus = smash_bonus(fall_distance)
+        + (density_per_fallen_block(density_level) as f64) * fall_distance;
+    bonus as f32
+}
+
+/// `MaceItem.getKnockbackPower`: `(3.5 - |victim - attacker|) * 0.7 *
+/// (attacker.fallDistance > 5.0 ? 2 : 1) * (1 - victim knockback resistance)`.
+/// `lambda$knockback$0` pushes `push(dir.x, 0.7, dir.z)` where
+/// `dir = (victim - attacker).normalize() * power`, only when `power > 0`.
+pub fn smash_knockback_power(victim_distance: f64, attacker_fall: f64,
+                             victim_knockback_resistance: f64) -> f64 {
+    (SMASH_KNOCKBACK_RADIUS - victim_distance)
+        * SMASH_KNOCKBACK_POWER
+        * if attacker_fall > SMASH_HEAVY_FALL { 2.0 } else { 1.0 }
+        * (1.0 - victim_knockback_resistance)
+}
+
+/// Wind Burst from `data/minecraft/enchantment/wind_burst.json`: a
+/// `post_attack` `minecraft:explode` effect on the attacker, radius 3.5,
+/// knockback multiplier [1.2, 1.75, 2.2] for levels 1-3 and
+/// 1.5 + 0.35*(level-1) beyond, gated on `direct_attacker` not flying and
+/// `fall_distance >= 1.5`. The impulse itself is the explosion law.
+pub fn wind_burst_knockback_multiplier(level: i32) -> f32 {
+    match level {
+        1 => 1.2,
+        2 => 1.75,
+        3 => 2.2,
+        _ if level > 3 => 1.5 + 0.35 * (level as f32 - 1.0),
+        _ => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod regression {
+    use super::*;
+
+    // Every expected value below was printed by the 26.2 jar itself
+    // (evidence/harness-run.txt); bit-exact, like knockback_regression.
+
+    #[test]
+    fn shield_warm_up_is_five_ticks() {
+        assert_eq!(block_delay_ticks(SHIELD_BLOCK_DELAY_SECONDS), 5);
+        assert!(item_blocking_ready(5, SHIELD_BLOCK_DELAY_SECONDS));
+        assert!(!item_blocking_ready(4, SHIELD_BLOCK_DELAY_SECONDS));
+    }
+
+    #[test]
+    fn angle_gate_blocks_at_exactly_90_degrees() {
+        // dots -0.01, 0.0, +0.01, 1.0 against the blocker's view vector
+        let view = Vec3::new(0.0, 0.0, 1.0); // yHeadRot = 0
+        let blocker = Vec3::new(0.0, 64.0, 0.0);
+        let angle = |dot: f64| {
+            let src = Vec3::new((1.0 - dot * dot).sqrt(), 64.0, dot).scale(10.0);
+            incoming_angle(view, Some(src), blocker)
+        };
+        assert_eq!(shield_blocks(angle(-0.01), 10.0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(shield_blocks(angle(0.0), 10.0).to_bits(), 10.0f32.to_bits());
+        assert_eq!(shield_blocks(angle(0.01), 10.0).to_bits(), 10.0f32.to_bits());
+        assert_eq!(shield_blocks(angle(1.0), 10.0).to_bits(), 10.0f32.to_bits());
+        assert_eq!(incoming_angle(view, None, blocker).to_bits(),
+                   3.1415927410125732f64.to_bits());
+        assert_eq!(shield_blocks(3.1415927410125732, 10.0).to_bits(), 0.0f32.to_bits());
+    }
+
+    #[test]
+    fn axe_disable_is_one_hundred_ticks() {
+        assert_eq!(axe_disables_shield(AXE_DISABLES_BLOCKING_FOR_SECONDS,
+                                       SHIELD_DISABLE_COOLDOWN_SCALE), 100);
+        assert_eq!(disable_ticks(0.02, 1.0), 0);
+        assert_eq!(disable_ticks(0.025, 1.0), 1);
+        assert_eq!(disable_ticks(0.0, 1.0), 0);
+        assert_eq!(axe_disables_shield(0.0, 1.0), 0); // mace and swords never disable
+    }
+
+    #[test]
+    fn crit_gate_flips_on_every_flag() {
+        let base = CritGate {
+            fall_distance: 1.0, on_ground: false, on_climbable: false, in_water: false,
+            blind: false, passenger: false, target_is_living: true, sprinting: false,
+        };
+        assert!(is_critical(&base));
+        assert!(!is_critical(&CritGate { fall_distance: 0.0, ..base }));
+        assert!(!is_critical(&CritGate { fall_distance: f64::NAN, ..base }));
+        assert!(!is_critical(&CritGate { on_ground: true, ..base }));
+        assert!(!is_critical(&CritGate { on_climbable: true, ..base }));
+        assert!(!is_critical(&CritGate { in_water: true, ..base }));
+        assert!(!is_critical(&CritGate { blind: true, ..base }));
+        assert!(!is_critical(&CritGate { passenger: true, ..base }));
+        assert!(!is_critical(&CritGate { target_is_living: false, ..base }));
+        assert!(!is_critical(&CritGate { sprinting: true, ..base }));
+    }
+
+    #[test]
+    fn sweep_gate_boundary_is_strict() {
+        let limit = (0.1f32 as f64) * 2.5;
+        assert!(is_sweep(true, false, false, true, 0.0625, 0.1, true));
+        assert!(!is_sweep(true, false, false, true, limit * limit, 0.1, true));
+        assert!(!is_sweep(false, false, false, true, 0.0, 0.1, true));
+        assert!(!is_sweep(true, true, false, true, 0.0, 0.1, true));
+        assert!(!is_sweep(true, false, true, true, 0.0, 0.1, true));
+        assert!(!is_sweep(true, false, false, false, 0.0, 0.1, true));
+        assert!(!is_sweep(true, false, false, true, 0.0, 0.1, false));
+    }
+
+    #[test]
+    fn mace_tiers_and_boundaries() {
+        assert!(!can_smash(1.5, false));
+        assert!(can_smash(1.51, false));
+        assert!(!can_smash(4.0, true)); // gliding
+        assert_eq!(mace_attack_bonus(1.5, false, 0).to_bits(), 0.0f32.to_bits());
+        assert_eq!(mace_attack_bonus(4.0, true, 0).to_bits(), 0.0f32.to_bits()); // gliding
+        assert_eq!(mace_attack_bonus(1.51, false, 0).to_bits(), 6.04f32.to_bits());
+        assert_eq!(mace_attack_bonus(3.0, false, 0).to_bits(), 12.0f32.to_bits());
+        assert_eq!(mace_attack_bonus(8.0, false, 0).to_bits(), 22.0f32.to_bits());
+        assert_eq!(mace_attack_bonus(25.0, false, 0).to_bits(), 39.0f32.to_bits());
+        assert_eq!(mace_attack_bonus(3.0000000001, false, 0).to_bits(), 12.0f32.to_bits());
+        assert_eq!(mace_attack_bonus(8.0000000001, false, 0).to_bits(), 22.0f32.to_bits());
+        // Density I on a 6-block fall: 0.5 * 6 = 3 more.
+        assert_eq!(mace_attack_bonus(6.0, false, 1).to_bits(), 21.0f32.to_bits());
+    }
+
+    #[test]
+    fn wind_burst_multiplier_table() {
+        assert_eq!(wind_burst_knockback_multiplier(1), 1.2);
+        assert_eq!(wind_burst_knockback_multiplier(2), 1.75);
+        assert_eq!(wind_burst_knockback_multiplier(3), 2.2);
+        assert_eq!(wind_burst_knockback_multiplier(4), 2.55);
+        assert_eq!(wind_burst_knockback_multiplier(0), 0.0);
+    }
+}

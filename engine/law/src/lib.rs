@@ -6,6 +6,8 @@ pub mod footprint;
 pub mod pattern;
 mod attributes;
 pub use attributes::{SpeedModifier, SpeedOperation};
+mod effects;
+pub use effects::{Effects, MobEffectInstance, EffectKind};
 mod movement;
 pub mod blocks;
 pub mod math;

@@ -1697,7 +1697,7 @@ mod knockback_regression {
 }
 
 // LivingEntity.hurtServer's cooldown branch for an eligible, non-bypassing hit.
-fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
+pub(crate) fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option<f32> {
     let debit = if cooldown.remaining_ticks > 10 {
         if amount <= cooldown.last_raw_hit {
             return None;
