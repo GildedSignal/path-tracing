@@ -1103,6 +1103,8 @@ impl FaceJudge {
     fn recording(&mut self, name: &str, text: &str, world: &impl World, mut state: PlayerState) {
         let (mut ticks, before): (Vec<(PlayerState, Input)>, _) = (Vec::new(), (self.ticks, self.jumped));
         replay_each(text, world, &mut state, |s, i| ticks.push((s.clone(), *i)));
+        // The wire is the boundary: every recorded state decodes from its words and encodes back to them.
+        for (s, _) in &ticks { if PlayerState::from_bits(&s.bits()).map(|d| d.bits()) != Ok(s.bits()) { self.anomalies.push(format!("{name}@{}	wire", s.t)); } }
         let mut start = 0;
         for k in 1..=ticks.len() {
             let held = k < ticks.len() && ticks[k].1 == ticks[k - 1].1 && {
