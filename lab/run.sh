@@ -24,6 +24,13 @@ phase() {
   prompt=$scratch/$name-prompt.md
   # On Windows (S43, Git Bash), omp.exe needs a Windows path; "@" stops MSYS from converting it.
   if command -v cygpath >/dev/null; then prompt=$(cygpath -w "$prompt"); fi
+  if [[ ${LAB_MODEL:-} == vibe* ]]; then
+    # Mistral's own Vibe CLI, on his Vibe subscription (its model is priced 0 per call).
+    timeout --signal=TERM --kill-after=1m "${minutes}m" \
+      "${LAB_VIBE:-/d/path-tracing-deps/vibe/bin/vibe.exe}" --workdir "$(cygpath -w "$PWD" 2>/dev/null || pwd)" --prompt-file "$prompt" \
+      --approval-policy auto-approve --time-limit "$((minutes * 60))" > "$scratch/$name.log" 2>&1
+    return
+  fi
   timeout --signal=TERM --kill-after=1m "${minutes}m" \
     omp -p --model="${LAB_MODEL:-zai/glm-5.4}" --thinking=high --approval-mode=yolo --no-session \
     --max-time="${minutes}m" "@$prompt" > "$scratch/$name.log" 2>&1

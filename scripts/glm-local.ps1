@@ -1,5 +1,5 @@
 # Runs lenses on this PC through omp with the same runner the GitHub workflow uses (lab/actions.sh): GLM by default,
-# Mistral with -Model mistral/<id>. GitHub's runner can't reach Z.ai (5 November: "Connection error" on every call), this PC can.
+# Mistral with -Model mistral/<id> (the API allowance), or -Model vibe (Mistral's Vibe CLI, on the Vibe allowance). GitHub's runner can't reach Z.ai (5 November: "Connection error" on every call), this PC can.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\glm-local.ps1 -Lenses foundations-primary -Minutes 180
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\glm-local.ps1 -Lenses <id> -Model mistral/<id from set-key.ps1 -Provider mistral -Test>
 # Results land in lab\results\local-<time>-*. The key comes from the encrypted store (scripts\set-key.ps1) and is never printed.
@@ -12,8 +12,8 @@ if (-not (Test-Path "$omp\omp.exe")) { throw "omp is missing in $omp." }
 $bash = 'C:\Program Files\Git\bin\bash.exe'
 $provider, $envName = switch -Regex ($Model) {
   '^zai/' { 'zai', 'ZAI_API_KEY' }
-  '^mistral/' { 'mistral', 'MISTRAL_API_KEY' }
-  default { throw "Unknown provider in -Model $Model (zai/... or mistral/...)." }
+  '^(mistral/|vibe)' { 'mistral', 'MISTRAL_API_KEY' }
+  default { throw "Unknown provider in -Model $Model (zai/..., mistral/... or vibe)." }
 }
 $key = Get-Key $provider
 if (-not $key) { throw "No $provider key stored: run scripts\set-key.ps1 -Provider $provider first." }
