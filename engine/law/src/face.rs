@@ -135,7 +135,7 @@ fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], axes: [bool; 3
         let (l, drained) = lanes(cycle[j], world, Lanes::of(b), axes).ok_or(Stepped::Lanes)?;
         if l.bits() != Lanes::of(a).bits() || drained && hungry(a, &l) || cycle[j].effect.contact.is_some() { return Err(Stepped::Lanes); }
     }
-    let mut corridor = Corridor { refs: std::collections::HashMap::new(), axes, context: CollisionContext::of(s), last: None };
+    let mut corridor = Corridor { refs: Vec::new(), axes, context: CollisionContext::of(s), last: None };
     for j in 1..=p {
         corridor.admit(world, cycle[j - 1].state.bounding_box(), cycle[j].state.bounding_box()).map_err(Stepped::Cell)?;
     }
@@ -173,7 +173,7 @@ fn jump(s: &mut PlayerState, world: &impl World, cycle: &[&Seen], axes: [bool; 3
 
 /// The cells the jump is certified on: each answers as the first cell of its line along the lane
 /// axes did (a layer on the ground, every cell in a fall), and no block effect counts its cells.
-struct Corridor<'w> { refs: std::collections::HashMap<BlockPos, (&'w Block, bool, Option<u16>)>, axes: [bool; 3], context: CollisionContext, last: Option<(BlockPos, BlockPos)> }
+struct Corridor<'w> { refs: Vec<(BlockPos, &'w Block, bool)>, axes: [bool; 3], context: CollisionContext, last: Option<(BlockPos, BlockPos)> }
 impl<'w> Corridor<'w> {
     fn admit(&mut self, world: &'w impl World, from: Aabb, to: Aabb) -> Result<(), BlockPos> {
         let hull = Aabb::new(from.min.x.min(to.min.x), from.min.y.min(to.min.y), from.min.z.min(to.min.z),
@@ -183,6 +183,8 @@ impl<'w> Corridor<'w> {
         let old = self.last.replace((lo, hi));
         let bounds = Aabb::new(lo[0] as f64, lo[1] as f64, lo[2] as f64, hi[0] as f64 + 1.0, hi[1] as f64 + 1.0, hi[2] as f64 + 1.0);
         if !world.visit_extra_collisions(bounds, self.context, |_| false) { self.last = old; return Err(lo); }
+        // The worldtube is read whole: every query of every cell in the box.
+        for query in crate::footprint::Query::ALL { world.observe_region(query, lo, hi); }
         for x in lo[0]..=hi[0] { for y in lo[1]..=hi[1] { for z in lo[2]..=hi[2] {
             let p = [x, y, z];
             if old.is_some_and(|(a, b)| (0..3).all(|i| p[i] >= a[i] && p[i] <= b[i])) { continue; }
@@ -190,22 +192,22 @@ impl<'w> Corridor<'w> {
         } } }
         Ok(())
     }
+    /// A cell answers as its line's first cell when it holds the same block (or one the codec
+    /// cannot tell apart) and is loaded alike; the first cell is asked every query once.
     fn same(&mut self, world: &'w impl World, p: BlockPos) -> bool {
-        let (block, loaded, model) = (world.block(p), world.loaded(p), world.model_id(p));
-        let (hook, fluid) = (world.hook_block(p), world.fluid_block(p));
-        let _ = world.collision_shape(p, self.context);
-        if !std::ptr::eq(hook, block) || !std::ptr::eq(fluid, block) || !quiet(block) { return false; }
+        let (block, loaded) = (world.block(p), world.loaded(p));
         let key = [0, 1, 2].map(|i| if self.axes[i] { 0 } else { p[i] });
-        let Some(&(first, first_loaded, first_model)) = self.refs.get(&key) else {
-            self.refs.insert(key, (block, loaded, model));
-            return true;
-        };
-        (loaded, model) == (first_loaded, first_model) && (std::ptr::eq(first, block)
-            || crate::pattern::encode_cell(first, loaded, 31).ok() == crate::pattern::encode_cell(block, loaded, 31).ok())
+        let alone = |block: &Block| { let _ = world.collision_shape(p, self.context);
+            std::ptr::eq(world.hook_block(p), block) && std::ptr::eq(world.fluid_block(p), block) && quiet(block) };
+        match self.refs.iter().find(|r| r.0 == key) {
+            None => { let ok = alone(block); if ok { self.refs.push((key, block, loaded)); } ok }
+            Some(&(_, first, first_loaded)) => loaded == first_loaded && (std::ptr::eq(first, block)
+                || alone(block) && crate::pattern::encode_cell(first, loaded, 31).ok() == crate::pattern::encode_cell(block, loaded, 31).ok()),
+        }
     }
 }
 
-/// A block whose effect on a body does not count the cells it crosses.
+/// A block whose effect on a body does not count the cells it crosses, nor reads its neighbours.
 fn quiet(b: &Block) -> bool {
-    matches!(b.inside, Inside::None | Inside::Cobweb | Inside::Extinguish) && matches!(b.fluid.kind, FluidKind::Empty | FluidKind::Water)
+    matches!(b.inside, Inside::None | Inside::Cobweb | Inside::Extinguish) && matches!(b.fluid.kind, FluidKind::Empty | FluidKind::Water) && !b.world_hook
 }

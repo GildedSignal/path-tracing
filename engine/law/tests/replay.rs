@@ -1098,7 +1098,7 @@ fn event_face() {
 
 #[derive(Default)]
 struct FaceJudge { ticks: u64, jumped: u64, jumps: Vec<u64>, stepped: std::collections::BTreeMap<String, u64>, causes: std::collections::BTreeMap<String, u64>,
-    face_time: Duration, step_time: Duration, timed: u64, anomalies: Vec<String> }
+    face_time: Duration, step_time: Duration, timed: u64, jumpy: (Duration, Duration, u64), anomalies: Vec<String> }
 impl FaceJudge {
     fn recording(&mut self, name: &str, text: &str, world: &impl World, mut state: PlayerState) {
         let (mut ticks, before): (Vec<(PlayerState, Input)>, _) = (Vec::new(), (self.ticks, self.jumped));
@@ -1116,7 +1116,7 @@ impl FaceJudge {
     }
     /// One held input from `from` for `n` ticks, through the face call by call.
     fn stretch(&mut self, at: &str, world: &impl World, from: &PlayerState, input: &Input, n: u64) {
-        let (mut face, mut step, mut done) = (from.clone(), from.clone(), 0);
+        let (mut face, mut step, mut done, mut jumped) = (from.clone(), from.clone(), 0, 0);
         while done < n {
             let (seen_face, seen_step) = (footprint::RecordingWorld::new(world), footprint::RecordingWorld::new(world));
             let jump = match face::advance(&mut face, &seen_face, input, n - done) {
@@ -1139,6 +1139,7 @@ impl FaceJudge {
             done += jump.ticks;
             self.ticks += jump.ticks;
             self.jumped += jump.jumped;
+            jumped += jump.jumped;
             if jump.jumped > 0 { self.jumps.push(jump.jumped); }
             let kind = match jump.stepped { face::Stepped::Cell(_) => "cell".to_owned(), other => format!("{other:?}").to_lowercase() };
             *self.stepped.entry(kind).or_default() += jump.ticks - jump.jumped;
@@ -1150,11 +1151,13 @@ impl FaceJudge {
         let clock = Instant::now();
         let mut left = n;
         while left > 0 { left -= face::advance(&mut face, world, input, left).unwrap().ticks; }
-        self.face_time += clock.elapsed();
+        let face_time = clock.elapsed();
         let clock = Instant::now();
         for _ in 0..n { tick(&mut step, world, input); }
-        self.step_time += clock.elapsed();
-        self.timed += n;
+        let step_time = clock.elapsed();
+        (self.face_time, self.step_time, self.timed) = (self.face_time + face_time, self.step_time + step_time, self.timed + n);
+        // Where the face jumped nine ticks in ten: its cost once the repeat is seen.
+        if jumped * 10 >= n * 9 { self.jumpy = (self.jumpy.0 + face_time, self.jumpy.1 + step_time, self.jumpy.2 + n); }
     }
     /// Long slides on every ground the hot layer knows, sneaking and sprint-jumping, falls
     /// through many binades, far from the origin.
@@ -1194,6 +1197,8 @@ impl FaceJudge {
         println!("stepped ticks by kind {:?}; calls by cause {:?}", self.stepped, self.causes);
         println!("speed: face {:.0} ns/tick, core {:.0} ns/tick over {} ticks", self.face_time.as_nanos() as f64 / self.timed as f64,
             self.step_time.as_nanos() as f64 / self.timed as f64, self.timed);
+        let (f, c, n) = self.jumpy;
+        println!("where nine ticks in ten jump: face {:.0} ns/tick, core {:.0} ns/tick over {n} ticks", f.as_nanos() as f64 / n.max(1) as f64, c.as_nanos() as f64 / n.max(1) as f64);
         for row in &self.anomalies { println!("ANOMALY\t{row}"); }
         assert!(self.anomalies.is_empty(), "{} anomalies", self.anomalies.len());
     }
