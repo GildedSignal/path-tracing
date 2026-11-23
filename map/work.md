@@ -9,12 +9,11 @@
 | Sol (`gpt-6.2-sol`, Codex) | strong builds beside the core |
 | Terra (`gpt-6.1-terra`, Codex) | builds from a closed spec, the leftover window |
 | Opus (native sub-agent) | red-teams of one-way doors, design, hard merges |
-| Sonnet (Antigravity, or native) | judges GPT's and Google's work |
-| Argon (Antigravity) | tooling builds, reading primary sources, linting the map against his words |
-| Hydrogen (Antigravity) | builds, digests, premise checks |
-| GLM (Z.ai, omp) | parameter table rows, Mojang scars, and jar witnesses against the generator basis, plus compiled `lab/wiki/` pages |
+| Sonnet (native sub-agent) | judges GPT's work; the work that needs no taste: cleaning, digests, linting the map against his words |
+| GLM 5.4 (Z.ai, omp) | parameter table rows, Mojang scars, and jar witnesses against the generator basis, plus compiled `lab/wiki/` pages |
+| Gemini (AI Studio credits, omp) | the third family: a judge of GPT's builds after its bake-off; key not stored yet ([clan.md](detail/clan.md) section 6) |
 
-A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/launch.ps1 <job> <who> [-Worktree D:\path-tracing-wt\<name>] [-Base <ref>]`; a job is `jobs/<id>/prompt.md` in, `last.md` out. Meters: `scripts/meters.ps1`.
+Antigravity is his own tool; he pilots it. A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/launch.ps1 <job> terra|astra|sol [-Worktree D:\path-tracing-wt\<name>] [-Base <ref>]`; Opus and Sonnet are the integrator's native sub-agents; GLM runs through `scripts/glm-chain.ps1`. A job is `jobs/<id>/prompt.md` in, `last.md` out. Meters: `scripts/meters.ps1`.
 
 ## A companion's job
 
@@ -28,9 +27,9 @@ A clear goal, in one line under the prompt's title, the conditions, the gate (a 
 |---|---|---|
 | a session starts, resumes, clears or compacts | this map loads whole | `SessionStart` hook, `scripts/load-docs.sh` |
 | he sends a message | the heuristics card is injected; his words go verbatim to `archive/turns/inbox.md` | `UserPromptSubmit` hook, `scripts/hooks/prompt.ps1` |
-| any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `scripts/gemini.ps1` |
+| any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `lab/run.sh` |
 | any launch | refused unless the prompt opens with its title, then `**Goal:**` in one line | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
-| a launch of Astra, Sol, Opus or an Argon build | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
+| a launch of Astra or Sol | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
 | a launch succeeds | a watcher wakes the integrator when the job ends | `PostToolUse` hook (async, wakes the model) |
 | a commit touches `map/` | 40 KB cap, no history wording, links resolve | `.git/hooks/pre-commit` (`scripts/install-hooks.sh`) |
 | a commit touches `engine/` | it touches `map/` or carries `Map: unchanged, because …` | `.git/hooks/commit-msg` |
