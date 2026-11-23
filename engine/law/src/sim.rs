@@ -11,34 +11,31 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use crate::boat::{self, BoatBody, BoatQuery, Controls as BoatControls};
-use crate::combat::{self, AttackInput, AttackResult};
 use crate::entity_contact::{ContactEntity, ContactKind, SpatialCrowdIndex, TeamCollisionRule};
-use crate::explosion::{self, ExplosionHit, ExplosionProfile, ExplosionTarget};
 use crate::falling::{self, AnvilStage, LandingContext, LandingOutcome};
 use crate::fluid::{
     self, FlowKind, FluidCell, LavaContact, SpreadWrite, TargetBlock, TargetCell,
 };
 use crate::footprint::Footprint;
 use crate::interact::{
-    self, AttachFace, BlockHitResult, BlockId, Direction as InteractDir, DoorHalf,
+    self, AttachFace, BlockId, Direction as InteractDir, DoorHalf,
     FenceGateState, LeverState, RedstoneCell, RedstoneCellKind, RedstoneDoorState, RedstoneEvent,
     RedstoneWorld, TrapDoorState,
 };
-use crate::mining::{self, MiningAction, MiningClock, MiningRefusal, MiningStep};
 use crate::neighbor::{
     self, CollectingNeighborUpdater, Direction, DrainStats, NeighborQueue, UpdateEvent,
     UpdateOrDestroyAction, UPDATE_SHAPE_ORDER, update_flags,
 };
 use crate::pearl::{
-    self, PearlEntityTarget, PearlLanding, PearlState, PearlUseInput, PearlUseResult,
+    self, PearlEntityTarget, PearlLanding, PearlState,
 };
 use crate::piston::{
     self, BlockKind as PistonBlockKind, MovingPiston, PistonBlock, PistonEntity, PistonWorld,
     Push, PushReaction, Resolver, TriggerAction, set_block_flags, trigger as piston_trigger,
 };
 use crate::place::{
-    self, DoorCellInfo, DoorHinge, DoorPlaceState, Half, LadderPlaceState, PlaceContext,
-    ScaffoldingCell, ScaffoldingState, SlabState, SlabType, StairState, TrapDoorPlaceState,
+    self, DoorHinge, DoorPlaceState, Half, LadderPlaceState,
+    ScaffoldingCell, ScaffoldingState, SlabState, SlabType, StairState,
 };
 use crate::shapes::collide_with_shapes;
 use crate::ticks::{
@@ -46,14 +43,13 @@ use crate::ticks::{
 };
 use crate::world::block_pos;
 use crate::world_hooks::{
-    self, BucketCell, BucketContent, BucketEvent, BucketStack, BucketUseResult, BucketWorld,
-    ButtonEvent, ButtonState, ButtonUseResult, PlateEvent, PressurePlateState, TriggerEntity,
+    self, BucketCell, BucketContent, BucketEvent, BucketWorld,
+    ButtonEvent, ButtonState, PlateEvent, PressurePlateState, TriggerEntity,
     TripwireCell, TripwireEvent, TripwireHookState, TripwireWireState, TripwireWorld,
     WATER_TICK_DELAY,
 };
 use crate::{
-    Aabb, Block, BlockPos, CollisionContext, Fluid, FluidFlowBlock, FluidKind, Input, Inside,
-    PlayerState, Vec3, VoxelShape, World, tick as tick_player_law,
+    Aabb, Block, BlockPos, CollisionContext, Fluid, FluidFlowBlock, FluidKind, Inside, Vec3, VoxelShape, World,
 };
 
 // ============================================================================
@@ -139,42 +135,6 @@ impl<'a, W: World> WorldOverlay<'a, W> {
         self.dirty.insert(pos);
     }
 
-    /// Removes an override at `pos` (falling back to `base`) and keeps `pos` marked dirty if present.
-    pub fn remove_override(&mut self, pos: BlockPos) -> Option<Block> {
-        let removed = self.overrides.remove(&pos)?;
-        self.dirty.insert(pos);
-        self.recompute_metadata();
-        Some(removed)
-    }
-
-    fn recompute_metadata(&mut self) {
-        self.bounds = None;
-        self.unbounded = false;
-        self.extra_fluids = false;
-        self.extra_inside = false;
-        for (&pos, block) in &self.overrides {
-            self.unbounded |= !block.collision_within_cell();
-            self.extra_fluids |= block.fluid.kind != FluidKind::Empty;
-            self.extra_inside |=
-                block.inside != Inside::None || block.stuck_multiplier.is_some() || block.fluid.kind != FluidKind::Empty;
-            let (lo, hi) = self.bounds.get_or_insert((pos, pos));
-            for a in 0..3 {
-                lo[a] = lo[a].min(pos[a]);
-                hi[a] = hi[a].max(pos[a]);
-            }
-        }
-    }
-
-    #[inline]
-    pub fn is_overridden(&self, pos: BlockPos) -> bool {
-        self.overrides.contains_key(&pos)
-    }
-
-    #[inline]
-    pub fn overrides_len(&self) -> usize {
-        self.overrides.len()
-    }
-
     /// Deterministic sorted set of mutated `BlockPos` cells since creation / last clear.
     #[inline]
     pub fn dirty_positions(&self) -> &BTreeSet<BlockPos> {
@@ -184,11 +144,6 @@ impl<'a, W: World> WorldOverlay<'a, W> {
     #[inline]
     pub fn clear_dirty(&mut self) {
         self.dirty.clear();
-    }
-
-    #[inline]
-    pub fn take_dirty(&mut self) -> BTreeSet<BlockPos> {
-        std::mem::take(&mut self.dirty)
     }
 
     /// Inclusive bounding box of all currently dirty positions, if non-empty.
@@ -209,17 +164,6 @@ impl<'a, W: World> WorldOverlay<'a, W> {
     /// Conservative check: returns `true` iff any mutated cell touches `footprint`'s read or swept set.
     pub fn invalidates_footprint(&self, footprint: &Footprint) -> bool {
         self.dirty.iter().any(|&pos| footprint.contains(pos))
-    }
-
-    /// Iterates mutated cells intersecting `footprint` for targeted local repair.
-    pub fn invalidated_positions<'b>(
-        &'b self,
-        footprint: &'b Footprint,
-    ) -> impl Iterator<Item = BlockPos> + 'b {
-        self.dirty
-            .iter()
-            .copied()
-            .filter(move |&pos| footprint.contains(pos))
     }
 
     fn override_cell_bounds(
@@ -1778,21 +1722,6 @@ impl SimLivingEntity {
         }
     }
 
-    pub fn as_explosion_target(&self) -> ExplosionTarget {
-        ExplosionTarget {
-            feet_pos: self.position,
-            eye_y: self.position.y + self.eye_height as f64,
-            bb: self.aabb(),
-            is_living: true,
-            is_player: self.is_player,
-            is_spectator: self.spectator,
-            is_creative_flying: self.creative_flying,
-            is_flying_ability: self.flying_ability,
-            is_primed_tnt: false,
-            ignore_explosion: self.spectator,
-            explosion_knockback_resistance: self.explosion_knockback_resistance,
-        }
-    }
 }
 
 /// Summary returned by [`SimWorld::step_tick`] for one full Mojang 26.2 server tick.
@@ -1897,11 +1826,6 @@ impl<'a, W: World> SimWorld<'a, W> {
     #[inline]
     pub fn world(&self) -> &WorldOverlay<'a, W> {
         &self.overlay
-    }
-
-    #[inline]
-    pub fn overlay_mut(&mut self) -> &mut WorldOverlay<'a, W> {
-        &mut self.overlay
     }
 
     #[inline]
@@ -4006,18 +3930,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         idx
     }
 
-    pub fn throw_pearl(&mut self, owner_idx: Option<usize>, input: &PearlUseInput) -> PearlUseResult {
-        let res = pearl::use_ender_pearl(input);
-        if let PearlUseResult::Thrown { state, .. } = res {
-            self.pearls.push(SimPearl {
-                state,
-                owner_idx,
-                removed: false,
-            });
-        }
-        res
-    }
-
     fn tick_boats(&mut self) -> usize {
         let mut ticked = 0usize;
         let query = SimBoatQueryRef {
@@ -4205,56 +4117,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         cram_events
     }
 
-    pub fn apply_explosion(&mut self, profile: ExplosionProfile, center: Vec3) -> Vec<(usize, ExplosionHit)> {
-        let Some(search) = explosion::explosion_search_aabb(center, profile.radius) else {
-            return Vec::new();
-        };
-        let mut results = Vec::new();
-        for i in 0..self.living_entities.len() {
-            let e = &self.living_entities[i];
-            if !e.alive || !e.aabb().intersects(search) {
-                continue;
-            }
-            let target = e.as_explosion_target();
-            let hit = explosion::explosion_entity_effect(profile, center, target, |from, to| {
-                let res = interact::clip_blocks(from, to, interact::ClipFluidMode::None, |p| {
-                    let b = self.overlay.block(p);
-                    (&b.shape, None, 0.0, false)
-                });
-                !res.is_hit()
-            });
-            if let Some(h) = hit {
-                let ent = &mut self.living_entities[i];
-                ent.velocity = ent.velocity.plus(h.knockback_impulse);
-                if h.damage > 0.0 {
-                    ent.health = (ent.health - h.damage).max(0.0);
-                    if ent.health == 0.0 {
-                        ent.alive = false;
-                    }
-                }
-                results.push((i, h));
-            }
-        }
-        results
-    }
-
-    pub fn attack_entity(&mut self, input: AttackInput) -> AttackResult {
-        let mut r = self.rng_state;
-        let res = combat::resolve_player_attack(input, || {
-            r ^= r << 13;
-            r ^= r >> 7;
-            r ^= r << 17;
-            ((r >> 11) as f64) / ((1u64 << 53) as f64)
-        });
-        self.rng_state = r;
-        res
-    }
-
-    #[inline]
-    pub fn tick_player(&self, state: &mut PlayerState, input: &Input) {
-        tick_player_law(state, &self.overlay, input);
-    }
-
     // ------------------------------------------------------------------------
     // Interactive & placement entry points (reusing place, interact, world_hooks, mining)
     // ------------------------------------------------------------------------
@@ -4306,16 +4168,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         );
         self.neighbor_updater = updater;
         (powered, stats)
-    }
-
-    pub fn use_button(&mut self, pos: BlockPos) -> ButtonUseResult {
-        let CellState::Button(mut btn) = self.cell(pos).state else {
-            return ButtonUseResult::Consume;
-        };
-        let mut evs = Vec::new();
-        let res = world_hooks::button_use_without_item(&mut btn, pos, &mut evs);
-        self.apply_button_events(btn, &evs);
-        res
     }
 
     fn apply_button_events(&mut self, btn: ButtonState, evs: &[ButtonEvent]) {
@@ -4409,36 +4261,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
     }
 
-    pub fn use_bucket(
-        &mut self,
-        held: BucketStack,
-        hit: BlockHitResult,
-        may_interact: bool,
-        may_use_item_at_offset: bool,
-        is_sneaking: bool,
-        has_infinite_materials: bool,
-    ) -> BucketUseResult {
-        let mut events = Vec::new();
-        let res = {
-            let mut bw = SimBucketView::new(self);
-            world_hooks::bucket_use(
-                &mut bw,
-                held,
-                hit,
-                may_interact,
-                may_use_item_at_offset,
-                is_sneaking,
-                has_infinite_materials,
-                false,
-                true,
-                false,
-                &mut events,
-            )
-        };
-        self.apply_bucket_events(&events);
-        res
-    }
-
     pub fn empty_bucket_at(
         &mut self,
         content: BucketContent,
@@ -4511,100 +4333,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         existing
     }
 
-    pub fn place_slab(&mut self, ctx: &PlaceContext) -> SlabState {
-        let existing = self.cell(ctx.clicked_pos);
-        let is_water = existing
-            .fluid_info()
-            .is_some_and(|(k, f)| matches!(k, FlowKind::Water) && f.source);
-        let state = place::slab_get_state_for_placement(ctx, existing.id, is_water);
-        self.set_cell_with_flags(ctx.clicked_pos, SimCell::slab(state), update_flags::ALL);
-        state
-    }
-
-    pub fn place_stair(&mut self, ctx: &PlaceContext) -> StairState {
-        let is_water = self
-            .cell(ctx.clicked_pos)
-            .fluid_info()
-            .is_some_and(|(k, f)| matches!(k, FlowKind::Water) && f.source);
-        let state = place::stair_get_state_for_placement(ctx, is_water, |p| match self.cell(p).state {
-            CellState::Stair(s) => Some(s),
-            _ => None,
-        });
-        self.set_cell_with_flags(
-            ctx.clicked_pos,
-            SimCell::stair(ctx.held_block_id, state),
-            update_flags::ALL,
-        );
-        state
-    }
-
-    pub fn place_trapdoor(&mut self, ctx: &PlaceContext) -> TrapDoorPlaceState {
-        let is_water = self
-            .cell(ctx.clicked_pos)
-            .fluid_info()
-            .is_some_and(|(k, f)| matches!(k, FlowKind::Water) && f.source);
-        let sig = self.has_neighbor_signal(ctx.clicked_pos);
-        let st = place::trapdoor_get_state_for_placement(ctx, is_water, sig);
-        let cell = SimCell::trapdoor(
-            ctx.held_block_id,
-            from_interact_dir(st.facing),
-            st.half,
-            st.open,
-            st.powered,
-            st.waterlogged,
-        );
-        self.set_cell_with_flags(ctx.clicked_pos, cell, update_flags::ALL);
-        st
-    }
-
-    pub fn place_door(&mut self, ctx: &PlaceContext) -> Option<DoorPlaceState> {
-        let above_pos = Direction::Up.relative(ctx.clicked_pos, 1);
-        let above_rep = self.cell(above_pos).props.can_be_replaced;
-        let lower = place::door_get_state_for_placement(
-            ctx,
-            self.max_y,
-            above_rep,
-            |p| self.has_neighbor_signal(p),
-            |p| {
-                let c = self.cell(p);
-                DoorCellInfo {
-                    is_full_collision: c.block.shape.is_block(),
-                    lower_door: matches!(
-                        c.state,
-                        CellState::Door(DoorPlaceState {
-                            half: DoorHalf::Lower,
-                            ..
-                        })
-                    ),
-                }
-            },
-        )?;
-        self.set_cell_with_flags(ctx.clicked_pos, SimCell::door(lower), update_flags::ALL);
-        let (upper_pos, upper, flags) = place::door_set_placed_by(lower, ctx.clicked_pos);
-        self.set_cell_with_flags(upper_pos, SimCell::door(upper), flags as i32);
-        Some(lower)
-    }
-
-    pub fn place_ladder(&mut self, ctx: &PlaceContext) -> Option<LadderPlaceState> {
-        let behind = match self.cell(ctx.clicked_face.opposite().relative(ctx.clicked_pos)).state {
-            CellState::Ladder(l) => Some(l.facing),
-            _ => None,
-        };
-        let is_water = self
-            .cell(ctx.clicked_pos)
-            .fluid_info()
-            .is_some_and(|(k, f)| matches!(k, FlowKind::Water) && f.source);
-        let st = place::ladder_get_state_for_placement(ctx, behind, is_water, |p, dir| {
-            self.cell(p).props.sturdy_faces[from_interact_dir(dir) as usize]
-        })?;
-        self.set_cell_with_flags(
-            ctx.clicked_pos,
-            SimCell::ladder(ctx.held_block_id, st),
-            update_flags::ALL,
-        );
-        Some(st)
-    }
-
     fn scaffolding_cell(&self, pos: BlockPos) -> ScaffoldingCell {
         let c = self.cell(pos);
         match c.state {
@@ -4621,67 +4349,6 @@ impl<'a, W: World> SimWorld<'a, W> {
                 replaceable: c.is_air() || c.props.can_be_replaced,
             },
         }
-    }
-
-    pub fn place_scaffolding(&mut self, ctx: &PlaceContext) -> Option<(BlockPos, ScaffoldingState)> {
-        let (target_pos, _) = place::scaffolding_update_placement_context(
-            ctx,
-            |p| self.in_world_bounds(p),
-            |p| self.scaffolding_cell(p),
-        )?;
-        let is_water = self
-            .cell(target_pos)
-            .fluid_info()
-            .is_some_and(|(k, f)| matches!(k, FlowKind::Water) && f.source);
-        let st = place::scaffolding_get_state_for_placement(target_pos, is_water, |p| {
-            self.scaffolding_cell(p)
-        });
-        self.set_cell_with_flags(
-            target_pos,
-            SimCell::scaffolding(ctx.held_block_id, st),
-            update_flags::ALL,
-        );
-        Some((target_pos, st))
-    }
-
-    pub fn mining_apply(
-        &mut self,
-        clock: &mut MiningClock,
-        action: MiningAction,
-        accepted: bool,
-    ) -> Result<MiningStep, MiningRefusal> {
-        let step = clock.apply(action, accepted)?;
-        if let MiningStep::Evaluated {
-            destroy: Some(intent),
-            ..
-        } = step
-        {
-            self.destroy_block(intent.target.position, true);
-        }
-        Ok(step)
-    }
-
-    pub fn mining_tick(
-        &mut self,
-        clock: &mut MiningClock,
-        current: impl FnOnce(mining::MiningTarget) -> Option<mining::MiningSample>,
-    ) -> Result<MiningStep, MiningRefusal> {
-        let step = clock.tick(current)?;
-        if let MiningStep::Evaluated {
-            destroy: Some(intent),
-            ..
-        } = step
-        {
-            self.destroy_block(intent.target.position, true);
-        }
-        Ok(step)
-    }
-
-    pub fn shears_disarm_tripwire(&mut self, pos: BlockPos) {
-        let mut tw = SimTripwireView::new(self, self.palette.tripwire, self.palette.tripwire_hook);
-        let mut evs = Vec::new();
-        world_hooks::tripwire_player_will_destroy(&mut tw, pos, false, true, &mut evs);
-        self.apply_tripwire_events(None, evs);
     }
 
     fn check_world_hooks(&mut self) {

@@ -8,7 +8,7 @@
 //! - `OldMinecartBehavior.tick` (`@58-240`), `moveAlongTrack` (`@242-970`),
 //!   `getPos` (`@1140-1359`), `getPosOffs` (`@972-1138`), `getSlowdownFactor` (`@1533-1542`)
 
-use crate::{interact::BlockId, math, BlockPos, Vec3};
+use crate::{math, BlockPos, Vec3};
 
 /// `RailShape` ordinals 0..=9 (`RailShape`); slopes are `2..=5`.
 #[repr(u8)]
@@ -64,13 +64,6 @@ impl RailShape {
     }
 }
 
-/// Data-driven rail block classification keyed by `BlockId` (no block-name strings).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RailBlockSpec {
-    pub block_id: BlockId,
-    pub is_powered_rail: bool,
-}
-
 /// Evaluated rail state at one block position (`BaseRailBlock.isRail` = `BlockTags.RAILS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RailInfo {
@@ -89,15 +82,6 @@ impl RailInfo {
         }
     }
 
-    /// Builds a `RailInfo` from a data-driven `RailBlockSpec` and block state properties.
-    #[inline]
-    pub const fn from_spec(spec: RailBlockSpec, shape: RailShape, powered: bool) -> Self {
-        Self {
-            shape,
-            powered,
-            is_powered_rail: spec.is_powered_rail,
-        }
-    }
 }
 
 /// World queries required by `OldMinecartBehavior` (`getCurrentBlockPosOrRailBelow`,

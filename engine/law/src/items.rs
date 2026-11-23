@@ -17,13 +17,6 @@ use crate::{math, Aabb, Vec3};
 // 1. Food & potion consumption
 // ============================================================================
 
-/// Default consume duration (`1.6f` -> `32` ticks) for food and drink items.
-pub const DEFAULT_CONSUME_SECONDS: f32 = 1.6;
-pub const DEFAULT_CONSUME_TICKS: i32 = 32;
-/// `Items.DRIED_KELP` (`0.8f` -> `16` ticks).
-pub const DRIED_KELP_CONSUME_TICKS: i32 = 16;
-/// `Items.HONEY_BOTTLE` (`2.0f` -> `40` ticks).
-pub const HONEY_BOTTLE_CONSUME_TICKS: i32 = 40;
 /// `FoodConstants.MAX_FOOD` and `MAX_SATURATION` upper bound (`20`).
 pub const MAX_FOOD_LEVEL: i32 = 20;
 
@@ -104,9 +97,6 @@ pub const POTION: Consumable = Consumable {
     can_always_eat: false,
     use_on_release: false,
 };
-
-/// Swiftness potion effect `(amplifier, duration_ticks)`.
-pub const SWIFTNESS_POTION_EFFECTS: &[(i32, i32)] = &[(0, 3600)];
 
 /// `Consumable.consumeTicks()`: `(int)(consumeSeconds * 20.0f)` (`fmul; f2i` truncation).
 #[inline]
@@ -203,10 +193,6 @@ pub fn eat_with_modifier(
 // 2. Trident Riptide launch & Auto Spin Attack
 // ============================================================================
 
-/// `TridentItem.THROW_THRESHOLD_TIME` (`@29-37`).
-pub const THROW_THRESHOLD_TICKS: i32 = 10;
-/// `TridentItem.getUseDuration` (`@0-4`).
-pub const USE_DURATION_TICKS: i32 = 72000;
 /// `data/minecraft/enchantment/riptide.json`: `linear { base: 1.5, per_level_above_first: 0.75 }`.
 pub const RIPTIDE_BASE: f32 = 1.5;
 pub const RIPTIDE_PER_LEVEL_ABOVE_FIRST: f32 = 0.75;
@@ -229,39 +215,6 @@ pub fn trident_spin_attack_strength(level: i32) -> f32 {
     } else {
         0.0f32 + (RIPTIDE_BASE + RIPTIDE_PER_LEVEL_ABOVE_FIRST * (level - 1) as f32)
     }
-}
-
-/// `TridentItem.use` (`@0-49`): fails if about to break or if riptide > 0 while dry.
-#[inline]
-pub fn can_start_trident_use(strength: f32, wet: bool, next_damage_will_break: bool) -> bool {
-    !next_damage_will_break && !(strength > 0.0 && !wet)
-}
-
-/// `TridentItem.releaseUsing` (`@18-79`): full gate before either throw (`strength == 0`) or
-/// riptide launch (`strength > 0`).
-#[inline]
-pub fn can_release_trident(
-    held_ticks: i32,
-    strength: f32,
-    wet: bool,
-    passenger: bool,
-    next_damage_will_break: bool,
-) -> bool {
-    held_ticks >= THROW_THRESHOLD_TICKS
-        && !(strength > 0.0 && (!wet || passenger))
-        && !next_damage_will_break
-}
-
-/// True when `releaseUsing` executes a Riptide launch (`strength > 0` and all release gates pass).
-#[inline]
-pub fn can_riptide(
-    held_ticks: i32,
-    strength: f32,
-    wet: bool,
-    passenger: bool,
-    next_damage_will_break: bool,
-) -> bool {
-    strength > 0.0 && can_release_trident(held_ticks, strength, wet, passenger, next_damage_will_break)
 }
 
 /// `TridentItem.releaseUsing` (`@216-347`): bit-exact Riptide impulse vector.
@@ -415,13 +368,9 @@ impl SpinAttack {
 pub const GRAVITY: f64 = 0.04;
 pub const AIR_DRAG: f32 = 0.98;
 pub const LIFETIME: i32 = 6000; // tick 544-551: despawn when age >= 6000 (server side)
-pub const EXTENDED_LIFETIME_AGE: i32 = -6000; // setExtendedLifetime 0-7
 pub const INFINITE_LIFETIME_AGE: i32 = -32768; // setUnlimitedLifetime 0-7
 pub const INFINITE_PICKUP_DELAY: i32 = 32767; // setNeverPickUp 0-7
-pub const DEFAULT_PICKUP_DELAY: i32 = 10; // setDefaultPickUpDelay 0-6 (block drops)
-pub const THROW_PICKUP_DELAY: i32 = 40; // LivingEntity.createItemStackToDrop 45-47 (every player drop)
 pub const DEFAULT_HEALTH: i32 = 5; // ItemEntity.DEFAULT_HEALTH; hurtServer 59-67: health -= (int) damage
-pub const MERGE_CAP: i32 = 64; // ItemEntity.merge(ItemEntity, ItemStack, ItemStack) 2-4
 pub const MERGE_INTERVAL_MOVING: i32 = 2; // tick 423-433: crossed a block boundary this tick
 pub const MERGE_INTERVAL_RESTING: i32 = 40; // same block: merge attempt every 40 ticks
 pub const REST_HORIZ_SPEED_SQR: f64 = 9.999999747378752E-6; // tick 235-238 (1.0E-5f as f64)
@@ -430,7 +379,6 @@ pub const FLUID_RISE_VELOCITY: f64 = 0.05999999865889549; // setFluidMovement 20
 pub const FLUID_RISE_ACCEL: f64 = 5.0E-4f32 as f64; // setFluidMovement 27-30
 pub const WATER_DRAG: f64 = 0.99f32 as f64; // setUnderwaterMovement 1-4
 pub const LAVA_DRAG: f64 = 0.95f32 as f64; // setUnderLavaMovement 1-4
-pub const MERGE_INFLATE: (f64, f64, f64) = (0.5, 0.0, 0.5); // mergeWithNeighbours 18-25
 pub const REST_MOVE_MODULUS: i32 = 4; // tick 251: (tickCount + id) % 4
 
 /// Fluid the body is submerged in with height > `PICKUP_MIN_FLUID_HEIGHT` (caller resolves
@@ -590,9 +538,7 @@ pub fn drop_velocity_toss(rng: &mut JavaRandom) -> Vec3 {
 
 // ---- Inventory.fill (Inventory.getSlotWithRemainingSpace / getFreeSlot / add / addResource) ----
 
-pub const INVENTORY_SIZE: i32 = 36; // hotbar 0..9, main 9..36 (Inventory 5)
 pub const SLOT_OFFHAND: i32 = 40; // Inventory 9
-pub const POP_TIME: i32 = 5; // Inventory 3, addResource 77
 
 /// The state one stack slot needs for the fill rules. `item` equality must stand for
 /// `isSameItemSameComponents`; `max_stack_size` is `ItemStack.getMaxStackSize()`
@@ -773,8 +719,6 @@ impl JavaRandom {
         self.seed = self.seed.wrapping_mul(0x5DEECE66D).wrapping_add(0xB) & 0xFFFF_FFFF_FFFF;
         (self.seed >> (48 - bits)) as i32
     }
-
-    pub fn next_int(&mut self) -> i32 { self.next(32) }
 
     /// RandomSource.nextFloat default: `next(24) / (1 << 24)`.
     pub fn next_float(&mut self) -> f32 {

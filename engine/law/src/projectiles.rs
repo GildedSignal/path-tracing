@@ -94,8 +94,6 @@ pub fn calculate_up_vector(x_rot: f32, y_rot: f32) -> (f32, f32, f32) {
 // BowItem
 // ============================================================================
 
-/// `BowItem.getUseDuration @0-2`.
-pub const BOW_USE_DURATION: i32 = 72000;
 /// `BowItem.releaseUsing @57-60`: minimum release power threshold in `f64`.
 pub const BOW_MIN_RELEASE_POWER: f64 = 0.1;
 /// `BowItem.releaseUsing @114`: `power * 3.0f`.
@@ -192,11 +190,6 @@ pub const CROSSBOW_QUICK_CHARGE_PER_LEVEL: f32 = -0.25;
 pub const CROSSBOW_ARROW_POWER: f32 = 3.15;
 /// `CrossbowItem.FIREWORK_POWER`.
 pub const CROSSBOW_FIREWORK_POWER: f32 = 1.6;
-/// `CrossbowItem.use @44`.
-pub const CROSSBOW_INACCURACY: f32 = 1.0;
-/// `multishot.json`: `projectile_count` +2 (3 total), `projectile_spread` +10.0 degrees.
-pub const CROSSBOW_MULTISHOT_COUNT: usize = 3;
-pub const CROSSBOW_MULTISHOT_SPREAD_DEG: f32 = 10.0;
 
 /// `EnchantmentHelper.modifyCrossbowChargingTime @0-28` with `quick_charge.json`:
 /// `max(0.0f, 1.25f + (-0.25f * level))` when `level > 0`, else `1.25f`.
@@ -216,23 +209,6 @@ pub fn crossbow_charging_time_seconds(quick_charge_level: u8) -> f32 {
 #[inline]
 pub fn crossbow_charge_duration(quick_charge_level: u8) -> i32 {
     math::floor_f32(crossbow_charging_time_seconds(quick_charge_level) * 20.0f32)
-}
-
-/// `CrossbowItem.getPowerForTime @0-19`: `min(1.0f, (float)use_ticks / (float)charge_duration)`.
-#[inline]
-pub fn crossbow_power_for_time(use_ticks: i32, charge_duration: i32) -> f32 {
-    let f = use_ticks as f32 / charge_duration as f32;
-    if f > 1.0f32 {
-        1.0f32
-    } else {
-        f
-    }
-}
-
-/// `CrossbowItem.releaseUsing @11-35`: finishes loading iff `power >= 1.0f && isCharged`.
-#[inline]
-pub fn crossbow_can_release(use_ticks: i32, charge_duration: i32, is_charged: bool) -> bool {
-    crossbow_power_for_time(use_ticks, charge_duration) >= 1.0f32 && is_charged
 }
 
 /// `CrossbowItem.getShootingPower @0-15`: `1.6f` if firework rocket is loaded, else `3.15f`.
@@ -393,13 +369,6 @@ impl Default for ArrowState {
     }
 }
 
-/// `AbstractArrow.<init>(EntityType, LivingEntity, ...)` @6-14:
-/// `(owner.x, owner.getEyeY() - 0.10000000149011612d, owner.z)`.
-#[inline]
-pub fn arrow_spawn_origin(owner_pos: Vec3, eye_height: f32) -> Vec3 {
-    pearl::spawn_origin(owner_pos, eye_height)
-}
-
 /// `AbstractArrow.tick @13-583` (free flight / grounded ageing, no block or entity hit):
 /// - Decrements `shake_time` if positive.
 /// - Grounded arrows increment `life` (`tickDespawn`, returns `false` at `life >= 1200`)
@@ -551,14 +520,6 @@ pub const THROWABLE_WATER_DRAG: f32 = pearl::PEARL_WATER_DRAG;
 pub const THROWABLE_GRAVITY: f64 = pearl::PEARL_GRAVITY;
 /// `SnowballItem.PROJECTILE_SHOOT_POWER` & `EggItem.use @74`.
 pub const SNOWBALL_SHOOT_POWER: f32 = 1.5;
-pub const EGG_SHOOT_POWER: f32 = 1.5;
-pub const THROWABLE_INACCURACY: f32 = 1.0;
-
-/// `ThrowableItemProjectile.<init> @30-36`.
-#[inline]
-pub fn throwable_spawn_origin(owner_pos: Vec3, eye_height: f32) -> Vec3 {
-    pearl::spawn_origin(owner_pos, eye_height)
-}
 
 /// `SnowballItem.use @63-77` / `EggItem.use @63-77`:
 /// `Projectile.spawnProjectileFromRotation(..., roll=0.0f, velocity=1.5f, inaccuracy=1.0f)`.
@@ -605,22 +566,10 @@ pub fn throwable_free_tick(pos: &mut Vec3, vel: &mut Vec3, in_water: bool) {
 
 /// `FishingHook.<init> @171`.
 pub const FISHING_CAST_SPEED_BASE: f64 = 0.6;
-/// `FishingHook.<init> @181, 184`: `random.triangle(0.5d, 0.0103365d)`.
-pub const FISHING_CAST_TRIANGLE_MODE: f64 = 0.5;
-pub const FISHING_CAST_TRIANGLE_DEV: f64 = 0.0103365;
 /// `FishingHook.<init> @90, 110`.
 pub const FISHING_CAST_SPAWN_BACK_OFFSET: f64 = 0.3;
 /// `FishingHook.pullEntity @44`.
 pub const FISHING_PULL_SCALE: f64 = 0.1;
-/// `FishingHook.retrieve @81, 85`: rod durability damage when retrieving a hooked entity.
-pub const FISHING_RETRIEVE_ITEM_DURABILITY: i32 = 3;
-pub const FISHING_RETRIEVE_ENTITY_DURABILITY: i32 = 5;
-
-/// `RandomSource.triangle(0.5d, 0.0103365d)`.
-#[inline]
-pub fn fishing_cast_triangle(r1: f64, r2: f64) -> f64 {
-    FISHING_CAST_TRIANGLE_MODE + FISHING_CAST_TRIANGLE_DEV * (r1 - r2)
-}
 
 /// `Mth.clamp(float, float, float) @0-13` (matches NaN behavior without Rust panicking).
 #[inline]
@@ -680,12 +629,3 @@ pub fn fishing_pull_velocity(owner_pos: Vec3, hook_pos: Vec3, target_vel: Vec3) 
     target_vel.plus(fishing_pull_impulse(owner_pos, hook_pos))
 }
 
-/// `FishingHook.retrieve @72-86`: durability cost when pulling a hooked entity (`3` for `ItemEntity`, `5` otherwise).
-#[inline]
-pub const fn fishing_retrieve_durability(hooked_is_item_entity: bool) -> i32 {
-    if hooked_is_item_entity {
-        FISHING_RETRIEVE_ITEM_DURABILITY
-    } else {
-        FISHING_RETRIEVE_ENTITY_DURABILITY
-    }
-}

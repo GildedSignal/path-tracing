@@ -196,11 +196,6 @@ impl StepBasedCollector {
         self.effects_in_step |= 1u8 << (kind as u8);
     }
 
-    /// `runBefore(type, consumer)`: list append, not deduped.
-    pub fn run_before(&mut self, kind: InsideBlockEffectType, op: InsideEffectOp) {
-        self.before_effects[kind as usize].push(op);
-    }
-
     /// `runAfter(type, consumer)` (`@0-20`): `ArrayList` add, appends every call.
     pub fn run_after(&mut self, kind: InsideBlockEffectType, op: InsideEffectOp) {
         self.after_effects[kind as usize].push(op);
@@ -416,7 +411,6 @@ pub fn farmland_trample_threshold(width: f32, height: f32, fall_distance: f64, r
 
 /// `WitherMobEffect.DAMAGE_INTERVAL` (`40` ticks at amplifier 0) and `applyEffectTick` damage (`1.0f`).
 pub const WITHER_DAMAGE_BASE_INTERVAL: i32 = 40;
-pub const WITHER_EFFECT_DAMAGE: f32 = 1.0;
 
 /// `WitherMobEffect.shouldApplyEffectTickThisTick` (`@0-43`):
 /// `interval = 40 >> amplifier`; true when `interval <= 0 || duration % interval == 0`.
@@ -832,24 +826,6 @@ pub fn server_set_game_mode(
         stopped_using_item: entering_spectator,
         reset_impulse_context: new_mode == GameType::Creative,
     }
-}
-
-/// `ClientPacketListener.handlePlayerAbilities` (`@20-83`): `may_build` is NOT on the wire.
-pub fn client_handle_player_abilities(
-    abilities: &mut Abilities,
-    flying: bool,
-    instabuild: bool,
-    invulnerable: bool,
-    mayfly: bool,
-    flying_speed: f32,
-    walking_speed: f32,
-) {
-    abilities.flying = flying;
-    abilities.instabuild = instabuild;
-    abilities.invulnerable = invulnerable;
-    abilities.mayfly = mayfly;
-    abilities.flying_speed = flying_speed;
-    abilities.walking_speed = walking_speed;
 }
 
 // ============================================================================

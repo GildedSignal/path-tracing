@@ -140,14 +140,6 @@ impl ReadCertificates {
         let proof = Proof { owner: self.owner.clone(), certificate: id, revision: record.revision, question: PhantomData };
         match &record.invalid { None => Answer::Yes(proof), Some(Refusal::Changed) => Answer::No(proof), Some(r) => Answer::Unknown(r.clone()) }
     }
-    /// This is the atomic read-proof consumption boundary; no source tick scan.
-    pub fn validate(&self, proof: &Proof<ReadsHold>, expected: usize, binding: &Binding) -> Result<(), Refusal> {
-        if !Arc::ptr_eq(&self.owner, &proof.owner) { return Err(Refusal::UnknownCertificate); }
-        if proof.certificate != expected { return Err(Refusal::Question); }
-        let record = self.records.get(proof.certificate).ok_or(Refusal::UnknownCertificate)?;
-        if record.invalid.is_some() || record.revision != proof.revision { return Err(record.invalid.clone().unwrap_or(Refusal::Changed)); }
-        match self.answer(proof.certificate, binding) { Answer::Yes(_) => Ok(()), Answer::Unknown(r) => Err(r), Answer::No(_) => Err(Refusal::Changed) }
-    }
     /// Publish after changing source contents. Only this cell's claims at affected
     /// recorded ticks are re-read, including previously un-evented native reads.
     pub fn edit(&mut self, codec: &Interner, position: BlockPos, ticks: (u64, u64), source: &impl Source) -> Vec<usize> {

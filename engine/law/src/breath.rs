@@ -12,8 +12,6 @@ pub const DROWN_DAMAGE: f32 = 2.0;
 pub const REFILL_PER_TICK: i32 = 4;
 /// LivingEntity.shouldTakeDrowningDamage — getAirSupply() <= -20.
 pub const DROWN_THRESHOLD: i32 = -20;
-/// LivingEntity.baseTick offset 313 — broadcastEntityEvent(this, 67), the drown hit.
-pub const DROWN_ENTITY_EVENT: u8 = 67;
 
 /// The three effects the breath gates read (MobEffectUtil).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -27,10 +27,6 @@ pub const BOAT_HURT_MULTIPLIER: f32 = 10.0;
 pub const BOAT_HURT_TIME: i32 = 10;
 /// `AbstractBoat.tick @110`: `damage` decays by `1.0f` per tick while `> 0.0f`.
 pub const BOAT_DAMAGE_DECAY: f32 = 1.0;
-/// `ServerGamePacketListenerImpl.handleMoveVehicle @248`: `d^2 - |v|^2 > 100.0`.
-pub const MOVE_VEHICLE_SPEED_BUDGET_SQR: f64 = 100.0;
-/// `ServerGamePacketListenerImpl.handleMoveVehicle @488`: residual `> 0.0625` (0.25 blocks).
-pub const MOVE_VEHICLE_WRONG_RESIDUAL_SQR: f64 = 0.0625;
 
 // EntityDimensions.makeBoundingBox for EntityTypes.OAK_BOAT (1.375 x 0.5625).
 pub fn boat_aabb(position: Vec3) -> Aabb {
@@ -52,15 +48,6 @@ pub fn seat(position: Vec3, yaw: f32, ride_height: f64, offset: f32) -> Vec3 {
     let cos = math::cos(angle) as f64;
     position.plus(Vec3::new(0.0 * cos + (offset as f64) * sin, ride_height, (offset as f64) * cos - 0.0 * sin))
         .minus(Vec3::new(0.0, 0.6, 0.0)) // Avatar.DEFAULT_VEHICLE_ATTACHMENT (0, 0.6, 0)
-}
-
-// Boat.rideHeight 0-8, Raft.rideHeight; AbstractBoat passenger slot 31-59.
-pub fn boat_ride_height(height: f32) -> f64 { (height / 3.0f32) as f64 }
-pub fn raft_ride_height(height: f32) -> f64 { (height * 0.8888889f32) as f64 }
-pub fn slot_offset(first: bool, animal: bool) -> f32 {
-    let mut offset = if first { 0.2f32 } else { -0.6f32 };
-    if animal { offset += 0.2f32; }
-    offset
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -659,28 +646,6 @@ pub fn tick_body(
         body.boat.velocity.y = (0.0 - body.boat.velocity.y) * 1.0 * 0.0;
     }
     ejected
-}
-
-/// `ServerGamePacketListenerImpl.handlePaddleBoat @0-44`: paddle state is animation/sound only.
-pub fn handle_paddle_boat(body: &mut BoatBody, left: bool, right: bool) {
-    body.paddle_left = left;
-    body.paddle_right = right;
-}
-
-/// `ServerGamePacketListenerImpl.handleMoveVehicle @215-259`: 10-block packet budget check
-/// (`server_vehicle_vel` is zero on driven boats because the server zeroes it each tick).
-pub fn move_vehicle_exceeds_speed_budget(
-    packet_pos: Vec3,
-    first_good_pos: Vec3,
-    server_vehicle_vel: Vec3,
-    is_singleplayer_owner: bool,
-) -> bool {
-    if is_singleplayer_owner {
-        return false;
-    }
-    let d_sqr = packet_pos.minus(first_good_pos).length_sqr();
-    let v_sqr = server_vehicle_vel.length_sqr();
-    d_sqr - v_sqr > MOVE_VEHICLE_SPEED_BUDGET_SQR
 }
 
 /// `AbstractBoat.interact` (`@20-35`) + `AbstractBoat.canAddPassenger` (`@0-31`).

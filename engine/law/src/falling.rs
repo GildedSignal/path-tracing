@@ -29,15 +29,6 @@ pub fn flight_tick(y: f64, vy: f64) -> (f64, f64) {
     (y, vy * AIR_DRAG)
 }
 
-/// Full 3D free-air flight tick (`applyGravity`, `move(SELF)`, `scale(AIR_DRAG)`).
-#[inline]
-pub fn flight_tick_3d(pos: Vec3, vel: Vec3) -> (Vec3, Vec3) {
-    let moved_vel = Vec3::new(vel.x, vel.y - GRAVITY, vel.z);
-    let next_pos = pos.plus(moved_vel);
-    let next_vel = moved_vel.scale(AIR_DRAG);
-    (next_pos, next_vel)
-}
-
 /// `FallingBlockEntity.tick 800-847`: timeout discard check after `time += 1` and `move`.
 #[inline]
 pub const fn discards(time: i32, block_y: i32, min_y: i32, max_y: i32) -> bool {
@@ -67,10 +58,6 @@ pub const ANVIL_MAX_DAMAGE: i32 = 40;
 pub fn stalactite_hurt(break_y: i32, tip_y: i32) -> (f32, i32) {
     ((1 + break_y - tip_y).max(6) as f32, ANVIL_MAX_DAMAGE)
 }
-
-/// `PointedDripstoneBlock.fallOn 26-45`: `fallDistance + 2.5` (f64), multiplier `2.0` (f32).
-pub const STALAGMITE_FALL_DISTANCE_OFFSET: f64 = 2.5;
-pub const STALAGMITE_DAMAGE_MULTIPLIER: f32 = 2.0;
 
 /// `FallingBlockEntity.causeFallDamage 131-204`: anvil degradation roll when `dmg > 0`.
 #[inline]

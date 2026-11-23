@@ -20,9 +20,6 @@ pub const PORTAL_COOLDOWN_PLAYER: i32 = 10;
 pub const PORTAL_COOLDOWN_VEHICLE: i32 = 10;
 /// `GameRules.PLAYERS_NETHER_PORTAL_DEFAULT_DELAY` (80; post-increment triggers on 81st inside tick).
 pub const NETHER_PORTAL_DEFAULT_DELAY_TICKS: i32 = 80;
-/// `DimensionType.coordinateScale` for Overworld (`1.0`) and Nether (`8.0`).
-pub const OVERWORLD_COORDINATE_SCALE: f64 = 1.0;
-pub const NETHER_COORDINATE_SCALE: f64 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DimensionHeightBounds {
@@ -90,17 +87,6 @@ pub const fn dimension_changing_delay(
 /// Overworld (`1.0`) -> Nether (`8.0`) is `0.125`; Nether -> Overworld is `8.0`.
 pub fn teleportation_scale(from_scale: f64, to_scale: f64) -> f64 {
     from_scale / to_scale
-}
-
-/// `NetherPortalBlock.getPortalDestination @64-101`: scaled target search centre clamped to target border.
-pub fn destination_centre(
-    entity_pos: Vec3,
-    from_scale: f64,
-    to_scale: f64,
-    border: WorldBorderBounds,
-) -> BlockPos {
-    let scale = teleportation_scale(from_scale, to_scale);
-    border.clamp_vec_to_bounds(Vec3::new(entity_pos.x * scale, entity_pos.y, entity_pos.z * scale))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

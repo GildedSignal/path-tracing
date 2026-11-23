@@ -155,44 +155,10 @@ pub const fn dispenser_neighbor_changed(
     }
 }
 
-/// `DispenseItemBehavior$3.execute` (`@16-89`, filled buckets): tries `emptyContents`
-/// at `pos.relative(FACING)`, replacing slot with `BUCKET` on success or ejecting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FilledBucketDispense {
-    Emptied,
-    Ejected,
-}
-
-#[inline]
-pub const fn filled_bucket_dispense(empty_contents_ok: bool) -> FilledBucketDispense {
-    if empty_contents_ok {
-        FilledBucketDispense::Emptied
-    } else {
-        FilledBucketDispense::Ejected
-    }
-}
-
-/// `DispenseItemBehavior$4.execute` (`@9-133`, empty bucket): picks up liquid
-/// via `BucketPickup.pickupBlock` at `pos.relative(FACING)` or ejects if none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EmptyBucketDispense<'a> {
-    PickedUp(&'a str),
-    Ejected,
-}
-
-#[inline]
-pub const fn empty_bucket_dispense(picked_up_item: Option<&str>) -> EmptyBucketDispense<'_> {
-    match picked_up_item {
-        Some(item) => EmptyBucketDispense::PickedUp(item),
-        None => EmptyBucketDispense::Ejected,
-    }
-}
-
 /// `RedstoneTorchBlock` / `RedstoneWallTorchBlock` (`2`-tick delay, `8`-in-`60` burnout, `160`-tick restart).
 pub mod torch {
     use super::TickPriority;
     use crate::neighbor::Direction;
-    use crate::BlockPos;
 
     pub const TOGGLE_DELAY: i32 = 2;
     pub const RECENT_TOGGLE_TIMER: i64 = 60;
@@ -232,21 +198,6 @@ pub mod torch {
         pub lit: bool,
         pub burnt_out: bool,
         pub restart_after: Option<(i32, TickPriority)>,
-    }
-
-    /// `RedstoneTorchBlock.neighborChanged @0-44`:
-    /// schedules `+2 NORMAL` iff `lit == has_neighbor_signal && !will_tick_this_tick`.
-    #[inline]
-    pub const fn neighbor_changed_schedule(
-        lit: bool,
-        has_neighbor_signal: bool,
-        will_tick_this_tick: bool,
-    ) -> Option<(i32, TickPriority)> {
-        if lit == has_neighbor_signal && !will_tick_this_tick {
-            Some((TOGGLE_DELAY, TickPriority::Normal))
-        } else {
-            None
-        }
     }
 
     /// `RedstoneTorchBlock.tick @0-193`:
@@ -334,18 +285,6 @@ pub mod torch {
         }
     }
 
-    /// `RedstoneTorchBlock.hasNeighborSignal @0-11`: queries `(pos.below(), Direction::Down)`.
-    #[inline]
-    pub const fn standing_input_query(pos: BlockPos) -> (BlockPos, Direction) {
-        (Direction::Down.relative(pos, 1), Direction::Down)
-    }
-
-    /// `RedstoneWallTorchBlock.hasNeighborSignal @0-27`: queries `(pos.relative(FACING.opposite()), FACING.opposite())`.
-    #[inline]
-    pub const fn wall_input_query(pos: BlockPos, torch_facing: Direction) -> (BlockPos, Direction) {
-        let dir = torch_facing.opposite();
-        (dir.relative(pos, 1), dir)
-    }
 }
 
 /// `ComparatorBlock` (extends `DiodeBlock`): `2`-tick delay, `HIGH` when facing a diode,
@@ -373,28 +312,6 @@ pub mod comparator {
         }
     }
 
-    /// `ComparatorBlock.checkTickOnNeighbor @0-117`:
-    /// schedules `+2` (`HIGH` if `should_prioritize`, else `NORMAL`) when `!will_tick_this_tick`
-    /// and either `calculated_output != stored_output` or `powered != should_turn_on`.
-    #[inline]
-    pub const fn check_tick_on_neighbor(
-        calculated_output: i32,
-        stored_output: i32,
-        powered: bool,
-        should_turn_on: bool,
-        will_tick_this_tick: bool,
-        should_prioritize: bool,
-    ) -> Option<(i32, TickPriority)> {
-        if will_tick_this_tick {
-            return None;
-        }
-        if calculated_output != stored_output || powered != should_turn_on {
-            Some((DELAY, priority(should_prioritize)))
-        } else {
-            None
-        }
-    }
-
     /// `ComparatorBlock.calculateOutputSignal @0-55`.
     #[inline]
     pub const fn calculate_output_signal(input: i32, side: i32, mode: Mode) -> i32 {
@@ -419,21 +336,6 @@ pub mod comparator {
         input == side && matches!(mode, Mode::Compare)
     }
 
-    /// `DiodeBlock.getInputSignal @20-82`:
-    /// wire `POWER` behind overrides if `< 15` and larger than `behind_signal`.
-    #[inline]
-    pub fn diode_input_signal(
-        behind_signal: i32,
-        behind_is_wire: bool,
-        behind_wire_power: i32,
-    ) -> i32 {
-        if behind_signal >= 15 {
-            return behind_signal;
-        }
-        let wire = if behind_is_wire { behind_wire_power } else { 0 };
-        behind_signal.max(wire)
-    }
-
     /// `ComparatorBlock.getInputSignal @0-168`:
     /// - direct analog block behind overrides `behind_diode_signal`;
     /// - else if `behind_diode_signal < 15 && behind_is_conductor`, reads one further back
@@ -455,82 +357,6 @@ pub mod comparator {
             }
         }
         behind_diode_signal
-    }
-
-    /// `SignalGetter.getControlInputSignal @0-144` (`diodes_only = false` for comparator sides,
-    /// `true` for repeater lock side).
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    pub const fn control_input_signal(
-        is_redstone_block: bool,
-        is_wire: bool,
-        wire_power: i32,
-        is_signal_source: bool,
-        direct_signal: i32,
-        is_diode: bool,
-        diodes_only: bool,
-    ) -> i32 {
-        if diodes_only {
-            return if is_diode { direct_signal } else { 0 };
-        }
-        if is_redstone_block {
-            return 15;
-        }
-        if is_wire {
-            return wire_power;
-        }
-        if is_signal_source {
-            return direct_signal;
-        }
-        0
-    }
-
-    /// `DiodeBlock.getAlternateSignal @32-67`: max of left/right control inputs.
-    #[inline]
-    pub fn alternate_signal(left: i32, right: i32) -> i32 {
-        left.max(right)
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct ComparatorRefresh {
-        pub stored_output: i32,
-        pub powered: bool,
-        pub set_powered_flag2: Option<bool>,
-        pub update_neighbors_in_front: bool,
-    }
-
-    /// `ComparatorBlock.refreshOutputState @0-164`:
-    /// writes `calculated_output` to the BE, and if `stored_output != calculated_output || mode != Compare`,
-    /// updates `POWERED` (with `setBlock` flag `2`) and calls `updateNeighborsInFront`.
-    #[inline]
-    pub const fn refresh_output_state(
-        stored_output: i32,
-        calculated_output: i32,
-        mode: Mode,
-        current_powered: bool,
-        should_turn_on: bool,
-    ) -> ComparatorRefresh {
-        if stored_output == calculated_output && matches!(mode, Mode::Compare) {
-            return ComparatorRefresh {
-                stored_output: calculated_output,
-                powered: current_powered,
-                set_powered_flag2: None,
-                update_neighbors_in_front: false,
-            };
-        }
-        let (powered, set_powered_flag2) = if current_powered && !should_turn_on {
-            (false, Some(false))
-        } else if !current_powered && should_turn_on {
-            (true, Some(true))
-        } else {
-            (current_powered, None)
-        };
-        ComparatorRefresh {
-            stored_output: calculated_output,
-            powered,
-            set_powered_flag2,
-            update_neighbors_in_front: true,
-        }
     }
 
     /// `Mth.lerpDiscrete(fill, 0, 15)` (`@0-27`):
@@ -581,34 +407,16 @@ pub mod copper_bulb {
 
 /// `TargetBlock`: radial hit offset -> `1..=15`, `20`/`8`-tick reset pulse.
 pub mod target {
-    use super::TickPriority;
     use crate::math;
     use crate::shapes::Axis;
 
     pub const ACTIVATION_TICKS_ARROWS: i32 = 20;
     pub const ACTIVATION_TICKS_OTHER: i32 = 8;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct TargetHit {
-        pub strength: i32,
-        /// Present when `!has_scheduled_tick`: `(output_power, reset_delay, priority)`.
-        pub set_output: Option<(i32, i32, TickPriority)>,
-    }
-
     /// `Mth.frac(double) @0-7`: `v - (double) Mth.lfloor(v)`.
     #[inline]
     fn frac(v: f64) -> f64 {
         v - (math::lfloor(v) as f64)
-    }
-
-    /// `TargetBlock.updateRedstoneOutput @10-24`: `20` for `AbstractArrow`, `8` otherwise.
-    #[inline]
-    pub const fn activation_delay(is_arrow: bool) -> i32 {
-        if is_arrow {
-            ACTIVATION_TICKS_ARROWS
-        } else {
-            ACTIVATION_TICKS_OTHER
-        }
     }
 
     /// `TargetBlock.getRedstoneStrength @0-131`:
@@ -626,45 +434,12 @@ pub mod target {
         math::ceil(15.0 * ratio).max(1)
     }
 
-    /// `TargetBlock.updateRedstoneOutput @0-63`:
-    /// always returns `strength`; sets `OUTPUT_POWER` and schedules `+20`/`+8 NORMAL` iff `!has_scheduled_tick`.
-    pub fn on_projectile_hit(
-        hit_x: f64,
-        hit_y: f64,
-        hit_z: f64,
-        face_axis: Axis,
-        is_arrow: bool,
-        has_scheduled_tick: bool,
-    ) -> TargetHit {
-        let strength = redstone_strength(hit_x, hit_y, hit_z, face_axis);
-        let set_output = if has_scheduled_tick {
-            None
-        } else {
-            Some((strength, activation_delay(is_arrow), TickPriority::Normal))
-        };
-        TargetHit {
-            strength,
-            set_output,
-        }
-    }
-
-    /// `TargetBlock.tick @0-37`: resets `OUTPUT_POWER` to `0` (`flag 3`) if non-zero.
-    #[inline]
-    pub const fn tick_reset(output_power: i32) -> Option<i32> {
-        if output_power != 0 {
-            Some(0)
-        } else {
-            None
-        }
-    }
 }
 
 /// `DaylightDetectorBlock`: effective sky brightness, sun angle `0.2` blend + cosine,
 /// inverted `15 - i`, and `20`-tick cadence.
 pub mod daylight {
     use crate::math;
-
-    pub const UPDATE_INTERVAL_TICKS: i64 = 20;
 
     /// `DaylightDetectorBlock.updateSignalStrength @0-127`:
     /// `sky_brightness` is `Level.getEffectiveSkyBrightness(pos)` (`skyLight - skyDarken`),
@@ -686,9 +461,4 @@ pub mod daylight {
         i.clamp(0, 15)
     }
 
-    /// `DaylightDetectorBlock.tickEntity @0-19`: recomputes on `game_time % 20 == 0`.
-    #[inline]
-    pub const fn ticks_this_game_tick(game_time: i64) -> bool {
-        game_time % UPDATE_INTERVAL_TICKS == 0
-    }
 }

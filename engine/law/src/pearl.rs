@@ -19,7 +19,6 @@ pub const PEARL_PITCH_OFFSET: f32 = 0.0;
 pub const PEARL_SPAWN_EYE_DROP: f64 = 0.1f32 as f64;
 pub const PEARL_COOLDOWN_SECONDS: f32 = 1.0;
 pub const PEARL_COOLDOWN_TICKS: i32 = (PEARL_COOLDOWN_SECONDS * 20.0f32) as i32;
-pub const PEARL_MAX_STACK_SIZE: i32 = 16;
 const RAD_TO_DEG_F64: f64 = (180.0f32 / (std::f64::consts::PI as f32)) as f64;
 
 pub const PEARL_GRAVITY: f64 = 0.03;

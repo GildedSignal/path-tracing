@@ -147,13 +147,6 @@ impl<T: Copy> ScheduledTick<T> {
             .then_with(|| self.sub_tick_order.cmp(&other.sub_tick_order))
     }
 
-    /// `ScheduledTick.INTRA_TICK_DRAIN_ORDER`: `(priority, subTickOrder)` ascending.
-    #[inline]
-    pub fn cmp_intra_tick_order(&self, other: &Self) -> Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| self.sub_tick_order.cmp(&other.sub_tick_order))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -91,13 +91,6 @@ pub struct TickRecord {
     pub footprint: Footprint,
 }
 
-#[derive(Clone, Debug)]
-pub struct ResourceRecord {
-    pub initial: PlayerState,
-    pub event: crate::ServerResourceEvent,
-    pub footprint: Footprint,
-}
-
 /// Cells per axis of the tape's dense window.
 const SPAN: i32 = 16;
 /// The tape's own bit for a swept cell, beside the five `Query` bits.
@@ -240,15 +233,6 @@ impl<'a, W: World> RecordingWorld<'a, W> {
         let footprint = tick_world.take();
         self.absorb(&footprint);
         TickRecord { initial, input: *input, footprint }
-    }
-
-    pub fn server_event(&self, state: &mut PlayerState, event: crate::ServerResourceEvent) -> ResourceRecord {
-        let event_world = Self::new(self.world);
-        let initial = state.clone();
-        crate::apply_server_resource_event(state, &event_world, event.clone());
-        let footprint = event_world.take();
-        self.absorb(&footprint);
-        ResourceRecord { initial, event, footprint }
     }
 
     #[inline]

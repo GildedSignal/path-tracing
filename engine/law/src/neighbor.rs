@@ -308,11 +308,6 @@ impl<B: Copy> NeighborQueue<B> {
         self.max_chained_updates
     }
 
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.count > 0 || !self.stack.is_empty() || !self.added_this_layer.is_empty()
-    }
-
     /// Enqueues a single-cell `neighborChanged` update. Returns `true` if the caller
     /// is at the root (not nested) and should invoke `run_updates`.
     pub fn neighbor_changed(&mut self, pos: BlockPos, source_block: B, moved_by_piston: bool) -> bool {

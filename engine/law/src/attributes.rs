@@ -83,10 +83,6 @@ impl PlayerState {
         self.weaving = active;
     }
 
-    pub fn set_resistance(&mut self, amplifier: Option<u8>) {
-        self.resistance = amplifier;
-    }
-
     pub fn set_movement_enchantments(&mut self, soul_speed: u8, depth_strider: u8, swift_sneak: u8) {
         let enchantments = MovementEnchantments { soul_speed, depth_strider, swift_sneak };
         self.water_movement_efficiency = enchantments.depth_strider_water_efficiency();
@@ -134,14 +130,6 @@ impl PlayerState {
         MovementEnchantments { soul_speed: level, ..Default::default() }.soul_speed_modifier()
     }
 
-    pub fn depth_strider_efficiency_for(level: u8) -> f32 {
-        MovementEnchantments { depth_strider: level, ..Default::default() }.depth_strider_water_efficiency()
-    }
-
-    pub fn swift_sneak_speed_for(level: u8) -> f32 {
-        MovementEnchantments { swift_sneak: level, ..Default::default() }.swift_sneak_sneaking_speed()
-    }
-
     /// `protection.json`: `add` linear (1.0, 1.0) EPF per piece.
     pub fn protection_epf_for(level: u8) -> f32 {
         if level == 0 { 0.0 } else { linear_level_value(1.0, 1.0, level) }
@@ -150,10 +138,6 @@ impl PlayerState {
     /// `feather_falling.json`: `add` linear (3.0, 3.0) EPF on `is_fall && !bypasses_invulnerability`.
     pub fn feather_falling_epf_for(level: u8) -> f32 {
         if level == 0 { 0.0 } else { linear_level_value(3.0, 3.0, level) }
-    }
-
-    pub const fn soul_speed_wear_chance() -> f32 {
-        MovementEnchantments::SOUL_SPEED_WEAR_CHANCE
     }
 
     /// `LivingEntity.getJumpBoostPower()`: `0.1f * ((float)amplifier + 1.0f)` when active, else `0.0f`.
@@ -298,6 +282,4 @@ impl MovementEnchantments {
         !riding && !flying && (on_soul_speed_block || active && !on_ground)
     }
 
-    /// Boot wear per qualifying location change: flat 4% chance (`random_chance`), level-independent.
-    pub const SOUL_SPEED_WEAR_CHANCE: f32 = 0.04;
 }

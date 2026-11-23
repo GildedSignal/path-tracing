@@ -1,5 +1,5 @@
 //! Derived leaf presence only: no terrain copy and no section-wide epoch.
-use super::{ClassId, LegsRole};
+use super::LegsRole;
 
 /// Mojang's 16^3 section addresses, packed in native 64-bit words.
 pub const WORDS: usize = 16 * 16 * 16 / 64;
@@ -36,21 +36,6 @@ pub struct SectionRoles {
     pub roles: [Plane; 4],
 }
 impl SectionRoles {
-    /// Build derived role planes from the source's fine-ID projection. Source
-    /// storage stays outside; this retains only presence/coverage bits.
-    pub fn from_classes(expected: [ClassId; 4], mut read: impl FnMut(usize) -> Option<([ClassId; 4], bool)>) -> Self {
-        let mut complete = [0; WORDS];
-        let mut loaded = [0; WORDS];
-        let mut roles = [[0; WORDS]; 4];
-        for cell in 0..WORDS * 64 {
-            let Some((classes, is_loaded)) = read(cell) else { continue };
-            let (word, bit) = (cell / 64, 1u64 << (cell % 64));
-            complete[word] |= bit;
-            if is_loaded { loaded[word] |= bit; }
-            for role in 0..4 { if classes[role] != expected[role] { roles[role][word] |= bit; } }
-        }
-        Self { complete: Plane::from_words(complete), loaded: Plane::from_words(loaded), roles: roles.map(Plane::from_words) }
-    }
     /// Query requested words first; locate exception cells only in returned words.
     pub fn query(&self, role: LegsRole, requested: &[(usize, u64)]) -> Result<Vec<(usize, u64)>, Missing> {
         let mut exceptions = Vec::new();

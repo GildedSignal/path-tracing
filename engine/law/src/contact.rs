@@ -3,11 +3,6 @@
 use crate::{Aabb,Axis,Vec3};
 pub const CONTACT_ZERO:f64=1.0e-7;
 pub const CONTACT_HIT:f64=1.0e-5f32 as f64;
-pub const CONTACT_CONSTANTS:&[(&str,f64,&str)]=&[
-    ("contact remainder / overlap",CONTACT_ZERO,"shapes.rs:ShapeView::collide; movement.rs:collide_in_world"),
-    ("horizontal hit",CONTACT_HIT,"math.rs:equal"),
-    ("position update squared gate",1.0e-7,"movement.rs:move_player"),
-];
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Outcome {Free,Clamp {plane:f64},Hold {plane:Option<f64>,remainder:f64}}
 impl Outcome {

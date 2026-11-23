@@ -1,6 +1,6 @@
 //! Interaction reach, eye ray / clip, and synchronous redstone interaction laws (26.2).
 
-use crate::{blocks, elytra, world, Aabb, Axis, BlockPos, FluidKind, Vec3, VoxelShape};
+use crate::{blocks, elytra, world, Aabb, Axis, BlockPos, Vec3, VoxelShape};
 
 /// `Player.DEFAULT_BLOCK_INTERACTION_RANGE` (`Attributes.BLOCK_INTERACTION_RANGE` base).
 pub const DEFAULT_BLOCK_INTERACTION_RANGE: f64 = 4.5;
@@ -59,10 +59,6 @@ impl Direction {
 
     pub const fn is_horizontal(self) -> bool {
         matches!(self, Self::North | Self::South | Self::West | Self::East)
-    }
-
-    pub const fn is_vertical(self) -> bool {
-        matches!(self, Self::Down | Self::Up)
     }
 
     pub const fn clock_wise(self) -> Self {
@@ -237,17 +233,6 @@ pub fn is_within_block_interaction_range(
         (pos[2] + 1) as f64,
     );
     aabb_distance_to_sqr(box_pos, eye_pos) < d * d
-}
-
-/// `Player.isWithinEntityInteractionRange(AABB, double)` (`@0-34`).
-pub fn is_within_entity_interaction_range(
-    eye_pos: Vec3,
-    entity_interaction_range: f64,
-    aabb: Aabb,
-    tolerance: f64,
-) -> bool {
-    let d = entity_interaction_range + tolerance;
-    aabb_distance_to_sqr(aabb, eye_pos) < d * d
 }
 
 /// `Entity.getViewVector` / `Entity.calculateViewVector` (`@0-67`).
@@ -510,42 +495,6 @@ pub fn clip_blocks<'a>(
             location: to,
             pos: world::block_pos(to),
         }
-    })
-}
-
-/// `Entity.pick(double range, float partial, boolean fluids)` (`@0-78`) over a `World`.
-pub fn entity_pick(
-    world: &impl crate::World,
-    prev_pos: Vec3,
-    pos: Vec3,
-    eye_height: f32,
-    yaw: f32,
-    pitch: f32,
-    range: f64,
-    partial: f32,
-    fluids: bool,
-) -> BlockHitResult {
-    let origin = get_eye_position_lerp(prev_pos, pos, eye_height, partial);
-    let view = calculate_view_vector(yaw, pitch);
-    let end = Vec3::new(
-        origin.x + view.x * range,
-        origin.y + view.y * range,
-        origin.z + view.z * range,
-    );
-    let fluid_mode = if fluids {
-        ClipFluidMode::Any
-    } else {
-        ClipFluidMode::None
-    };
-    clip_blocks(origin, end, fluid_mode, |cell| {
-        let block = world.block(cell);
-        let fh = if block.fluid.kind != FluidKind::Empty {
-            block.fluid.surface_height(world, cell)
-        } else {
-            0.0
-        };
-        let is_source = block.fluid.raw_amount == Some(8);
-        (&block.shape, None, fh, is_source)
     })
 }
 
@@ -938,6 +887,7 @@ pub fn lever_pull(
 #[cfg(test)]
 mod part1_tests {
     use super::*;
+    use crate::FluidKind;
     use crate::world::{Block, BoxWorld, Fluid, World};
 
     #[test]

@@ -61,13 +61,6 @@ pub enum PatternError {
     UnknownQuery,
 }
 
-/// A whole model's content seen in `frame`, or None when the frame cannot carry it
-/// exactly. Equal content gives an equal digest whatever the block's name.
-pub fn model_digest(block: &Block, frame: Frame) -> Result<Option<u128>, PatternError> {
-    let mut bytes = Vec::new();
-    Ok(encode(&mut bytes, block, SHAPES | HOOKS, frame)?.then(|| fnv(&bytes)))
-}
-
 /// One cell's content under the queries in `mask`: what those queries return, nothing else.
 pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<crate::codec::Canonical, PatternError> {
     crate::codec::cell(block, loaded, mask)
@@ -76,11 +69,6 @@ pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<crate::codec
 /// Canonical bytes for a query; equality must compare these, not the digest alone.
 pub fn cell_bytes(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
     Ok(crate::codec::cell(block, loaded, mask)?.bytes().to_vec())
-}
-
-/// Compatibility presence API: exact bytes, never a bare 128-bit equality witness.
-pub fn law_digest(block: &Block) -> Result<crate::codec::Canonical, PatternError> {
-    crate::codec::legs_presence(block)
 }
 
 pub(crate) fn encode_cell(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
@@ -337,11 +325,6 @@ fn binade([lo, hi]: [i32; 2]) -> Option<(bool, u32)> {
 /// An integer shift is bit-exact while every coordinate keeps its binade.
 pub fn in_scope(scope: [[i32; 2]; 3], shift: BlockPos) -> bool {
     (0..3).all(|a| shift[a] == 0 || binade(scope[a]).is_some_and(|b| binade([scope[a][0] + shift[a], scope[a][1] + shift[a]]) == Some(b)))
-}
-
-/// FNV-1a 128 with explicit constants, independent of std's Hash.
-fn fnv(bytes: &[u8]) -> u128 {
-    crate::codec::digest(bytes)
 }
 
 fn f64s(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f64>) { values.into_iter().for_each(|v| bytes.extend(v.to_bits().to_le_bytes())); }

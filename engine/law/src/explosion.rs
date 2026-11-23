@@ -11,17 +11,12 @@ use crate::{math, Aabb, Vec3};
 
 pub const MIN_EXPLOSION_RADIUS: f32 = 1.0e-5;
 pub const WIND_CHARGE_SHOOT_POWER: f32 = 1.5;
-pub const WIND_CHARGE_INACCURACY: f32 = 1.0;
-pub const WIND_CHARGE_COOLDOWN_SECONDS: f32 = 0.5;
-pub const WIND_CHARGE_COOLDOWN_TICKS: i32 = 10;
-pub const WIND_CHARGE_NO_DEFLECT_TICKS: i32 = 5;
 pub const WIND_CHARGE_RADIUS: f32 = 1.2;
 pub const WIND_CHARGE_KB_MULTIPLIER: f32 = 1.22;
 pub const WIND_CHARGE_WIDTH: f32 = 0.3125;
 pub const WIND_CHARGE_HEIGHT: f32 = 0.3125;
 pub const WIND_CHARGE_AABB_Y_OFFSET: f64 = 0.15f32 as f64;
 pub const WIND_CHARGE_HIT_BLOCK_OFFSET: f64 = 0.25;
-pub const WIND_CHARGE_DIRECT_HIT_DAMAGE: f32 = 1.0;
 pub const WIND_CHARGE_MAX_Y_MARGIN: i32 = 30;
 pub const PROJECTILE_SPREAD_SCALE: f64 = 0.0172275;
 
@@ -44,24 +39,6 @@ impl ExplosionProfile {
         }
     }
 
-    pub const fn creeper(charged: bool) -> Self {
-        Self {
-            radius: if charged { 6.0 } else { 3.0 },
-            damages_entities: true,
-            knockback_multiplier: 1.0,
-            zero_kb_for_flying_player: false,
-        }
-    }
-
-    pub const fn end_crystal() -> Self {
-        Self {
-            radius: 6.0,
-            damages_entities: true,
-            knockback_multiplier: 1.0,
-            zero_kb_for_flying_player: false,
-        }
-    }
-
     /// `WindCharge.EXPLOSION_DAMAGE_CALCULATOR`: `SimpleExplosionDamageCalculator(true, false, Optional.of(1.22f), ...)`, `RADIUS = 1.2f`.
     pub const fn wind_charge() -> Self {
         Self {
@@ -71,23 +48,6 @@ impl ExplosionProfile {
             zero_kb_for_flying_player: true,
         }
     }
-}
-
-/// `ServerExplosion.hurtEntities @11-149`: `Mth.floor(center ± (radius * 2) ± 1)`.
-#[inline]
-pub fn explosion_search_aabb(center: Vec3, radius: f32) -> Option<Aabb> {
-    if radius < MIN_EXPLOSION_RADIUS {
-        return None;
-    }
-    let diameter = (radius * 2.0f32) as f64;
-    Some(Aabb::new(
-        math::floor(center.x - diameter - 1.0) as f64,
-        math::floor(center.y - diameter - 1.0) as f64,
-        math::floor(center.z - diameter - 1.0) as f64,
-        math::floor(center.x + diameter + 1.0) as f64,
-        math::floor(center.y + diameter + 1.0) as f64,
-        math::floor(center.z + diameter + 1.0) as f64,
-    ))
 }
 
 /// `ServerExplosion.getSeenPercent(Vec3 center, Entity) @0-294`:

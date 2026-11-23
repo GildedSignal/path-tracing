@@ -120,9 +120,6 @@ state_fields!(
     soul_speed_active,
 );
 impl StateField {
-    pub fn is_resource(self) -> bool {
-        matches!(self, Self::health | Self::food_level | Self::saturation | Self::exhaustion | Self::food_tick_timer)
-    }
 }
 /// Predicates whose rounded evaluation is not monotone in the free spatial
 /// coordinate. The set compiler carries both outcomes at a pin instead of

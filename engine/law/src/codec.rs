@@ -16,7 +16,6 @@ pub const SCHEMA: &[u8] = &crate::LAW_HASH;
 pub struct Canonical(pub(crate) Box<[u8]>);
 impl Canonical {
     pub fn bytes(&self) -> &[u8] { &self.0 }
-    pub fn fingerprint(&self) -> u128 { digest(&self.0) }
 }
 
 pub fn state_bytes(words: &[u64]) -> Vec<u8> {
@@ -210,7 +209,6 @@ impl Interner {
         let id=StateClassId(u32::try_from(self.states.len()).ok()?);self.states.insert(bytes.to_vec(),id);Some(id)
     }
     pub fn find_state(&self,bytes:&[u8])->Option<StateClassId> {self.states.get(bytes).copied()}
-    pub fn state_bytes_used(&self)->usize {self.states.keys().map(Vec::len).sum()}
     pub fn find(&self, bytes: &[u8]) -> Option<ClassId> { self.find_in((self.hash)(bytes), bytes) }
     fn find_in(&self, hash: u128, bytes: &[u8]) -> Option<ClassId> {
         self.buckets.get(&hash)?.iter().copied().find(|id| &*self.classes[id.0 as usize] == bytes)
@@ -231,18 +229,6 @@ impl Interner {
     }
     pub fn unknown_verb(&mut self, verb: UnportedVerb, registry_hash: &[u8], fine_state: &[u8], kit: &[u8]) -> Option<Projection> {
         self.intern(&unknown_verb_bytes(verb, registry_hash, fine_state, kit)).map(Projection::Unknown)
-    }
-    /// Only the already-ported progress query is Known; this does not answer the
-    /// unported harvest/drop/restoration questions and cannot execute Break.
-    pub fn mining_progress(&mut self, sample: crate::mining::MiningSample, kit: &[u8]) -> Option<Projection> {
-        let mut bytes = SCHEMA.to_vec();
-        bytes.push(b'm');
-        bytes.extend((kit.len() as u64).to_le_bytes()); bytes.extend(kit);
-        bytes.extend(sample.destroy_speed.to_bits().to_le_bytes());
-        bytes.extend(sample.hardness.to_bits().to_le_bytes());
-        bytes.push(sample.correct_tool as u8);
-        bytes.extend(sample.progress().to_bits().to_le_bytes());
-        self.intern(&bytes).map(Projection::Known)
     }
     pub fn identity(&self)->&std::sync::Arc<()> {&self.owner}
     pub fn bare_legs_label(&mut self,classes:[ClassId;4])->Option<LabelId> {

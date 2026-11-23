@@ -18,7 +18,6 @@
 
 use crate::math;
 use crate::shapes::Vec3;
-use crate::Refusal;
 
 /// `PlayerRideableJumping.getPlayerJumpPendingScale(int)` — 26.2 default method.
 /// `charge >= 90 -> 1.0f`, else `0.4f + (0.4f * charge) / 90.0f`.
@@ -37,16 +36,6 @@ pub fn boost_factor(boosting: bool, boost_time: i32, boost_time_total: i32) -> f
         1.0f32 + 1.15f32 * math::sin((t * 3.1415927f32) as f64)
     } else {
         1.0
-    }
-}
-
-/// `ItemBasedSteering.tickBoost()` — `boosting` ends when `boostTime` exceeds the total.
-pub fn tick_boost(boosting: &mut bool, boost_time: &mut i32, boost_time_total: i32) {
-    if *boosting {
-        *boost_time += 1;
-        if *boost_time > boost_time_total {
-            *boosting = false;
-        }
     }
 }
 
@@ -159,25 +148,6 @@ impl MountState {
     }
 }
 
-/// `AbstractHorse.onPlayerJump(int)` — server entry for the rider's jump input.
-/// A negative charge clamps to 0; a positive one sets `allowStandSliding` and
-/// stands the horse; the pending scale then comes from the charge.
-pub fn on_player_jump(m: &mut MountState, charge: i32) {
-    let mut charge = charge;
-    if charge >= 0 {
-        m.allow_stand_sliding = true;
-        m.is_standing = true; // standIfPossible
-    } else {
-        charge = 0;
-    }
-    if let MountKind::Camel = m.kind {
-        if m.dash_cooldown > 0 || !m.on_ground {
-            return;
-        }
-    }
-    m.player_jump_pending_scale = player_jump_pending_scale(charge);
-}
-
 /// `AbstractHorse.getRiddenInput(Player, Vec3)` — offset 0.
 /// Standing horses with no pending jump refuse to move; `xxa * 0.5f`,
 /// `zza <= 0.0f -> zza * 0.25f` (only a strictly positive forward escapes).
@@ -191,11 +161,6 @@ pub fn ridden_input_horse(m: &MountState, xxa: f32, zza: f32) -> Vec3 {
         z *= 0.25f32;
     }
     Vec3::new(x as f64, 0.0, z as f64)
-}
-
-/// `Pig.getRiddenInput` / `Strider.getRiddenInput` — constant forward.
-pub fn ridden_input_forward() -> Vec3 {
-    Vec3::new(0.0, 0.0, 1.0)
 }
 
 /// `HappyGhast.getRiddenInput(Player, Vec3)` — pitch-driven flight input scaled
@@ -240,31 +205,6 @@ pub fn ridden_speed(m: &MountState, player_sprinting: bool, suffocating: bool) -
     }
 }
 
-/// `AbstractHorse.tickRidden(Player, Vec3)` — offset 0. The rider's look drives the
-/// mount's rotation (`xRot * 0.5f`), then the pending jump executes on ground
-/// while the rider is *not* holding jump, and the scale is cleared afterwards.
-/// Returns the rotation the mount took and whether a jump fired.
-pub fn tick_ridden_horse(m: &mut MountState, player_yaw: f32, player_pitch: f32, input_z: f64) -> (f32, f32, bool) {
-    // getRiddenRotation: Vec2(player.getXRot() * 0.5f, player.getYRot()); setRot(y, x)
-    m.yaw = player_yaw;
-    let pitch = player_pitch * 0.5f32;
-    if input_z <= 0.0 {
-        m.gallop_sound_counter = 0;
-    }
-    let mut jumped = false;
-    if m.on_ground && m.player_jump_pending_scale > 0.0 && !m.is_jumping {
-        let scale = m.player_jump_pending_scale;
-        if let MountKind::Camel = m.kind {
-            execute_riders_jump_camel(m, scale);
-        } else {
-            execute_riders_jump_horse(m, scale, input_z);
-        }
-        jumped = true;
-    }
-    m.player_jump_pending_scale = 0.0;
-    (m.yaw, pitch, jumped)
-}
-
 /// `AbstractHorse.executeRidersJump(float, Vec3)` — offset 0.
 /// `getJumpPower(scale)` = `JUMP_STRENGTH * scale * blockJumpFactor + jumpBoost`
 /// (LivingEntity.getJumpPower(float): `(attr d2f * scale) * 1.0f + 0.0f` without
@@ -303,15 +243,6 @@ pub fn execute_riders_jump_camel(m: &mut MountState, scale: f32) {
     m.dash_cooldown = 55;
 }
 
-/// `Pig.tickRidden` / `Strider.tickRidden` rotation sync: `setRot(player.getYRot(),
-/// player.getXRot() * 0.5f)` then `yHeadRot = yBodyRot = yRotO = getYRot()`, and
-/// `steering.tickBoost()`.
-pub fn tick_ridden_steered(m: &mut MountState, player_yaw: f32, player_pitch: f32) {
-    m.yaw = player_yaw;
-    let _ = player_pitch * 0.5f32;
-    tick_boost(&mut m.boosting, &mut m.boost_time, m.boost_time_total);
-}
-
 /// `HappyGhast.tickRidden` — the mount's yaw chases the rider's by
 /// `0.08 * wrapDegrees(target - yaw)`.
 pub fn tick_ridden_happy_ghast(m: &mut MountState, player_yaw: f32, player_pitch: f32) {
@@ -320,45 +251,3 @@ pub fn tick_ridden_happy_ghast(m: &mut MountState, player_yaw: f32, player_pitch
     let _ = player_pitch * 0.5f32;
 }
 
-/// `LivingEntity.calculateFallDamage(double, float)` for a mount
-/// (movement.rs holds the player version; same op order):
-/// `floor((distance + 1.0E-6 - safeFall) * multiplier * fallMultiplier)`.
-pub fn mount_fall_damage(m: &MountState, distance: f64, multiplier: f32) -> i32 {
-    math::floor((distance + 1.0e-6 - m.safe_fall_distance) * multiplier as f64 * m.fall_damage_multiplier)
-}
-
-/// `AbstractHorse.causeFallDamage` + `Entity.propagateFallToPassengers`: the
-/// mount damages itself, then every passenger sees the *same* raw fall distance
-/// and multiplier (the rider's own `calculateFallDamage` applies the player's
-/// safe-fall distance). Returns `(mount_damage, rider_damage)`.
-pub fn fall_damage_split(m: &MountState, fall_distance: f64, multiplier: f32, rider_safe_fall: f64, rider_fall_multiplier: f64) -> (i32, i32) {
-    let mount = mount_fall_damage(m, fall_distance, multiplier);
-    let rider = math::floor(
-        (fall_distance + 1.0e-6 - rider_safe_fall) * multiplier as f64 * rider_fall_multiplier,
-    );
-    (mount, rider)
-}
-
-/// One mounted tick: the `travelRidden` order over the mount state, producing
-/// the input vector and speed that `movement.rs`'s `travel` consumes (the bot's
-/// engine applies it with the mount's `STEP_HEIGHT` of 1.0). Refuses what this
-/// port does not model yet.
-pub fn travel_ridden(m: &mut MountState, xxa: f32, zza: f32, player_yaw: f32, player_pitch: f32) -> Result<(Vec3, f32), Refusal> {
-    if let MountKind::HappyGhast = m.kind {
-        return Err(Refusal("HappyGhast travel: flying drag law not ported".to_string()));
-    }
-    let input = match m.kind {
-        MountKind::Horse | MountKind::Camel => ridden_input_horse(m, xxa, zza),
-        MountKind::Pig | MountKind::Strider => ridden_input_forward(),
-        MountKind::HappyGhast => unreachable!(),
-    };
-    match m.kind {
-        MountKind::Horse | MountKind::Camel => {
-            tick_ridden_horse(m, player_yaw, player_pitch, input.z);
-        }
-        MountKind::Pig | MountKind::Strider => tick_ridden_steered(m, player_yaw, player_pitch),
-        MountKind::HappyGhast => unreachable!(),
-    }
-    let speed = ridden_speed(m, false, false);
-    Ok((input, speed))
-}

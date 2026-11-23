@@ -277,17 +277,6 @@ pub const fn is_solid_collider(kind: ContactKind) -> bool {
     )
 }
 
-/// `EntityGetter.getEntityCollisions` predicate `NO_SPECTATORS.and(mover::canCollideWith)`
-/// (`AbstractBoat`/`AbstractMinecart` use `canVehicleCollide`).
-#[inline]
-pub fn can_collide_with(mover: &ContactEntity, other: &ContactEntity, same_vehicle: bool) -> bool {
-    if same_vehicle || other.spectator {
-        return false;
-    }
-    can_be_collided_with(other)
-        || (matches!(mover.kind, ContactKind::Boat | ContactKind::Minecart) && is_pushable(other))
-}
-
 /// `LivingEntity.pushEntities @0-191` (`aiStep @817`, after `travel @617`).
 ///
 /// `neighbors` must be collected using the mover's **plain** bounding box (no inflate)

@@ -308,11 +308,6 @@ impl ShulkerBoxEntityState {
         self.progress_old + partial_tick * (self.progress - self.progress_old)
     }
 
-    #[inline]
-    pub fn is_closed(&self) -> bool {
-        self.status == ShulkerAnimationStatus::Closed
-    }
-
     /// `ShulkerBoxBlockEntity.getBoundingBox(BlockState)` (`@192-213`):
     /// `Shulker.getProgressAabb(1.0f, facing, 0.5f * getProgress(1.0f), Vec3(0.5, 0, 0.5))`.
     pub fn local_bounding_box(&self, facing: Direction) -> Aabb {
@@ -496,18 +491,6 @@ pub const fn shulker_break_outcome(
 // 3. Non-player and world block hooks (13 refused census classes -> none / world)
 // ============================================================================
 
-/// How a block hook affects a walking/falling `Player` in 26.2 (`ModelTable.HOOKS`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PlayerHookClass {
-    /// Never mutates any player state (`CropBlock`, `PitcherCropBlock`, `EyeblossomBlock`,
-    /// `LilyPadBlock`, `FrogspawnBlock`, `HopperBlock`).
-    None,
-    /// Mutates only world / block-entity / non-player state (`DetectorRailBlock`,
-    /// `SculkSensorBlock`, `CalibratedSculkSensorBlock`, `SculkShriekerBlock`,
-    /// `RedStoneOreBlock`, `TurtleEggBlock`), plus standard block-agnostic `Block.fallOn`.
-    WorldOnly,
-}
-
 /// Entity types discriminated by the 12 hook classes (players never trigger any non-world hook).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HookEntityKind {
@@ -594,42 +577,12 @@ impl NonPlayerHookBlock {
         }
     }
 
-    #[inline]
-    pub const fn entity_inside_player_class(self) -> PlayerHookClass {
-        match self {
-            Self::DetectorRail { .. } => PlayerHookClass::WorldOnly,
-            _ => PlayerHookClass::None,
-        }
-    }
-
-    #[inline]
-    pub const fn step_on_player_class(self) -> PlayerHookClass {
-        match self {
-            Self::SculkSensor { .. }
-            | Self::SculkShrieker { .. }
-            | Self::RedStoneOre { .. }
-            | Self::TurtleEgg { .. } => PlayerHookClass::WorldOnly,
-            _ => PlayerHookClass::None,
-        }
-    }
-
-    #[inline]
-    pub const fn fall_on_player_class(self) -> PlayerHookClass {
-        match self {
-            Self::TurtleEgg { .. } => PlayerHookClass::WorldOnly,
-            _ => PlayerHookClass::None,
-        }
-    }
 }
 
 /// `DetectorRailBlock.PRESSED_CHECK_PERIOD` (`20` ticks).
 pub const DETECTOR_RAIL_CHECK_PERIOD: u32 = 20;
 /// `SculkShriekerBlockEntity.shriek` tick delay (`90` ticks).
 pub const SCULK_SHRIEKER_DELAY: u32 = 90;
-/// `TurtleEggBlock.stepOn` trample denominator (`nextInt(100) == 0`).
-pub const TURTLE_EGG_STEP_CHANCE: u32 = 100;
-/// `TurtleEggBlock.fallOn` trample denominator (`nextInt(3) == 0`).
-pub const TURTLE_EGG_FALL_CHANCE: u32 = 3;
 
 /// `Hopper.SUCK_AABB` (`Block.column(16, 11, 32)`) moved to block `pos`:
 /// `[x, y + 0.6875, z, x + 1.0, y + 2.0, z + 1.0]`.
@@ -935,40 +888,6 @@ pub fn evaluate_step_on(
     }
 }
 
-/// Evaluates `TurtleEggBlock.fallOn`: ignores `stepping_carefully`, guards against `Zombie`,
-/// tramples with `1/3` chance, and leaves fall damage to standard `Block.fallOn`.
-pub fn evaluate_fall_on(
-    block: NonPlayerHookBlock,
-    entity: HookEntityKind,
-    ctx: HookContext,
-) -> HookEvaluation {
-    let action = match block {
-        NonPlayerHookBlock::TurtleEgg { eggs, .. } => {
-            if entity != HookEntityKind::Zombie
-                && ctx.is_server_level
-                && turtle_egg_can_destroy(entity, ctx.mob_griefing)
-                && ctx.random_hit_chance
-            {
-                if eggs <= 1 {
-                    WorldHookAction::DestroyBlock { drop: false }
-                } else {
-                    WorldHookAction::TurtleEggDecrease {
-                        remaining_eggs: eggs - 1,
-                        flags: update_flags::CLIENTS,
-                    }
-                }
-            } else {
-                WorldHookAction::NoOp
-            }
-        }
-        _ => WorldHookAction::NoOp,
-    };
-    HookEvaluation {
-        player_mutated: false,
-        action,
-    }
-}
-
 // ============================================================================
 // 4. Cauldron, BigDripleaf, WitherRose, and Portal block hooks (Mojang 26.2)
 // ============================================================================
@@ -1162,26 +1081,6 @@ pub const fn end_portal_inside_aabb() -> Aabb {
 
 /// `Portal.getPortalTransitionTime()` default (`0` ticks for `EndPortalBlock` and `EndGatewayBlock`).
 pub const END_PORTAL_TRANSITION_TICKS: i32 = 0;
-
-/// `EndPortalBlock.entityInside` (`@0-64`): `canUsePortal(false)` & not showing End credits.
-#[inline]
-pub const fn end_portal_triggers(
-    can_use_portal: bool,
-    is_server_player_in_end_unseen_credits: bool,
-) -> bool {
-    can_use_portal && !is_server_player_in_end_unseen_credits
-}
-
-/// `EndGatewayBlock.entityInside` (`@0-61`).
-#[inline]
-pub const fn end_gateway_triggers(
-    can_use_portal: bool,
-    is_server_level: bool,
-    has_block_entity: bool,
-    is_cooling_down: bool,
-) -> bool {
-    can_use_portal && is_server_level && has_block_entity && !is_cooling_down
-}
 
 /// `WitherRoseBlock.getBeeInteractionEffect` (`MobEffects.WITHER`, `40` ticks, amplifier `0`).
 pub const WITHER_ROSE_EFFECT_DURATION_TICKS: i32 = 40;

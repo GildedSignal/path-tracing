@@ -309,12 +309,6 @@ fn legacy_fluid_source_cell(world: &impl BucketWorld, content: BucketContent) ->
     }
 }
 
-/// `SimpleWaterloggedBlock.canPlaceLiquid` (`@0-13`).
-#[inline]
-pub const fn simple_waterlogged_can_place_liquid(content: BucketContent) -> bool {
-    matches!(content, BucketContent::Water)
-}
-
 /// `SimpleWaterloggedBlock.placeLiquid` (`@0-83`).
 pub fn simple_waterlogged_place_liquid(
     world: &mut impl BucketWorld,

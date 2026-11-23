@@ -514,8 +514,6 @@ pub struct CritGate {
     pub sprinting: bool,
 }
 
-pub const STRONG_THRESHOLD: f32 = 0.9;
-
 pub fn is_critical(g: &CritGate) -> bool {
     g.fall_distance > 0.0
         && !g.on_ground
@@ -529,17 +527,6 @@ pub fn is_critical(g: &CritGate) -> bool {
 
 // ------------------------------------------------------------ sweep gate ----
 
-/// `Player.isSweepAttack(boolean strong, boolean crit, boolean sprintKB)`
-/// offsets 0-63: needs a sword-tag main hand, and the attacker's known
-/// horizontal movement squared strictly under `square((double)getSpeed() * 2.5)`
-/// (`getSpeed` is the float `speed` field; `getKnownMovement` is
-/// `getDeltaMovement()` for a walking player, `Entity.getKnownMovement`
-/// offsets 0-33). `d == e^2` does not sweep (dcmpg/ifge at 46-47).
-pub const SWEEP_INFLATE: (f64, f64, f64) = (1.0, 0.25, 1.0); // AABB.inflate of the target box
-pub const SWEEP_MAX_ATTACKER_DISTANCE_SQR: f64 = 9.0;        // attacker.distanceToSqr(victim) < 9.0
-pub const SWEEP_KNOCKBACK: f64 = 0.4f32 as f64;              // ldc2_w #1695 = 0.4f widened
-pub const SWEEP_DAMAGE_BASE: f32 = 1.0;
-
 pub fn is_sweep(strong: bool, crit: bool, sprint_knockback: bool, on_ground: bool,
                 known_horizontal_sqr: f64, speed: f32, main_hand_is_sword: bool) -> bool {
     strong && !crit && !sprint_knockback && on_ground && {
@@ -548,23 +535,9 @@ pub fn is_sweep(strong: bool, crit: bool, sprint_knockback: bool, on_ground: boo
     } && main_hand_is_sword
 }
 
-/// `Player.doSweepAttack` offsets 32-44: `1.0f + SWEEPING_DAMAGE_RATIO * damage`
-/// where `damage` is the post-bonus, post-crit base damage (before the
-/// enchant add and before the attack-strength scale, which multiply the
-/// per-victim hurt at offsets 163-175).
-pub fn sweep_damage(sweeping_damage_ratio: f32, base_damage: f32) -> f32 {
-    SWEEP_DAMAGE_BASE + sweeping_damage_ratio * base_damage
-}
-
 // ------------------------------------------------------------ mace smash ----
 
 pub const SMASH_FALL_THRESHOLD: f64 = 1.5;   // MaceItem.SMASH_ATTACK_FALL_THRESHOLD
-pub const SMASH_HEAVY_FALL: f64 = 5.0;       // heavy sound; smash knockback power doubled
-pub const SMASH_KNOCKBACK_RADIUS: f64 = 3.5; // AABB inflate of the target box
-pub const SMASH_KNOCKBACK_POWER: f64 = 0.7f32 as f64;   // 0.699999988079071
-pub const SMASH_UPWARD_PUSH: f64 = 0.7f32 as f64;       // y push of the smash knockback
-pub const SMASH_Y_VELOCITY_AFTER_HIT: f64 = 0.01f32 as f64; // hurtEnemy offsets 16-30
-pub const IMPULSE_GRACE_TICKS: i32 = 40;     // setIgnoreFallDamageFromCurrentImpulse -> bipush 40
 
 /// `MaceItem.canSmashAttack`: `fallDistance > 1.5 && !isFallFlying()`
 /// (dcmpl/ifle, so NaN does not smash).
@@ -608,18 +581,6 @@ pub fn mace_attack_bonus(fall_distance: f64, fall_flying: bool, density_level: i
     let bonus = smash_bonus(fall_distance)
         + (density_per_fallen_block(density_level) as f64) * fall_distance;
     bonus as f32
-}
-
-/// `MaceItem.getKnockbackPower`: `(3.5 - |victim - attacker|) * 0.7 *
-/// (attacker.fallDistance > 5.0 ? 2 : 1) * (1 - victim knockback resistance)`.
-/// `lambda$knockback$0` pushes `push(dir.x, 0.7, dir.z)` where
-/// `dir = (victim - attacker).normalize() * power`, only when `power > 0`.
-pub fn smash_knockback_power(victim_distance: f64, attacker_fall: f64,
-                             victim_knockback_resistance: f64) -> f64 {
-    (SMASH_KNOCKBACK_RADIUS - victim_distance)
-        * SMASH_KNOCKBACK_POWER
-        * if attacker_fall > SMASH_HEAVY_FALL { 2.0 } else { 1.0 }
-        * (1.0 - victim_knockback_resistance)
 }
 
 /// Wind Burst from `data/minecraft/enchantment/wind_burst.json`: a
