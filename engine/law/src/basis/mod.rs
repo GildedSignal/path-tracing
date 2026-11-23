@@ -7,6 +7,7 @@
 //! - `ray`: DDA through cells, each clipped against its boxes.
 //! - `clock`: a counter, a threshold that fires, a reset.
 pub mod body;
+pub mod cell;
 pub mod clock;
 pub mod ray;
 pub mod sweep;

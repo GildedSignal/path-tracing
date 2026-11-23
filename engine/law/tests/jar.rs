@@ -4138,8 +4138,9 @@ fn jar_world_sim() {
     use law::interact::{AttachFace, DoorHalf};
     use law::neighbor::{Direction, update_flags};
     use law::place::{DoorHinge, DoorPlaceState, Half};
+    use law::interact::{BlockId, LeverState};
     use law::sim::{
-        BlockPalette, CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldOverlay,
+        CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldOverlay,
     };
     use law::world_hooks::BucketContent;
     use law::{Block, BlockPos, BoxWorld, PlayerState, Vec3, World};
@@ -4162,26 +4163,14 @@ fn jar_world_sim() {
     }
     fn sim_block_tag<W: World>(sim: &SimWorld<'_, W>, pos: BlockPos) -> String {
         let cell = sim.cell(pos);
-        let p = sim.palette();
         match cell.state {
             CellState::Empty => "air".to_owned(),
-            CellState::Plain => {
-                if cell.id == p.stone {
-                    "stone".to_owned()
-                } else if cell.id == p.cobblestone {
-                    "cobblestone".to_owned()
-                } else if cell.id == p.obsidian {
-                    "obsidian".to_owned()
-                } else if cell.id == p.slime_block {
-                    "slime".to_owned()
-                } else if cell.id == p.honey_block {
-                    "honey".to_owned()
-                } else if cell.id == p.torch {
-                    "torch".to_owned()
-                } else {
-                    "solid".to_owned()
-                }
-            }
+            CellState::Plain => match cell.id.name() {
+                name @ ("stone" | "cobblestone" | "obsidian" | "torch") => name.to_owned(),
+                "slime_block" => "slime".to_owned(),
+                "honey_block" => "honey".to_owned(),
+                _ => "solid".to_owned(),
+            },
             CellState::Fluid { kind, cell: fc } => {
                 let name = match kind {
                     FlowKind::Water => "water",
@@ -4191,15 +4180,10 @@ fn jar_world_sim() {
             }
             CellState::Falling(FallingKind::Sand) => "sand".to_owned(),
             CellState::Falling(FallingKind::ConcretePowder) => "concrete_powder".to_owned(),
-            CellState::Falling(FallingKind::Anvil { .. }) => {
-                if cell.id == p.anvil {
-                    "anvil".to_owned()
-                } else if cell.id == p.chipped_anvil {
-                    "chipped_anvil".to_owned()
-                } else {
-                    "damaged_anvil".to_owned()
-                }
-            }
+            CellState::Falling(FallingKind::Anvil { .. }) => match cell.id.name() {
+                name @ ("anvil" | "chipped_anvil") => name.to_owned(),
+                _ => "damaged_anvil".to_owned(),
+            },
             CellState::MovingPiston { facing, .. } => {
                 format!("moving_piston:{}", dir_name(facing))
             }
@@ -4246,7 +4230,7 @@ fn jar_world_sim() {
         }
     }
     fn floor_stone<W: World>(sim: &mut SimWorld<'_, W>, x0: i32, z0: i32, x1: i32, z1: i32, y: i32) {
-        let stone = SimCell::stone(sim.palette().stone);
+        let stone = SimCell::plain(BlockId::of("stone"));
         for x in x0..=x1 {
             for z in z0..=z1 {
                 sim.set_cell_raw([x, y, z], stone.clone());
@@ -4263,7 +4247,6 @@ fn jar_world_sim() {
     assert_eq!(rows.len(), 63, "expected 63 witness rows in world_sim.tsv");
 
     let base = BoxWorld::default();
-    let pal = BlockPalette::default();
 
     // -------------------------------------------------------------------------
     // WorldOverlay + Footprint invalidation check
@@ -4292,56 +4275,49 @@ fn jar_world_sim() {
     {
         let a_rows: Vec<_> = rows.iter().filter(|r| r[0] == "A_CASCADE").collect();
         assert_eq!(a_rows.len(), 9);
-        let mut sim = SimWorld::with_palette(&base, pal);
+        let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, -2, -2, 13, 5, 64);
         let lever_pos = [0, 65, 0];
         sim.set_cell_raw(
             lever_pos,
-            SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false),
+            SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })),
         );
         for i in 1..=8 {
-            sim.set_cell_raw([i, 65, 0], SimCell::redstone_wire(pal.redstone_wire, 0));
+            sim.set_cell_raw([i, 65, 0], SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
         }
         let branch_wire = [2, 65, 1];
-        sim.set_cell_raw(branch_wire, SimCell::redstone_wire(pal.redstone_wire, 0));
+        sim.set_cell_raw(branch_wire, SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
         let door_low = [9, 65, 0];
         let door_high = [9, 66, 0];
         sim.set_cell_raw(
             door_low,
-            SimCell::door(DoorPlaceState {
-                block_id: pal.iron_door,
+            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
+                block_id: BlockId::of("iron_door"),
                 facing: law::neighbor::Direction::North,
                 half: DoorHalf::Lower,
                 hinge: DoorHinge::Left,
                 open: false,
                 powered: false,
-            }),
+            })),
         );
         sim.set_cell_raw(
             door_high,
-            SimCell::door(DoorPlaceState {
-                block_id: pal.iron_door,
+            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
+                block_id: BlockId::of("iron_door"),
                 facing: law::neighbor::Direction::North,
                 half: DoorHalf::Upper,
                 hinge: DoorHinge::Left,
                 open: false,
                 powered: false,
-            }),
+            })),
         );
         let trap_pos = [2, 65, 2];
         sim.set_cell_raw(
             trap_pos,
-            SimCell::trapdoor(
-                pal.oak_trapdoor,
-                Direction::North,
-                Half::Bottom,
-                false,
-                false,
-                true,
-            ),
+            SimCell::new(BlockId::of("oak_trapdoor"), CellState::TrapDoor { facing: Direction::North, half: Half::Bottom, open: false, powered: false, waterlogged: true }),
         );
-        sim.set_cell_raw([1, 65, 2], SimCell::stone(pal.stone));
-        sim.set_cell_raw([2, 65, 3], SimCell::stone(pal.stone));
+        sim.set_cell_raw([1, 65, 2], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([2, 65, 3], SimCell::plain(BlockId::of("stone")));
 
         let check_a = |sim: &SimWorld<'_, BoxWorld>, row: &[&str]| {
             assert_eq!(sim_block_tag(sim, lever_pos), row[3], "row {row:?} lever");
@@ -4372,17 +4348,17 @@ fn jar_world_sim() {
     {
         let b_rows: Vec<_> = rows.iter().filter(|r| r[0] == "B_FLUID").collect();
         assert_eq!(b_rows.len(), 7);
-        let mut sim = SimWorld::with_palette(&base, pal);
+        let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, 62, -2, 72, 16, 63);
         floor_stone(&mut sim, 62, -2, 72, 16, 64);
-        let stone = SimCell::stone(pal.stone);
+        let stone = SimCell::plain(BlockId::of("stone"));
         for x in 64..=70 {
             sim.set_cell_raw([x, 65, -1], stone.clone());
             sim.set_cell_raw([x, 65, 1], stone.clone());
         }
         sim.set_cell_raw([64, 65, 0], stone.clone());
         sim.set_cell_raw([70, 65, 0], stone.clone());
-        sim.set_cell_raw([68, 64, 0], SimCell::air(pal.air));
+        sim.set_cell_raw([68, 64, 0], SimCell::air(BlockId::of("air")));
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 3], stone.clone());
@@ -4397,7 +4373,7 @@ fn jar_world_sim() {
         }
         sim.set_cell_raw([64, 65, 8], stone.clone());
         sim.set_cell_raw([67, 65, 8], stone.clone());
-        sim.set_cell_raw([66, 65, 8], SimCell::lava(pal.lava, false, FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([66, 65, 8], SimCell::lava(BlockId::of("lava"), false, FluidCell::WATER_SOURCE));
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 10], stone.clone());
@@ -4447,22 +4423,22 @@ fn jar_world_sim() {
     {
         let c_rows: Vec<_> = rows.iter().filter(|r| r[0] == "C_PISTON").collect();
         assert_eq!(c_rows.len(), 11);
-        let mut sim = SimWorld::with_palette(&base, pal);
+        let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, 126, -2, 134, 10, 63);
         floor_stone(&mut sim, 126, -2, 134, 10, 64);
 
-        sim.set_cell_raw([128, 64, 4], SimCell::piston(pal.sticky_piston, true, Direction::Up, false));
-        sim.set_cell_raw([128, 65, 4], SimCell::slime(pal.slime_block));
+        sim.set_cell_raw([128, 64, 4], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::Up, extended: false }));
+        sim.set_cell_raw([128, 65, 4], SimCell::plain(BlockId::of("slime_block")));
         let c1_lever = [127, 65, 4];
-        sim.set_cell_raw(c1_lever, SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false));
+        sim.set_cell_raw(c1_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
         let pig_c1 = sim.spawn_living(pig_entity(128.5, 66.0, 4.5));
 
-        sim.set_cell_raw([128, 65, 0], SimCell::piston(pal.sticky_piston, true, Direction::East, false));
-        sim.set_cell_raw([129, 65, 0], SimCell::honey(pal.honey_block));
-        sim.set_cell_raw([129, 65, 1], SimCell::slime(pal.slime_block));
-        sim.set_cell_raw([130, 65, 0], SimCell::stone(pal.stone));
+        sim.set_cell_raw([128, 65, 0], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::East, extended: false }));
+        sim.set_cell_raw([129, 65, 0], SimCell::plain(BlockId::of("honey_block")));
+        sim.set_cell_raw([129, 65, 1], SimCell::plain(BlockId::of("slime_block")));
+        sim.set_cell_raw([130, 65, 0], SimCell::plain(BlockId::of("stone")));
         let c2_lever = [127, 65, 0];
-        sim.set_cell_raw(c2_lever, SimCell::lever(pal.lever, AttachFace::Floor, law::neighbor::Direction::East, false));
+        sim.set_cell_raw(c2_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
         let pig_c2 = sim.spawn_living(pig_entity(129.5, 66.0, 0.5));
 
         sim.pull_lever(c1_lever);
@@ -4503,40 +4479,40 @@ fn jar_world_sim() {
     {
         let d_rows: Vec<_> = rows.iter().filter(|r| r[0] == "D_FALL").collect();
         assert_eq!(d_rows.len(), 22);
-        let mut sim = SimWorld::with_palette(&base, pal);
+        let mut sim = SimWorld::new(&base);
         sim.set_rng_seed(0x9e37_79b9_7f4a_7c15);
         floor_stone(&mut sim, 190, -2, 206, 2, 64);
 
         let d1_sup = [192, 69, 0];
         let d1_sand = [192, 70, 0];
-        sim.set_cell_raw(d1_sup, SimCell::stone(pal.stone));
-        sim.set_cell_raw(d1_sand, SimCell::sand(pal.sand));
+        sim.set_cell_raw(d1_sup, SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw(d1_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
 
         let d2_sup = [196, 68, 0];
         let d2_anvil = [196, 69, 0];
-        sim.set_cell_raw(d2_sup, SimCell::stone(pal.stone));
-        sim.set_cell_raw(d2_anvil, SimCell::anvil(pal.anvil, false, law::falling::AnvilStage::Intact));
+        sim.set_cell_raw(d2_sup, SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw(d2_anvil, SimCell::new(BlockId::of("anvil"), CellState::Falling(FallingKind::Anvil { facing_x_axis: false, stage: law::falling::AnvilStage::Intact })));
         let pig_d2 = sim.spawn_living(pig_entity(196.5, 65.0, 0.5));
 
         let d3_torch = [200, 65, 0];
         let d3_sup = [200, 67, 0];
         let d3_sand = [200, 68, 0];
-        sim.set_cell_raw(d3_torch, SimCell::torch(pal.torch));
-        sim.set_cell_raw(d3_sup, SimCell::stone(pal.stone));
-        sim.set_cell_raw(d3_sand, SimCell::sand(pal.sand));
+        sim.set_cell_raw(d3_torch, SimCell::plain(BlockId::of("torch")));
+        sim.set_cell_raw(d3_sup, SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw(d3_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
 
         let d4_water = [204, 65, 0];
-        sim.set_cell_raw([203, 65, 0], SimCell::stone(pal.stone));
-        sim.set_cell_raw([205, 65, 0], SimCell::stone(pal.stone));
-        sim.set_cell_raw([204, 65, -1], SimCell::stone(pal.stone));
-        sim.set_cell_raw([204, 65, 1], SimCell::stone(pal.stone));
-        sim.set_cell_raw(d4_water, SimCell::water(pal.water, FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([203, 65, 0], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([205, 65, 0], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([204, 65, -1], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([204, 65, 1], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw(d4_water, SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
         let d4_sup = [204, 67, 0];
         let d4_powder = [204, 68, 0];
-        sim.set_cell_raw(d4_sup, SimCell::stone(pal.stone));
-        sim.set_cell_raw(d4_powder, SimCell::concrete_powder(pal.concrete_powder));
+        sim.set_cell_raw(d4_sup, SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw(d4_powder, SimCell::new(BlockId::of("white_concrete_powder"), CellState::Falling(FallingKind::ConcretePowder)));
 
-        let air = SimCell::air(pal.air);
+        let air = SimCell::air(BlockId::of("air"));
         sim.set_cell_with_flags(d1_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d2_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d3_sup, air.clone(), update_flags::ALL);
@@ -4603,12 +4579,12 @@ fn jar_world_sim() {
         assert_eq!(e1_rows.len(), 8);
         assert_eq!(e2_rows.len(), 6);
 
-        let mut sim = SimWorld::with_palette(&base, pal);
+        let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, 253, -3, 275, 5, 63);
         floor_stone(&mut sim, 253, -3, 275, 5, 64);
         for x in 254..=260 {
             for z in -2..=2 {
-                sim.set_cell_raw([x, 64, z], SimCell::water(pal.water, FluidCell::WATER_SOURCE));
+                sim.set_cell_raw([x, 64, z], SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
             }
         }
 

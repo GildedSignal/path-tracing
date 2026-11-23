@@ -1,186 +1,21 @@
 use crate::{ BlockState, LoadError, WorldReader, nbt, region::metadata};
 use law::{
-    block_hooks::{OffsetCollisionSpec, SpeleothemThickness, TipDirection, get_seed, offset_collision_shape_for_keys},
-    Aabb, Block, BlockPos, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape, World,
+    basis::cell::{self, Models, models, BEYOND, OWN_CELL},
+    block_hooks::get_seed,
+    Aabb, Block, BlockPos, FluidKind, Inside, World,
 };
-use std::{collections::BTreeMap, path::Path, sync::OnceLock};
+use std::path::Path;
 
 const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
-/// A shared generator: the properties that change a model, and their values' slots.
-struct Map { properties: Vec<&'static str>, slots: BTreeMap<&'static str, usize> }
-struct Models {
-    maps: Vec<Map>,
-    tables: BTreeMap<&'static str, (usize, Vec<u16>)>,
-    blocks: Vec<Block>,
-    offset_variants: Vec<Option<Box<[Block]>>>,
-    reach: Vec<u8>,
-    refusals: BTreeMap<&'static str, &'static str>,
-}
-/// How far a model's collision reaches, in any context.
-const NOWHERE: u8 = 0;
-const OWN_CELL: u8 = 1;
-const BEYOND: u8 = 2;
-fn models() -> &'static Models {
-    static MODELS: OnceLock<Models> = OnceLock::new();
-    MODELS.get_or_init(|| {
-        let mut blocks = Vec::new();
-        let mut offset_variants = Vec::new();
-        let mut reach = Vec::new();
-        for line in include_str!("../data/models.tsv").lines() {
-            let (block, offset) = parse_model(line);
-            let (variants, cell_reach) = match offset {
-                OffsetCollisionSpec::None => {
-                    let r = if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND };
-                    (None, r)
-                }
-                spec => {
-                    let mut list = Vec::with_capacity(256);
-                    for kx in 0..16u8 {
-                        for kz in 0..16u8 {
-                            let shifted = offset_collision_shape_for_keys(spec, kx, kz).expect("non-none offset spec");
-                            let mut variant = block.clone();
-                            variant.shape = shifted.clone();
-                            variant.above_shape = Some(shifted.clone());
-                            variant.below_shape = Some(shifted.clone());
-                            variant.sneak_shape = Some(shifted.clone());
-                            variant.inside_cell_shape = Some(shifted);
-                            assert!(!variant.never_collides() && variant.collision_within_cell(), "offset collision must remain within cell");
-                            list.push(variant);
-                        }
-                    }
-                    (Some(list.into_boxed_slice()), OWN_CELL)
-                }
-            };
-            blocks.push(block);
-            offset_variants.push(variants);
-            reach.push(cell_reach);
-        }
-        // maps.tsv: relevant properties, then "values:slot" entries in that property order.
-        let maps = include_str!("../data/maps.tsv").lines().map(|line| {
-            let (properties, entries) = line.split_once('\t').expect("generated map row");
-            let slots = entries.split(' ').map(|e| {
-                let (key, slot) = e.rsplit_once(':').expect("generated map entry");
-                (key, slot.parse().expect("generated slot"))
-            }).collect();
-            Map { properties: properties.split(',').filter(|p| !p.is_empty()).collect(), slots }
-        }).collect::<Vec<_>>();
-        // blocks.tsv: block, its map, then the model id of each slot.
-        let tables = include_str!("../data/blocks.tsv").lines().map(|line| {
-            let [name, map, ids] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated block row") };
-            let map: usize = map.parse().expect("generated map index");
-            let ids = ids.split(',').map(|id| id.parse().expect("generated model id")).collect::<Vec<u16>>();
-            assert!(map < maps.len() && ids.iter().all(|&id| (id as usize) < blocks.len()));
-            assert!(maps[map].slots.values().all(|&s| s < ids.len()), "generated slots of {name}");
-            (name, (map, ids))
-        }).collect();
-        // census.tsv: block, bucket, state count. Every bucket other than "modeled" names a refusal.
-        let mut refusals = BTreeMap::new();
-        for line in include_str!("../data/census.tsv").lines().filter(|l| !l.starts_with('#')) {
-            let [block, bucket, _] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated census row") };
-            if bucket != "modeled" { assert!(refusals.insert(block, bucket).is_none(), "one refusal reason per block: {block}"); }
-        }
-        Models { maps, tables, blocks, offset_variants, reach, refusals }
-    })
-}
-/// Project the state onto its block's relevant properties, then look the values up.
+/// Project the state onto its block's relevant properties, then look the values up (the law's table).
 fn lookup(state: &BlockState) -> Result<u16, String> {
-    let registry = models();
-    if let Some(reason) = registry.refusals.get(state.name.as_str()) { return Err((*reason).into()); }
-    let Some((map, ids)) = registry.tables.get(state.name.as_str()) else { return Err(format!("{} is not a 26.2 registry block", state.name)); };
-    let map = &registry.maps[*map];
-    map.properties.iter().map(|p| state.properties.iter().find(|(k,_)| k == p).map(|(_,v)| v.as_str()))
-        .collect::<Option<Vec<_>>>().and_then(|values| map.slots.get(values.join(",").as_str()).map(|&slot| ids[slot]))
-        .ok_or_else(|| format!("state unknown to the 26.2 table of {}", state.name))
+    cell::lookup(&state.name, |p| state.properties.iter().find(|(k, _)| k == p).map(|(_, v)| v.as_str()))
 }
 /// The shared model table, indexed by model id. Every admitted state maps to one row.
 pub fn model_table() -> &'static [Block] { &models().blocks }
 /// The law's model of a block state, or the reason the generated rule refuses it.
 pub fn model(state: &BlockState) -> Result<&'static Block, String> {
     lookup(state).map(|id| &models().blocks[id as usize])
-}
-fn shape(raw: &str) -> VoxelShape {
-    let boxes = raw.split(';').filter(|s| !s.is_empty()).map(|s| {
-        let v = s.split(',').map(|s| s.parse::<f64>().expect("generated box number")).collect::<Vec<_>>();
-        assert_eq!(v.len(), 6);
-        Aabb::new(v[0],v[1],v[2],v[3],v[4],v[5])
-    }).collect::<Vec<_>>();
-    VoxelShape::boxes(&boxes)
-}
-fn parse_offset(raw: &str) -> OffsetCollisionSpec {
-    if raw == "none" {
-        return OffsetCollisionSpec::None;
-    }
-    if raw == "bamboo" {
-        return OffsetCollisionSpec::Bamboo;
-    }
-    let parts: Vec<_> = raw.split(':').collect();
-    if parts.len() == 3 && parts[0] == "speleothem" {
-        let thickness = match parts[1] {
-            "tip_merge" => SpeleothemThickness::TipMerge,
-            "tip" => SpeleothemThickness::Tip,
-            "frustum" => SpeleothemThickness::Frustum,
-            "middle" => SpeleothemThickness::Middle,
-            "base" => SpeleothemThickness::Base,
-            other => panic!("generated speleothem thickness {other}"),
-        };
-        let tip_direction = match parts[2] {
-            "up" => TipDirection::Up,
-            "down" => TipDirection::Down,
-            other => panic!("generated speleothem tip direction {other}"),
-        };
-        return OffsetCollisionSpec::Speleothem { thickness, tip_direction };
-    }
-    panic!("generated offset spec {raw}");
-}
-fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
-    let f: Vec<_> = line.split('\t').collect();
-    assert_eq!(f.len(), 22, "generated model schema");
-    let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i],16).expect("generated float bits"));
-    let bits: u16 = f[5].parse().unwrap();
-    let flag = |i: usize| bits & (1u16<<i) != 0;
-    let direction = |i: usize| match f[i] { "-1" => None, s => Some(s.parse().unwrap()) };
-    let amount: u8 = f[9].parse().unwrap();
-    let faces: u8 = f[12].parse().unwrap();
-    let block = Block {
-        shape: shape(f[15]), inside_shape: Some(shape(f[16])),
-        above_shape: Some(shape(f[17])), below_shape: Some(shape(f[18])), sneak_shape: Some(shape(f[19])), inside_cell_shape: Some(shape(f[20])),
-        friction: fp(0), speed_factor: fp(1), jump_factor: fp(2), bounce: fp(3), fall_on_multiplier: fp(4),
-        air: flag(0), suffocating: flag(1), water_block: flag(2), climbable: flag(3), scaffolding: flag(4),
-        slime: flag(5), bed: flag(6), fence: flag(7), wall_or_gate: flag(8), suppresses_bounce: flag(9),
-        resets_fall_distance: flag(10), end_portal_or_gateway: flag(11), world_hook: flag(12),
-        ladder_facing: direction(6), open_trapdoor_facing: direction(7),
-        fluid: Fluid {
-            kind: match f[8] { "0" => FluidKind::Empty, "1" => FluidKind::Water, "2" => FluidKind::Lava, _ => panic!("generated fluid kind") },
-            raw_amount: (amount != 0).then_some(amount),
-            raw_falling: (amount != 0).then(|| f[10].parse().unwrap()),
-            ..Fluid::default()
-        },
-        fluid_flow: Some(FluidFlowBlock { blocks_motion: f[11].parse().unwrap(), solid_faces: std::array::from_fn(|i| faces & (1<<i) != 0) }),
-        inside: match f[13] {
-            "none" => Inside::None,
-            "cobweb" => Inside::Cobweb,
-            "powderSnow" => Inside::PowderSnow,
-            "honey" => Inside::Honey,
-            "bubbleColumnUp" => Inside::BubbleColumn { drag: false },
-            "bubbleColumnDown" => Inside::BubbleColumn { drag: true },
-            "cactus" => Inside::Cactus,
-            "campfire" => Inside::Campfire { soul: false },
-            "soulCampfire" => Inside::Campfire { soul: true },
-            "fire" => Inside::Fire { soul: false },
-            "soulFire" => Inside::Fire { soul: true },
-            "berryBush" => Inside::BerryBush { hurt: false },
-            "berryBushHurt" => Inside::BerryBush { hurt: true },
-            "extinguish" => Inside::Extinguish,
-            "lava" => Inside::Lava,
-            "endPortal" => Inside::EndPortal,
-            "netherPortal" => Inside::NetherPortal,
-            "witherRose" => Inside::WitherRose,
-            other => panic!("generated inside hook {other}"),
-        },
-        grounded_contact: match f[14] { "none" => GroundedContact::None, "hotFloor" => GroundedContact::DamageUnlessCareful(ContactDamage::HotFloor), _ => panic!("generated step hook") },
-        ..Block::default()
-    };
-    (block, parse_offset(f[21]))
 }
 
 /// Immutable inclusive box. All cells and chunks in this box are validated before

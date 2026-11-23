@@ -205,9 +205,7 @@ pub fn nearest_looking_directions(
     dirs
 }
 
-/// Opaque block-type identity from the block table (never matched by block name).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct BlockId(pub u32);
+pub use crate::basis::cell::BlockId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttachFace {
