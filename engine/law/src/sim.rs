@@ -19,8 +19,7 @@ use crate::fluid::{
 use crate::footprint::Footprint;
 use crate::interact::{
     self, BlockId, DoorHalf,
-    FenceGateState, LeverState, RedstoneCell, RedstoneCellKind, RedstoneDoorState, RedstoneEvent,
-    RedstoneWorld, TrapDoorState,
+    RedstoneEvent,
 };
 use crate::neighbor::{
     self, CollectingNeighborUpdater, Direction, DrainStats, NeighborQueue, UpdateEvent,
@@ -319,165 +318,10 @@ impl<W: World> World for WorldOverlay<'_, W> {
 }
 
 // ============================================================================
-// 3. CellState and SimCell: a block id, the family's state, and the table's rows
+// 3. The cell (`basis::cell`): a block id, the family's state, the table's rows
 // ============================================================================
 
-pub use crate::basis::cell::{Rules as CellProps, SurviveRule};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FallingKind {
-    Sand,
-    Anvil { facing_x_axis: bool, stage: AnvilStage },
-    ConcretePowder,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum CellState {
-    Empty,
-    Plain,
-    Fluid { kind: FlowKind, cell: FluidCell },
-    RedstoneWire { power: u8 },
-    Lever(LeverState),
-    Door(DoorPlaceState),
-    TrapDoor { facing: Direction, half: Half, open: bool, powered: bool, waterlogged: bool },
-    FenceGate { facing: Direction, open: bool, powered: bool },
-    Button(ButtonState),
-    PressurePlate(PressurePlateState),
-    TripwireWire(TripwireWireState),
-    TripwireHook(TripwireHookState),
-    Scaffolding(ScaffoldingState),
-    Piston { sticky: bool, facing: Direction, extended: bool },
-    PistonHead { sticky: bool, facing: Direction },
-    MovingPiston { sticky: bool, facing: Direction },
-    Falling(FallingKind),
-}
-
-#[derive(Clone, Debug)]
-pub struct SimCell {
-    pub id: BlockId,
-    pub state: CellState,
-    pub props: CellProps,
-    pub block: Block,
-}
-
-const LEVEL: [&str; 16] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"];
-const DIRECTION: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
-fn yes(v: bool) -> &'static str {
-    if v { "true" } else { "false" }
-}
-
-impl SimCell {
-    /// The block `id` in `state`: its rules and its model from the tables.
-    pub fn new(id: BlockId, state: CellState) -> Self {
-        let mut cell = Self { id, state, props: id.rules(), block: Block::default() };
-        cell.block = cell.model().clone();
-        cell.sync_block();
-        cell
-    }
-
-    pub fn air(id: BlockId) -> Self {
-        Self::new(id, CellState::Empty)
-    }
-
-    pub fn plain(id: BlockId) -> Self {
-        Self::new(id, CellState::Plain)
-    }
-
-    pub fn water(id: BlockId, cell: FluidCell) -> Self {
-        Self::new(id, CellState::Fluid { kind: FlowKind::Water, cell })
-    }
-
-    pub fn lava(id: BlockId, fast: bool, cell: FluidCell) -> Self {
-        Self::new(id, CellState::Fluid { kind: FlowKind::Lava { fast }, cell })
-    }
-
-    /// The model the state's relevant properties select (`blocks.tsv`, `maps.tsv`).
-    fn model(&self) -> &'static Block {
-        use crate::basis::cell::model;
-        let d = |d: Direction| DIRECTION[d as usize];
-        let half = |h: Half| if h == Half::Top { "top" } else { "bottom" };
-        match self.state {
-            CellState::MovingPiston { .. } => {
-                // Census: moving_piston is a dynamic, non-local shape; its block entity carries it.
-                static MOVING: std::sync::OnceLock<Block> = std::sync::OnceLock::new();
-                MOVING.get_or_init(|| Block { air: false, fluid_flow: Some(FluidFlowBlock { blocks_motion: true, solid_faces: [false; 4] }), ..Block::default() })
-            }
-            CellState::Fluid { cell, .. } => model(self.id, &[("level", LEVEL[cell.legacy_level() as usize])]),
-            CellState::Door(s) => model(self.id, &[("facing", d(s.facing)), ("hinge", if s.hinge == DoorHinge::Left { "left" } else { "right" }), ("open", yes(s.open))]),
-            CellState::TrapDoor { facing, half: h, open, waterlogged, .. } => {
-                model(self.id, &[("facing", d(facing)), ("half", half(h)), ("open", yes(open)), ("waterlogged", yes(waterlogged))])
-            }
-            CellState::FenceGate { facing, open, .. } => model(self.id, &[("facing", d(facing)), ("open", yes(open))]),
-            CellState::TripwireWire(w) => model(self.id, &[("attached", yes(w.attached))]),
-            CellState::Scaffolding(s) => {
-                model(self.id, &[("bottom", yes(s.bottom)), ("distance", LEVEL[s.distance as usize]), ("waterlogged", yes(s.waterlogged))])
-            }
-            CellState::Piston { facing, extended, .. } => model(self.id, &[("extended", yes(extended)), ("facing", d(facing))]),
-            CellState::PistonHead { facing, .. } => model(self.id, &[("facing", d(facing)), ("short", "false")]),
-            CellState::Falling(FallingKind::Anvil { facing_x_axis, .. }) => model(self.id, &[("facing", if facing_x_axis { "east" } else { "north" })]),
-            _ => model(self.id, &[]),
-        }
-    }
-
-    #[inline]
-    pub fn is_air(&self) -> bool {
-        matches!(self.state, CellState::Empty)
-    }
-
-    /// Extracts fluid info (including waterlogged blocks) for `fluid` and `world_hooks`.
-    pub fn fluid_info(&self) -> Option<(FlowKind, FluidCell)> {
-        match self.state {
-            CellState::Fluid { kind, cell } => Some((kind, cell)),
-            CellState::TrapDoor { waterlogged: true, .. }
-            | CellState::Scaffolding(ScaffoldingState { waterlogged: true, .. }) => Some((FlowKind::Water, FluidCell::WATER_SOURCE)),
-            _ => None,
-        }
-    }
-
-    pub fn is_waterlogged_container(&self) -> bool {
-        matches!(self.state, CellState::TrapDoor { .. } | CellState::Scaffolding(_))
-    }
-
-    pub fn set_waterlogged(&mut self, wl: bool) -> bool {
-        match &mut self.state {
-            CellState::TrapDoor { waterlogged, .. } => *waterlogged = wl,
-            CellState::Scaffolding(s) => s.waterlogged = wl,
-            _ => return false,
-        }
-        self.sync_block();
-        true
-    }
-
-    pub fn as_piston_block(&self) -> PistonBlock {
-        PistonBlock {
-            air: self.is_air(),
-            destroy_speed: self.props.destroy_speed,
-            has_block_entity: self.props.has_block_entity,
-            push_reaction: self.props.push_reaction,
-            kind: self.props.piston_kind,
-        }
-    }
-
-    /// The rows a state changes: a piston's kind and sturdy faces, and the model. A plain cell
-    /// keeps the block it was made with (the base world's own, for an unedited cell).
-    pub fn sync_block(&mut self) {
-        match self.state {
-            CellState::Piston { sticky, facing, extended } => {
-                self.props.piston_kind = if sticky { PistonBlockKind::StickyPiston { extended } } else { PistonBlockKind::Piston { extended } };
-                self.props.sturdy_faces = [!extended; 6];
-                self.props.sturdy_faces[facing.opposite() as usize] = true;
-            }
-            CellState::PistonHead { facing, .. } => {
-                self.props.sturdy_faces = [false; 6];
-                self.props.sturdy_faces[facing as usize] = true;
-            }
-            _ => {}
-        }
-        if self.state != CellState::Plain {
-            self.block = self.model().clone();
-        }
-    }
-}
+pub use crate::basis::cell::{CellState, FallingKind, Rules as CellProps, SimCell, SurviveRule, WorldMut};
 
 // ============================================================================
 // 4. Tick keys, BlockEvents, MovingPistons, and Entity states
@@ -2394,7 +2238,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     PistonBlockKind::Piston { .. } | PistonBlockKind::StickyPiston { .. }
                 )
             {
-                let base = crate::basis::cell::model(BlockId::of("piston"), &[("extended", "true"), ("facing", DIRECTION[entry.moving.direction as usize])]);
+                let base = crate::basis::cell::model(BlockId::of("piston"), &[("extended", "true"), ("facing", crate::basis::cell::DIRECTION[entry.moving.direction as usize])]);
                 let c = &base.shape.coords;
                 let base_box = Aabb::new(c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1]).moved(Vec3::new(
                     entry.pos[0] as f64,
@@ -3030,7 +2874,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     // ------------------------------------------------------------------------
 
     pub fn pull_lever(&mut self, pos: BlockPos) -> (bool, DrainStats) {
-        let mut rw = SimRedstoneView::new(self);
+        let mut rw = Pending::new(self);
         let mut events = Vec::new();
         let powered = interact::lever_pull(&mut rw, pos, false, &mut events);
         if events.is_empty() {
@@ -3400,85 +3244,25 @@ impl<W: World> PistonWorld for SimPistonView<'_, '_, W> {
     }
 }
 
-struct SimRedstoneView<'s, 'a, W: World> {
+/// The world a rule edits while it runs: its own writes, over the sim's cells. The sim then
+/// applies the rule's events with their update flags.
+struct Pending<'s, 'a, W: World> {
     sim: &'s mut SimWorld<'a, W>,
     pending: HashMap<BlockPos, SimCell>,
 }
 
-impl<'s, 'a, W: World> SimRedstoneView<'s, 'a, W> {
+impl<'s, 'a, W: World> Pending<'s, 'a, W> {
     fn new(sim: &'s mut SimWorld<'a, W>) -> Self {
-        Self {
-            sim,
-            pending: HashMap::new(),
-        }
+        Self { sim, pending: HashMap::new() }
     }
 }
 
-impl<W: World> RedstoneWorld for SimRedstoneView<'_, '_, W> {
-    fn cell(&self, pos: BlockPos) -> RedstoneCell {
-        let c = self
-            .pending
-            .get(&pos)
-            .cloned()
-            .unwrap_or_else(|| self.sim.cell(pos));
-        let kind = match c.state {
-            CellState::Lever(l) => RedstoneCellKind::Lever(l),
-            CellState::Door(d) => RedstoneCellKind::Door(RedstoneDoorState {
-                block_id: d.block_id,
-                half: d.half,
-                open: d.open,
-                powered: d.powered,
-            }),
-            CellState::TrapDoor {
-                open,
-                powered,
-                waterlogged,
-                ..
-            } => RedstoneCellKind::TrapDoor(TrapDoorState {
-                block_id: c.id,
-                open,
-                powered,
-                waterlogged,
-            }),
-            CellState::FenceGate { open, powered, .. } => {
-                RedstoneCellKind::FenceGate(FenceGateState {
-                    block_id: c.id,
-                    open,
-                    powered,
-                })
-            }
-            _ => RedstoneCellKind::Empty,
-        };
-        RedstoneCell {
-            kind,
-            is_redstone_conductor: c.props.is_redstone_conductor,
-        }
+impl<W: World> WorldMut for Pending<'_, '_, W> {
+    fn cell(&self, pos: BlockPos) -> SimCell {
+        self.pending.get(&pos).cloned().unwrap_or_else(|| self.sim.cell(pos))
     }
-
-    fn set_cell(&mut self, pos: BlockPos, rc: RedstoneCell) {
-        let mut existing = self
-            .pending
-            .get(&pos)
-            .cloned()
-            .unwrap_or_else(|| self.sim.cell(pos));
-        match (rc.kind, &mut existing.state) {
-            (RedstoneCellKind::Lever(l), CellState::Lever(cur)) => *cur = l,
-            (RedstoneCellKind::Door(d), CellState::Door(cur)) => {
-                cur.open = d.open;
-                cur.powered = d.powered;
-            }
-            (RedstoneCellKind::TrapDoor(t), CellState::TrapDoor { open, powered, waterlogged, .. }) => {
-                *open = t.open;
-                *powered = t.powered;
-                *waterlogged = t.waterlogged;
-            }
-            (RedstoneCellKind::FenceGate(g), CellState::FenceGate { open, powered, .. }) => {
-                *open = g.open;
-                *powered = g.powered;
-            }
-            _ => return,
-        }
-        self.pending.insert(pos, existing);
+    fn set(&mut self, pos: BlockPos, cell: SimCell) {
+        self.pending.insert(pos, cell);
     }
 }
 

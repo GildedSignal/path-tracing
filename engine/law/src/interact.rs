@@ -1,5 +1,6 @@
 //! Interaction reach, eye ray / clip, and synchronous redstone interaction laws (26.2).
 
+use crate::basis::cell::{CellState, SimCell, WorldMut};
 use crate::{Aabb, BlockPos, Vec3};
 
 /// `Player.DEFAULT_BLOCK_INTERACTION_RANGE` (`Attributes.BLOCK_INTERACTION_RANGE` base).
@@ -259,53 +260,6 @@ impl LeverState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RedstoneDoorState {
-    pub block_id: BlockId,
-    pub half: DoorHalf,
-    pub open: bool,
-    pub powered: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TrapDoorState {
-    pub block_id: BlockId,
-    pub open: bool,
-    pub powered: bool,
-    pub waterlogged: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FenceGateState {
-    pub block_id: BlockId,
-    pub open: bool,
-    pub powered: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RedstoneCellKind {
-    Empty,
-    Lever(LeverState),
-    Door(RedstoneDoorState),
-    TrapDoor(TrapDoorState),
-    FenceGate(FenceGateState),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RedstoneCell {
-    pub kind: RedstoneCellKind,
-    pub is_redstone_conductor: bool,
-}
-
-impl Default for RedstoneCell {
-    fn default() -> Self {
-        Self {
-            kind: RedstoneCellKind::Empty,
-            is_redstone_conductor: false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RedstoneEvent {
     SetBlock {
         pos: BlockPos,
@@ -353,38 +307,30 @@ pub const NEIGHBOR_UPDATE_ORDER: [Direction; 6] = [
 /// `Fluids.WATER.getTickDelay(level)` scheduled by `TrapDoorBlock.neighborChanged` when waterlogged.
 pub const WATERLOGGED_TRAPDOOR_TICK_DELAY: u32 = 5;
 
-pub trait RedstoneWorld {
-    fn cell(&self, pos: BlockPos) -> RedstoneCell;
-    fn set_cell(&mut self, pos: BlockPos, cell: RedstoneCell);
-}
-
 /// `SignalGetter.getDirectSignalTo(BlockPos)`.
-pub fn get_direct_signal_to(world: &impl RedstoneWorld, pos: BlockPos) -> u8 {
+pub fn get_direct_signal_to(world: &impl WorldMut, pos: BlockPos) -> u8 {
     let mut best = 0u8;
     for dir in Direction::ALL {
-        let neighbor = world.cell(dir.relative(pos));
-        let sig = match neighbor.kind {
-            RedstoneCellKind::Lever(l) => l.direct_signal(dir),
+        let sig = match world.cell(dir.relative(pos)).state {
+            CellState::Lever(l) => l.direct_signal(dir),
             _ => 0,
         };
         if sig >= 15 {
             return 15;
         }
-        if sig > best {
-            best = sig;
-        }
+        best = best.max(sig);
     }
     best
 }
 
 /// `SignalGetter.getSignal(BlockPos, Direction)` (`@0-41`).
-pub fn get_signal(world: &impl RedstoneWorld, pos: BlockPos, _dir: Direction) -> u8 {
+pub fn get_signal(world: &impl WorldMut, pos: BlockPos, _dir: Direction) -> u8 {
     let cell = world.cell(pos);
-    let own = match cell.kind {
-        RedstoneCellKind::Lever(l) => l.signal(),
+    let own = match cell.state {
+        CellState::Lever(l) => l.signal(),
         _ => 0,
     };
-    if cell.is_redstone_conductor {
+    if cell.props.is_redstone_conductor {
         own.max(get_direct_signal_to(world, pos))
     } else {
         own
@@ -392,24 +338,14 @@ pub fn get_signal(world: &impl RedstoneWorld, pos: BlockPos, _dir: Direction) ->
 }
 
 /// `SignalGetter.hasNeighborSignal(BlockPos)` (`@0-111`): scans `Direction.VALUES`.
-pub fn has_neighbor_signal(world: &impl RedstoneWorld, pos: BlockPos) -> bool {
-    for dir in Direction::ALL {
-        if get_signal(world, dir.relative(pos), dir) > 0 {
-            return true;
-        }
-    }
-    false
+pub fn has_neighbor_signal(world: &impl WorldMut, pos: BlockPos) -> bool {
+    Direction::ALL.into_iter().any(|dir| get_signal(world, dir.relative(pos), dir) > 0)
 }
 
 /// `DoorBlock.neighborChanged` (`@0-161`).
-pub fn door_neighbor_changed(
-    world: &mut impl RedstoneWorld,
-    pos: BlockPos,
-    source_id: BlockId,
-    events: &mut Vec<RedstoneEvent>,
-) {
+pub fn door_neighbor_changed(world: &mut impl WorldMut, pos: BlockPos, source_id: BlockId, events: &mut Vec<RedstoneEvent>) {
     let cell = world.cell(pos);
-    let RedstoneCellKind::Door(mut door) = cell.kind else {
+    let CellState::Door(mut door) = cell.state else {
         return;
     };
     let other_half_pos = match door.half {
@@ -417,10 +353,7 @@ pub fn door_neighbor_changed(
         DoorHalf::Upper => Direction::Down.relative(pos),
     };
     let has_signal = has_neighbor_signal(world, pos) || has_neighbor_signal(world, other_half_pos);
-    if source_id == door.block_id {
-        return;
-    }
-    if has_signal == door.powered {
+    if source_id == door.block_id || has_signal == door.powered {
         return;
     }
     if has_signal != door.open {
@@ -428,140 +361,75 @@ pub fn door_neighbor_changed(
     }
     door.powered = has_signal;
     door.open = has_signal;
-    world.set_cell(pos, RedstoneCell { kind: RedstoneCellKind::Door(door), ..cell });
-    events.push(RedstoneEvent::SetBlock {
-        pos,
-        flags: 2,
-        open: Some(door.open),
-        powered: has_signal,
-        waterlogged: None,
-    });
+    world.set(pos, SimCell::new(cell.id, CellState::Door(door)));
+    events.push(RedstoneEvent::SetBlock { pos, flags: 2, open: Some(door.open), powered: has_signal, waterlogged: None });
 }
 
 /// `TrapDoorBlock.neighborChanged` (`@0-129`).
-pub fn trapdoor_neighbor_changed(
-    world: &mut impl RedstoneWorld,
-    pos: BlockPos,
-    is_client_side: bool,
-    events: &mut Vec<RedstoneEvent>,
-) {
-    if is_client_side {
-        return;
-    }
+pub fn trapdoor_neighbor_changed(world: &mut impl WorldMut, pos: BlockPos, is_client_side: bool, events: &mut Vec<RedstoneEvent>) {
     let cell = world.cell(pos);
-    let RedstoneCellKind::TrapDoor(mut trap) = cell.kind else {
+    let CellState::TrapDoor { facing, half, mut open, powered, waterlogged } = cell.state else {
         return;
     };
     let has_signal = has_neighbor_signal(world, pos);
-    if has_signal == trap.powered {
+    if is_client_side || has_signal == powered {
         return;
     }
-    if trap.open != has_signal {
-        trap.open = has_signal;
+    if open != has_signal {
+        open = has_signal;
         events.push(RedstoneEvent::TrapDoorSoundAndEvent { pos, open: has_signal });
     }
-    trap.powered = has_signal;
-    world.set_cell(pos, RedstoneCell { kind: RedstoneCellKind::TrapDoor(trap), ..cell });
-    events.push(RedstoneEvent::SetBlock {
-        pos,
-        flags: 2,
-        open: Some(trap.open),
-        powered: has_signal,
-        waterlogged: Some(trap.waterlogged),
-    });
-    if trap.waterlogged {
-        events.push(RedstoneEvent::ScheduleWaterTick {
-            pos,
-            delay: WATERLOGGED_TRAPDOOR_TICK_DELAY,
-        });
+    world.set(pos, SimCell::new(cell.id, CellState::TrapDoor { facing, half, open, powered: has_signal, waterlogged }));
+    events.push(RedstoneEvent::SetBlock { pos, flags: 2, open: Some(open), powered: has_signal, waterlogged: Some(waterlogged) });
+    if waterlogged {
+        events.push(RedstoneEvent::ScheduleWaterTick { pos, delay: WATERLOGGED_TRAPDOOR_TICK_DELAY });
     }
 }
 
 /// `FenceGateBlock.neighborChanged` (`@0-154`): writes BEFORE sound/event.
-pub fn fence_gate_neighbor_changed(
-    world: &mut impl RedstoneWorld,
-    pos: BlockPos,
-    is_client_side: bool,
-    events: &mut Vec<RedstoneEvent>,
-) {
-    if is_client_side {
-        return;
-    }
+pub fn fence_gate_neighbor_changed(world: &mut impl WorldMut, pos: BlockPos, is_client_side: bool, events: &mut Vec<RedstoneEvent>) {
     let cell = world.cell(pos);
-    let RedstoneCellKind::FenceGate(mut gate) = cell.kind else {
+    let CellState::FenceGate { facing, open, powered } = cell.state else {
         return;
     };
     let has_signal = has_neighbor_signal(world, pos);
-    if has_signal == gate.powered {
+    if is_client_side || has_signal == powered {
         return;
     }
-    let old_open = gate.open;
-    gate.powered = has_signal;
-    gate.open = has_signal;
-    world.set_cell(pos, RedstoneCell { kind: RedstoneCellKind::FenceGate(gate), ..cell });
-    events.push(RedstoneEvent::SetBlock {
-        pos,
-        flags: 2,
-        open: Some(gate.open),
-        powered: has_signal,
-        waterlogged: None,
-    });
-    if old_open != has_signal {
+    world.set(pos, SimCell::new(cell.id, CellState::FenceGate { facing, open: has_signal, powered: has_signal }));
+    events.push(RedstoneEvent::SetBlock { pos, flags: 2, open: Some(has_signal), powered: has_signal, waterlogged: None });
+    if open != has_signal {
         events.push(RedstoneEvent::FenceGateSoundAndEvent { pos, open: has_signal });
     }
 }
 
-fn dispatch_neighbor_updates(
-    world: &mut impl RedstoneWorld,
-    center: BlockPos,
-    source_id: BlockId,
-    is_client_side: bool,
-    events: &mut Vec<RedstoneEvent>,
-) {
+fn dispatch_neighbor_updates(world: &mut impl WorldMut, center: BlockPos, source_id: BlockId, is_client_side: bool, events: &mut Vec<RedstoneEvent>) {
     events.push(RedstoneEvent::UpdateNeighborsAt { pos: center, source_id });
     for dir in NEIGHBOR_UPDATE_ORDER {
         let neighbor_pos = dir.relative(center);
-        match world.cell(neighbor_pos).kind {
-            RedstoneCellKind::Door(_) => door_neighbor_changed(world, neighbor_pos, source_id, events),
-            RedstoneCellKind::TrapDoor(_) => {
-                trapdoor_neighbor_changed(world, neighbor_pos, is_client_side, events);
-            }
-            RedstoneCellKind::FenceGate(_) => {
-                fence_gate_neighbor_changed(world, neighbor_pos, is_client_side, events);
-            }
-            RedstoneCellKind::Empty | RedstoneCellKind::Lever(_) => {}
+        match world.cell(neighbor_pos).state {
+            CellState::Door(_) => door_neighbor_changed(world, neighbor_pos, source_id, events),
+            CellState::TrapDoor { .. } => trapdoor_neighbor_changed(world, neighbor_pos, is_client_side, events),
+            CellState::FenceGate { .. } => fence_gate_neighbor_changed(world, neighbor_pos, is_client_side, events),
+            _ => {}
         }
     }
 }
 
 /// `LeverBlock.pull` (`@0-66`) + `LeverBlock.updateNeighbours` (`@0-65`):
 /// flips `powered` (`flags = 3`), synchronously notifies `pos` and `support_pos`, then emits sound/event.
-pub fn lever_pull(
-    world: &mut impl RedstoneWorld,
-    pos: BlockPos,
-    is_client_side: bool,
-    events: &mut Vec<RedstoneEvent>,
-) -> bool {
+pub fn lever_pull(world: &mut impl WorldMut, pos: BlockPos, is_client_side: bool, events: &mut Vec<RedstoneEvent>) -> bool {
     let cell = world.cell(pos);
-    let RedstoneCellKind::Lever(mut lever) = cell.kind else {
+    let CellState::Lever(mut lever) = cell.state else {
         return false;
     };
     lever.powered = !lever.powered;
-    world.set_cell(pos, RedstoneCell { kind: RedstoneCellKind::Lever(lever), ..cell });
-    events.push(RedstoneEvent::SetBlock {
-        pos,
-        flags: 3,
-        open: None,
-        powered: lever.powered,
-        waterlogged: None,
-    });
+    world.set(pos, SimCell::new(cell.id, CellState::Lever(lever)));
+    events.push(RedstoneEvent::SetBlock { pos, flags: 3, open: None, powered: lever.powered, waterlogged: None });
     let support = lever.support_pos(pos);
     dispatch_neighbor_updates(world, pos, lever.block_id, is_client_side, events);
     dispatch_neighbor_updates(world, support, lever.block_id, is_client_side, events);
-    events.push(RedstoneEvent::LeverSoundAndEvent {
-        pos,
-        activated: lever.powered,
-    });
+    events.push(RedstoneEvent::LeverSoundAndEvent { pos, activated: lever.powered });
     lever.powered
 }
 
@@ -787,100 +655,53 @@ mod part1_tests {
 #[cfg(test)]
 mod part6_tests {
     use super::*;
+    use crate::place::{DoorHinge, DoorPlaceState, Half};
     use std::collections::HashMap;
 
-    const STONE_ID: BlockId = BlockId(1);
-    const LEVER_ID: BlockId = BlockId(2);
-    const IRON_DOOR_ID: BlockId = BlockId(3);
-    const OAK_DOOR_ID: BlockId = BlockId(4);
-    const COPPER_DOOR_ID: BlockId = BlockId(5);
-    const IRON_TRAPDOOR_ID: BlockId = BlockId(6);
-    const OAK_FENCE_GATE_ID: BlockId = BlockId(7);
-
-    #[derive(Default)]
-    struct MapRedstoneWorld {
-        cells: HashMap<BlockPos, RedstoneCell>,
+    type MapRedstoneWorld = HashMap<BlockPos, SimCell>;
+    fn id(name: &str) -> BlockId {
+        BlockId::of(name)
     }
 
-    impl RedstoneWorld for MapRedstoneWorld {
-        fn cell(&self, pos: BlockPos) -> RedstoneCell {
-            self.cells.get(&pos).copied().unwrap_or_default()
-        }
-
-        fn set_cell(&mut self, pos: BlockPos, cell: RedstoneCell) {
-            self.cells.insert(pos, cell);
-        }
+    fn conductor() -> SimCell {
+        SimCell::plain(id("stone"))
     }
 
-    fn conductor() -> RedstoneCell {
-        RedstoneCell { kind: RedstoneCellKind::Empty, is_redstone_conductor: true }
+    fn lever(face: AttachFace, facing: Direction, powered: bool) -> SimCell {
+        SimCell::new(id("lever"), CellState::Lever(LeverState { block_id: id("lever"), face, facing, powered }))
     }
 
-    fn lever(face: AttachFace, facing: Direction, powered: bool) -> RedstoneCell {
-        RedstoneCell {
-            kind: RedstoneCellKind::Lever(LeverState {
-                block_id: LEVER_ID,
-                face,
-                facing,
-                powered,
-            }),
-            is_redstone_conductor: false,
-        }
+    fn door(block_id: BlockId, half: DoorHalf, open: bool, powered: bool) -> SimCell {
+        let door = DoorPlaceState { block_id, facing: Direction::North, half, hinge: DoorHinge::Left, open, powered };
+        SimCell::new(block_id, CellState::Door(door))
     }
 
-    fn door(block_id: BlockId, half: DoorHalf, open: bool, powered: bool) -> RedstoneCell {
-        RedstoneCell {
-            kind: RedstoneCellKind::Door(RedstoneDoorState {
-                block_id,
-                half,
-                open,
-                powered,
-            }),
-            is_redstone_conductor: false,
-        }
+    fn trapdoor(open: bool, powered: bool, waterlogged: bool) -> SimCell {
+        SimCell::new(id("iron_trapdoor"), CellState::TrapDoor { facing: Direction::North, half: Half::Bottom, open, powered, waterlogged })
     }
 
-    fn trapdoor(open: bool, powered: bool, waterlogged: bool) -> RedstoneCell {
-        RedstoneCell {
-            kind: RedstoneCellKind::TrapDoor(TrapDoorState {
-                block_id: IRON_TRAPDOOR_ID,
-                open,
-                powered,
-                waterlogged,
-            }),
-            is_redstone_conductor: false,
-        }
-    }
-
-    fn gate(open: bool, powered: bool) -> RedstoneCell {
-        RedstoneCell {
-            kind: RedstoneCellKind::FenceGate(FenceGateState {
-                block_id: OAK_FENCE_GATE_ID,
-                open,
-                powered,
-            }),
-            is_redstone_conductor: false,
-        }
+    fn gate(open: bool, powered: bool) -> SimCell {
+        SimCell::new(id("oak_fence_gate"), CellState::FenceGate { facing: Direction::North, open, powered })
     }
 
     #[test]
     fn lever_pull_support_cells_and_signal_table() {
         // expected-harness-output.txt:10-27 (E1 wall, E1b floor) & checker-output.txt:12-25 (X3 ceiling, X7 signals)
-        let mut w = MapRedstoneWorld::default();
-        w.set_cell([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
+        let mut w = MapRedstoneWorld::new();
+        w.set([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
         let mut ev = Vec::new();
         assert!(lever_pull(&mut w, [0, 64, 0], false, &mut ev));
         assert_eq!(
             ev,
             vec![
                 RedstoneEvent::SetBlock { pos: [0, 64, 0], flags: 3, open: None, powered: true, waterlogged: None },
-                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: LEVER_ID },
-                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: LEVER_ID },
+                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: id("lever") },
+                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: id("lever") },
                 RedstoneEvent::LeverSoundAndEvent { pos: [0, 64, 0], activated: true },
             ]
         );
         // X7 signal table (checker-output.txt:18-25)
-        let RedstoneCellKind::Lever(l_on) = w.cell([0, 64, 0]).kind else { unreachable!() };
+        let CellState::Lever(l_on) = w.cell([0, 64, 0]).state else { unreachable!() };
         assert_eq!(l_on.signal(), 15);
         for d in Direction::ALL {
             assert_eq!(l_on.direct_signal(d), if d == Direction::East { 15 } else { 0 });
@@ -890,27 +711,27 @@ mod part6_tests {
         assert_eq!(ev[0], RedstoneEvent::SetBlock { pos: [0, 64, 0], flags: 3, open: None, powered: false, waterlogged: None });
 
         // Floor lever (expected-harness-output.txt:23-27)
-        w.set_cell([5, 64, 0], lever(AttachFace::Floor, Direction::North, false));
+        w.set([5, 64, 0], lever(AttachFace::Floor, Direction::North, false));
         ev.clear();
         lever_pull(&mut w, [5, 64, 0], false, &mut ev);
-        assert_eq!(ev[1], RedstoneEvent::UpdateNeighborsAt { pos: [5, 64, 0], source_id: LEVER_ID });
-        assert_eq!(ev[2], RedstoneEvent::UpdateNeighborsAt { pos: [5, 63, 0], source_id: LEVER_ID });
+        assert_eq!(ev[1], RedstoneEvent::UpdateNeighborsAt { pos: [5, 64, 0], source_id: id("lever") });
+        assert_eq!(ev[2], RedstoneEvent::UpdateNeighborsAt { pos: [5, 63, 0], source_id: id("lever") });
 
         // Ceiling lever (checker-output.txt:13-17)
-        w.set_cell([7, 64, 0], lever(AttachFace::Ceiling, Direction::North, false));
+        w.set([7, 64, 0], lever(AttachFace::Ceiling, Direction::North, false));
         ev.clear();
         lever_pull(&mut w, [7, 64, 0], false, &mut ev);
-        assert_eq!(ev[2], RedstoneEvent::UpdateNeighborsAt { pos: [7, 65, 0], source_id: LEVER_ID });
+        assert_eq!(ev[2], RedstoneEvent::UpdateNeighborsAt { pos: [7, 65, 0], source_id: id("lever") });
     }
 
     #[test]
     fn synchronous_lever_to_door_and_trapdoor_interleaving() {
         // expected-harness-output.txt:28-49 (E2)
-        let mut w = MapRedstoneWorld::default();
-        w.set_cell([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
-        w.set_cell([-1, 64, 0], conductor());
-        w.set_cell([-2, 64, 0], door(IRON_DOOR_ID, DoorHalf::Lower, false, false));
-        w.set_cell([-2, 65, 0], door(IRON_DOOR_ID, DoorHalf::Upper, false, false));
+        let mut w = MapRedstoneWorld::new();
+        w.set([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
+        w.set([-1, 64, 0], conductor());
+        w.set([-2, 64, 0], door(id("iron_door"), DoorHalf::Lower, false, false));
+        w.set([-2, 65, 0], door(id("iron_door"), DoorHalf::Upper, false, false));
 
         let mut ev = Vec::new();
         lever_pull(&mut w, [0, 64, 0], false, &mut ev);
@@ -918,15 +739,15 @@ mod part6_tests {
             ev,
             vec![
                 RedstoneEvent::SetBlock { pos: [0, 64, 0], flags: 3, open: None, powered: true, waterlogged: None },
-                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: LEVER_ID },
-                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: LEVER_ID },
+                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: id("lever") },
+                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: id("lever") },
                 RedstoneEvent::DoorSoundAndEvent { pos: [-2, 64, 0], open: true },
                 RedstoneEvent::SetBlock { pos: [-2, 64, 0], flags: 2, open: Some(true), powered: true, waterlogged: None },
                 RedstoneEvent::LeverSoundAndEvent { pos: [0, 64, 0], activated: true },
             ]
         );
         // Only lower half written by neighborChanged; upper stays unchanged until shape wave (expected-harness-output.txt:38-39)
-        assert_eq!(w.cell([-2, 65, 0]), door(IRON_DOOR_ID, DoorHalf::Upper, false, false));
+        assert_eq!(w.cell([-2, 65, 0]).state, door(id("iron_door"), DoorHalf::Upper, false, false).state);
 
         ev.clear();
         lever_pull(&mut w, [0, 64, 0], false, &mut ev);
@@ -934,8 +755,8 @@ mod part6_tests {
             ev,
             vec![
                 RedstoneEvent::SetBlock { pos: [0, 64, 0], flags: 3, open: None, powered: false, waterlogged: None },
-                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: LEVER_ID },
-                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: LEVER_ID },
+                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: id("lever") },
+                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: id("lever") },
                 RedstoneEvent::DoorSoundAndEvent { pos: [-2, 64, 0], open: false },
                 RedstoneEvent::SetBlock { pos: [-2, 64, 0], flags: 2, open: Some(false), powered: false, waterlogged: None },
                 RedstoneEvent::LeverSoundAndEvent { pos: [0, 64, 0], activated: false },
@@ -943,26 +764,26 @@ mod part6_tests {
         );
 
         // X10 pull -> stone -> iron trapdoor (checker-output.txt:37-54) & X11 door far at -3 (checker-output.txt:56-62)
-        let mut wt = MapRedstoneWorld::default();
-        wt.set_cell([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
-        wt.set_cell([-1, 64, 0], conductor());
-        wt.set_cell([-2, 64, 0], trapdoor(false, false, false));
-        wt.set_cell([-3, 64, 0], door(IRON_DOOR_ID, DoorHalf::Lower, false, false));
+        let mut wt = MapRedstoneWorld::new();
+        wt.set([0, 64, 0], lever(AttachFace::Wall, Direction::East, false));
+        wt.set([-1, 64, 0], conductor());
+        wt.set([-2, 64, 0], trapdoor(false, false, false));
+        wt.set([-3, 64, 0], door(id("iron_door"), DoorHalf::Lower, false, false));
         ev.clear();
         lever_pull(&mut wt, [0, 64, 0], false, &mut ev);
         assert_eq!(
             ev,
             vec![
                 RedstoneEvent::SetBlock { pos: [0, 64, 0], flags: 3, open: None, powered: true, waterlogged: None },
-                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: LEVER_ID },
-                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: LEVER_ID },
+                RedstoneEvent::UpdateNeighborsAt { pos: [0, 64, 0], source_id: id("lever") },
+                RedstoneEvent::UpdateNeighborsAt { pos: [-1, 64, 0], source_id: id("lever") },
                 RedstoneEvent::TrapDoorSoundAndEvent { pos: [-2, 64, 0], open: true },
                 RedstoneEvent::SetBlock { pos: [-2, 64, 0], flags: 2, open: Some(true), powered: true, waterlogged: Some(false) },
                 RedstoneEvent::LeverSoundAndEvent { pos: [0, 64, 0], activated: true },
             ]
         );
         // X11: door at -3 untouched
-        assert_eq!(wt.cell([-3, 64, 0]), door(IRON_DOOR_ID, DoorHalf::Lower, false, false));
+        assert_eq!(wt.cell([-3, 64, 0]).state, door(id("iron_door"), DoorHalf::Lower, false, false).state);
     }
 
     #[test]
@@ -971,11 +792,11 @@ mod part6_tests {
         let mut ev = Vec::new();
 
         // 3b: upper updates from lower signal; X6: lower updates from upper signal
-        let mut w = MapRedstoneWorld::default();
-        w.set_cell([2, 64, 0], door(IRON_DOOR_ID, DoorHalf::Lower, false, false));
-        w.set_cell([2, 65, 0], door(IRON_DOOR_ID, DoorHalf::Upper, false, false));
-        w.set_cell([3, 64, 0], lever(AttachFace::Floor, Direction::North, true));
-        door_neighbor_changed(&mut w, [2, 65, 0], STONE_ID, &mut ev);
+        let mut w = MapRedstoneWorld::new();
+        w.set([2, 64, 0], door(id("iron_door"), DoorHalf::Lower, false, false));
+        w.set([2, 65, 0], door(id("iron_door"), DoorHalf::Upper, false, false));
+        w.set([3, 64, 0], lever(AttachFace::Floor, Direction::North, true));
+        door_neighbor_changed(&mut w, [2, 65, 0], id("stone"), &mut ev);
         assert_eq!(ev, vec![
             RedstoneEvent::DoorSoundAndEvent { pos: [2, 65, 0], open: true },
             RedstoneEvent::SetBlock { pos: [2, 65, 0], flags: 2, open: Some(true), powered: true, waterlogged: None },
@@ -983,25 +804,25 @@ mod part6_tests {
 
         // 3d: same-door skip; X1: cross-material (oak_door) does NOT skip
         ev.clear();
-        door_neighbor_changed(&mut w, [2, 64, 0], IRON_DOOR_ID, &mut ev);
+        door_neighbor_changed(&mut w, [2, 64, 0], id("iron_door"), &mut ev);
         assert!(ev.is_empty());
-        door_neighbor_changed(&mut w, [2, 64, 0], OAK_DOOR_ID, &mut ev);
+        door_neighbor_changed(&mut w, [2, 64, 0], id("oak_door"), &mut ev);
         assert_eq!(ev.len(), 2);
 
         // 3e: pre-opened copper door + signal ON -> no sound, write open=true powered=true
-        let mut wc = MapRedstoneWorld::default();
-        wc.set_cell([2, 64, 0], door(COPPER_DOOR_ID, DoorHalf::Lower, true, false));
-        wc.set_cell([3, 64, 0], lever(AttachFace::Floor, Direction::North, true));
+        let mut wc = MapRedstoneWorld::new();
+        wc.set([2, 64, 0], door(id("copper_door"), DoorHalf::Lower, true, false));
+        wc.set([3, 64, 0], lever(AttachFace::Floor, Direction::North, true));
         ev.clear();
-        door_neighbor_changed(&mut wc, [2, 64, 0], STONE_ID, &mut ev);
+        door_neighbor_changed(&mut wc, [2, 64, 0], id("stone"), &mut ev);
         assert_eq!(ev, vec![
             RedstoneEvent::SetBlock { pos: [2, 64, 0], flags: 2, open: Some(true), powered: true, waterlogged: None },
         ]);
 
         // 3g3 & X5/X5b: waterlogged trapdoor ON, held (noop), OFF
-        let mut wt = MapRedstoneWorld::default();
-        wt.set_cell([4, 64, 0], trapdoor(false, false, true));
-        wt.set_cell([5, 64, 0], lever(AttachFace::Floor, Direction::North, true));
+        let mut wt = MapRedstoneWorld::new();
+        wt.set([4, 64, 0], trapdoor(false, false, true));
+        wt.set([5, 64, 0], lever(AttachFace::Floor, Direction::North, true));
         ev.clear();
         trapdoor_neighbor_changed(&mut wt, [4, 64, 0], false, &mut ev);
         assert_eq!(ev, vec![
@@ -1014,7 +835,7 @@ mod part6_tests {
         trapdoor_neighbor_changed(&mut wt, [4, 64, 0], false, &mut ev);
         assert!(ev.is_empty());
         // X5b: signal OFF -> close sound, write, scheduleTick delay=5
-        wt.set_cell([5, 64, 0], lever(AttachFace::Floor, Direction::North, false));
+        wt.set([5, 64, 0], lever(AttachFace::Floor, Direction::North, false));
         trapdoor_neighbor_changed(&mut wt, [4, 64, 0], false, &mut ev);
         assert_eq!(ev, vec![
             RedstoneEvent::TrapDoorSoundAndEvent { pos: [4, 64, 0], open: false },
@@ -1023,9 +844,9 @@ mod part6_tests {
         ]);
 
         // 3h & X4: fence gate writes BEFORE sound, and skips sound when pre-opened
-        let mut wg = MapRedstoneWorld::default();
-        wg.set_cell([6, 64, 0], gate(false, false));
-        wg.set_cell([7, 64, 0], lever(AttachFace::Floor, Direction::North, true));
+        let mut wg = MapRedstoneWorld::new();
+        wg.set([6, 64, 0], gate(false, false));
+        wg.set([7, 64, 0], lever(AttachFace::Floor, Direction::North, true));
         ev.clear();
         fence_gate_neighbor_changed(&mut wg, [6, 64, 0], false, &mut ev);
         assert_eq!(ev, vec![
@@ -1033,7 +854,7 @@ mod part6_tests {
             RedstoneEvent::FenceGateSoundAndEvent { pos: [6, 64, 0], open: true },
         ]);
         // X4: pre-opened fence gate + signal ON -> write only, no sound
-        wg.set_cell([6, 64, 0], gate(true, false));
+        wg.set([6, 64, 0], gate(true, false));
         ev.clear();
         fence_gate_neighbor_changed(&mut wg, [6, 64, 0], false, &mut ev);
         assert_eq!(ev, vec![

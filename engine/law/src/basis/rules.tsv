@@ -37,3 +37,4 @@ anvil	5	y	n	none	normal	other	y	y	n	n	n	always
 chipped_anvil	5	y	n	none	normal	other	y	y	n	n	n	always
 damaged_anvil	5	y	n	none	normal	other	y	y	n	n	n	always
 lily_pad	0	n	n	none	destroy	other	n	y	n	n	n	always
+copper_door	3	n	n	none	destroy	other	y	y	n	n	n	always

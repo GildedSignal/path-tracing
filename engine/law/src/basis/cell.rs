@@ -243,3 +243,187 @@ fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
     };
     (block, parse_offset(f[21]))
 }
+
+// ============================================================================
+// The cell: a block id, its family's state, and the table's rows; one world to edit
+// ============================================================================
+
+use crate::falling::AnvilStage;
+use crate::fluid::{FlowKind, FluidCell};
+use crate::interact::LeverState;
+use crate::neighbor::Direction;
+use crate::piston::PistonBlock;
+use crate::place::{DoorHinge, DoorPlaceState, Half, ScaffoldingState};
+use crate::world_hooks::{ButtonState, PressurePlateState, TripwireHookState, TripwireWireState};
+use crate::BlockPos;
+
+/// The edit side of the world: one cell representation, read and written by every rule.
+pub trait WorldMut {
+    fn cell(&self, pos: BlockPos) -> SimCell;
+    fn set(&mut self, pos: BlockPos, cell: SimCell);
+}
+
+/// A plain map world (unset cells are air), for rules run on their own.
+impl WorldMut for std::collections::HashMap<BlockPos, SimCell> {
+    fn cell(&self, pos: BlockPos) -> SimCell {
+        self.get(&pos).cloned().unwrap_or_else(|| SimCell::air(BlockId::of("air")))
+    }
+    fn set(&mut self, pos: BlockPos, cell: SimCell) {
+        self.insert(pos, cell);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FallingKind {
+    Sand,
+    Anvil { facing_x_axis: bool, stage: AnvilStage },
+    ConcretePowder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CellState {
+    Empty,
+    Plain,
+    Fluid { kind: FlowKind, cell: FluidCell },
+    RedstoneWire { power: u8 },
+    Lever(LeverState),
+    Door(DoorPlaceState),
+    TrapDoor { facing: Direction, half: Half, open: bool, powered: bool, waterlogged: bool },
+    FenceGate { facing: Direction, open: bool, powered: bool },
+    Button(ButtonState),
+    PressurePlate(PressurePlateState),
+    TripwireWire(TripwireWireState),
+    TripwireHook(TripwireHookState),
+    Scaffolding(ScaffoldingState),
+    Piston { sticky: bool, facing: Direction, extended: bool },
+    PistonHead { sticky: bool, facing: Direction },
+    MovingPiston { sticky: bool, facing: Direction },
+    Falling(FallingKind),
+}
+
+#[derive(Clone, Debug)]
+pub struct SimCell {
+    pub id: BlockId,
+    pub state: CellState,
+    pub props: Rules,
+    pub block: Block,
+}
+
+const LEVEL: [&str; 16] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"];
+pub const DIRECTION: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
+fn yes(v: bool) -> &'static str {
+    if v { "true" } else { "false" }
+}
+
+impl SimCell {
+    /// The block `id` in `state`: its rules and its model from the tables.
+    pub fn new(id: BlockId, state: CellState) -> Self {
+        let mut cell = Self { id, state, props: id.rules(), block: Block::default() };
+        cell.block = cell.model().clone();
+        cell.sync_block();
+        cell
+    }
+
+    pub fn air(id: BlockId) -> Self {
+        Self::new(id, CellState::Empty)
+    }
+
+    pub fn plain(id: BlockId) -> Self {
+        Self::new(id, CellState::Plain)
+    }
+
+    pub fn water(id: BlockId, cell: FluidCell) -> Self {
+        Self::new(id, CellState::Fluid { kind: FlowKind::Water, cell })
+    }
+
+    pub fn lava(id: BlockId, fast: bool, cell: FluidCell) -> Self {
+        Self::new(id, CellState::Fluid { kind: FlowKind::Lava { fast }, cell })
+    }
+
+    /// The model the state's relevant properties select (`blocks.tsv`, `maps.tsv`).
+    fn model(&self) -> &'static Block {
+        use self::model;
+        let d = |d: Direction| DIRECTION[d as usize];
+        let half = |h: Half| if h == Half::Top { "top" } else { "bottom" };
+        match self.state {
+            CellState::MovingPiston { .. } => {
+                // Census: moving_piston is a dynamic, non-local shape; its block entity carries it.
+                static MOVING: std::sync::OnceLock<Block> = std::sync::OnceLock::new();
+                MOVING.get_or_init(|| Block { air: false, fluid_flow: Some(FluidFlowBlock { blocks_motion: true, solid_faces: [false; 4] }), ..Block::default() })
+            }
+            CellState::Fluid { cell, .. } => model(self.id, &[("level", LEVEL[cell.legacy_level() as usize])]),
+            CellState::Door(s) => model(self.id, &[("facing", d(s.facing)), ("hinge", if s.hinge == DoorHinge::Left { "left" } else { "right" }), ("open", yes(s.open))]),
+            CellState::TrapDoor { facing, half: h, open, waterlogged, .. } => {
+                model(self.id, &[("facing", d(facing)), ("half", half(h)), ("open", yes(open)), ("waterlogged", yes(waterlogged))])
+            }
+            CellState::FenceGate { facing, open, .. } => model(self.id, &[("facing", d(facing)), ("open", yes(open))]),
+            CellState::TripwireWire(w) => model(self.id, &[("attached", yes(w.attached))]),
+            CellState::Scaffolding(s) => {
+                model(self.id, &[("bottom", yes(s.bottom)), ("distance", LEVEL[s.distance as usize]), ("waterlogged", yes(s.waterlogged))])
+            }
+            CellState::Piston { facing, extended, .. } => model(self.id, &[("extended", yes(extended)), ("facing", d(facing))]),
+            CellState::PistonHead { facing, .. } => model(self.id, &[("facing", d(facing)), ("short", "false")]),
+            CellState::Falling(FallingKind::Anvil { facing_x_axis, .. }) => model(self.id, &[("facing", if facing_x_axis { "east" } else { "north" })]),
+            _ => model(self.id, &[]),
+        }
+    }
+
+    #[inline]
+    pub fn is_air(&self) -> bool {
+        matches!(self.state, CellState::Empty)
+    }
+
+    /// Extracts fluid info (including waterlogged blocks) for `fluid` and `world_hooks`.
+    pub fn fluid_info(&self) -> Option<(FlowKind, FluidCell)> {
+        match self.state {
+            CellState::Fluid { kind, cell } => Some((kind, cell)),
+            CellState::TrapDoor { waterlogged: true, .. }
+            | CellState::Scaffolding(ScaffoldingState { waterlogged: true, .. }) => Some((FlowKind::Water, FluidCell::WATER_SOURCE)),
+            _ => None,
+        }
+    }
+
+    pub fn is_waterlogged_container(&self) -> bool {
+        matches!(self.state, CellState::TrapDoor { .. } | CellState::Scaffolding(_))
+    }
+
+    pub fn set_waterlogged(&mut self, wl: bool) -> bool {
+        match &mut self.state {
+            CellState::TrapDoor { waterlogged, .. } => *waterlogged = wl,
+            CellState::Scaffolding(s) => s.waterlogged = wl,
+            _ => return false,
+        }
+        self.sync_block();
+        true
+    }
+
+    pub fn as_piston_block(&self) -> PistonBlock {
+        PistonBlock {
+            air: self.is_air(),
+            destroy_speed: self.props.destroy_speed,
+            has_block_entity: self.props.has_block_entity,
+            push_reaction: self.props.push_reaction,
+            kind: self.props.piston_kind,
+        }
+    }
+
+    /// The rows a state changes: a piston's kind and sturdy faces, and the model. A plain cell
+    /// keeps the block it was made with (the base world's own, for an unedited cell).
+    pub fn sync_block(&mut self) {
+        match self.state {
+            CellState::Piston { sticky, facing, extended } => {
+                self.props.piston_kind = if sticky { PistonKind::StickyPiston { extended } } else { PistonKind::Piston { extended } };
+                self.props.sturdy_faces = [!extended; 6];
+                self.props.sturdy_faces[facing.opposite() as usize] = true;
+            }
+            CellState::PistonHead { facing, .. } => {
+                self.props.sturdy_faces = [false; 6];
+                self.props.sturdy_faces[facing as usize] = true;
+            }
+            _ => {}
+        }
+        if self.state != CellState::Plain {
+            self.block = self.model().clone();
+        }
+    }
+}
