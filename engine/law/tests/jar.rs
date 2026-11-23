@@ -351,6 +351,7 @@ fn server_unloaded_chunk_applies_gravity_not_minus_0_1() {
 
 #[test]
 fn jar_world_hooks() {
+    use law::basis::cell::{CellState, SimCell, WorldMut};
     use law::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
     use law::world_hooks::*;
     use law::{Block, BlockPos, BoxWorld, Fluid, FluidKind};
@@ -397,8 +398,9 @@ fn jar_world_hooks() {
     const IRON_PLATE_ID: BlockId = BlockId(13);
     const STONE_BTN_ID: BlockId = BlockId(20);
     const OAK_BTN_ID: BlockId = BlockId(21);
-    const WIRE_ID: BlockId = BlockId(30);
-    const HOOK_ID: BlockId = BlockId(31);
+    const WIRE_ID: BlockId = BlockId(1038); // census rows: the tripwire rules build cells of these blocks
+    const HOOK_ID: BlockId = BlockId(1039);
+    assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
 
     struct MapBucketWorld {
         cells: HashMap<BlockPos, BucketCell>,
@@ -596,30 +598,27 @@ fn jar_world_hooks() {
     };
 
     struct MapTripwireWorld {
-        cells: HashMap<BlockPos, TripwireCell>,
+        cells: HashMap<BlockPos, SimCell>,
         scheduled: Vec<(BlockPos, BlockId)>,
     }
     impl MapTripwireWorld {
         fn new() -> Self { Self { cells: HashMap::new(), scheduled: Vec::new() } }
         fn put_wire(&mut self, pos: BlockPos, powered: bool, attached: bool, disarmed: bool) {
-            self.cells.insert(pos, TripwireCell::Wire(TripwireWireState {
-                block_id: WIRE_ID, powered, attached, disarmed,
-            }));
+            let wire = TripwireWireState { block_id: WIRE_ID, powered, attached, disarmed };
+            self.cells.insert(pos, SimCell::new(WIRE_ID, CellState::TripwireWire(wire)));
         }
         fn put_hook(&mut self, pos: BlockPos, facing: Direction, powered: bool, attached: bool) {
-            self.cells.insert(pos, TripwireCell::Hook(TripwireHookState {
-                block_id: HOOK_ID, facing, powered, attached,
-            }));
+            let hook = TripwireHookState { block_id: HOOK_ID, facing, powered, attached };
+            self.cells.insert(pos, SimCell::new(HOOK_ID, CellState::TripwireHook(hook)));
         }
+        fn cell(&self, pos: BlockPos) -> TripwireCell { tripwire_cell(self, pos) }
     }
-    impl TripwireWorld for MapTripwireWorld {
-        fn wire_block_id(&self) -> BlockId { WIRE_ID }
-        fn hook_block_id(&self) -> BlockId { HOOK_ID }
-        fn cell(&self, pos: BlockPos) -> TripwireCell {
-            self.cells.get(&pos).copied().unwrap_or(TripwireCell::Empty)
+    impl WorldMut for MapTripwireWorld {
+        fn cell(&self, pos: BlockPos) -> SimCell {
+            self.cells.get(&pos).cloned().unwrap_or_else(|| SimCell::air(BlockId::of("air")))
         }
-        fn set_cell(&mut self, pos: BlockPos, cell: TripwireCell) {
-            if cell == TripwireCell::Empty { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
+        fn set(&mut self, pos: BlockPos, cell: SimCell) {
+            if cell.is_air() { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
         }
         fn has_scheduled_tick(&self, pos: BlockPos, block_id: BlockId) -> bool {
             self.scheduled.contains(&(pos, block_id))

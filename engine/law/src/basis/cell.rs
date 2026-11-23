@@ -261,6 +261,10 @@ use crate::BlockPos;
 pub trait WorldMut {
     fn cell(&self, pos: BlockPos) -> SimCell;
     fn set(&mut self, pos: BlockPos, cell: SimCell);
+    /// `LevelTicks.hasScheduledTick`: a tick of `block` is pending at `pos`.
+    fn has_scheduled_tick(&self, _pos: BlockPos, _block: BlockId) -> bool {
+        false
+    }
 }
 
 /// A plain map world (unset cells are air), for rules run on their own.

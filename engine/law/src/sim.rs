@@ -33,8 +33,7 @@ use crate::piston::{
     Push, PushReaction, Resolver, TriggerAction, set_block_flags, trigger as piston_trigger,
 };
 use crate::place::{
-    self, DoorHinge, DoorPlaceState, Half,
-    ScaffoldingCell, ScaffoldingState,
+    self, ScaffoldingCell,
 };
 use crate::basis::sweep::shapes as collide_with_shapes;
 use crate::ticks::{
@@ -44,11 +43,11 @@ use crate::world::block_pos;
 use crate::world_hooks::{
     self, BucketCell, BucketContent, BucketEvent, BucketWorld,
     ButtonEvent, ButtonState, PlateEvent, PressurePlateState, TriggerEntity,
-    TripwireCell, TripwireEvent, TripwireHookState, TripwireWireState, TripwireWorld,
+    TripwireEvent,
     WATER_TICK_DELAY,
 };
 use crate::{
-    Aabb, Block, BlockPos, CollisionContext, FluidFlowBlock, FluidKind, Inside, Vec3, VoxelShape, World,
+    Aabb, Block, BlockPos, CollisionContext, FluidKind, Inside, Vec3, VoxelShape, World,
 };
 
 #[inline]
@@ -954,13 +953,13 @@ impl<'a, W: World> SimWorld<'a, W> {
                 }
             }
             CellState::TripwireWire(wire) => {
-                let mut tw = SimTripwireView::new(self, wire.block_id, BlockId::of("tripwire_hook"));
+                let mut tw = Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_after_removal(&mut tw, pos, wire, moved_by_piston, &mut evs);
                 self.apply_tripwire_events(queue.as_deref_mut(), evs);
             }
             CellState::TripwireHook(hook) => {
-                let mut tw = SimTripwireView::new(self, BlockId::of("tripwire"), hook.block_id);
+                let mut tw = Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_hook_after_removal(
                     &mut tw,
@@ -2478,14 +2477,14 @@ impl<'a, W: World> SimWorld<'a, W> {
                     .map(SimLivingEntity::as_trigger_entity)
                     .collect();
                 let mut tw =
-                    SimTripwireView::new(self, BlockId::of("tripwire"), BlockId::of("tripwire_hook"));
+                    Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_tick(&mut tw, pos, &triggers, &mut evs);
                 self.apply_tripwire_events(None, evs);
             }
             BlockTickKind::TripwireHook => {
                 let mut tw =
-                    SimTripwireView::new(self, BlockId::of("tripwire"), BlockId::of("tripwire_hook"));
+                    Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_hook_tick(&mut tw, pos, &mut evs);
                 self.apply_tripwire_events(None, evs);
@@ -3142,11 +3141,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         .moved(Vec3::new(w[0] as f64, w[1] as f64, w[2] as f64));
                     for &tr in &triggers {
                         if tr.bbox.intersects(box_w) {
-                            let mut tw = SimTripwireView::new(
-                                self,
-                                BlockId::of("tripwire"),
-                                BlockId::of("tripwire_hook"),
-                            );
+                            let mut tw = Pending::new(self);
                             let mut evs = Vec::new();
                             world_hooks::tripwire_entity_inside(&mut tw, w, false, tr, &mut evs);
                             self.apply_tripwire_events(None, evs);
@@ -3264,6 +3259,10 @@ impl<W: World> WorldMut for Pending<'_, '_, W> {
     fn set(&mut self, pos: BlockPos, cell: SimCell) {
         self.pending.insert(pos, cell);
     }
+    fn has_scheduled_tick(&self, pos: BlockPos, block: BlockId) -> bool {
+        let kind = if block == BlockId::of("tripwire_hook") { BlockTickKind::TripwireHook } else { BlockTickKind::TripwireWire };
+        self.sim.block_ticks.container(ChunkPos::from_block_pos(pos)).is_some_and(|c| c.has_scheduled_tick(kind, pos))
+    }
 }
 
 struct SimBucketView<'s, 'a, W: World> {
@@ -3338,67 +3337,6 @@ impl<W: World> BucketWorld for SimBucketView<'_, '_, W> {
     }
 }
 
-struct SimTripwireView<'s, 'a, W: World> {
-    sim: &'s mut SimWorld<'a, W>,
-    wire_id: BlockId,
-    hook_id: BlockId,
-    air_id: BlockId,
-    pending: HashMap<BlockPos, SimCell>,
-}
-
-impl<'s, 'a, W: World> SimTripwireView<'s, 'a, W> {
-    fn new(sim: &'s mut SimWorld<'a, W>, wire_id: BlockId, hook_id: BlockId) -> Self {
-        let air_id = BlockId::of("air");
-        Self {
-            sim,
-            wire_id,
-            hook_id,
-            air_id,
-            pending: HashMap::new(),
-        }
-    }
-}
-
-impl<W: World> TripwireWorld for SimTripwireView<'_, '_, W> {
-    fn wire_block_id(&self) -> BlockId {
-        self.wire_id
-    }
-    fn hook_block_id(&self) -> BlockId {
-        self.hook_id
-    }
-    fn cell(&self, pos: BlockPos) -> TripwireCell {
-        let cell = self
-            .pending
-            .get(&pos)
-            .cloned()
-            .unwrap_or_else(|| self.sim.cell(pos));
-        match cell.state {
-            CellState::TripwireWire(w) => TripwireCell::Wire(w),
-            CellState::TripwireHook(h) => TripwireCell::Hook(h),
-            _ => TripwireCell::Empty,
-        }
-    }
-    fn set_cell(&mut self, pos: BlockPos, tc: TripwireCell) {
-        let cell = match tc {
-            TripwireCell::Empty => SimCell::air(self.air_id),
-            TripwireCell::Wire(w) => SimCell::new(w.block_id, CellState::TripwireWire(w)),
-            TripwireCell::Hook(h) => SimCell::new(h.block_id, CellState::TripwireHook(h)),
-        };
-        self.pending.insert(pos, cell);
-    }
-    fn has_scheduled_tick(&self, pos: BlockPos, block_id: BlockId) -> bool {
-        let chunk = ChunkPos::from_block_pos(pos);
-        let kind = if block_id == self.hook_id {
-            BlockTickKind::TripwireHook
-        } else {
-            BlockTickKind::TripwireWire
-        };
-        self.sim
-            .block_ticks
-            .container(chunk)
-            .is_some_and(|c| c.has_scheduled_tick(kind, pos))
-    }
-}
 fn piston_head_boxes(facing: Direction) -> [Aabb; 2] {
     let t = 0.25;
     let plate = match facing {

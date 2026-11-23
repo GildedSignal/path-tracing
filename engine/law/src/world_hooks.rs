@@ -14,6 +14,7 @@
 //! Block identity is strictly data-driven (`BlockId` and properties, never block-name strings).
 
 use crate::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
+use crate::basis::cell::{CellState, SimCell, WorldMut};
 use crate::neighbor::update_flags;
 use crate::{Aabb, BlockPos, FluidKind, Vec3, World};
 
@@ -1131,12 +1132,21 @@ pub enum TripwireEvent {
     GameEventShear { pos: BlockPos },
 }
 
-pub trait TripwireWorld {
-    fn wire_block_id(&self) -> BlockId;
-    fn hook_block_id(&self) -> BlockId;
-    fn cell(&self, pos: BlockPos) -> TripwireCell;
-    fn set_cell(&mut self, pos: BlockPos, cell: TripwireCell);
-    fn has_scheduled_tick(&self, pos: BlockPos, block_id: BlockId) -> bool;
+/// The tripwire rules' view of a cell: a wire, a hook, or neither.
+pub fn tripwire_cell(world: &impl WorldMut, pos: BlockPos) -> TripwireCell {
+    match world.cell(pos).state {
+        CellState::TripwireWire(w) => TripwireCell::Wire(w),
+        CellState::TripwireHook(h) => TripwireCell::Hook(h),
+        _ => TripwireCell::Empty,
+    }
+}
+
+fn set_tripwire(world: &mut impl WorldMut, pos: BlockPos, cell: TripwireCell) {
+    world.set(pos, match cell {
+        TripwireCell::Empty => SimCell::air(BlockId::of("air")),
+        TripwireCell::Wire(w) => SimCell::new(w.block_id, CellState::TripwireWire(w)),
+        TripwireCell::Hook(h) => SimCell::new(h.block_id, CellState::TripwireHook(h)),
+    });
 }
 
 fn push_hook_neighbor_updates(
@@ -1181,13 +1191,13 @@ fn emit_hook_state(
 }
 
 fn set_hook_if_changed(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     next: TripwireHookState,
     events: &mut Vec<TripwireEvent>,
 ) {
-    if world.cell(pos) != TripwireCell::Hook(next) {
-        world.set_cell(pos, TripwireCell::Hook(next));
+    if tripwire_cell(world, pos) != TripwireCell::Hook(next) {
+        set_tripwire(world, pos, TripwireCell::Hook(next));
         events.push(TripwireEvent::SetHook {
             pos,
             flags: UPDATE_ALL,
@@ -1197,14 +1207,14 @@ fn set_hook_if_changed(
 }
 
 fn set_wire_if_changed(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     next: TripwireWireState,
     flags: i32,
     events: &mut Vec<TripwireEvent>,
 ) {
-    if world.cell(pos) != TripwireCell::Wire(next) {
-        world.set_cell(pos, TripwireCell::Wire(next));
+    if tripwire_cell(world, pos) != TripwireCell::Wire(next) {
+        set_tripwire(world, pos, TripwireCell::Wire(next));
         events.push(TripwireEvent::SetWire {
             pos,
             flags,
@@ -1215,7 +1225,7 @@ fn set_wire_if_changed(
 
 fn hook_on_removed(
     hook_state: TripwireHookState,
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     events: &mut Vec<TripwireEvent>,
 ) {
@@ -1230,7 +1240,7 @@ fn hook_on_removed(
 /// `TripWireHookBlock.calculateState` (`@0-609`).
 #[allow(clippy::too_many_arguments)]
 pub fn tripwire_hook_calculate_state(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     state: TripwireHookState,
     is_being_destroyed: bool,
@@ -1252,7 +1262,7 @@ pub fn tripwire_hook_calculate_state(
 
     for i in 1..TRIPWIRE_DIST_MAX {
         let p = step_n(dir, pos, i);
-        let cell = world.cell(p);
+        let cell = tripwire_cell(world, p);
         match cell {
             TripwireCell::Hook(far_hook) => {
                 if far_hook.facing == dir.opposite() {
@@ -1318,7 +1328,7 @@ pub fn tripwire_hook_calculate_state(
         };
         set_hook_if_changed(world, far_pos, far_new, events);
         push_hook_neighbor_updates(state.block_id, far_pos, opp, events);
-        if !matches!(world.cell(pos), TripwireCell::Hook(_)) {
+        if !matches!(tripwire_cell(world, pos), TripwireCell::Hook(_)) {
             hook_on_removed(hook_new, world, pos, events);
             return;
         }
@@ -1337,7 +1347,7 @@ pub fn tripwire_hook_calculate_state(
         for j in 1..far_dist {
             if let Some(mut wire_st) = astate[j as usize] {
                 let wire_pos = step_n(dir, pos, j);
-                if matches!(world.cell(wire_pos), TripwireCell::Wire(_) | TripwireCell::Hook(_)) {
+                if matches!(tripwire_cell(world, wire_pos), TripwireCell::Wire(_) | TripwireCell::Hook(_)) {
                     wire_st.attached = attached_new;
                     set_wire_if_changed(world, wire_pos, wire_st, UPDATE_ALL, events);
                 }
@@ -1348,7 +1358,7 @@ pub fn tripwire_hook_calculate_state(
 
 /// `TripWireBlock.updateSource` (`@0-136`): walks `SOUTH` and `WEST` rays only, `i < 42`.
 pub fn tripwire_update_source(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     changed_wire_state: TripwireWireState,
     events: &mut Vec<TripwireEvent>,
@@ -1356,7 +1366,7 @@ pub fn tripwire_update_source(
     for dir in [Direction::South, Direction::West] {
         for i in 1..TRIPWIRE_DIST_MAX {
             let p = step_n(dir, pos, i);
-            match world.cell(p) {
+            match tripwire_cell(world, p) {
                 TripwireCell::Hook(hook_st) => {
                     if hook_st.facing == dir.opposite() {
                         tripwire_hook_calculate_state(
@@ -1381,12 +1391,12 @@ pub fn tripwire_update_source(
 
 /// `TripWireBlock.checkPressed(Level, BlockPos, List)` (`@0-166`).
 pub fn tripwire_check_pressed_with_entities(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     entities: &[TriggerEntity],
     events: &mut Vec<TripwireEvent>,
 ) {
-    let TripwireCell::Wire(mut wire_st) = world.cell(pos) else {
+    let TripwireCell::Wire(mut wire_st) = tripwire_cell(world, pos) else {
         return;
     };
     let flag = wire_st.powered;
@@ -1415,7 +1425,7 @@ pub fn tripwire_check_pressed_with_entities(
 
 /// `TripWireBlock.entityInside` (`@0-50`).
 pub fn tripwire_entity_inside(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     is_client_side: bool,
     entity: TriggerEntity,
@@ -1424,7 +1434,7 @@ pub fn tripwire_entity_inside(
     if is_client_side {
         return;
     }
-    let TripwireCell::Wire(wire_st) = world.cell(pos) else {
+    let TripwireCell::Wire(wire_st) = tripwire_cell(world, pos) else {
         return;
     };
     if wire_st.powered || world.has_scheduled_tick(pos, wire_st.block_id) {
@@ -1435,12 +1445,12 @@ pub fn tripwire_entity_inside(
 
 /// `TripWireBlock.tick` (`@0-27`) + `TripWireBlock.checkPressed(Level, BlockPos)` (`@0-34`).
 pub fn tripwire_tick(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     entities: &[TriggerEntity],
     events: &mut Vec<TripwireEvent>,
 ) {
-    let TripwireCell::Wire(wire_st) = world.cell(pos) else {
+    let TripwireCell::Wire(wire_st) = tripwire_cell(world, pos) else {
         return;
     };
     if !wire_st.powered {
@@ -1459,11 +1469,11 @@ pub fn tripwire_tick(
 
 /// `TripWireHookBlock.tick` (`@0-10`).
 pub fn tripwire_hook_tick(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     events: &mut Vec<TripwireEvent>,
 ) {
-    let TripwireCell::Hook(hook_st) = world.cell(pos) else {
+    let TripwireCell::Hook(hook_st) = tripwire_cell(world, pos) else {
         return;
     };
     tripwire_hook_calculate_state(world, pos, hook_st, false, true, -1, None, events);
@@ -1471,7 +1481,7 @@ pub fn tripwire_hook_tick(
 
 /// `TripWireBlock.playerWillDestroy` (`@0-74`): shears disarm sets `DISARMED=true` with `flags = 260`.
 pub fn tripwire_player_will_destroy(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     is_client_side: bool,
     main_hand_is_shears: bool,
@@ -1480,7 +1490,7 @@ pub fn tripwire_player_will_destroy(
     if is_client_side || !main_hand_is_shears {
         return;
     }
-    let TripwireCell::Wire(mut wire_st) = world.cell(pos) else {
+    let TripwireCell::Wire(mut wire_st) = tripwire_cell(world, pos) else {
         return;
     };
     wire_st.disarmed = true;
@@ -1490,7 +1500,7 @@ pub fn tripwire_player_will_destroy(
 
 /// `TripWireBlock.affectNeighborsAfterRemoval` (`@0-25`): phantom `POWERED = true` copy.
 pub fn tripwire_after_removal(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     old_wire: TripwireWireState,
     moved_by_piston: bool,
@@ -1507,7 +1517,7 @@ pub fn tripwire_after_removal(
 
 /// `TripWireHookBlock.affectNeighborsAfterRemoval` (`@0-12`).
 pub fn tripwire_hook_after_removal(
-    world: &mut impl TripwireWorld,
+    world: &mut impl WorldMut,
     pos: BlockPos,
     old_hook: TripwireHookState,
     moved_by_piston: bool,
