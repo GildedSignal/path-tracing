@@ -559,25 +559,6 @@ pub enum NonPlayerHookBlock {
     },
 }
 
-impl NonPlayerHookBlock {
-    #[inline]
-    pub const fn block_id(self) -> BlockId {
-        match self {
-            Self::Crop { block_id }
-            | Self::PitcherCrop { block_id }
-            | Self::Eyeblossom { block_id, .. }
-            | Self::LilyPad { block_id }
-            | Self::Frogspawn { block_id }
-            | Self::Hopper { block_id, .. }
-            | Self::DetectorRail { block_id, .. }
-            | Self::SculkSensor { block_id, .. }
-            | Self::SculkShrieker { block_id, .. }
-            | Self::RedStoneOre { block_id, .. }
-            | Self::TurtleEgg { block_id, .. } => block_id,
-        }
-    }
-
-}
 
 /// `DetectorRailBlock.PRESSED_CHECK_PERIOD` (`20` ticks).
 pub const DETECTOR_RAIL_CHECK_PERIOD: u32 = 20;

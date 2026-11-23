@@ -14,40 +14,7 @@ use crate::BlockPos;
 /// and `fluidTicks.tick` (@287). Excess due ticks remain queued for the next tick.
 pub const MAX_TICKS_PER_TICK: usize = 65_536;
 
-/// Exact phase order inside `ServerLevel.tick` followed by `MinecraftServer.tickChildren`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ServerTickPhase {
-    /// `ServerLevel.tick @246-269`: `blockTicks.tick(time, 65536, this::tickBlock)`
-    BlockTicks,
-    /// `ServerLevel.tick @273-296`: `fluidTicks.tick(time, 65536, this::tickFluid)`
-    FluidTicks,
-    /// `ServerLevel.tick @328-342`: `chunkSource.tick(supplier, true)`
-    ChunkSource,
-    /// `ServerLevel.tick @346-360`: `runBlockEvents()` (pistons, etc.)
-    BlockEvents,
-    /// `ServerLevel.tick @417-471`: entities (when `emptyTime < 300`)
-    Entities,
-    /// `ServerLevel.tick @474-487`: `tickBlockEntities()`
-    BlockEntities,
-    /// `ServerLevel.tick @493-509`: `PersistentEntitySectionManager.tick()`
-    EntityManagement,
-    /// `MinecraftServer.tickChildren @232-233`: after all levels tick
-    Connection,
-    /// `MinecraftServer.tickChildren @245-249`: after connection tick
-    PlayerList,
-}
 
-pub const SERVER_TICK_PHASES: [ServerTickPhase; 9] = [
-    ServerTickPhase::BlockTicks,
-    ServerTickPhase::FluidTicks,
-    ServerTickPhase::ChunkSource,
-    ServerTickPhase::BlockEvents,
-    ServerTickPhase::Entities,
-    ServerTickPhase::BlockEntities,
-    ServerTickPhase::EntityManagement,
-    ServerTickPhase::Connection,
-    ServerTickPhase::PlayerList,
-];
 
 /// Fast non-cryptographic FNV/Fx-style hasher to avoid SipHash overhead on 65k-tick maps.
 #[derive(Clone, Copy, Debug, Default)]
@@ -110,9 +77,6 @@ pub enum TickPriority {
 pub struct SubTickCounter(i64);
 
 impl SubTickCounter {
-    pub const fn new(initial: i64) -> Self {
-        Self(initial)
-    }
 
     #[inline]
     pub fn next(&mut self) -> i64 {
@@ -121,10 +85,6 @@ impl SubTickCounter {
         v
     }
 
-    #[inline]
-    pub const fn peek(&self) -> i64 {
-        self.0
-    }
 }
 
 /// `ScheduledTick<T>`: immutable value entry stored in `LevelChunkTicks`.
@@ -209,10 +169,6 @@ impl<T: Copy + Eq + Hash> LevelChunkTicks<T> {
         self.queue.len()
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
 
     #[inline]
     pub fn has_scheduled_tick(&self, kind: T, pos: BlockPos) -> bool {

@@ -79,10 +79,6 @@ pub struct BucketStack {
 }
 
 impl BucketStack {
-    pub const EMPTY: Self = Self {
-        content: BucketContent::Empty,
-        count: 0,
-    };
 
     #[inline]
     pub const fn new(content: BucketContent, count: u32) -> Self {
@@ -642,14 +638,6 @@ impl PressurePlateState {
         }
     }
 
-    #[inline]
-    pub const fn shape(self) -> Aabb {
-        if self.signal > 0 {
-            PRESSURE_PLATE_SHAPE_PRESSED
-        } else {
-            PRESSURE_PLATE_SHAPE
-        }
-    }
 
     /// `BasePressurePlateBlock.ownSignal`.
     #[inline]

@@ -303,10 +303,6 @@ impl<B: Copy> NeighborQueue<B> {
         }
     }
 
-    #[inline]
-    pub fn max_chained_updates(&self) -> i32 {
-        self.max_chained_updates
-    }
 
     /// Enqueues a single-cell `neighborChanged` update. Returns `true` if the caller
     /// is at the root (not nested) and should invoke `run_updates`.

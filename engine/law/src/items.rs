@@ -329,17 +329,6 @@ impl SpinAttack {
         bounced
     }
 
-    /// Simplified tick step for callers tracking only `remaining_ticks`.
-    #[inline]
-    pub fn step(&mut self, horizontal_collision: bool, touched_living_entity: bool) {
-        let mut dummy = Vec3::default();
-        let touch = if touched_living_entity {
-            SpinTouch::Living
-        } else {
-            SpinTouch::None
-        };
-        let _ = self.check_auto_spin_attack(&mut dummy, horizontal_collision, touch);
-    }
 
     /// `LivingEntity.checkAutoSpinAttack @84-95`: `velocity.scale(-0.2d)`.
     #[inline]
@@ -347,10 +336,6 @@ impl SpinAttack {
         velocity.scale(-0.2)
     }
 
-    #[inline]
-    pub const fn finished(&self) -> bool {
-        self.remaining_ticks <= 0
-    }
 }
 
 // ============================================================================
@@ -367,11 +352,9 @@ impl SpinAttack {
 pub const LIFETIME: i32 = 6000; // tick 544-551: despawn when age >= 6000 (server side)
 pub const INFINITE_LIFETIME_AGE: i32 = -32768; // setUnlimitedLifetime 0-7
 pub const INFINITE_PICKUP_DELAY: i32 = 32767; // setNeverPickUp 0-7
-pub const DEFAULT_HEALTH: i32 = 5; // ItemEntity.DEFAULT_HEALTH; hurtServer 59-67: health -= (int) damage
 pub const MERGE_INTERVAL_MOVING: i32 = 2; // tick 423-433: crossed a block boundary this tick
 pub const MERGE_INTERVAL_RESTING: i32 = 40; // same block: merge attempt every 40 ticks
 pub const REST_HORIZ_SPEED_SQR: f64 = 9.999999747378752E-6; // tick 235-238 (1.0E-5f as f64)
-pub const PICKUP_MIN_FLUID_HEIGHT: f64 = 0.10000000149011612; // tick 89/117 (0.1f as f64)
 pub const FLUID_RISE_VELOCITY: f64 = 0.05999999865889549; // setFluidMovement 20-23 (0.06f as f64)
 pub const FLUID_RISE_ACCEL: f64 = 5.0E-4f32 as f64; // setFluidMovement 27-30
 pub const LAVA_DRAG: f64 = 0.95f32 as f64; // setUnderLavaMovement 1-4

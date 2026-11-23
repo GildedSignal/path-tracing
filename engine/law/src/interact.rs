@@ -4,12 +4,8 @@ use crate::{Aabb, BlockPos, Vec3};
 
 /// `Player.DEFAULT_BLOCK_INTERACTION_RANGE` (`Attributes.BLOCK_INTERACTION_RANGE` base).
 pub const DEFAULT_BLOCK_INTERACTION_RANGE: f64 = 4.5;
-/// `Player.DEFAULT_ENTITY_INTERACTION_RANGE`.
-pub const DEFAULT_ENTITY_INTERACTION_RANGE: f64 = 3.0;
 /// `ServerPlayer.CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER` (`ADD_VALUE`).
 pub const CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER: f64 = 0.5;
-/// `ServerPlayer.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER` (`ADD_VALUE`).
-pub const CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER: f64 = 2.0;
 /// Server-side tolerance passed to `isWithinBlockInteractionRange` by both
 /// `ServerGamePacketListenerImpl.handleUseItemOn` and `ServerPlayerGameMode.handleBlockBreakAction`.
 pub const SERVER_INTERACTION_RANGE_TOLERANCE: f64 = 1.0;

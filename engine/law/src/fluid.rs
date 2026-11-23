@@ -91,11 +91,6 @@ impl FluidCell {
         self.amount as f32 / 9.0f32
     }
 
-    /// `FlowingFluid.getHeight 0-10`: same fluid above forces height 1.0.
-    #[inline]
-    pub fn height(self, same_above: bool) -> f32 {
-        if same_above { 1.0 } else { self.own_height() }
-    }
 
     /// `FlowingFluid.getLegacyLevel 0-44`: source 0, else `8 - min(8, amount) + 8 * falling`.
     #[inline]
