@@ -114,7 +114,7 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     let collision = travel(s, world, movement)?;
     world.observe_sweep(start_box, s.bounding_box());
     // Cause: the cells the move crossed.
-    let contact = burn.or(cross(s, world, start)?);
+    let contact = burn.or(cross(s, world, start, collision.map(|(wanted, _)| wanted))?);
     let before_pose = s.bounding_box();
     s.position.x = s.position.x.clamp(-29999999.0, 29999999.0);
     s.position.z = s.position.z.clamp(-29999999.0, 29999999.0);
@@ -221,7 +221,7 @@ fn jump(s: &mut PlayerState, world: &impl World) {
     if power > 1.0e-5f32 {
         s.velocity.y = (power as f64).max(s.velocity.y);
         if s.sprinting {
-            let yaw = (s.yaw * 0.017453292f32) as f64;
+            let yaw = (s.input.yaw * 0.017453292f32) as f64;
             s.velocity = s.velocity.plus(Vec3::new((-math::sin(yaw)) as f64 * 0.2, 0.0, math::cos(yaw) as f64 * 0.2));
         }
     }
@@ -244,7 +244,7 @@ fn gravity(s: &PlayerState, vy: f64) -> f64 {
 // Player.travel; LivingEntity.travel
 fn travel(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     if s.swimming {
-        let look_y = -math::sin((s.pitch * 0.017453292f32) as f64) as f64;
+        let look_y = -math::sin((s.input.pitch * 0.017453292f32) as f64) as f64;
         let factor = if look_y < -0.2 { 0.085 } else { 0.06 };
         if look_y <= 0.0 || s.input.jump || world.fluid_block(block_pos(Vec3::new(s.position.x, s.position.y + 1.0 - 0.1, s.position.z))).fluid.kind != FluidKind::Empty {
             s.velocity.y += (look_y - s.velocity.y) * factor;
@@ -265,8 +265,8 @@ fn travel(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Opt
 // LivingEntity.travelFallFlying: the elytra kernel, then the wall's hit.
 fn glide(s: &mut PlayerState, world: &impl World) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     let pre_h = s.velocity.horizontal_sqr().sqrt();
-    let look = math::calculate_view_vector(s.yaw, s.pitch);
-    s.velocity = crate::elytra::update_fall_flying_movement(s.velocity, look, s.pitch, gravity(s, s.velocity.y));
+    let look = math::calculate_view_vector(s.input.yaw, s.input.pitch);
+    s.velocity = crate::elytra::update_fall_flying_movement(s.velocity, look, s.input.pitch, gravity(s, s.velocity.y));
     let collision = move_body(s, world, s.velocity)?;
     if let Some(amount) = crate::elytra::fly_into_wall_damage(s.horizontal_collision, pre_h, s.velocity.horizontal_sqr().sqrt()) {
         hurt(s, Hit { amount, fall: false, ..Hit::FALL });
@@ -284,7 +284,7 @@ fn travel_air(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result
     let below = on_pos(s, world, 0.500001);
     let f = if s.on_ground { math::modified_friction(world.hook_block(below).friction, s.profile.friction_modifier) } else { 1.0 };
     let acceleration = if !s.on_ground { air_speed(s) } else if f as f64 > 0.6 { s.speed * (0.21600002f32 / (f * f * f)) } else { s.speed };
-    s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.yaw));
+    s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.input.yaw));
     if climbable(s, world) {
         s.fall_distance = 0.0;
         let c = 0.15f32 as f64;
@@ -322,14 +322,14 @@ fn travel_fluid(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Resu
         let efficiency = s.profile.water_movement_efficiency * if s.on_ground { 1.0 } else { 0.5 };
         if efficiency > 0.0 { drag += (0.54600006f32 - drag) * efficiency; acceleration += (s.speed - acceleration) * efficiency; }
         if s.profile.dolphins_grace { drag = 0.96f32; }
-        s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.yaw));
+        s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.input.yaw));
         let collision = move_body(s, world, s.velocity)?;
         if s.horizontal_collision && climbable(s, world) { s.velocity.y = 0.2; }
         s.velocity = s.velocity.multiply(Vec3::new(drag as f64, 0.8f32 as f64, drag as f64));
         fall_adjust(s);
         collision
     } else {
-        s.velocity = s.velocity.plus(input_vector(movement, 0.02, s.yaw));
+        s.velocity = s.velocity.plus(input_vector(movement, 0.02, s.input.yaw));
         let collision = move_body(s, world, s.velocity)?;
         if s.lava_height <= 0.4 { s.velocity = s.velocity.multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5)); fall_adjust(s); }
         else { s.velocity = s.velocity.scale(0.5); }
@@ -448,7 +448,7 @@ fn move_body(s: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Resul
 fn minor_collision(s: &PlayerState, moved: Vec3) -> bool {
     if !s.horizontal_collision { return false; }
     let input = steer(&s.input, s.crouching || s.pose == Pose::Swimming && !s.in_water, s);
-    let yaw = (s.yaw * 0.017453292f32) as f64;
+    let yaw = (s.input.yaw * 0.017453292f32) as f64;
     let (sin, cos) = (math::sin(yaw) as f64, math::cos(yaw) as f64);
     let intended = Vec3::new(input.x * cos - input.z * sin, 0.0, input.z * cos + input.x * sin);
     let (a, b) = (intended.horizontal_sqr(), moved.horizontal_sqr());
@@ -602,7 +602,7 @@ impl Collector {
 }
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks; the fire grace tail
-fn cross(s: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<ContactDamage>, Refusal> {
+fn cross(s: &mut PlayerState, world: &impl World, start: Vec3, wanted: Option<Vec3>) -> Result<Option<ContactDamage>, Refusal> {
     if s.profile.no_physics { return Ok(None); }
     let contact = apply_grounded_step(s, world);
     let fire_before = s.remaining_fire_ticks;
@@ -612,7 +612,7 @@ fn cross(s: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<
     if world.has_inside_effects() {
         let delta = s.position.minus(start);
         let (mut seen, mut collector, mut budget, mut from) = (SeenBlocks::new(), Collector::default(), 16, start);
-        if let Some(original) = s.movement_this_tick.filter(|_| delta.length_sqr() > 0.0) {
+        if let Some(original) = wanted.filter(|_| delta.length_sqr() > 0.0) {
             for axis in axis_order(original) {
                 if delta.get(axis) == 0.0 { continue; }
                 let to = from.plus(Vec3::default().with(axis, delta.get(axis)));
