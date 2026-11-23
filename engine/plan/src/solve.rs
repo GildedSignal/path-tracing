@@ -240,8 +240,8 @@ pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store
         let route=if at_goal {crate::joints::Route {words:List::new(),ticks:0,end:StateAt::point(from.clone())}}
         else if let Some(r)=known {stages.extend([Stage::Extend,Stage::Cut,Stage::Compose]);r}
         else {
-            let blocked=[("difficulty",source.difficulty()!=0),("effects",from.effects),("boat",from.boat),("riding",from.riding),("fall_flying",from.fall_flying),
-                ("flying",from.flying),("using_item",from.using_item),("in_lava",from.in_lava),("in_water",from.in_water),("crouching",from.crouching)];
+            let blocked=[("difficulty",source.difficulty()!=0),("effects",from.effects),("boat",from.profile.boat),("riding",from.profile.riding),("fall_flying",from.fall_flying),
+                ("flying",from.flying),("using_item",from.profile.using_item),("in_lava",from.in_lava),("in_water",from.in_water),("crouching",from.crouching)];
             if let Some((name,_))=blocked.iter().find(|(_,b)|*b) {return Err(format!("word needs bare legs and invariant resource guards: {name}"));}
             stages.push(Stage::Extend);
             let program=if sprint_allowed(from) {SPRINT_JUMP} else {WALK};

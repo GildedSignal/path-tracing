@@ -42,6 +42,8 @@ pub use state::{
     HurtCooldown,
     Input,
     PlayerState,
+    Profile,
+    Shared,
     // A state encoding refused by `PlayerState::from_bits`; `Refusal` is the law refusing an unported rule.
     Refusal as BitsRefusal,
     Pose

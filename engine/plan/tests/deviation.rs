@@ -42,7 +42,7 @@ mod replay {
             let mut plan = format!("{{\"start\":[{},{},{},{},{}],\"start_bits\":{:?}}}\n", state.position.x, state.position.y, state.position.z, state.yaw, state.pitch, state.bits());
             for line in recording.lines().skip(1) {
                 let row = Object::parse(line); if row.get("type").is_some() { break; }
-                state.speed_modifiers = speed_modifiers(&row);
+                state.profile.speed_modifiers = speed_modifiers(&row);
                 if row.get("startSprinting").is_some() { state.sprinting = row.boolean("startSprinting"); state.sprint_speed_modifier = row.boolean("startSprintSpeedModifier"); }
                 if row.get("startPose").is_some() { state.pose = pose(row.string("startPose")); }
                 if row.get("startSwimming").is_some() { state.swimming = row.boolean("startSwimming"); }

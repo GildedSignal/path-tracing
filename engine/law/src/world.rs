@@ -338,7 +338,7 @@ impl CollisionContext {
             feet_y: state.bounding_box().min.y,
             descending: state.shift_key_down,
             fall_distance: state.fall_distance,
-            leather_boots: state.leather_boots
+            leather_boots: state.profile.leather_boots
         }
     }
 }

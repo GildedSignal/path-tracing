@@ -91,25 +91,25 @@ fn load_state(object: &Object<'_>) -> PlayerState {
     // Archived settled fixtures predate the independent attribute observation.
     state.sprint_speed_modifier = object.get("sprintSpeedModifier")
         .map(|_| object.boolean("sprintSpeedModifier")).unwrap_or(state.sprinting);
-    state.movement_speed_base = object.f64("movementSpeedBase");
-    state.speed_modifiers = speed_modifiers(object);
+    state.profile.movement_speed_base = object.f64("movementSpeedBase");
+    state.profile.speed_modifiers = speed_modifiers(object);
     if object.get("inputs").is_some() { state.input = input(&object.object("inputs")); }
     macro_rules! flags {
-        ($($key:literal => $field:ident),*) => { $(
-            if object.get($key).is_some() { state.$field = object.boolean($key); }
+        ($($key:literal => $($field:ident).+),*) => { $(
+            if object.get($key).is_some() { state.$($field).+ = object.boolean($key); }
         )* };
     }
     macro_rules! floats {
-        ($($key:literal => $field:ident),*) => { $(
+        ($($key:literal => $($field:ident).+),*) => { $(
             if object.get($key).is_some() || object.get(concat!($key, "Bits")).is_some() {
-                state.$field = object.f32($key);
+                state.$($field).+ = object.f32($key);
             }
         )* };
     }
     macro_rules! doubles {
-        ($($key:literal => $field:ident),*) => { $(
+        ($($key:literal => $($field:ident).+),*) => { $(
             if object.get($key).is_some() || object.get(concat!($key, "Bits")).is_some() {
-                state.$field = object.f64($key);
+                state.$($field).+ = object.f64($key);
             }
         )* };
     }
@@ -119,18 +119,18 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "isShiftKeyDown" => shift_key_down, "isInWater" => in_water, "isInLava" => in_lava,
         "onClimbable" => on_climbable, "crouching" => crouching, "swimming" => swimming,
         "underwater" => underwater, "eyeInWater" => eye_in_water, "wasEyeInWater" => was_eye_in_water,
-        "leatherBoots" => leather_boots, "wasInPowderSnow" => was_in_powder_snow,
+        "leatherBoots" => profile.leather_boots, "wasInPowderSnow" => was_in_powder_snow,
         "inPowderSnow" => in_powder_snow, "onGroundNoBlocks" => on_ground_no_blocks,
-"noPhysics" => no_physics);
+"noPhysics" => profile.no_physics);
     floats!("yRot" => yaw, "xRot" => pitch, "health" => health, "saturationLevel" => saturation,
-        "exhaustion" => exhaustion, "speed" => speed, "stepHeight" => step_height,
-        "frictionModifier" => friction_modifier, "airDragModifier" => air_drag_modifier,
-        "waterMovementEfficiency" => water_movement_efficiency, "movementEfficiency" => movement_efficiency,
-        "sneakingSpeed" => sneaking_speed);
+        "exhaustion" => exhaustion, "speed" => speed, "stepHeight" => profile.step_height,
+        "frictionModifier" => profile.friction_modifier, "airDragModifier" => profile.air_drag_modifier,
+        "waterMovementEfficiency" => profile.water_movement_efficiency, "movementEfficiency" => profile.movement_efficiency,
+        "sneakingSpeed" => profile.sneaking_speed);
     doubles!("fallDistance" => fall_distance, "waterHeight" => water_height, "lavaHeight" => lava_height,
-        "jumpStrength" => jump_strength, "gravity" => gravity,
-        "safeFallDistance" => safe_fall_distance, "fallDamageMultiplier" => fall_damage_multiplier,
-        "bounciness" => bounciness);
+        "jumpStrength" => profile.jump_strength, "gravity" => profile.gravity,
+        "safeFallDistance" => profile.safe_fall_distance, "fallDamageMultiplier" => profile.fall_damage_multiplier,
+        "bounciness" => profile.bounciness);
     if object.get("remainingFireTicks").is_some() { state.remaining_fire_ticks = object.number("remainingFireTicks") as i32; }
     if object.get("noJumpDelay").is_some() { state.no_jump_delay = object.number("noJumpDelay") as i32; }
     if object.get("ticksFrozen").is_some() { state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen"); }
@@ -397,7 +397,7 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
             previous_tick_count = Some(count);
         }
-        state.speed_modifiers = speed_modifiers(&object);
+        state.profile.speed_modifiers = speed_modifiers(&object);
         if object.get("startSprinting").is_some() || object.get("startSprintSpeedModifier").is_some() {
             state.sprinting = object.boolean("startSprinting");
             state.sprint_speed_modifier = object.boolean("startSprintSpeedModifier");
@@ -819,7 +819,7 @@ fn fixture_reads_server_driven_modifiers_and_frozen_counter_each_tick() {
     }
     replay_text(&complete_recording(&rows.join("\n"), 3), &world, &mut state);
     assert_eq!(state.ticks_frozen, 73, "server observation replaces the counter");
-    assert_eq!(state.speed_modifiers.len(), 3);
+    assert_eq!(state.profile.speed_modifiers.len(), 3);
 }
 
 #[test]

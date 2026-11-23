@@ -50,124 +50,156 @@ pub struct HurtCooldown {
 /// The one declaration of the player's state: each field, its type and its value at
 /// spawn (Entity.<init>; LivingEntity.createLivingAttributes; Player.createAttributes;
 /// FoodData.<init>). The struct, its default, the footprint's field names and each
-/// field's raw bits come from this list.
+/// field's raw bits come from this list. The hot part is what a tick reads and writes;
+/// the profile is what no tick writes (attributes, gear, game mode, observed effects),
+/// shared by every copy of the state until one of them changes it.
 macro_rules! player_state {
-    ($($(#[$meta:meta])* $field:ident: $ty:ty = $default:expr,)*) => {
+    (hot { $($(#[$meta:meta])* $field:ident: $ty:ty = $default:expr,)* }
+     profile { $($(#[$pmeta:meta])* $pfield:ident: $pty:ty = $pdefault:expr,)* }) => {
         #[derive(Clone, Debug)]
-        pub struct PlayerState { $($(#[$meta])* pub $field: $ty,)* }
+        pub struct PlayerState { $($(#[$meta])* pub $field: $ty,)* pub profile: Shared<Profile> }
+        #[derive(Clone, Debug)]
+        pub struct Profile { $($(#[$pmeta])* pub $pfield: $pty,)* }
         impl Default for PlayerState {
-            fn default() -> Self { Self { $($field: $default,)* } }
+            fn default() -> Self { Self { $($field: $default,)* profile: Shared::default() } }
+        }
+        impl Default for Profile {
+            fn default() -> Self { Self { $($pfield: $pdefault,)* } }
         }
         #[allow(non_camel_case_types)]
         #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
         #[repr(u8)]
-        pub enum StateField { $($field,)* }
-        impl StateField { pub const ALL: &'static [Self] = &[$(Self::$field,)*]; }
+        pub enum StateField { $($field,)* $($pfield,)* }
+        impl StateField { pub const ALL: &'static [Self] = &[$(Self::$field,)* $(Self::$pfield,)*]; }
         impl PlayerState {
             /// Appends the field's raw bits, floats included.
             pub fn push_field_bits(&self, field: StateField, out: &mut Vec<u64>) {
-                match field { $(StateField::$field => Wire::put(&self.$field, out),)* }
+                match field {
+                    $(StateField::$field => Wire::put(&self.$field, out),)*
+                    $(StateField::$pfield => Wire::put(&self.profile.$pfield, out),)*
+                }
             }
         }
     };
 }
+
+/// A value shared by the copies of a state: reading is a pointer away, and writing
+/// copies it first if another state still holds it.
+#[derive(Clone, Debug, Default)]
+pub struct Shared<T>(std::sync::Arc<T>);
+impl<T> std::ops::Deref for Shared<T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T { &self.0 }
+}
+impl<T> From<T> for Shared<T> {
+    fn from(value: T) -> Self { Self(std::sync::Arc::new(value)) }
+}
+impl<T: Clone> std::ops::DerefMut for Shared<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T { std::sync::Arc::make_mut(&mut self.0) }
+}
 player_state! {
-    t: u64 = 0,
-    input: Input = Input::default(),
-    position: Vec3 = Vec3::default(),
-    velocity: Vec3 = Vec3::default(),
-    yaw: f32 = 0.0,
-    pitch: f32 = 0.0,
-    on_ground: bool = false,
-    horizontal_collision: bool = false,
-    vertical_collision: bool = false,
-    vertical_collision_below: bool = false,
-    minor_horizontal_collision: bool = false,
-    sprinting: bool = false,
-    /// MOVEMENT_SPEED modifier presence; entity-data packets update only `sprinting`.
-    sprint_speed_modifier: bool = false,
-    no_physics: bool = false,
-    shift_key_down: bool = false,
-    pose: Pose = Pose::Standing,
-    fall_distance: f64 = 0.0,
-    in_water: bool = false,
-    in_lava: bool = false,
-    on_climbable: bool = false,
-    health: f32 = 20.0,
-    hurt_cooldown: HurtCooldown = HurtCooldown::default(),
-    food_level: i32 = 20,
-    saturation: f32 = 5.0,
-    exhaustion: f32 = 0.0,
-    food_tick_timer: u32 = 0,
-    remaining_fire_ticks: i32 = 0,
-    no_jump_delay: i32 = 0,
-    stuck_speed_multiplier: Vec3 = Vec3::default(),
-    movement_this_tick: Option<Vec3> = None,
-    main_supporting_block: Option<[i32; 3]> = None,
-    on_ground_no_blocks: bool = false,
-    crouching: bool = false,
-    swimming: bool = false,
-    underwater: bool = false,
-    eye_in_water: bool = false,
-    was_eye_in_water: bool = false,
-    water_height: f64 = 0.0,
-    lava_height: f64 = 0.0,
-    in_powder_snow: bool = false,
-    was_in_powder_snow: bool = false,
-    ticks_frozen: i32 = 0,
-    leather_boots: bool = false,
-    movement_speed_base: f64 = 0.1f32 as f64,
-    speed_modifiers: Vec<SpeedModifier> = Vec::new(),
-    /// Observed Player.getSpeed(), refreshed from the attribute before travel.
-    speed: f32 = 0.1,
-    jump_strength: f64 = 0.42f32 as f64,
-    gravity: f64 = 0.08,
-    step_height: f32 = 0.6,
-    friction_modifier: f32 = 1.0,
-    air_drag_modifier: f32 = 1.0,
-    water_movement_efficiency: f32 = 0.0,
-    movement_efficiency: f32 = 0.0,
-    sneaking_speed: f32 = 0.3,
-    safe_fall_distance: f64 = 3.0,
-    fall_damage_multiplier: f64 = 1.0,
-    bounciness: f64 = 0.0,
-    fall_flying: bool = false,
-    riding: bool = false,
-    boat: bool = false,
-    effects: bool = false,
-    flying: bool = false,
-    using_item: bool = false,
-    use_item_speed_multiplier: Option<f32> = None,
-    use_item_can_sprint: Option<bool> = None,
-    game_mode: GameType = GameType::Survival,
-    mayfly: bool = false,
-    instabuild: bool = false,
-    invulnerable: bool = false,
-    may_build: bool = true,
-    flying_speed: f32 = 0.05f32,
-    jump_trigger_time: i32 = 0,
-    sprint_trigger_time: i32 = 0,
-    sprint_window: i32 = 0,
-    jump_boost: Option<u8> = None,
-    speed_effect: Option<u8> = None,
-    slowness_effect: Option<u8> = None,
-    blindness: bool = false,
-    fire_resistance: bool = false,
-    unmodeled_effects: bool = false,
-    levitation: Option<u8> = None,
-    slow_falling: bool = false,
-    dolphins_grace: bool = false,
-    weaving: bool = false,
-    resistance: Option<u8> = None,
-    armor: f32 = 0.0,
-    armor_toughness: f32 = 0.0,
-    protection_epf: f32 = 0.0,
-    feather_falling_epf: f32 = 0.0,
-    absorption: f32 = 0.0,
-    soul_speed_active: bool = false,
-    /// The server's effect book (effects.rs) and the MAX_HEALTH it sets.
-    effect_book: Vec<crate::MobEffectInstance> = Vec::new(),
-    max_health: f32 = 20.0,
+    hot {
+        t: u64 = 0,
+        input: Input = Input::default(),
+        position: Vec3 = Vec3::default(),
+        velocity: Vec3 = Vec3::default(),
+        yaw: f32 = 0.0,
+        pitch: f32 = 0.0,
+        on_ground: bool = false,
+        horizontal_collision: bool = false,
+        vertical_collision: bool = false,
+        vertical_collision_below: bool = false,
+        minor_horizontal_collision: bool = false,
+        sprinting: bool = false,
+        /// MOVEMENT_SPEED modifier presence; entity-data packets update only `sprinting`.
+        sprint_speed_modifier: bool = false,
+        shift_key_down: bool = false,
+        pose: Pose = Pose::Standing,
+        fall_distance: f64 = 0.0,
+        in_water: bool = false,
+        in_lava: bool = false,
+        on_climbable: bool = false,
+        health: f32 = 20.0,
+        hurt_cooldown: HurtCooldown = HurtCooldown::default(),
+        food_level: i32 = 20,
+        saturation: f32 = 5.0,
+        exhaustion: f32 = 0.0,
+        food_tick_timer: u32 = 0,
+        remaining_fire_ticks: i32 = 0,
+        no_jump_delay: i32 = 0,
+        stuck_speed_multiplier: Vec3 = Vec3::default(),
+        movement_this_tick: Option<Vec3> = None,
+        main_supporting_block: Option<[i32; 3]> = None,
+        on_ground_no_blocks: bool = false,
+        crouching: bool = false,
+        swimming: bool = false,
+        underwater: bool = false,
+        eye_in_water: bool = false,
+        was_eye_in_water: bool = false,
+        water_height: f64 = 0.0,
+        lava_height: f64 = 0.0,
+        in_powder_snow: bool = false,
+        was_in_powder_snow: bool = false,
+        ticks_frozen: i32 = 0,
+        /// Observed Player.getSpeed(), refreshed from the attribute before travel.
+        speed: f32 = 0.1,
+        fall_flying: bool = false,
+        effects: bool = false,
+        flying: bool = false,
+        jump_trigger_time: i32 = 0,
+        sprint_trigger_time: i32 = 0,
+        sprint_window: i32 = 0,
+        absorption: f32 = 0.0,
+        /// The server's effect book (effects.rs) and the MAX_HEALTH it sets.
+        effect_book: Vec<crate::MobEffectInstance> = Vec::new(),
+        max_health: f32 = 20.0,
+    }
+    profile {
+        no_physics: bool = false,
+        leather_boots: bool = false,
+        movement_speed_base: f64 = 0.1f32 as f64,
+        speed_modifiers: Vec<SpeedModifier> = Vec::new(),
+        jump_strength: f64 = 0.42f32 as f64,
+        gravity: f64 = 0.08,
+        step_height: f32 = 0.6,
+        friction_modifier: f32 = 1.0,
+        air_drag_modifier: f32 = 1.0,
+        water_movement_efficiency: f32 = 0.0,
+        movement_efficiency: f32 = 0.0,
+        sneaking_speed: f32 = 0.3,
+        safe_fall_distance: f64 = 3.0,
+        fall_damage_multiplier: f64 = 1.0,
+        bounciness: f64 = 0.0,
+        riding: bool = false,
+        boat: bool = false,
+        using_item: bool = false,
+        use_item_speed_multiplier: Option<f32> = None,
+        use_item_can_sprint: Option<bool> = None,
+        game_mode: GameType = GameType::Survival,
+        mayfly: bool = false,
+        instabuild: bool = false,
+        invulnerable: bool = false,
+        may_build: bool = true,
+        flying_speed: f32 = 0.05f32,
+        jump_boost: Option<u8> = None,
+        speed_effect: Option<u8> = None,
+        slowness_effect: Option<u8> = None,
+        blindness: bool = false,
+        fire_resistance: bool = false,
+        unmodeled_effects: bool = false,
+        levitation: Option<u8> = None,
+        slow_falling: bool = false,
+        dolphins_grace: bool = false,
+        weaving: bool = false,
+        resistance: Option<u8> = None,
+        armor: f32 = 0.0,
+        armor_toughness: f32 = 0.0,
+        protection_epf: f32 = 0.0,
+        feather_falling_epf: f32 = 0.0,
+        soul_speed_active: bool = false,
+    }
 }
 
 /// The wire order of `bits` (the bot's mod speaks it over its channel, Recorder.java):
@@ -196,18 +228,18 @@ wire! {
      food_level, food_tick_timer, remaining_fire_ticks, no_jump_delay, ticks_frozen,
      input.forward, input.back, input.left, input.right, input.jump, input.sneak, input.sprint, on_ground,
      horizontal_collision, vertical_collision, vertical_collision_below, minor_horizontal_collision,
-     sprinting, sprint_speed_modifier, no_physics, shift_key_down, in_water, in_lava, on_climbable,
+     sprinting, sprint_speed_modifier, profile.no_physics, shift_key_down, in_water, in_lava, on_climbable,
      on_ground_no_blocks, crouching, swimming, underwater, eye_in_water, was_eye_in_water, in_powder_snow,
-     was_in_powder_snow, leather_boots, fall_flying, riding, boat, effects, flying, using_item,
-     health, saturation, exhaustion, speed, step_height, friction_modifier, air_drag_modifier,
-     water_movement_efficiency, movement_efficiency, sneaking_speed, use_item_speed_multiplier, use_item_can_sprint,
-     fall_distance, water_height, lava_height, movement_speed_base, jump_strength, gravity, safe_fall_distance,
-     fall_damage_multiplier, bounciness, position, velocity, stuck_speed_multiplier, movement_this_tick,
-     main_supporting_block, speed_modifiers]
-    [game_mode, mayfly, instabuild, invulnerable, may_build, flying_speed, jump_trigger_time, sprint_trigger_time,
-     sprint_window, jump_boost, speed_effect, slowness_effect, blindness, fire_resistance, unmodeled_effects]
-    [levitation, slow_falling, dolphins_grace, weaving, resistance, armor, armor_toughness, protection_epf,
-     feather_falling_epf, absorption, soul_speed_active]
+     was_in_powder_snow, profile.leather_boots, fall_flying, profile.riding, profile.boat, effects, flying, profile.using_item,
+     health, saturation, exhaustion, speed, profile.step_height, profile.friction_modifier, profile.air_drag_modifier,
+     profile.water_movement_efficiency, profile.movement_efficiency, profile.sneaking_speed, profile.use_item_speed_multiplier, profile.use_item_can_sprint,
+     fall_distance, water_height, lava_height, profile.movement_speed_base, profile.jump_strength, profile.gravity, profile.safe_fall_distance,
+     profile.fall_damage_multiplier, profile.bounciness, position, velocity, stuck_speed_multiplier, movement_this_tick,
+     main_supporting_block, profile.speed_modifiers]
+    [profile.game_mode, profile.mayfly, profile.instabuild, profile.invulnerable, profile.may_build, profile.flying_speed, jump_trigger_time, sprint_trigger_time,
+     sprint_window, profile.jump_boost, profile.speed_effect, profile.slowness_effect, profile.blindness, profile.fire_resistance, profile.unmodeled_effects]
+    [profile.levitation, profile.slow_falling, profile.dolphins_grace, profile.weaving, profile.resistance, profile.armor, profile.armor_toughness, profile.protection_epf,
+     profile.feather_falling_epf, absorption, profile.soul_speed_active]
     [max_health, effect_book]
 }
 

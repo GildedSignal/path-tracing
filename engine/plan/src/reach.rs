@@ -99,7 +99,7 @@ impl Reach {
                     path.push(relative(states[next].position));
                 }
                 let arc = reach.arcs.len() as u32;
-                for tick in 0..path.len() { reach.land(arc, tick as u32 + 1, 0.0, states[at].step_height as f64, 0.0, runup.len() as u32, path[tick]); }
+                for tick in 0..path.len() { reach.land(arc, tick as u32 + 1, 0.0, states[at].profile.step_height as f64, 0.0, runup.len() as u32, path[tick]); }
                 if !path.is_empty() { reach.arcs.push(Arc { path, runup, grounded: true, tool }); }
             }
         }

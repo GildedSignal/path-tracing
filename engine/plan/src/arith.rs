@@ -23,7 +23,7 @@ fn plain(block: &Block, free: &Block) -> bool {
 /// A body the free arc's premises hold for: in the air, upright, in no medium.
 pub fn flying(state: &PlayerState) -> bool {
     !state.on_ground && !state.in_water && !state.in_lava && !state.on_climbable && !state.swimming && !state.in_powder_snow
-        && state.pose != Pose::Swimming && state.stuck_speed_multiplier.length_sqr() == 0.0 && !state.no_physics && state.health > 0.0
+        && state.pose != Pose::Swimming && state.stuck_speed_multiplier.length_sqr() == 0.0 && !state.profile.no_physics && state.health > 0.0
 }
 /// Why a free arc takes no further tick: its tube meets the world, or leaves what may be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

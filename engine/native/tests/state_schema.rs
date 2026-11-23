@@ -7,7 +7,7 @@ fn frozen_java_rust_schema_witness() {
     let state = PlayerState::from_observed_bits(&bits,&known).unwrap();
     assert_eq!(state.bits(),bits);
     assert_eq!(state.t,123); assert_eq!(state.hurt_cooldown.remaining_ticks,-7);
-    assert_eq!(state.speed_modifiers[0].id,"minecraft:é");
+    assert_eq!(state.profile.speed_modifiers[0].id,"minecraft:é");
     for i in 0..bits.len() { let mut mask = known.clone(); mask[i]=false; assert_eq!(PlayerState::from_observed_bits(&bits,&mask).unwrap_err().position,i); }
 }
 

@@ -68,9 +68,9 @@ fn update_swimming(state: &mut PlayerState, world: &impl World) {
     state.swimming = if state.flying {
         false
     } else if state.swimming {
-        state.sprinting && state.in_water && !state.riding
+        state.sprinting && state.in_water && !state.profile.riding
     } else {
-        state.sprinting && state.underwater && !state.riding && world.fluid_block(block_pos(state.position)).fluid.kind == FluidKind::Water
+        state.sprinting && state.underwater && !state.profile.riding && world.fluid_block(block_pos(state.position)).fluid.kind == FluidKind::Water
     };
 }
 
@@ -92,7 +92,7 @@ mod swimming_witness {
             (false,false,true,true,false,true,true,false),
         ];
         for (flying, swimming, sprinting, underwater, in_water, riding, water, expected) in cases {
-            let mut state = PlayerState { flying, swimming, sprinting, underwater, in_water, riding, ..Default::default() };
+            let mut state = PlayerState { flying, swimming, sprinting, underwater, in_water, profile: crate::Profile { riding, ..Default::default() }.into(), ..Default::default() };
             let mut world = BoxWorld::default();
             if water { let mut block = Block::default(); block.fluid = Fluid { kind: FluidKind::Water, ..Default::default() }; world.blocks.insert(block_pos(state.position), block); }
             update_swimming(&mut state, &world);
@@ -102,16 +102,16 @@ mod swimming_witness {
 }
 
 #[inline] fn has_modeled_effect(state: &PlayerState) -> bool {
-    state.jump_boost.is_some()
-        || state.speed_effect.is_some()
-        || state.slowness_effect.is_some()
-        || state.blindness
-        || state.fire_resistance
-        || state.levitation.is_some()
-        || state.slow_falling
-        || state.dolphins_grace
-        || state.weaving
-        || state.resistance.is_some()
+    state.profile.jump_boost.is_some()
+        || state.profile.speed_effect.is_some()
+        || state.profile.slowness_effect.is_some()
+        || state.profile.blindness
+        || state.profile.fire_resistance
+        || state.profile.levitation.is_some()
+        || state.profile.slow_falling
+        || state.profile.dolphins_grace
+        || state.profile.weaving
+        || state.profile.resistance.is_some()
         || !state.effect_book.is_empty()
 }
 
@@ -121,20 +121,20 @@ fn tick_movement(
     world.observe_tick();
     // The tick reads every group but those it overwrites first; the previous input only where
     // creative flight or the sprint window asks for it (below).
-    let input_read = state.mayfly || state.sprint_window > 0 || state.sprint_trigger_time > 0;
+    let input_read = state.profile.mayfly || state.sprint_window > 0 || state.sprint_trigger_time > 0;
     let first = crate::state_reads::TICK_WRITES_FIRST;
     use crate::state_reads::{StateField, StateReads};
     world.state_footprint(StateReads(StateReads::ALL.minus(first).0 | if input_read { StateReads::of(&[StateField::input]).0 } else { 0 }), first);
     let has_modeled_effect = has_modeled_effect(state);
-    if state.unmodeled_effects
+    if state.profile.unmodeled_effects
         || (state.effects && !has_modeled_effect)
     {
         refuse!("LivingEntity: status effects other than none");
     }
-    if state.boat {
+    if state.profile.boat {
         refuse!("Boat movement");
     }
-    if state.riding {
+    if state.profile.riding {
         refuse!("LivingEntity.travelRidden");
     }
     let start = state.position;
@@ -158,7 +158,7 @@ fn tick_movement(
         set_remaining_fire_ticks(state, cur_fire - 1);
     }
     let was_shift = state.shift_key_down;
-    let was_jumping = if state.mayfly {
+    let was_jumping = if state.profile.mayfly {
         state.input.jump
     } else {
         false
@@ -173,12 +173,12 @@ fn tick_movement(
     };
     state.crouching = !state.flying
         && !state.swimming
-        && !state.riding
+        && !state.profile.riding
         && fits(state, world, Pose::Crouching)
         && (was_shift || !fits(state, world, Pose::Standing));
     state.shift_key_down = input.sneak;
     state.input = *input;
-    if !state.no_physics {
+    if !state.profile.no_physics {
         let offset = 0.6f32 as f64 * 0.35;
         for (x, z) in [(-offset, offset), (-offset, -offset), (offset, -offset), (offset, offset)] {
             move_towards_closest_space(state, world, state.position.x+x, state.position.z+z);
@@ -187,11 +187,11 @@ fn tick_movement(
     let slowly = state.crouching || (state.pose == Pose::Swimming && !state.in_water);
     update_sprinting(state, input, slowly, was_shift, pre_move_vector_y);
     // LocalPlayer.aiStep @487-607: creative flight toggle and vertical thrust before super.aiStep().
-    if state.game_mode == GameType::Spectator {
+    if state.profile.game_mode == GameType::Spectator {
         if !state.flying {
             state.flying = true;
         }
-    } else if state.mayfly && !was_jumping && input.jump {
+    } else if state.profile.mayfly && !was_jumping && input.jump {
         if state.jump_trigger_time == 0 {
             state.jump_trigger_time = 7;
         } else {
@@ -204,7 +204,7 @@ fn tick_movement(
         if input.sneak { dir -= 1; }
         if input.jump { dir += 1; }
         if dir != 0 {
-            let dy = ((dir as f32 * state.flying_speed) * 3.0f32) as f64;
+            let dy = ((dir as f32 * state.profile.flying_speed) * 3.0f32) as f64;
             state.velocity.y += dy;
         }
     }
@@ -212,7 +212,7 @@ fn tick_movement(
     if state.jump_trigger_time > 0 {
         state.jump_trigger_time -= 1;
     }
-    if state.flying && !state.riding {
+    if state.flying && !state.profile.riding {
         state.fall_distance = 0.0;
     }
     // Player.getSpeed reads the attribute after LocalPlayer updates the sprint modifier.
@@ -230,7 +230,7 @@ fn tick_movement(
     if state.velocity.y.abs() < 0.003 {
         state.velocity.y = 0.0;
     }
-    let movement = modify_input(input, slowly, state.sneaking_speed, item_multiplier(state));
+    let movement = modify_input(input, slowly, state.profile.sneaking_speed, item_multiplier(state));
     state.on_climbable = climbable(state, world);
     if input.jump && !state.flying && state.health > 0.0 {
         let height = if state.in_lava {
@@ -260,13 +260,13 @@ fn tick_movement(
         );
         state.fall_distance = clamped;
         if state.on_ground
-            || state.riding
-            || state.levitation.is_some()
+            || state.profile.riding
+            || state.profile.levitation.is_some()
         {
             state.fall_flying = false;
         }
     }
-    if state.slow_falling || state.levitation.is_some() {
+    if state.profile.slow_falling || state.profile.levitation.is_some() {
         state.fall_distance = 0.0;
     }
     let collision = travel(state, world, movement)?;
@@ -279,7 +279,7 @@ fn tick_movement(
     // LocalPlayer.aiStep @608-640: clear creative flight upon touching ground, then Player.tick calls updatePlayerPose.
     if state.on_ground
         && state.flying
-        && state.game_mode != GameType::Spectator
+        && state.profile.game_mode != GameType::Spectator
     {
         state.flying = false;
     }
@@ -302,14 +302,14 @@ fn tick_movement(
 ) {
     let prev_sprint_trigger = state.sprint_trigger_time;
     let was_sprinting = state.sprinting;
-    let using_item = state.using_item;
+    let using_item = state.profile.using_item;
     let use_effects_can_sprint = if using_item {
-        state.use_item_can_sprint.expect("used item canSprint")
+        state.profile.use_item_can_sprint.expect("used item canSprint")
     } else {
         true
     };
-    let blindness = state.blindness;
-    let mayfly = state.mayfly;
+    let blindness = state.profile.blindness;
+    let mayfly = state.profile.mayfly;
     let food_level = state.food_level;
     let swimming = state.swimming;
     // Player.rs `step_ai_sprint` uses `food_data_has_enough_food` in `shouldStopSwimSprinting`,
@@ -332,7 +332,7 @@ fn tick_movement(
         sprint_window: state.sprint_window,
         using_item,
         use_effects_can_sprint,
-        is_passenger: state.riding,
+        is_passenger: state.profile.riding,
         vehicle_can_sprint: false,
         food_level: sprint_food,
         mayfly,
@@ -391,7 +391,7 @@ fn move_towards_closest_space(state: &mut PlayerState, world: &impl World, x: f6
 
 // KeyboardInput.tick; LocalPlayer.modifyInput; LocalPlayer.modifyInputSpeedForSquareMovement
 #[inline] fn item_multiplier(state: &PlayerState) -> Option<f32> {
-    state.using_item.then(|| state.use_item_speed_multiplier.expect("used item speedMultiplier"))
+    state.profile.using_item.then(|| state.profile.use_item_speed_multiplier.expect("used item speedMultiplier"))
 }
 
 fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32, item_multiplier: Option<f32>) -> Vec3 {
@@ -434,9 +434,9 @@ fn modify_input(i: &Input, slowly: bool, sneaking_speed: f32, item_multiplier: O
 #[inline] fn flying_speed(state: &PlayerState) -> f32 {
     player::player_get_flying_speed(
         state.flying,
-        state.riding,
+        state.profile.riding,
         state.sprinting,
-        state.flying_speed,
+        state.profile.flying_speed,
     )
 }
 
@@ -496,7 +496,7 @@ fn speed_factor(state: &PlayerState, world: &impl World) -> f32 {
 
 // LivingEntity.getJumpPower; LivingEntity.jumpFromGround; ServerPlayer.jumpFromGround
 fn jump_from_ground(state: &mut PlayerState, world: &impl World) {
-    let power = state.jump_strength as f32 * 1.0f32 * jump_factor(state, world)
+    let power = state.profile.jump_strength as f32 * 1.0f32 * jump_factor(state, world)
         + state.jump_boost_power();
     if power > 1.0e-5f32 {
         state.velocity.y = (power as f64).max(state.velocity.y);
@@ -534,8 +534,8 @@ fn handle_climbable(state: &mut PlayerState, world: &impl World) {
 
 // LivingEntity.getEffectiveGravity (@8709)
 #[inline] fn effective_gravity(state: &PlayerState, pre_bump_vy: f64) -> f64 {
-    let g = state.gravity;
-    if pre_bump_vy <= 0.0 && state.slow_falling {
+    let g = state.profile.gravity;
+    if pre_bump_vy <= 0.0 && state.profile.slow_falling {
         g.min(0.01)
     } else {
         g
@@ -598,7 +598,7 @@ fn travel_fall_flying(state: &mut PlayerState, world: &impl World, movement: Vec
 fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
     let below = on_pos(state, world, 0.500001);
     let f = if state.on_ground {
-        math::modified_friction(world.hook_block(below).friction, state.friction_modifier)
+        math::modified_friction(world.hook_block(below).friction, state.profile.friction_modifier)
     } else {
         1.0
     };
@@ -608,17 +608,17 @@ fn travel_air(state: &mut PlayerState, world: &impl World, movement: Vec3) -> Re
     let collision = move_player(state, world, state.velocity)?;
     let mut velocity = state.velocity;
     let pre_bump_vy = velocity.y;
-    if (state.horizontal_collision || state.input.jump) && (climbable(state, world) || state.was_in_powder_snow && state.leather_boots) {
+    if (state.horizontal_collision || state.input.jump) && (climbable(state, world) || state.was_in_powder_snow && state.profile.leather_boots) {
         velocity.y = 0.2;
     }
-    let vy = if let Some(amp) = state.levitation {
+    let vy = if let Some(amp) = state.profile.levitation {
         velocity.y + (0.05 * ((amp as i32 + 1) as f64) - velocity.y) * 0.2
     } else {
         // LivingEntity.travelInAir @101-131: unloaded-chunk -0.1/0.0 fallback is client-only
         // (`isClientSide() == false` jumps directly to gravity) and dead even on 26.2 client.
         velocity.y - effective_gravity(state, pre_bump_vy)
     };
-    let m = state.air_drag_modifier;
+    let m = state.profile.air_drag_modifier;
     let row = AffineBody { air_drag: math::modified_friction(LIVING.air_drag, m), drag_y: math::modified_friction(LIVING.drag_y, m), ..LIVING };
     world.observe_air_travel(movement.z * acceleration as f64, f * row.air_drag);
     state.velocity = row.friction_drag(velocity, vy, f);
@@ -638,7 +638,7 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
             0.8f32
         };
         let mut acceleration = 0.02f32;
-        let efficiency = state.water_movement_efficiency * if state.on_ground {
+        let efficiency = state.profile.water_movement_efficiency * if state.on_ground {
             1.0
         } else {
             0.5
@@ -647,7 +647,7 @@ fn travel_fluid(state: &mut PlayerState, world: &impl World, movement: Vec3) -> 
             drag += (0.54600006f32-drag)*efficiency;
             acceleration += (state.speed-acceleration)*efficiency;
         }
-        if state.dolphins_grace {
+        if state.profile.dolphins_grace {
             drag = 0.96f32;
         }
         state.velocity = state.velocity.plus(input_vector(movement, acceleration, state.yaw));
@@ -710,8 +710,8 @@ fn update_pose(state: &mut PlayerState, world: &impl World) {
     } else {
         Pose::Standing
     };
-    state.pose = if state.game_mode == GameType::Spectator
-        || state.riding
+    state.pose = if state.profile.game_mode == GameType::Spectator
+        || state.profile.riding
         || fits(state, world, desired)
     {
         desired
@@ -732,7 +732,7 @@ pub fn can_fall(state: &PlayerState, world: &impl World, x: f64, z: f64, depth: 
 
 // Player.maybeBackOffFromEdge; Player.isAboveGround
 fn back_off(state: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
-    let step = state.step_height;
+    let step = state.profile.step_height;
     if v.y > 0.0
         || !state.shift_key_down
         || state.flying
@@ -778,7 +778,7 @@ fn back_off(state: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
 
 // Entity.collide, with the player's step height and ground.
 fn collide(state: &PlayerState, world: &impl World, v: Vec3) -> Vec3 {
-    let step = state.step_height;
+    let step = state.profile.step_height;
     let step = if cfg!(feature="mutant-step-up") { f32::from_bits(step.to_bits()+1) } else { step };
     let (b, context) = (state.bounding_box(), CollisionContext::of(state));
     crate::basis::sweep::collide(world, b, context, v, || state.on_ground, step)
@@ -825,7 +825,7 @@ fn supporting_block(state: &mut PlayerState, world: &impl World, moved: Vec3) {
 
 // Entity.move; Entity.restituteMovementAfterCollisions
 fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
-    if state.no_physics {
+    if state.profile.no_physics {
         state.position = state.position.plus(wanted);
         return Ok(None);
     }
@@ -857,15 +857,15 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     check_fall_damage(state, block, moved.y)?;
     if m.wanted.y.abs() > 0.0 && m.y || m.horizontal() {
         let shift=state.shift_key_down;
-        let bounce=if shift { 0.0 } else { state.bounciness };
+        let bounce=if shift { 0.0 } else { state.profile.bounciness };
         let mut v=state.velocity;
         let vertical=if !m.below() { bounce }
-            else if -v.y < state.gravity || shift || block.suppresses_bounce { 0.0 } else { bounce.max(block.bounce as f64) };
-        m.restitute(&mut v, bounce, vertical, || (state.gravity, math::modified_friction(0.98, state.air_drag_modifier)));
+            else if -v.y < state.profile.gravity || shift || block.suppresses_bounce { 0.0 } else { bounce.max(block.bounce as f64) };
+        m.restitute(&mut v, bounce, vertical, || (state.profile.gravity, math::modified_friction(0.98, state.profile.air_drag_modifier)));
         state.velocity=v;
     }
     let factor=speed_factor(state, world);
-    let factor=(factor+state.movement_efficiency*(1.0f32-factor)) as f64;
+    let factor=(factor+state.profile.movement_efficiency*(1.0f32-factor)) as f64;
     world.observe_speed_factor(factor);
     state.velocity=state.velocity.multiply(Vec3::new(factor, 1.0, factor));
     Ok(Some((wanted, moved)))
@@ -876,7 +876,7 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
     if !state.horizontal_collision {
         return false;
     }
-    let input=modify_input(&state.input, state.crouching||(state.pose==Pose::Swimming&&!state.in_water), state.sneaking_speed, item_multiplier(state));
+    let input=modify_input(&state.input, state.crouching||(state.pose==Pose::Swimming&&!state.in_water), state.profile.sneaking_speed, item_multiplier(state));
     let yaw = (state.yaw * 0.017453292f32) as f64;
     let sin = math::sin(yaw) as f64;
     let cos = math::cos(yaw) as f64;
@@ -892,12 +892,12 @@ fn move_player(state: &mut PlayerState, world: &impl World, mut wanted: Vec3) ->
 
 // LivingEntity.calculateFallPower
 pub fn calculate_fall_power(state: &PlayerState, distance: f64) -> f64 {
-    distance+1.0e-6-state.safe_fall_distance
+    distance+1.0e-6-state.profile.safe_fall_distance
 }
 
 // LivingEntity.calculateFallDamage
 pub fn calculate_fall_damage(state: &PlayerState, distance: f64, multiplier: f32) -> i32 {
-    math::floor(calculate_fall_power(state, distance)*multiplier as f64*state.fall_damage_multiplier)
+    math::floor(calculate_fall_power(state, distance)*multiplier as f64*state.profile.fall_damage_multiplier)
 }
 
 // Entity.checkFallDamage; LivingEntity.checkFallDamage; Block.fallOn
@@ -910,7 +910,7 @@ pub fn calculate_fall_damage(state: &PlayerState, distance: f64, multiplier: f32
             if let Some(name) = &block.unsupported_fall_on {
                 refuse!("BlockState.fallOn: {name}");
             }
-            if !state.mayfly {
+            if !state.profile.mayfly {
                 let (distance, multiplier) = if block.slime || block.inside == Inside::PowderSnow {
                     (state.fall_distance, 0.0)
                 } else if block.fall_on_multiplier == 2.0 {
@@ -930,7 +930,7 @@ pub fn calculate_fall_damage(state: &PlayerState, distance: f64, multiplier: f32
                         block.fall_on_multiplier,
                     )
                 };
-                let _ = (state.safe_fall_distance, state.fall_damage_multiplier);
+                let _ = (state.profile.safe_fall_distance, state.profile.fall_damage_multiplier);
                 let damage=calculate_fall_damage(state, distance, multiplier).max(0);
                 if damage>0 {
                     // fall damage type: is_fire=false, bypasses_armor=true, is_fall=true, exhaustion=0.0.
@@ -1062,7 +1062,7 @@ fn fall_reset_ray(state: &PlayerState, world: &impl World, movement: Vec3) -> bo
 /// Resolve the returned request on the server resource timeline when predicting damage.
 pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Option<ContactDamage> {
     world.state_footprint(crate::state_reads::StateReads::ALL, crate::state_reads::StateReads(0));
-    if state.no_physics || !state.on_ground {
+    if state.profile.no_physics || !state.on_ground {
         return None;
     }
     let block = world.hook_block(on_pos(state, world, 0.2));
@@ -1088,7 +1088,7 @@ pub fn apply_grounded_step(state: &mut PlayerState, world: &impl World) -> Optio
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks
 fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3) -> Result<Option<ContactDamage>, Refusal> {
-    if state.no_physics {
+    if state.profile.no_physics {
         return Ok(None);
     }
     let contact = apply_grounded_step(state, world);
@@ -1128,7 +1128,7 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
 
 #[inline] fn set_remaining_fire_ticks(state: &mut PlayerState, ticks: i32) {
     // Player.setRemainingFireTicks: creative/invulnerable caps fire duration at 1 tick.
-    state.remaining_fire_ticks = if state.invulnerable {
+    state.remaining_fire_ticks = if state.profile.invulnerable {
         ticks.min(1)
     } else {
         ticks
@@ -1144,8 +1144,8 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
         match op {
             InsideEffectOp::ApplyType(InsideBlockEffectType::Freeze) => {
                 state.in_powder_snow = true;
-                if state.game_mode != GameType::Spectator
-                    && !state.leather_boots
+                if state.profile.game_mode != GameType::Spectator
+                    && !state.profile.leather_boots
                 {
                     state.ticks_frozen = (state.ticks_frozen + 1).min(140);
                 }
@@ -1187,13 +1187,13 @@ fn apply_block_effects(state: &mut PlayerState, world: &impl World, start: Vec3)
                     ticks_frozen: state.ticks_frozen,
                     exhaustion: state.exhaustion,
                     fire_immune: false,
-                    abilities_invulnerable: state.invulnerable,
-                    has_fire_resistance: state.fire_resistance,
-                    armor: state.armor,
-                    armor_toughness: state.armor_toughness,
-                    protection_epf: state.protection_epf,
-                    feather_falling_epf: state.feather_falling_epf,
-                    resistance: state.resistance,
+                    abilities_invulnerable: state.profile.invulnerable,
+                    has_fire_resistance: state.profile.fire_resistance,
+                    armor: state.profile.armor,
+                    armor_toughness: state.profile.armor_toughness,
+                    protection_epf: state.profile.protection_epf,
+                    feather_falling_epf: state.profile.feather_falling_epf,
+                    resistance: state.profile.resistance,
                     absorption: state.absorption,
                 };
                 if player::lava_hurt(&mut entity, true) {
@@ -1295,7 +1295,7 @@ fn inside_block(
     let damage = match &block.inside {
         Inside::None=>None,
         Inside::Cobweb=>{
-            let multiplier = if state.weaving {
+            let multiplier = if state.profile.weaving {
                 Vec3::new(0.5, 0.25, 0.5)
             } else {
                 Vec3::new(0.25, 0.05f32 as f64, 0.25)
@@ -1372,7 +1372,7 @@ fn inside_block(
         Inside::NetherPortal => refuse!("NetherPortalBlock.entityInside: setAsInsidePortal enters portal"),
         Inside::WitherRose => {
             // WitherRoseBlock.entityInside @0-64: the server adds WITHER to the book.
-            if crate::block_hooks::wither_rose_applies_effect(true, world.difficulty(), true, state.invulnerable) {
+            if crate::block_hooks::wither_rose_applies_effect(true, world.difficulty(), true, state.profile.invulnerable) {
                 state.add_effect(crate::EffectKind::Wither, crate::block_hooks::WITHER_ROSE_EFFECT_DURATION_TICKS,
                     crate::block_hooks::WITHER_ROSE_EFFECT_AMPLIFIER);
                 state.effects = true;
@@ -1391,14 +1391,14 @@ fn inside_block(
 
 // Player.causeFoodExhaustion
 #[inline] fn cause_food_exhaustion(state: &mut PlayerState, amount: f32) {
-    if !state.invulnerable {
+    if !state.profile.invulnerable {
         add_exhaustion(state, amount);
     }
 }
 
 // ServerPlayer.checkMovementStatistics
 #[inline] fn movement_exhaustion(state: &mut PlayerState, delta: Vec3) {
-    if state.riding {
+    if state.profile.riding {
         return;
     }
     if state.swimming || state.eye_in_water || state.in_water {
@@ -1477,7 +1477,7 @@ pub fn apply_server_resource_event(state: &mut PlayerState, world: &impl World, 
         ServerResourceEvent::UnmodifiedContactDamage(request) => {
             assert!(
                 world.difficulty() == 2
-                    && !state.unmodeled_effects
+                    && !state.profile.unmodeled_effects
                     && !(state.effects && !has_modeled_effect(state)),
                 "contact damage prediction requires unmodified normal survival"
             );
@@ -1586,13 +1586,13 @@ pub(crate) fn accept_raw_hit(cooldown: &mut HurtCooldown, amount: f32) -> Option
         &mut health,
         &mut absorption,
         &mut cur_exhaustion,
-        state.invulnerable,
+        state.profile.invulnerable,
         amount,
-        state.armor,
-        state.armor_toughness,
-        state.resistance,
-        state.protection_epf,
-        state.feather_falling_epf,
+        state.profile.armor,
+        state.profile.armor_toughness,
+        state.profile.resistance,
+        state.profile.protection_epf,
+        state.profile.feather_falling_epf,
         bypasses_armor,
         false,
         bypasses_resistance,
@@ -1617,9 +1617,9 @@ fn apply_server_damage(
     is_fall: bool,
     exhaustion: f32,
 ) {
-    if state.invulnerable
+    if state.profile.invulnerable
         || state.health <= 0.0
-        || (is_fire && state.fire_resistance)
+        || (is_fire && state.profile.fire_resistance)
     {
         return;
     }

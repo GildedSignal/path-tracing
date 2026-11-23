@@ -25,7 +25,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
                 words.push(answers(&[p.x < -29999999.0, p.x > 29999999.0, p.z < -29999999.0, p.z > 29999999.0])); // movement.rs:195, 196
             }
             F::velocity => {
-                let (v, g) = (s.velocity, s.gravity);
+                let (v, g) = (s.velocity, s.profile.gravity);
                 let honey = v.y / 0.98f32 as f64 + 0.08; // movement.rs:1059
                 words.push(answers(&[
                     v.horizontal_sqr() < 9.0e-6, // movement.rs:157
@@ -57,7 +57,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             F::fall_distance => words.push(answers(&[
                 s.fall_distance != 0.0, // movement.rs:730
                 s.fall_distance > 0.0, // movement.rs:822
-                s.fall_distance < s.step_height as f64, // movement.rs:540
+                s.fall_distance < s.profile.step_height as f64, // movement.rs:540
                 s.fall_distance > 2.5, // world.rs:446
             ])),
             F::no_jump_delay => words.push(answers(&[s.no_jump_delay > 0, s.no_jump_delay == 0])), // movement.rs:154, 175

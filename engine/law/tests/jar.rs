@@ -104,13 +104,9 @@ fn jar_movement_speed_attribute_order() {
         let (header, modifiers) = row.split_once('|').unwrap();
         let header: Vec<_> = header.split_whitespace().collect();
         let from_hex = |s| f64::from_bits(u64::from_str_radix(s, 16).unwrap());
-        let mut state = law::PlayerState {
-            movement_speed_base: from_hex(header[0]),
-            sprinting: header[1] == "true",
-            sprint_speed_modifier: header[1] == "true",
-            ..law::PlayerState::default()
-        };
-        state.speed_modifiers = modifiers.split(';').filter(|s| !s.is_empty()).map(|entry| {
+        let mut state = law::PlayerState { sprinting: header[1] == "true",
+            sprint_speed_modifier: header[1] == "true", profile: law::Profile { movement_speed_base: from_hex(header[0]), ..(*(law::PlayerState::default()).profile).clone() }.into(), ..law::PlayerState::default() };
+        state.profile.speed_modifiers = modifiers.split(';').filter(|s| !s.is_empty()).map(|entry| {
             let fields: Vec<_> = entry.split_whitespace().collect();
             law::SpeedModifier {
                 id: fields[0].to_owned(),
@@ -1829,12 +1825,12 @@ fn jar_movement_wired() {
         let c: Vec<&str> = row.split('\t').collect();
         match c[0] {
             "ABILITY_SWITCH" => {
-                let mut s = PlayerState { flying_speed: 0.08, ..PlayerState::default() };
+                let mut s = PlayerState { profile: law::Profile { flying_speed: 0.08, ..Default::default() }.into(), ..PlayerState::default() };
                 s.set_game_mode(player::GameType::by_id(c[1].parse().unwrap()));
                 s.flying = bit(c[2]);
                 s.set_game_mode(player::GameType::by_id(c[3].parse().unwrap()));
                 assert_eq!(
-                    (s.invulnerable, s.flying, s.mayfly, s.instabuild, s.may_build, s.flying_speed.to_bits()),
+                    (s.profile.invulnerable, s.flying, s.profile.mayfly, s.profile.instabuild, s.profile.may_build, s.profile.flying_speed.to_bits()),
                     (bit(c[4]), bit(c[5]), bit(c[6]), bit(c[7]), bit(c[8]), h32(c[9]).to_bits()),
                     "row {idx}: {row}"
                 );
@@ -1848,19 +1844,11 @@ fn jar_movement_wired() {
                 let fspeed = h32(c[2]);
                 let init_vy = h64(c[3]);
                 let sprinting = bit(c[4]);
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
                     velocity: Vec3::new(0.0, init_vy, 0.0),
-                    game_mode: player::GameType::Creative,
-                    mayfly: true,
                     flying: true,
-                    invulnerable: true,
-                    instabuild: true,
-                    flying_speed: fspeed,
                     sprinting,
-                    sprint_speed_modifier: sprinting,
-                    ..PlayerState::default()
-                };
+                    sprint_speed_modifier: sprinting, profile: law::Profile { game_mode: player::GameType::Creative, mayfly: true, invulnerable: true, instabuild: true, flying_speed: fspeed, ..Default::default() }.into(), ..PlayerState::default() };
                 let inp = Input {
                     forward: true,
                     sprint: sprinting,
@@ -1914,7 +1902,7 @@ fn jar_movement_wired() {
                 s.set_jump_boost((jb >= 0).then_some(jb as u8));
                 s.set_sprinting(true);
                 assert_eq!(s.jump_boost_power().to_bits(), h32(c[2]).to_bits(), "row {idx} boost");
-                assert_eq!(s.safe_fall_distance.to_bits(), h64(c[4]).to_bits(), "row {idx} safe_fall");
+                assert_eq!(s.profile.safe_fall_distance.to_bits(), h64(c[4]).to_bits(), "row {idx} safe_fall");
                 assert_eq!(calculate_fall_power(&s, 5.5).to_bits(), h64(c[5]).to_bits(), "row {idx} fall_power");
                 // Confirm law::tick executes jump_from_ground + travel_air without effects refusal.
                 tick(&mut s, &BoxWorld::default(), &Input { jump: true, forward: true, sprint: true, yaw: 35.0, ..Input::default() });
@@ -1930,16 +1918,12 @@ fn jar_movement_wired() {
                     o => panic!("bad pose {o}"),
                 };
                 let mut w = BoxWorld::default();
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    gravity: 0.0,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5), profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 let mut inp = Input::default();
                 match case_id {
                     0 => {}
                     1 => inp.sneak = true,
-                    2 => { inp.sneak = true; s.flying = true; s.mayfly = true; }
+                    2 => { inp.sneak = true; s.flying = true; s.profile.mayfly = true; }
                     3 => { w.set([0, 65, 0], Block::full()); s.position.y = 63.4; }
                     4 => { w.set([0, 65, 0], Block::full()); }
                     5 => { w.set([0, 65, 0], Block::full()); s.set_game_mode(player::GameType::Spectator); }
@@ -1957,16 +1941,11 @@ fn jar_movement_wired() {
                 let mut w = BoxWorld::default();
                 w.set([0, 63, 0], Block::full());
                 w.set([1, 63, 0], Block::full());
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    on_ground: true,
-                    gravity: 0.0,
-                    movement_speed_base: 0.0,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
+                    on_ground: true, profile: law::Profile { gravity: 0.0, movement_speed_base: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 s.set_sprinting(true);
                 if case_id == 1 {
-                    s.invulnerable = true;
+                    s.profile.invulnerable = true;
                 }
                 if case_id == 3 {
                     for x in 0..=1 {
@@ -1979,7 +1958,7 @@ fn jar_movement_wired() {
                     }
                     s.on_ground = false;
                     s.flying = true;
-                    s.mayfly = true;
+                    s.profile.mayfly = true;
                     s.velocity = Vec3::new(0.28, 0.12, 0.0);
                 } else {
                     s.velocity = Vec3::new(0.28, -0.08, 0.0);
@@ -2032,16 +2011,11 @@ fn jar_movement_wired() {
                 } else if above_kind == 2 {
                     w.set([0, 65, 0], Block::boxes(&[Aabb::new(0.0, 0.9, 0.0, 1.0, 1.0, 1.0)]));
                 }
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, if above_kind == 2 && init_vy > 0.0 { 63.5 } else { 64.0 }, 0.5),
+                let mut s = PlayerState { position: Vec3::new(0.5, if above_kind == 2 && init_vy > 0.0 { 63.5 } else { 64.0 }, 0.5),
                     pose: Pose::Swimming,
                     velocity: Vec3::new(0.0, init_vy, 0.0),
-                    gravity: 0.0,
-                    air_drag_modifier: 0.0,
                     flying,
-                    fall_distance: 5.0,
-                    ..PlayerState::default()
-                };
+                    fall_distance: 5.0, profile: law::Profile { gravity: 0.0, air_drag_modifier: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 tick(&mut s, &w, &Input::default());
                 let expected_vy = if flying { h64(c[6]) * 0.6 } else { h64(c[6]) };
                 let pre_fall = if flying { 0.0 } else { h64(c[7]) };
@@ -2073,19 +2047,11 @@ fn jar_movement_wired() {
                 for dy in 0..steps {
                     w.set([0, 64 + dy, 0], Block { air: false, inside: Inside::PowderSnow, ..Block::default() });
                 }
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, if steps == 3 { 66.7 } else { 64.0 }, 0.5),
+                let mut s = PlayerState { position: Vec3::new(0.5, if steps == 3 { 66.7 } else { 64.0 }, 0.5),
                     velocity: Vec3::new(0.0, if steps == 3 { -2.5 } else { 0.0 }, 0.0),
-                    gravity: 0.0,
-                    air_drag_modifier: 0.0,
                     ticks_frozen: init_frozen,
                     remaining_fire_ticks: 40,
-                    game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival },
-                    mayfly: spectator,
-                    flying: spectator,
-                    invulnerable: spectator,
-                    ..PlayerState::default()
-                };
+                    flying: spectator, profile: law::Profile { gravity: 0.0, air_drag_modifier: 0.0, game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival }, mayfly: spectator, invulnerable: spectator, ..Default::default() }.into(), ..PlayerState::default() };
                 tick(&mut s, &w, &Input::default());
                 assert_eq!(s.in_powder_snow, bit(c[4]), "row {idx} inSnow: {row}");
                 assert_eq!(s.ticks_frozen, c[5].parse::<i32>().unwrap(), "row {idx} tf: {row}");
@@ -2110,15 +2076,10 @@ fn jar_movement_wired() {
                         ..Block::default()
                     });
                 }
-                let mut s = PlayerState {
-                    // X=0.8 makes player bounding box [0.5..1.1] intersect both [0,64,0] (lava) and [1,64,0] (water) at step 0.
+                let mut s = PlayerState { // X=0.8 makes player bounding box [0.5..1.1] intersect both [0,64,0] (lava) and [1,64,0] (water) at step 0.
                     position: Vec3::new(if with_water { 0.8 } else { 0.5 }, 64.0, 0.5),
                     ticks_frozen: 50,
-                    invulnerable: invuln,
-                    fire_resistance: with_fire_res,
-                    effects: with_fire_res,
-                    ..PlayerState::default()
-                };
+                    effects: with_fire_res, profile: law::Profile { invulnerable: invuln, fire_resistance: with_fire_res, ..Default::default() }.into(), ..PlayerState::default() };
                 tick(&mut s, &w, &Input::default());
                 assert_eq!(s.health.to_bits(), h32(c[4]).to_bits(), "row {idx} health: {row}");
                 assert_eq!(s.ticks_frozen, c[5].parse::<i32>().unwrap(), "row {idx} tf: {row}");
@@ -2133,17 +2094,10 @@ fn jar_movement_wired() {
                 let tc: i32 = c[4].parse().unwrap();
                 let mut w = BoxWorld::default();
                 w.set([0, 63, 0], Block::full());
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
                     on_ground: true,
                     ticks_frozen: tf,
-                    gravity: 0.0,
-                    game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival },
-                    mayfly: spectator,
-                    flying: spectator,
-                    invulnerable: spectator,
-                    ..PlayerState::default()
-                };
+                    flying: spectator, profile: law::Profile { gravity: 0.0, game_mode: if spectator { player::GameType::Spectator } else { player::GameType::Survival }, mayfly: spectator, invulnerable: spectator, ..Default::default() }.into(), ..PlayerState::default() };
                 if in_snow {
                     w.set([0, 64, 0], Block { air: false, inside: Inside::PowderSnow, ..Block::default() });
                     tick(&mut s, &w, &Input::default());
@@ -3019,18 +2973,13 @@ fn jar_player_elytra_damage() {
                     "row {idx} update_fall_flying_movement: {row}"
                 );
                 if v0.horizontal_sqr() >= 9.0e-6 && v0.y.abs() >= 0.003 {
-                    let mut s = PlayerState {
-                        position: Vec3::new(0.5, 1000.0, 0.5),
+                    let mut s = PlayerState { position: Vec3::new(0.5, 1000.0, 0.5),
                         velocity: v0,
                         yaw,
                         pitch,
                         pose: Pose::FallFlying,
                         fall_flying: true,
-                        gravity,
-                        slow_falling: gravity == 0.01,
-                        effects: gravity == 0.01,
-                        ..PlayerState::default()
-                    };
+                        effects: gravity == 0.01, profile: law::Profile { gravity, slow_falling: gravity == 0.01, ..Default::default() }.into(), ..PlayerState::default() };
                     tick(&mut s, &BoxWorld::default(), &Input { yaw, pitch, ..Input::default() });
                     assert_eq!(s.pose, Pose::FallFlying, "row {idx} pose: {row}");
                     assert_eq!(
@@ -3128,18 +3077,14 @@ fn jar_player_elytra_damage() {
                 if sprint {
                     w.set([0, 65, 0], water_block);
                 }
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
                     velocity: Vec3::new(0.5, -0.1, 0.0),
                     on_ground,
                     in_water: true,
                     underwater: sprint,
                     eye_in_water: sprint,
                     water_height: if sprint { 1.0 } else { 0.9 },
-                    water_movement_efficiency: eff_val,
-                    effects: dg,
-                    ..PlayerState::default()
-                };
+                    effects: dg, profile: law::Profile { water_movement_efficiency: eff_val, ..Default::default() }.into(), ..PlayerState::default() };
                 s.set_sprinting(sprint);
                 s.set_dolphins_grace(dg);
                 tick(&mut s, &w, &Input { forward: sprint, sprint, ..Input::default() });
@@ -3193,12 +3138,8 @@ fn jar_player_elytra_damage() {
                 let weaving = bit(c[1]);
                 let mut w = BoxWorld::default();
                 w.set([0, 64, 0], Block { air: false, inside: Inside::Cobweb, ..Block::default() });
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    gravity: 0.0,
-                    effects: weaving,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
+                    effects: weaving, profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 s.set_weaving(weaving);
                 tick(&mut s, &w, &Input::default());
                 assert_eq!(
@@ -3226,8 +3167,8 @@ fn jar_player_elytra_damage() {
                 tick(&mut s_plain, &w, &Input::default());
                 assert_eq!(h32(c[4]).to_bits(), 1.0f32.to_bits());
                 assert!(s.velocity.x > s_plain.velocity.x);
-                assert_eq!(s.water_movement_efficiency.to_bits(), h32(c[5]).to_bits(), "row {idx} ds: {row}");
-                assert_eq!(s.sneaking_speed.to_bits(), h32(c[6]).to_bits(), "row {idx} sneak: {row}");
+                assert_eq!(s.profile.water_movement_efficiency.to_bits(), h32(c[5]).to_bits(), "row {idx} ds: {row}");
+                assert_eq!(s.profile.sneaking_speed.to_bits(), h32(c[6]).to_bits(), "row {idx} sneak: {row}");
             }
             "ENCH_EPF" => {
                 assert_eq!(PlayerState::protection_epf_for(4).to_bits(), h32(c[1]).to_bits(), "row {idx} prot: {row}");
@@ -3292,17 +3233,8 @@ fn jar_player_elytra_damage() {
                     _ => None,
                 };
                 if let Some(req) = contact_req {
-                    let mut ps = PlayerState {
-                        armor: arm,
-                        armor_toughness: tgh,
-                        resistance: res,
-                        protection_epf: prot,
-                        feather_falling_epf: fef,
-                        absorption: abs0,
-                        fire_resistance: fres,
-                        effects: res.is_some() || fres,
-                        ..PlayerState::default()
-                    };
+                    let mut ps = PlayerState { absorption: abs0,
+                        effects: res.is_some() || fres, profile: law::Profile { armor: arm, armor_toughness: tgh, resistance: res, protection_epf: prot, feather_falling_epf: fef, fire_resistance: fres, ..Default::default() }.into(), ..PlayerState::default() };
                     apply_server_resource_event(&mut ps, &BoxWorld::default(), ServerResourceEvent::UnmodifiedContactDamage(req));
                     assert_eq!(
                         (ps.health.to_bits(), ps.absorption.to_bits(), ps.exhaustion.to_bits()),
@@ -3336,12 +3268,8 @@ fn jar_player_elytra_damage() {
                 let exp_dmg = h32(c[4]);
                 let mut w = BoxWorld::default();
                 w.set([0, 64, 0], Block { air: false, inside: Inside::Fire { soul }, ..Block::default() });
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    gravity: 0.0,
-                    remaining_fire_ticks: -1,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
+                    remaining_fire_ticks: -1, profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 let contact = tick_with_contact(&mut s, &w, &Input::default()).unwrap();
                 assert_eq!(s.remaining_fire_ticks, exp_ticks, "row {idx} fire inside ticks: {row}");
                 assert_eq!(contact, ContactDamage::InFire { soul }, "row {idx} fire inside req: {row}");
@@ -3359,12 +3287,8 @@ fn jar_player_elytra_damage() {
                     inside: if lit { Inside::Campfire { soul } } else { Inside::None },
                     ..Block::default()
                 });
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    gravity: 0.0,
-                    remaining_fire_ticks: -20,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
+                    remaining_fire_ticks: -20, profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 let contact = tick_with_contact(&mut s, &w, &Input::default());
                 assert_eq!(s.remaining_fire_ticks, exp_ticks, "row {idx} campfire ticks: {row}");
                 if exp_src == "none" {
@@ -3392,7 +3316,7 @@ fn jar_player_elytra_damage() {
                     air: false,
                     ..Block::default()
                 });
-                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5), gravity: 0.0, ..PlayerState::default() };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5), profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 let req = tick_with_contact(&mut s, &w, &Input::default()).unwrap();
                 assert_eq!(req, ContactDamage::Cactus, "row {idx} cactus: {row}");
                 assert_eq!(req.raw_amount().to_bits(), exp_dmg.to_bits(), "row {idx} cactus dmg: {row}");
@@ -3412,12 +3336,8 @@ fn jar_player_elytra_damage() {
                     inside: Inside::BerryBush { hurt: age > 0 },
                     ..Block::default()
                 });
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    velocity: Vec3::new(dx, 0.0, dz),
-                    gravity: 0.0,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5),
+                    velocity: Vec3::new(dx, 0.0, dz), profile: law::Profile { gravity: 0.0, ..Default::default() }.into(), ..PlayerState::default() };
                 let contact = tick_with_contact(&mut s, &w, &Input::default());
                 assert_eq!(
                     (s.stuck_speed_multiplier.x.to_bits(), s.stuck_speed_multiplier.y.to_bits(), s.stuck_speed_multiplier.z.to_bits()),
@@ -3641,13 +3561,9 @@ fn jar_cauldron_and_redstone() {
                 assert_eq!(s.health.to_bits(), 16.0f32.to_bits());
 
                 // Longer fire duration is never shortened by LavaIgnite.
-                let mut s_hot = PlayerState {
-                    position: Vec3::new(0.5, 64.25, 0.5),
+                let mut s_hot = PlayerState { position: Vec3::new(0.5, 64.25, 0.5),
                     remaining_fire_ticks: 500,
-                    fire_resistance: true,
-                    effects: true,
-                    ..PlayerState::default()
-                };
+                    effects: true, profile: law::Profile { fire_resistance: true, ..Default::default() }.into(), ..PlayerState::default() };
                 tick(&mut s_hot, &w, &Input::default());
                 // Entity.baseTick decrements 500 -> 499; LavaIgnite never shortens a longer fire.
                 assert_eq!(s_hot.remaining_fire_ticks, 499);
@@ -3716,11 +3632,7 @@ fn jar_cauldron_and_redstone() {
                         ..Block::default()
                     },
                 );
-                let mut s = PlayerState {
-                    position: Vec3::new(0.5, 64.0, 0.5),
-                    invulnerable: invuln,
-                    ..PlayerState::default()
-                };
+                let mut s = PlayerState { position: Vec3::new(0.5, 64.0, 0.5), profile: law::Profile { invulnerable: invuln, ..Default::default() }.into(), ..PlayerState::default() };
                 try_tick(&mut s, &w, &Input::default()).expect("a wither rose is a row of the effect book");
                 let book: Vec<_> = s.effect_book.iter().map(|e| (e.kind, e.duration, e.amplifier)).collect();
                 let wither = vec![(law::EffectKind::Wither, WITHER_ROSE_EFFECT_DURATION_TICKS, WITHER_ROSE_EFFECT_AMPLIFIER)];
@@ -5060,7 +4972,7 @@ fn jar_mounts_breath_void() {
 
     // Void 10-tick cadence (FellOutOfWorld + HurtCooldownTick) and respawn reset.
     let world = BoxWorld::default();
-    let mut state = PlayerState { invulnerable: true, ..Default::default() };
+    let mut state = PlayerState { profile: law::Profile { invulnerable: true, ..Default::default() }.into(), ..Default::default() };
     apply_server_resource_event(&mut state, &world, ServerResourceEvent::FellOutOfWorld);
     assert_eq!(state.health.to_bits(), (20.0f32 - FELL_OUT_OF_WORLD).to_bits());
     for _ in 0..9 {

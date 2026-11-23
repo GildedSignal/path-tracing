@@ -81,9 +81,9 @@ pub(crate) fn events(a: &PlayerState, b: &PlayerState) -> Exit {
         ($($field:ident),*) => { $(if (a.$field == 0) != (b.$field == 0) { exit |= ExitKind::State(F::$field).bit(); })* };
     }
     cut!(on_ground, horizontal_collision, vertical_collision, vertical_collision_below, minor_horizontal_collision,
-        sprinting, sprint_speed_modifier, no_physics, shift_key_down, pose, in_water, in_lava, on_climbable,
+        sprinting, sprint_speed_modifier, shift_key_down, pose, in_water, in_lava, on_climbable,
         main_supporting_block, on_ground_no_blocks, crouching, swimming, underwater, eye_in_water, in_powder_snow,
-        leather_boots, fall_flying, riding, boat, effects, flying, using_item, stuck_speed_multiplier);
+        fall_flying, effects, flying, stuck_speed_multiplier);
     running!(no_jump_delay, remaining_fire_ticks, ticks_frozen);
     if a.health.to_bits() != b.health.to_bits() { exit |= ExitKind::State(F::health).bit(); }
     if (a.hurt_cooldown.remaining_ticks == 0) != (b.hurt_cooldown.remaining_ticks == 0) { exit |= ExitKind::State(F::hurt_cooldown).bit(); }
