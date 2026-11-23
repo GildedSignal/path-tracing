@@ -28,6 +28,7 @@ A clear goal, in one line under the prompt's title, the conditions, the gate (a 
 | he sends a message | the heuristics card is injected; his words go verbatim to `archive/turns/inbox.md` | `UserPromptSubmit` hook, `scripts/hooks/prompt.ps1` |
 | any launch | the goal, principles and architecture lead the prompt; a judge gets the map question | `scripts/gpt.ps1`, `lab/run.sh` |
 | any launch | refused unless the prompt opens with its title, then `**Goal:**` in one line | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
+| a native Opus sub-agent (or an Agent call with no model, which inherits Opus) | refused unless its prompt names `jobs/<id>/prompt.md` and `jobs/<id>/shown.txt` exists | `PreToolUse` hook on Agent, `scripts/hooks/opus.ps1` |
 | a launch of Astra or Sol | refused unless `jobs/<id>/shown.txt` exists (he saw the prompt) | `PreToolUse` hook, `scripts/hooks/launch.ps1` |
 | a launch succeeds | a watcher wakes the integrator when the job ends | `PostToolUse` hook (async, wakes the model) |
 | a commit touches `map/` | 40 KB cap, no history wording, links resolve | `.git/hooks/pre-commit` (`scripts/install-hooks.sh`) |
