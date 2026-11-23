@@ -11,7 +11,7 @@ Get-CimInstance Win32_Process -Filter "Name='codex.exe'" | Where-Object { $_.Com
 $q = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'glm-queue' }
 "  queue runner: $(if ($q) { 'running' } else { 'NOT running' })"
 Get-Content (Join-Path $Root 'lab\results\queue.log') -Tail 2 | ForEach-Object { "  $_" }
-$key = Get-Key zai
+$key = Get-GlmKey
 if ($key) {
   $env:ZAI_API_KEY = $key
   & D:\path-tracing-deps\omp\omp.exe usage -p zai 2>$null | Select-String '5 Hours' | ForEach-Object { "  " + ($_.Line -replace '[^\x20-\x7E]', '').Trim() }

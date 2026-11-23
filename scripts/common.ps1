@@ -118,11 +118,10 @@ function Test-Port([string]$HostName, [int]$Port) {
   try { $c.ConnectAsync($HostName, $Port).Wait(300) -and $c.Connected } catch { $false } finally { $c.Dispose() }
 }
 
-# A provider's API key (zai for GLM, gemini for Google), stored by scripts\set-key.ps1 (DPAPI, this user only).
-# Returns $null when none is stored. Callers put it only into a child process's environment, and scrub it from
-# anything they publish.
-function Get-Key([ValidateSet('zai','gemini')][string]$Provider = 'zai') {
-  $file = Join-Path $env:LOCALAPPDATA "path-tracing\$Provider-key.xml"
+# The Z.ai key for GLM, stored by scripts\set-glm-key.ps1 (DPAPI, this user only). Returns $null when none is stored.
+# Callers put it only into a child process's environment, and scrub it from anything they publish.
+function Get-GlmKey {
+  $file = Join-Path $env:LOCALAPPDATA 'path-tracing\zai-key.xml'
   if (-not (Test-Path $file)) { return $null }
   (Import-Clixml $file).GetNetworkCredential().Password
 }

@@ -11,7 +11,6 @@
 | Opus (native sub-agent) | red-teams of one-way doors, design, hard merges |
 | Sonnet (native sub-agent) | judges GPT's work; the work that needs no taste: cleaning, digests, linting the map against his words |
 | GLM 5.4 (Z.ai, omp) | parameter table rows, Mojang scars, and jar witnesses against the generator basis, plus compiled `lab/wiki/` pages |
-| Gemini (AI Studio credits, omp) | the third family: a judge of GPT's builds after its bake-off; every run capped in dollars ([clan.md](detail/clan.md) section 6) |
 
 Antigravity is his own tool; he pilots it. A smaller model never writes a prompt for a bigger one (S210). Launch: `scripts/launch.ps1 <job> terra|astra|sol [-Worktree D:\path-tracing-wt\<name>] [-Base <ref>]`; Opus and Sonnet are the integrator's native sub-agents; GLM runs through `scripts/glm-chain.ps1`. A job is `jobs/<id>/prompt.md` in, `last.md` out. Meters: `scripts/meters.ps1`.
 

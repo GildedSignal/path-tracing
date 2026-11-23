@@ -2,7 +2,7 @@
 
 The team table in [work.md](../work.md) says who holds each role. This file says **how a job is assigned**, and it is the file that changes when a companion joins or a measurement moves someone.
 
-Julien, S10: "plan for the whole build with the appropriate sub-agents doing the right things with the right intellect tackling things in the right order." S12: GPT "tends to be good with well formed tasks while you do better when taste is required." Google joins as Gemini through omp (section 6).
+Julien, S10: "plan for the whole build with the appropriate sub-agents doing the right things with the right intellect tackling things in the right order." S12: GPT "tends to be good with well formed tasks while you do better when taste is required."
 
 ## 1. The law of assignment: who catches the error
 
@@ -22,7 +22,7 @@ A fourth thing exists and is not a band: **orchestration**, one mind holding the
 
 ## 2. What a third family buys
 
-The clan has three families — Anthropic, OpenAI and Google — plus GLM's lab. Google as a third family is the real purchase, not the tokens:
+The clan has two families that build and judge, Anthropic and OpenAI, plus GLM's lab; Google is Julien's own tool (Antigravity, piloted by him). A third judging family would buy, beyond its tokens:
 
 1. **The judge can be chosen, not conceded.** For each builder, the judge is the family whose errors are least like the builder's. Which family that is, is a measurement, not an opinion (section 4).
 2. **What a machine cannot check can be put to three.** Two minds that disagree leave the integrator to break the tie by taste; three that disagree say the question is underspecified, which is information. Used only where no machine can check, because where one can, a vote is fake work.
@@ -41,7 +41,6 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 | Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209). Effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's with `Built-by:`. Copy git-ignored `engine/world/tests/fixtures/world` into a new worktree |
 | Terra | OpenAI | Checked (build) | a spec that leaves nothing open, built exactly, unattended; backfills the leftover ~20% of the Codex window (S209). ≤ 4 GPT; with Astra, one GPT job beside her (S15); same launch rules as Astra |
 | GLM | Z.ai | Checked (wide) | parameter table rows, Mojang scars, and jar bit-witnesses against the generator basis, plus compiled `lab/wiki/` notes ([lab/glm.md](../../lab/glm.md)); no second checker session — judged by jar witnesses, the integrator, and live flights. `.\scripts\glm-local.ps1 -Lenses "<job-id>"` (reads `jobs\<id>\prompt.md`): commit the prompt first, because lanes run from a checkout of HEAD |
-| **Gemini** | **Google** | **claimed: Judged, then Checked (wide)** | unmeasured until its bake-off (section 4); launch through omp, key not yet stored; every job carries a spending cap (section 6) |
 
 ## 4. The bake-off: no row stands on reputation
 
@@ -60,7 +59,7 @@ A companion's row is a hypothesis, settled the way everything here is settled �
 
 **But the currency is window-hours, not dollars** (S102). Every family here is a flat subscription: we spend *a meter*, and an unspent meter is worth nothing when it resets. What matters is which meter the work lands on. `.\scripts\meters.ps1` reads every meter, so re-anchor whenever a number surprises you.
 
-Windows: Zai 5 h; Codex 5 h and weekly; Gemini is AI Studio credits (money, capped per job); the native plan 5 h, weekly, and weekly per model.
+Windows: Zai 5 h; Codex 5 h and weekly; the native plan 5 h, weekly, and weekly per model.
 **So: inside a band, spend the least contended meter; the native plan runs the integrator and is spent last. On a shared meter, big models first** (S114): unspent capacity is lost at reset, and a small model cut off mid-task costs far less than a big one. Launch Astra (or a native Opus) at the start of a window, and let Terra and the lanes fill what is left. "Fill the Anthropic context" means load the integrator with context, not drain its quota (S102).
 
 **Window discipline:**
@@ -92,7 +91,7 @@ A job is `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out ([work.md](../work.md
 1. Every launch goes through `launch.ps1`, detached, at Normal priority (S158); anything that must outlive a turn is a detached process, never an in-session background task. Test launcher changes with `-DryRun`.
 2. Every job writes as it goes and ends with a status (GPT `STATUS:`). An empty run is a launcher fault: fix it before rerunning.
 3. Test each spec's load-bearing premise with one command before launch.
-4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM extracts parameter rows, scars, jar witnesses, and `lab/wiki/` notes paced by `scripts/glm-chain.ps1`. Gemini spends its own credits under a cap. A smaller model never writes for a bigger one (S210; [work.md](../work.md)).
+4. **The Codex window is Astra's** (S209: "the goal is to maximize astra more"). Terra backfills the leftover ~20%. Red-team native Opus; judge native Sonnet. GLM extracts parameter rows, scars, jar witnesses, and `lab/wiki/` notes paced by `scripts/glm-chain.ps1`. A smaller model never writes for a bigger one (S210; [work.md](../work.md)).
 5. Read meters raw before stating them, naming which column is used or remaining. **The usage check is one step: `get_usage` (the native Anthropic plan: 5-hour, weekly, Fable weekly) and `meters.ps1` (Codex, GLM) in the same message, before every launch** (S168). Launch no native sub-agent above 80% of the native 5-hour window.
 6. Read-only companions get their evidence made for them (failure lines, block dumps, logs).
 7. Live gates only on a free machine, with a fresh evidence folder, the gate's Java at High, and a CPU sampler beside it.
@@ -100,11 +99,10 @@ A job is `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out ([work.md](../work.md
 9. Terra halts the whole job at its first open question: settle every design question in the prompt ("decisions already made"), name the independent steps, and resume with a continuation, never a bare retry. A verdict goes to `jobs/<id>/last.md`, never only into chat.
 10. **Our docs are linted against his words, from time to time** (S210, S211: "our own docs should be lintet based on what i said looking for issues"). A native Sonnet sub-agent reads every living doc beside his verbatim turns and the register, and reports drift, contradictions, stale claims, his rules not written down, and made-up names (`jobs/doc-lint`). It runs after each phase and whenever a doc has been rewritten at length. The integrator applies the fixes.
 
-## 6. How Google is reached
+## 6. Google
 
-Google as a companion is **Gemini through omp**, the same runner as GLM (`D:\path-tracing-deps\omp\omp.exe`, v19.1.1; provider "Google Gemini", env `GEMINI_API_KEY`; Vertex would be `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`). Model ids include `gemini-3.1-pro-preview`, `gemini-pro-latest`, `gemini-4-argon`, `gemini-4-hydrogen`, `gemini-4-carbon` and `gemini-4-neon`. The meter is AI Studio credits (about $10): money, not a window, so every Gemini job carries a spending cap (`scripts/glm-local.ps1 -Model google/<id> -MaxCost <USD>`, omp's `--max-cost`). The key is stored like the GLM key (`scripts/set-key.ps1 -Provider gemini`, checked with `-Test`), never printed, never in git. Its first job is the bake-off of section 4 as a judge of GPT's builds (a third family judging), before it gets a band. Julien pilots Antigravity himself; no runner here calls it.
+Julien pilots Antigravity himself; no runner here calls Google. A third judging family is open (section 2).
 
 ## 7. Open
 
-- Gemini's row is unmeasured until its bake-off.
 - Which family's errors are least like which is unmeasured. Until it is, the judge rule stays "the other family" ([work.md](../work.md)).
