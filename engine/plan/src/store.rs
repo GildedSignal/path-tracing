@@ -27,7 +27,7 @@ pub(crate) struct Phase {
 impl Phase {
     fn sample(w:&Sample<'_>,s:&mut PlayerState,input:Input)->Result<Self,String> {
         let jump=input.jump && s.on_ground && s.no_jump_delay<=1;
-        let (wanted,actual)=law::tick_with_collision(s,w,&input).ok_or("word has no collision readout")?;
+        let (wanted,actual)=law::try_tick_with_collision(s,w,&input).map_err(|e|e.0)?.ok_or("word has no collision readout")?;
         let (forward,drag)=w.terms.get();
         Ok(Self {after:Arc::new(s.clone()),forward,impulse:if jump && s.sprinting && wanted.y>0.0 {0.2} else {0.0},
             factor:w.factor.get(),drag:f64::from(drag),contact:wanted.y!=actual.y,dy:actual.y,wanted_y:wanted.y})

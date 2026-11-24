@@ -1,7 +1,7 @@
 //! A sentence and its certificate. A sentence is a chain of steps, each a program at an aim
 //! run for a number of ticks. Its certificate is one replay through the law from the exact
 //! start state, tick by tick, with the tick of every cell its tube sweeps.
-use law::{BlockPos, Input, PlayerState, Refusal, footprint::RecordingWorld};
+use law::{BlockPos, Input, PlayerState, footprint::RecordingWorld};
 use words::{Arguments, Program};
 use crate::{Goal, Timeline};
 
@@ -10,33 +10,9 @@ use crate::{Goal, Timeline};
 pub enum Lane {
     /// One segment, replayed through the law in the world.
     Replay,
-    /// A free arc: the law run in free space, its tube checked against the world.
-    Arc,
-    /// Gait cycles advanced by their increments.
-    Gait,
-    /// A segment cut where the world changes at a known tick.
-    Cut,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Step { pub program: u16, pub args: Arguments, pub ticks: u32, pub lane: Lane }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Halt { Refused(Refusal), NoRow }
-
-/// Runs `program` for `ticks` ticks from `state`, each tick in the world of its tick.
-/// `each` sees the state before and after every tick and stops the run by returning true.
-/// Returns the ticks taken.
-pub fn advance<T: Timeline>(timeline: &T, state: &mut PlayerState, program: &Program, args: Arguments, ticks: u32,
-    each: &mut dyn FnMut(&PlayerState, &PlayerState) -> bool) -> Result<u32, Halt> {
-    for elapsed in 0..ticks {
-        let world = timeline.at(state.t);
-        let (_, input) = program.select(world, state, elapsed, args).ok_or(Halt::NoRow)?;
-        let before = state.clone();
-        law::try_tick(state, world, &input).map_err(Halt::Refused)?;
-        if each(&before, state) { return Ok(elapsed + 1); }
-    }
-    Ok(ticks)
-}
 
 /// The body at rest on `column`: dropped with no input until every field but the tick
 /// counter repeats. The counter then restarts at `tick`.

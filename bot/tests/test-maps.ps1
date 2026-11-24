@@ -73,8 +73,8 @@ for ($i = 0; $i -lt $names.Count; $i++) {
 & "$Jdk\java.exe" -cp $testClasspath pathtracing.MapTests $testRig
 if ($LASTEXITCODE) { throw 'Map tests failed.' }
 if ($Planner) {
-  # This need not find a sentence: it must reach search after loading the imported dimension.
-  $reply = & $Planner hard_track_2 --rig $testRig --world $world --start settled --mode 3 --out "$Destination\plan.jsonl" --cap 0.01
+  # This need not find a sentence: it must reach solve after loading the imported dimension.
+  $reply = & $Planner hard_track_2 --rig $testRig --world $world --start settled --mode solve --out "$Destination\plan.jsonl"
   $plannerExit = $LASTEXITCODE
   if ($plannerExit -ne 0 -and $plannerExit -ne 3) { throw "Unexpected planner exit: $plannerExit" }
   if (($reply -join "`n") -match 'track does not load|track dimension:|planner or export failed|unknown track') { throw "Planner failed before search: $reply" }

@@ -13,6 +13,7 @@ mod replay {
             let header=Object::parse(lines.next().unwrap());
             let bits:Vec<u64>=array(header.required("start_bits")).iter().map(|s|s.parse().unwrap()).collect();
             let mut state=PlayerState::from_bits(&bits).unwrap();
+            assert_eq!(state.saturation,20.0,"settled bot saturation");
             let goal=plan::Goal {cell:track.b};
             let mut first=None;let mut last_on_a=state.t;
             for (index,line) in lines.enumerate() {

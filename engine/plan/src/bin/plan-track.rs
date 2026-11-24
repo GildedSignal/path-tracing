@@ -1,5 +1,5 @@
-use std::{collections::HashMap, path::PathBuf, time::Instant};
-use plan::flight::{fly_with_budget, track_at};
+use std::path::PathBuf;
+use plan::flight::track_at;
 
 struct View(PathBuf);
 impl Drop for View {
@@ -7,11 +7,10 @@ impl Drop for View {
 }
 
 fn run() -> Result<(u32, u128), String> {
-    let started = Instant::now();
     let mut args = std::env::args().skip(1);
     let name = args.next().ok_or("missing track")?;
     if name.is_empty() || !name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-') { return Err("track names use [a-z0-9_-]+".into()); }
-    let (mut start, mut mode, mut out, mut cap) = (None, None, None, None);
+    let (mut start, mut mode, mut out) = (None, None, None);
     let (mut rig, mut world) = (None, None);
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("missing value for {flag}"))?;
@@ -21,16 +20,11 @@ fn run() -> Result<(u32, u128), String> {
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--rig" if rig.is_none() => rig = Some(PathBuf::from(value)),
             "--world" if world.is_none() => world = Some(PathBuf::from(value)),
-            "--cap" if cap.is_none() => {
-                let seconds: f64 = value.parse().map_err(|_| "invalid cap")?;
-                if !seconds.is_finite() || seconds <= 0.0 { return Err("invalid cap".into()); }
-                cap = Some(seconds);
-            }
             _ => return Err(format!("unknown or repeated option {flag}")),
         }
     }
     if start.as_deref() != Some("settled") { return Err("only --start settled is supported; PlayerState::from_bits is unavailable".into()); }
-    let mode = match mode.as_deref() { Some("solve") => 's', Some("3") => '3', Some("5") => '5', Some("b") => 'b', _ => return Err("mode must be solve, 3, 5, or b".into()) };
+    if mode.as_deref() != Some("solve") { return Err("only --mode solve is supported".into()); }
     let out = out.ok_or("missing --out")?;
     let known = include_str!("../../../world/tests/fixtures/tracks.txt").lines().find(|line| line.split_whitespace().next() == Some(name.as_str()));
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -38,6 +32,15 @@ fn run() -> Result<(u32, u128), String> {
     let records = rig.as_ref().unwrap_or(&root).join("lab/tracks");
     let world = world.unwrap_or_else(|| rig.as_ref().map_or_else(|| root.join("engine/world/tests/fixtures/world"), |r| r.join("server/world")));
     let world = world.canonicalize().map_err(|e| format!("{}: {e}", world.display()))?;
+    // The saved overworld fixture already has the reader's validated disk layout.
+    if root.join("engine/world/tests/fixtures/world").canonicalize().ok().as_ref() == Some(&world) {
+        let record = std::fs::read_to_string(records.join(format!("{name}.json"))).map_err(|e|e.to_string())?;
+        if !record.contains("\"dimension\":\"minecraft:overworld\"") {
+            return Err(format!("saved overworld fixture does not contain the dimension in {name}.json"));
+        }
+        let track = track_at(known.ok_or("missing saved track bounds")?, &records, &world)?;
+        return plan::flight::solve_track(&track, &out);
+    }
     // Keep links on the source volume. The snapshot owns its cells before this view is removed.
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
     let view = View(world.parent().ok_or("world has no parent")?.join(format!(".plan-world-{}-{stamp}", std::process::id())));
@@ -50,14 +53,7 @@ fn run() -> Result<(u32, u128), String> {
     let bounds = std::fs::read_to_string(view.0.join("bounds.txt")).map_err(|e| e.to_string())?;
     let track = track_at(known.unwrap_or(&bounds), &records, &view.0).map_err(|e| format!("track does not load: {e}"))?;
     drop(view);
-    if mode == 's' { return plan::flight::solve_track(&track,&out); }
-    let mut log = Vec::new();
-    let row = fly_with_budget(&track, mode, &words::tiny_programs(), &mut HashMap::new(), 20.0, false, &mut log, cap, Some(&out));
-    if !row.found {
-        let log = String::from_utf8_lossy(&log);
-        return Err(log.lines().find(|line| line.contains("NO SENTENCE:")).unwrap_or("search found no sentence").replace('\n', " "));
-    }
-    Ok((row.ticks, started.elapsed().as_micros()))
+    plan::flight::solve_track(&track,&out)
 }
 
 fn main() {

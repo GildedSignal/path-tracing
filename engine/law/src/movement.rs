@@ -67,7 +67,10 @@ pub fn tick(state: &mut PlayerState, world: &impl World, input: &Input) {
 pub fn tick_with_collision(
     state: &mut PlayerState, world: &impl World, input: &Input,
 ) -> Option<(Vec3, Vec3)> {
-    unported(tick_movement(state, world, input)).0
+    unported(try_tick_with_collision(state,world,input))
+}
+pub fn try_tick_with_collision(state:&mut PlayerState,world:&impl World,input:&Input)->Result<Option<(Vec3,Vec3)>,Refusal> {
+    tick_movement(state,world,input).map(|result|result.0)
 }
 
 /// Runs the local movement tick and reports its grounded contact request.

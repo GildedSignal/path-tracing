@@ -239,31 +239,3 @@ fn the_required_mechanics_cannot_be_removed_from_the_witness() {
     print!("{text}");
     if std::env::var_os("HARD_RECORD").is_some() { std::fs::write(root().join("jobs/hard-track/controls.md"),text).unwrap(); }
 }
-
-/// Diagnostic only: the existing mode-5 backward field and forward planner,
-/// over the command-built world because no in-game fixture exists yet.
-#[test]
-#[ignore = "capped release planner diagnostic, not a correctness gate"]
-fn current_planner_mode_5() {
-    use plan::{Field,Goal,Options,Order,Planner,Problem,Reach};
-    let world=build(); let timeline=Still(&world); let start=start(&world);
-    let programs=words::tiny_programs();
-    let body=([-109,-60,-109],[-61,-21,-61]);
-    let extent=((49.0f64).powi(2)*2.0).sqrt();
-    let reach=Reach::compile(world.block(A),&programs,extent,40.0).unwrap();
-    let compile=reach.compile_us/1e6;
-    let clock=std::time::Instant::now();
-    let goal=Goal {cell:B};
-    let field=Field::build(&world,&reach,body,&goal,start.main_supporting_block,(0,None));
-    let field_seconds=clock.elapsed().as_secs_f64();
-    let field_stats=(field.standable,field.reached,field.checks,field.cells.get(&A).map(|c|c.t));
-    let mut table=words::ProposalTable::default();
-    let problem=Problem {timeline:&timeline,start,goal,body,read:([-112,-64,-112],[-58,-17,-58]),a:Some(A)};
-    let options=Options {order:Order::Field,arcs:true,gaits:true,audit:false,improve:false,nodes:1_500_000};
-    let mut planner=Planner::new(problem,programs,&mut table,Some(field),options);
-    let outcome=planner.run(&mut |seconds,_,_|seconds+field_seconds>10.0);
-    let text=format!("# Current planner diagnostic\n\nExisting mode 5 (Field, arcs and gaits on, improve off, 1,500,000 nodes), command-built world. Run: `cargo test --offline --release -p plan --test hard_track current_planner_mode_5 -- --ignored --nocapture`. Budget: 10 seconds for field plus search; reach preparation recorded separately, as in the current flight.\n\n- Reach preparation: {compile:.6} s.\n- Field: {field_seconds:.6} s; (standable, reached, checks, T at A): {field_stats:?}.\n- Search: {:.6} s; stop {:?}; nodes {}; expansions {}; lower {}.\n- Sentence: {:?}.\n- Refusals: {:?}.\n- Uncertified candidates: {:?}.\n\nThis is a diagnostic, not a gate or an impossibility claim. No human T exists yet.\n",outcome.seconds,outcome.stopped,planner.stats.nodes,planner.stats.expansions,outcome.lower,outcome.sentence.as_ref().map(|(_,c)|c.ticks),planner.stats.refusals,planner.stats.uncertified);
-    print!("{text}");
-    if std::env::var_os("HARD_RECORD").is_some() { std::fs::write(root().join("jobs/hard-track/planner.md"),text).unwrap(); }
-}
-

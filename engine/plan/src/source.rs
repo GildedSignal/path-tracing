@@ -8,6 +8,21 @@ pub struct ReadCost { pub blocks:u64, pub loaded:u64, pub corridors:u64, pub sca
 pub struct CorridorProof { pub label:LabelId, pub min:BlockPos, pub max:BlockPos, pub version:[u8;32] }
 #[derive(Clone, Debug)]
 pub enum CorridorResult { Clear(CorridorProof), Exception { first_pos:BlockPos, exceptions:usize }, Unknown(Refusal) }
+/// Discard any replay that reads a cell whose model is unavailable.
+pub struct ObservedWorld<'a,W> {world:&'a W, missing:Cell<Option<BlockPos>>, empty:Block}
+impl<'a,W:World> ObservedWorld<'a,W> {
+    pub fn new(world:&'a W)->Self {Self {world,missing:Cell::new(None),empty:Default::default()}}
+    pub fn check(&self)->Result<(),String> {match self.missing.get() {Some(p)=>Err(format!("cell {p:?}: {}",self.world.known_block(p).err().unwrap_or("unavailable"))),None=>Ok(())}}
+}
+impl<W:World> World for ObservedWorld<'_,W> {
+    fn block(&self,p:BlockPos)->&Block {self.world.known_block(p).unwrap_or_else(|_|{if self.missing.get().is_none() {self.missing.set(Some(p));} &self.empty})}
+    fn loaded(&self,p:BlockPos)->bool {if self.world.known_block(p).is_err() {self.block(p);false} else {self.world.loaded(p)}}
+    fn min_y(&self)->i32 {self.world.min_y()}
+    fn difficulty(&self)->u8 {self.world.difficulty()}
+    fn natural_regeneration(&self)->bool {self.world.natural_regeneration()}
+    fn has_fluid(&self)->bool {self.world.has_fluid()}
+    fn has_inside_effects(&self)->bool {self.world.has_inside_effects()}
+}
 pub trait CorridorSource: World + Source {
     fn support_cell(&self,state:&PlayerState)->BlockPos {
         state.main_supporting_block.unwrap_or_else(||[state.position.x.floor() as i32,state.position.y.floor() as i32-1,state.position.z.floor() as i32])
@@ -84,7 +99,7 @@ pub struct GeneratorSuperflatSource {
     pub loaded_min:BlockPos, pub loaded_max:BlockPos,
     pub difficulty:u8, pub natural_regeneration:bool,
     pub scars:BTreeMap<BlockPos,Block>, pub provenance_hash:[u8;32],
-    layers:BTreeMap<i32,Block>, costs:Cell<ReadCost>,
+    layers:BTreeMap<i32,Block>, unknown:BTreeMap<BlockPos,String>, costs:Cell<ReadCost>,
 }
 impl GeneratorSuperflatSource {
     pub fn new(floor_y:i32,floor_block:Block,loaded_min:BlockPos,loaded_max:BlockPos)->Self {
@@ -93,33 +108,36 @@ impl GeneratorSuperflatSource {
         for b in [&floor_block,&air_block] {bytes.extend(codec::legs_presence(b).expect("qualified generator model").bytes());}
         let mut provenance_hash=[0;32];provenance_hash[..16].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
         bytes.push(1);provenance_hash[16..].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
-        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),costs:Cell::default()}
+        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),unknown:BTreeMap::new(),costs:Cell::default()}
     }
     /// Factor the saved cells into A's supporting layers and sparse differences.
     /// This is ingestion, before the command clock. Playback reads the original snapshot.
     pub fn snapshot(world:&world::WorldSnapshot,a:BlockPos)->Result<Self,String> {Self::from_world(world,world.bounds(),a)}
     /// The same factoring over any world and box: the saved track, or the chunks the bot has received.
     pub fn from_world(world:&impl World,(lo,hi):(BlockPos,BlockPos),a:BlockPos)->Result<Self,String> {
-        let mut source=Self::new(a[1],world.block(a).clone(),lo,hi);
+        let floor=world.known_block(a).map_err(|e|format!("support {a:?}: {e}"))?;
+        codec::legs_presence(floor).map_err(|e|format!("support {a:?}: {e:?}"))?;
+        let mut source=Self::new(a[1],floor.clone(),lo,hi);
         source.air_block=world::model(&world::BlockState {name:"minecraft:air".into(),properties:Vec::new()})?.clone();
         source.difficulty=world.difficulty();
         source.natural_regeneration=world.natural_regeneration();
-        for y in lo[1]..a[1] {source.layers.insert(y,world.block([a[0],y,a[2]]).clone());}
+        for y in lo[1]..a[1] {if let Ok(b)=world.known_block([a[0],y,a[2]]) {if codec::legs_presence(b).is_ok() {source.layers.insert(y,b.clone());}}}
         let mut differences=std::collections::HashMap::new();
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {for x in lo[0]..=hi[0] {
                 let p=[x,y,z];
                 // A model's id where the world has one, else its address: equal keys, equal blocks.
-                let id=world.model_id(p).map_or(world.block(p) as *const law::Block as usize,usize::from);
+                let block=match world.known_block(p) {Ok(b)=>b,Err(e)=>{source.unknown.insert(p,e.to_owned());continue;}};
+                let id=world.model_id(p).map_or(block as *const law::Block as usize,usize::from);
                 let differs=match differences.entry((y,id)) {
                     std::collections::hash_map::Entry::Occupied(e)=>*e.get(),
                     std::collections::hash_map::Entry::Vacant(e)=>{
                         let same=codec::legs_presence(source.base(p)).and_then(|base|
-                            codec::legs_presence(world.block(p)).map(|actual|actual==base));
-                        *e.insert(!same.map_err(|e|format!("snapshot cell {p:?}: {e:?}"))?)
+                            codec::legs_presence(block).map(|actual|actual==base));
+                        match same {Ok(same)=>*e.insert(!same),Err(e)=>{source.unknown.insert(p,format!("{e:?}"));continue;}}
                     }
                 };
-                if differs {source.scars.insert(p,world.block(p).clone());}
+                if differs {source.scars.insert(p,block.clone());}
             }}
         }
         Ok(source)
@@ -130,11 +148,16 @@ impl GeneratorSuperflatSource {
     fn covered(&self,p:BlockPos)->bool {(0..3).all(|a|p[a]>=self.loaded_min[a] && p[a]<=self.loaded_max[a])}
 }
 impl World for GeneratorSuperflatSource {
+    fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
+        if !self.covered(p) {return Err("outside the source");}
+        if let Some(reason)=self.unknown.get(&p) {return Err(reason);}
+        Ok(self.block(p))
+    }
     fn block(&self,p:BlockPos)->&Block {
         let mut c=self.costs.get();c.blocks+=1;self.costs.set(c);
         self.scars.get(&p).unwrap_or_else(||self.base(p))
     }
-    fn loaded(&self,p:BlockPos)->bool {let mut c=self.costs.get();c.loaded+=1;self.costs.set(c);self.covered(p)}
+    fn loaded(&self,p:BlockPos)->bool {let mut c=self.costs.get();c.loaded+=1;self.costs.set(c);self.covered(p) && !self.unknown.contains_key(&p)}
     fn difficulty(&self)->u8 {self.difficulty}
     fn natural_regeneration(&self)->bool {self.natural_regeneration}
     fn min_y(&self)->i32 {self.loaded_min[1]}
@@ -167,7 +190,7 @@ impl World for GeneratorSuperflatSource {
 }
 impl Source for GeneratorSuperflatSource {
     fn cell(&self,_tick:u64,p:BlockPos,mask:u8)->Result<Canonical,Refusal> {
-        if !self.covered(p) {return Err(Refusal::Coverage);}
+        if !self.covered(p) || self.unknown.contains_key(&p) {return Err(Refusal::Coverage);}
         codec::cell(self.block(p),self.loaded(p),mask).map_err(Refusal::Law)
     }
     fn environment(&self,_tick:u64,q:&EnvironmentRead)->Result<Canonical,Refusal> {codec::environment(self,q).map_err(Refusal::Law)}
@@ -193,11 +216,23 @@ impl CorridorSource for GeneratorSuperflatSource {
         impl World for Base<'_> {fn block(&self,p:BlockPos)->&Block {self.0.base(p)}}
         match label(codec,&Base(self),&seed) {Ok(id) if id==expected=>(),Ok(_)=>return CorridorResult::Exception {first_pos:support,exceptions:1},Err(r)=>return CorridorResult::Unknown(r)}
         let mut first=None;let mut exceptions=0;
+        // An unknown shape may extend beyond its own cell into the corridor.
+        let halo_min=min.map(|v|v.saturating_sub(1)); let halo_max=max.map(|v|v.saturating_add(1));
+        if !self.covered(halo_min) || !self.covered(halo_max) {return CorridorResult::Unknown(Refusal::Coverage);}
+        for &p in self.unknown.range(halo_min..=halo_max).map(|(p,_)|p) {
+            if (0..3).all(|a|halo_min[a]<=p[a] && p[a]<=halo_max[a]) {exceptions+=1;first.get_or_insert(p);}
+        }
         // Lexicographic range, then all three coordinate bounds: never mistake
         // BTreeMap ordering for a three-dimensional box.
-        for (&p,b) in self.scars.range(min..=max) {
+        for (&p,b) in self.scars.range(halo_min..=halo_max) {
             let mut c=self.costs.get();c.scars+=1;self.costs.set(c);
-            if !(0..3).all(|a|min[a]<=p[a] && p[a]<=max[a]) {continue;}
+            if !(0..3).all(|a|halo_min[a]<=p[a] && p[a]<=halo_max[a]) {continue;}
+            if !(0..3).all(|a|min[a]<=p[a] && p[a]<=max[a]) {
+                let lo=std::array::from_fn::<_,3,_>(|i|f64::from(min[i])-f64::from(p[i]));
+                let hi=std::array::from_fn::<_,3,_>(|i|f64::from(max[i])+1.0-f64::from(p[i]));
+                let bounds=law::Aabb::new(lo[0],lo[1],lo[2],hi[0],hi[1],hi[2]);
+                if !b.collision_shapes().chain(self.base(p).collision_shapes()).any(|s|s.intersects(bounds)) {continue;}
+            }
             let changed=[LegsRole::Support02,LegsRole::Support05,LegsRole::BodyFeet,LegsRole::Inside].into_iter().try_fold(false,|found,r| {
                 Ok::<_,law::pattern::PatternError>(found || codec::legs_bytes(b,true,r)?!=codec::legs_bytes(self.base(p),true,r)?)
             });
@@ -205,5 +240,27 @@ impl CorridorSource for GeneratorSuperflatSource {
         }
         if let Some(first_pos)=first {CorridorResult::Exception {first_pos,exceptions}}
         else {CorridorResult::Clear(CorridorProof {label:expected,min,max,version:self.provenance_hash})}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Partial {floor:Block, air:Block}
+    impl World for Partial {
+        fn block(&self,p:BlockPos)->&Block {if p[1]==0 {&self.floor} else {&self.air}}
+        fn difficulty(&self)->u8 {0}
+        fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
+            if p==[0,1,15] {Err("unmodeled non-local stair shape")} else {Ok(self.block(p))}
+        }
+    }
+    #[test]
+    fn unknown_shape_in_corridor_is_an_exception() {
+        let world=Partial {floor:Block::full(),air:world::model(&world::BlockState {name:"minecraft:air".into(),properties:Vec::new()}).unwrap().clone()};
+        let source=GeneratorSuperflatSource::from_world(&world,([-8,-4,-8],[8,12,60]),[0,0,0]).unwrap();
+        let mut start=crate::settle(&crate::Still(&source),[0.5,1.0,0.5],0).unwrap();
+        start.saturation=20.0;
+        let result=crate::solve(&start,crate::Goal {cell:[0,0,40]},crate::Kit::BareLegs,&source,&crate::store::GeneratorStore::default(),&mut Interner::default(),u64::MAX);
+        assert!(matches!(result.outcome,crate::PlanOutcome::NeedsJoints {exception:[0,1,15],..}),"{:?} {:?}",result.outcome,result.explanation);
     }
 }
