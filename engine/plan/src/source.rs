@@ -51,14 +51,15 @@ impl<'a,W> MeteredWorld<'a,W> {
     pub fn take_ticks(&self)->u64 {self.ticks.replace(0)}
 }
 impl<W:World> World for MeteredWorld<'_,W> {
-    fn observe_axis_contact(&self,c:law::contact::AxisContact) {self.world.observe_axis_contact(c);}
+    fn observe_axis_contact(&self,c:law::basis::sweep::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.ticks.set(self.ticks.get()+1);self.world.observe_tick();}
     fn block(&self,p:BlockPos)->&Block {self.world.block(p)}
     fn known_block(&self,p:BlockPos)->Result<&Block,&str> {self.world.known_block(p)}
     fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}
     fn fluid_block(&self,p:BlockPos)->&Block {self.world.fluid_block(p)}
     fn raw_fluid_block(&self,p:BlockPos)->Option<&Block> {self.world.raw_fluid_block(p)}
-    fn model_id(&self,p:BlockPos)->Option<u16> {self.world.model_id(p)}
+    fn state_id(&self,p:BlockPos)->Option<law::basis::cell::StateId> {self.world.state_id(p)}
+    fn uniform(&self,lo:BlockPos,hi:BlockPos)->Option<&Block> {self.world.uniform(lo,hi)}
     fn loaded(&self,p:BlockPos)->bool {self.world.loaded(p)}
     fn difficulty(&self)->u8 {self.world.difficulty()}
     fn natural_regeneration(&self)->bool {self.world.natural_regeneration()}
@@ -66,10 +67,7 @@ impl<W:World> World for MeteredWorld<'_,W> {
     fn fast_lava(&self)->bool {self.world.fast_lava()}
     fn has_fluid(&self)->bool {self.world.has_fluid()}
     fn has_inside_effects(&self)->bool {self.world.has_inside_effects()}
-    fn read_state(&self,f:law::state_reads::StateField) {
-        self.world.read_state(f);
-    }
-    fn write_state(&self,f:law::state_reads::StateField) {self.world.write_state(f)}
+    fn state_footprint(&self,r:law::state_reads::StateReads,w:law::state_reads::StateReads) {self.world.state_footprint(r,w)}
     fn observe_region(&self,q:law::footprint::Query,lo:BlockPos,hi:BlockPos) {self.world.observe_region(q,lo,hi)}
     fn observe_sweep(&self,a:law::Aabb,b:law::Aabb) {self.world.observe_sweep(a,b)}
     fn collision_cell_bounds(&self,b:law::Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> {self.world.collision_cell_bounds(b,lo,hi)}
@@ -143,7 +141,7 @@ impl GeneratorSuperflatSource {
                 let p=[x,y,z];
                 // A model's id where the world has one, else its address: equal keys, equal blocks.
                 let block=match world.known_block(p) {Ok(b)=>b,Err(e)=>{source.unknown.insert(p,e.to_owned());continue;}};
-                let id=world.model_id(p).map_or(block as *const law::Block as usize,usize::from);
+                let id=world.model_id(p).map_or(block as *const law::Block as usize,|m| m.0 as usize);
                 let differs=match differences.entry((y,id)) {
                     std::collections::hash_map::Entry::Occupied(e)=>*e.get(),
                     std::collections::hash_map::Entry::Vacant(e)=>{

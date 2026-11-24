@@ -191,7 +191,7 @@ impl<'a, S: World> LocalGrid<'a, S> {
 
 impl<S: World> World for LocalGrid<'_, S> {
     #[inline]
-    fn observe_axis_contact(&self, c: law::contact::AxisContact) {
+    fn observe_axis_contact(&self, c: law::basis::sweep::AxisContact) {
         self.source.observe_axis_contact(c);
     }
 
@@ -625,7 +625,7 @@ fn fast_can_fall<S: World>(grid: &LocalGrid<'_, S>, s: &PlayerState) -> bool {
             return false;
         }
     }
-    law::can_fall(s, grid, 0.0, 0.0, f64::from(s.step_height))
+    law::can_fall(s, grid, 0.0, 0.0, f64::from(s.profile.step_height))
 }
 
 #[inline]

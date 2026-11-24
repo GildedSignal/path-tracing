@@ -91,25 +91,25 @@ fn load_state(object: &Object<'_>) -> PlayerState {
     // Archived settled fixtures predate the independent attribute observation.
     state.sprint_speed_modifier = object.get("sprintSpeedModifier")
         .map(|_| object.boolean("sprintSpeedModifier")).unwrap_or(state.sprinting);
-    state.movement_speed_base = object.f64("movementSpeedBase");
-    state.speed_modifiers = speed_modifiers(object);
+    state.profile.movement_speed_base = object.f64("movementSpeedBase");
+    state.profile.speed_modifiers = speed_modifiers(object);
     if object.get("inputs").is_some() { state.input = input(&object.object("inputs")); }
     macro_rules! flags {
-        ($($key:literal => $field:ident),*) => { $(
-            if object.get($key).is_some() { state.$field = object.boolean($key); }
+        ($($key:literal => $($field:ident).+),*) => { $(
+            if object.get($key).is_some() { state.$($field).+ = object.boolean($key); }
         )* };
     }
     macro_rules! floats {
-        ($($key:literal => $field:ident),*) => { $(
+        ($($key:literal => $($field:ident).+),*) => { $(
             if object.get($key).is_some() || object.get(concat!($key, "Bits")).is_some() {
-                state.$field = object.f32($key);
+                state.$($field).+ = object.f32($key);
             }
         )* };
     }
     macro_rules! doubles {
-        ($($key:literal => $field:ident),*) => { $(
+        ($($key:literal => $($field:ident).+),*) => { $(
             if object.get($key).is_some() || object.get(concat!($key, "Bits")).is_some() {
-                state.$field = object.f64($key);
+                state.$($field).+ = object.f64($key);
             }
         )* };
     }
@@ -119,18 +119,18 @@ fn load_state(object: &Object<'_>) -> PlayerState {
         "isShiftKeyDown" => shift_key_down, "isInWater" => in_water, "isInLava" => in_lava,
         "onClimbable" => on_climbable, "crouching" => crouching, "swimming" => swimming,
         "underwater" => underwater, "eyeInWater" => eye_in_water, "wasEyeInWater" => was_eye_in_water,
-        "leatherBoots" => leather_boots, "wasInPowderSnow" => was_in_powder_snow,
+        "leatherBoots" => profile.leather_boots, "wasInPowderSnow" => was_in_powder_snow,
         "inPowderSnow" => in_powder_snow, "onGroundNoBlocks" => on_ground_no_blocks,
-"noPhysics" => no_physics);
+"noPhysics" => profile.no_physics);
     floats!("yRot" => yaw, "xRot" => pitch, "health" => health, "saturationLevel" => saturation,
-        "exhaustion" => exhaustion, "speed" => speed, "stepHeight" => step_height,
-        "frictionModifier" => friction_modifier, "airDragModifier" => air_drag_modifier,
-        "waterMovementEfficiency" => water_movement_efficiency, "movementEfficiency" => movement_efficiency,
-        "sneakingSpeed" => sneaking_speed);
+        "exhaustion" => exhaustion, "speed" => speed, "stepHeight" => profile.step_height,
+        "frictionModifier" => profile.friction_modifier, "airDragModifier" => profile.air_drag_modifier,
+        "waterMovementEfficiency" => profile.water_movement_efficiency, "movementEfficiency" => profile.movement_efficiency,
+        "sneakingSpeed" => profile.sneaking_speed);
     doubles!("fallDistance" => fall_distance, "waterHeight" => water_height, "lavaHeight" => lava_height,
-        "jumpStrength" => jump_strength, "gravity" => gravity,
-        "safeFallDistance" => safe_fall_distance, "fallDamageMultiplier" => fall_damage_multiplier,
-        "bounciness" => bounciness);
+        "jumpStrength" => profile.jump_strength, "gravity" => profile.gravity,
+        "safeFallDistance" => profile.safe_fall_distance, "fallDamageMultiplier" => profile.fall_damage_multiplier,
+        "bounciness" => profile.bounciness);
     if object.get("remainingFireTicks").is_some() { state.remaining_fire_ticks = object.number("remainingFireTicks") as i32; }
     if object.get("noJumpDelay").is_some() { state.no_jump_delay = object.number("noJumpDelay") as i32; }
     if object.get("ticksFrozen").is_some() { state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen"); }
@@ -185,7 +185,10 @@ fn load_block(object: &Object<'_>) -> Block {
     if object.get("inside").is_some() {
         block.inside = match object.string("inside") {
             "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow,
-            "honey" => Inside::Honey, "none" => Inside::None,
+            "honey" => Inside::Honey,
+            "bubbleColumnUp" => Inside::BubbleColumn { drag: false },
+            "bubbleColumnDown" => Inside::BubbleColumn { drag: true },
+            "none" => Inside::None,
             "unmodeled" if object.get("block").is_some() => {
                 let id = object.string("block");
                 let name = if unsupported_fall_on.is_none() {
@@ -358,15 +361,20 @@ fn assert_tick(state: &PlayerState, expected: &Object<'_>, tick: u64) {
     assert_eq!(state.fall_distance.to_bits(), hex(expected.required("fallDistanceBits"), 16), "tick {tick} fall distance");
 }
 
-fn recording_header(object: &Object<'_>) {
+/// The recorder options; the double-tap sprint window (7 in his own play) is a law input.
+fn recording_header(object: &Object<'_>) -> i32 {
     assert_eq!(object.string("type"), "recording");
     for option in ["autoJump", "toggleSprint", "toggleCrouch"] {
         assert!(!object.boolean(option), "unsupported recorder option {option}");
     }
-    assert_eq!(object.number("sprintWindow"), 0.0, "unsupported double-tap sprint window");
+    object.number("sprintWindow") as i32
 }
 
 fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64, Duration) {
+    replay_each(text, world, state, |_, _| {})
+}
+/// The replay, handing each tick's state (server data applied) and input to `each` first.
+fn replay_each(text: &str, world: &impl World, state: &mut PlayerState, mut each: impl FnMut(&PlayerState, &Input)) -> (u64, Duration) {
     let mut expected_tick = 0;
     let mut previous_tick_count = None;
     let mut elapsed = Duration::ZERO;
@@ -376,7 +384,7 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
         let object = Object::parse(line);
         if object.get("type").is_some() {
             if line_index == 0 && object.string("type") == "recording" {
-                recording_header(&object);
+                state.sprint_window = recording_header(&object);
                 continue;
             }
             assert_eq!(object.string("type"), "end", "unexpected recording row type");
@@ -394,7 +402,7 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
             if let Some(previous) = previous_tick_count { assert_eq!(count, previous + 1, "client tick gap"); }
             previous_tick_count = Some(count);
         }
-        state.speed_modifiers = speed_modifiers(&object);
+        state.profile.speed_modifiers = speed_modifiers(&object);
         if object.get("startSprinting").is_some() || object.get("startSprintSpeedModifier").is_some() {
             state.sprinting = object.boolean("startSprinting");
             state.sprint_speed_modifier = object.boolean("startSprintSpeedModifier");
@@ -404,6 +412,7 @@ fn replay_text(text: &str, world: &impl World, state: &mut PlayerState) -> (u64,
         if object.get("startSwimming").is_some() { state.swimming = object.boolean("startSwimming"); }
         state.ticks_frozen = object.required("ticksFrozen").parse().expect("invalid ticksFrozen");
         let applied = input(&object.object("inputs"));
+        each(state, &applied);
         let start = Instant::now();
         tick(state, world, &applied);
         elapsed += start.elapsed();
@@ -441,6 +450,19 @@ fn check_server_end(state: &mut PlayerState, world: &impl World, expected: &Obje
     for _ in 0..offset { tick(state, world, &input); }
     assert_server(state, expected);
     true
+}
+
+#[test]
+#[ignore = "explicit recorded witness"]
+fn freeze_sweep_recording() {
+    let file = PathBuf::from(std::env::var_os("PATHTRACING_FREEZE_WITNESS").expect("witness path"));
+    let fixture = fs::read_to_string(file.with_extension("world.jsonl")).expect("witness world");
+    let text = fs::read_to_string(&file).expect("witness recording");
+    let header = Object::parse(text.lines().next().expect("recording header"));
+    let fixture = format!("{}\n{}", fixture, header.required("initialPlayer"));
+    let (world, mut state, _) = parse_world(&fixture);
+    let (ticks, _) = replay_text(&text, &world, &mut state);
+    println!("freeze sweep witness: {ticks} ticks replayed");
 }
 
 #[test]
@@ -803,7 +825,7 @@ fn fixture_reads_server_driven_modifiers_and_frozen_counter_each_tick() {
     }
     replay_text(&complete_recording(&rows.join("\n"), 3), &world, &mut state);
     assert_eq!(state.ticks_frozen, 73, "server observation replaces the counter");
-    assert_eq!(state.speed_modifiers.len(), 3);
+    assert_eq!(state.profile.speed_modifiers.len(), 3);
 }
 
 #[test]
@@ -981,5 +1003,205 @@ fn raw_exporter_oracle() {
         let one = text.lines().find(|l| l.contains("\"at\":[1,1,1]")).unwrap();
         let duplicate = text.replace(one, &format!("{one}\n{one}"));
         assert!(std::panic::catch_unwind(|| parse_world(&duplicate)).is_err(), "duplicate raw cell accepted");
+    }
+}
+
+/// His tracks' recordings (git-ignored, `recordings/` beside `engine/`, or `PATHTRACING_RECORDINGS`),
+/// replayed against the region fixture they were recorded in. The ones named in
+/// `data/track_gate.txt` must replay byte-identical; every other one prints why it is out.
+fn replay_track(path: &Path) -> Result<u64, String> {
+    let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let header = Object::parse(text.lines().next().ok_or("empty")?);
+    let mut state = load_state(&header.object("initialPlayer"));
+    let (min, max) = track_bounds(&text, &state);
+    let world = world::WorldSnapshot::load(track_world(), min, max).map_err(|e| format!("world: {e}"))?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay_text(&text, &world, &mut state).0))
+        .map_err(|failure| failure.downcast_ref::<String>().cloned()
+            .or_else(|| failure.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())
+}
+
+#[test]
+fn tracks() {
+    let root = std::env::var_os("PATHTRACING_RECORDINGS").map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recordings"));
+    let gate: Vec<&str> = include_str!("data/track_gate.txt").lines().filter(|l| !l.is_empty()).collect();
+    if !root.exists() {
+        println!("tracks: no recordings at {}; the track gate is not judged here", root.display());
+        return;
+    }
+    let mut files = Vec::new();
+    recordings(&root, &mut files);
+    files.sort();
+    let mut passed = Vec::new();
+    for file in &files {
+        let name = file.file_name().unwrap().to_str().unwrap().to_owned();
+        match replay_track(file) {
+            Ok(ticks) => { println!("PASS {name} {ticks}"); passed.push(name); }
+            Err(reason) => println!("OUT  {name}: {}", reason.lines().next().unwrap_or("")),
+        }
+    }
+    println!("tracks: {} of {} replay byte-identical", passed.len(), files.len());
+    for name in gate { assert!(passed.iter().any(|p| p == name), "gate recording {name} no longer replays"); }
+}
+fn track_bounds(text: &str, state: &PlayerState) -> (BlockPos, BlockPos) {
+    let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
+    let mut widen = |p: Vec3| for (axis, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+        lo[axis] = lo[axis].min(v.floor() as i32);
+        hi[axis] = hi[axis].max(v.floor() as i32);
+    };
+    widen(state.position);
+    for line in text.lines().skip(1) {
+        let object = Object::parse(line);
+        if object.get("position").is_some() { widen(vector(&object.object("position"))); }
+    }
+    ([lo[0] - 4, (lo[1] - 4).max(-64), lo[2] - 4], [hi[0] + 4, hi[1] + 6, hi[2] + 4])
+}
+/// The committed fixture holds trimmed regions; `lab/track-world` (untracked) holds the whole ones.
+fn track_world() -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    std::env::var_os("PATHTRACING_TRACK_WORLD").map(PathBuf::from)
+        .or_else(|| Some(manifest.join("../../lab/track-world")).filter(|p| p.exists()))
+        .unwrap_or_else(|| manifest.join("../world/tests/fixtures/world"))
+}
+
+
+/// The event face against the core: every held-input stretch of the gated recordings and the
+/// extremes, jumped cause to cause, must equal stepping the core over the same ticks bit for
+/// bit, its footprint holding the footprint of stepping. Prints the share of ticks jumped, the
+/// jumps, the kinds it still steps, and its speed against stepping.
+#[test]
+fn event_face() {
+    let mut judge = FaceJudge::default();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lab/fixtures");
+    let mut files = Vec::new();
+    recordings(&root, &mut files);
+    files.sort();
+    for file in files {
+        let (world, state, _) = parse_world(&fs::read_to_string(file.with_extension("world.jsonl")).unwrap());
+        judge.recording(&file.display().to_string(), &fs::read_to_string(&file).unwrap(), &world, state);
+    }
+    let tracks = std::env::var_os("PATHTRACING_RECORDINGS").map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recordings"));
+    if tracks.exists() {
+        for name in include_str!("data/track_gate.txt").lines().filter(|l| !l.is_empty()) {
+            let text = fs::read_to_string(tracks.join(name)).unwrap();
+            let state = load_state(&Object::parse(text.lines().next().unwrap()).object("initialPlayer"));
+            let (min, max) = track_bounds(&text, &state);
+            let world = world::WorldSnapshot::load(track_world(), min, max).unwrap();
+            judge.recording(name, &text, &world, state);
+        }
+    }
+    let recorded = (judge.ticks, judge.jumped);
+    judge.extremes();
+    judge.report(recorded);
+}
+
+#[derive(Default)]
+struct FaceJudge { ticks: u64, jumped: u64, jumps: Vec<u64>, stepped: std::collections::BTreeMap<String, u64>, causes: std::collections::BTreeMap<String, u64>,
+    face_time: Duration, step_time: Duration, timed: u64, jumpy: (Duration, Duration, u64), anomalies: Vec<String> }
+impl FaceJudge {
+    fn recording(&mut self, name: &str, text: &str, world: &impl World, mut state: PlayerState) {
+        let (mut ticks, before): (Vec<(PlayerState, Input)>, _) = (Vec::new(), (self.ticks, self.jumped));
+        replay_each(text, world, &mut state, |s, i| ticks.push((s.clone(), *i)));
+        // The wire is the boundary: every recorded state decodes from its words and encodes back to them.
+        for (s, _) in &ticks { if PlayerState::from_bits(&s.bits()).map(|d| d.bits()) != Ok(s.bits()) { self.anomalies.push(format!("{name}@{}	wire", s.t)); } }
+        let mut start = 0;
+        for k in 1..=ticks.len() {
+            let held = k < ticks.len() && ticks[k].1 == ticks[k - 1].1 && {
+                let mut s = ticks[k - 1].0.clone();
+                tick(&mut s, world, &ticks[k - 1].1);
+                s.bits() == ticks[k].0.bits()
+            };
+            if !held { self.stretch(&format!("{name}@{start}"), world, &ticks[start].0, &ticks[start].1, (k - start) as u64); start = k; }
+        }
+        println!("face {name}: {} of {} ticks jumped", self.jumped - before.1, self.ticks - before.0);
+    }
+    /// One held input from `from` for `n` ticks, through the face call by call.
+    fn stretch(&mut self, at: &str, world: &impl World, from: &PlayerState, input: &Input, n: u64) {
+        let (mut face, mut step, mut done, mut jumped) = (from.clone(), from.clone(), 0, 0);
+        while done < n {
+            let (seen_face, seen_step) = (footprint::RecordingWorld::new(world), footprint::RecordingWorld::new(world));
+            let jump = match face::advance(&mut face, &seen_face, input, n - done) {
+                Ok(jump) => jump,
+                Err(refusal) => { self.anomalies.push(format!("{at}+{done}\trefused\t{refusal:?}")); return; }
+            };
+            for _ in 0..jump.ticks { tick(&mut step, &seen_step, input); }
+            if face.bits() != step.bits() {
+                let (f, s) = (face.bits(), step.bits());
+                let word = f.iter().zip(&s).position(|(a, b)| a != b).unwrap_or(f.len().min(s.len()));
+                self.anomalies.push(format!("{at}+{done}\tstate\t{jump:?} first differing wire word {word}: face {:?} step {:?}", f.get(word), s.get(word)));
+                return;
+            }
+            let (f, s) = (seen_face.footprint(), seen_step.footprint());
+            let outside: Vec<_> = s.reads.iter().filter(|&(p, m)| f.reads.get(p).is_none_or(|q| q & m != *m)).take(3).collect();
+            if !outside.is_empty() || !s.swept.is_subset(&f.swept) || s.state_reads.0 != f.state_reads.0 {
+                self.anomalies.push(format!("{at}+{done}\tfootprint\t{jump:?} reads outside {outside:?}, swept {}, state reads {}",
+                    s.swept.is_subset(&f.swept), s.state_reads.0 == f.state_reads.0));
+            }
+            done += jump.ticks;
+            self.ticks += jump.ticks;
+            self.jumped += jump.jumped;
+            jumped += jump.jumped;
+            if jump.jumped > 0 { self.jumps.push(jump.jumped); }
+            let kind = match jump.stepped { face::Stepped::Cell(_) => "cell".to_owned(), other => format!("{other:?}").to_lowercase() };
+            *self.stepped.entry(kind).or_default() += jump.ticks - jump.jumped;
+            let cause = match jump.cause { face::Cause::Cell(_) => "cell".to_owned(), other => format!("{other:?}").to_lowercase() };
+            *self.causes.entry(cause).or_default() += 1;
+        }
+        // The speed: the same stretch through the face and the core, no recording.
+        let (mut face, mut step) = (from.clone(), from.clone());
+        let clock = Instant::now();
+        let mut left = n;
+        while left > 0 { left -= face::advance(&mut face, world, input, left).unwrap().ticks; }
+        let face_time = clock.elapsed();
+        let clock = Instant::now();
+        for _ in 0..n { tick(&mut step, world, input); }
+        let step_time = clock.elapsed();
+        (self.face_time, self.step_time, self.timed) = (self.face_time + face_time, self.step_time + step_time, self.timed + n);
+        // Where the face jumped nine ticks in ten: its cost once the repeat is seen.
+        if jumped * 10 >= n * 9 { self.jumpy = (self.jumpy.0 + face_time, self.jumpy.1 + step_time, self.jumpy.2 + n); }
+    }
+    /// Long slides on every ground the hot layer knows, sneaking and sprint-jumping, falls
+    /// through many binades, far from the origin.
+    fn extremes(&mut self) {
+        let grounds = [("stone", 0.6, 1.0, 1.0), ("ice", 0.98, 1.0, 1.0), ("blue ice", 0.989, 1.0, 1.0), ("slime", 0.8, 1.0, 1.0),
+            ("soul sand", 0.6, 0.4, 1.0), ("honey", 0.6, 0.4, 0.5)];
+        let walk = Input { forward: true, ..Input::default() };
+        let inputs = [("walk", walk), ("sprint", Input { sprint: true, ..walk }), ("sprint-jump", Input { sprint: true, jump: true, ..walk }),
+            ("sneak", Input { sneak: true, ..walk }), ("diagonal", Input { left: true, yaw: 37.5, ..walk })];
+        for (ground, friction, speed_factor, jump_factor) in grounds {
+            let mut world = BoxWorld::default();
+            let floor = Block { friction, speed_factor, jump_factor, slime: ground == "slime", ..Block::full() };
+            for x0 in [-8, 1_048_570] {
+                world.fill([x0 - 64, 63, -64], [x0 + 4000, 63, 4000], floor.clone());
+            }
+            for x0 in [0.5, 1_048_575.5] {
+                for (name, input) in inputs {
+                    let from = PlayerState { position: Vec3::new(x0, 64.0, 0.5), on_ground: true, ..PlayerState::default() };
+                    self.stretch(&format!("extreme {ground} {name} x={x0}"), &world, &from, &input, 3000);
+                }
+            }
+        }
+        // Falls through many binades, in air and in a column of water.
+        let mut world = BoxWorld::default();
+        world.fill([-4, -1_000_000, -4], [4, -100_000, 4], Block { fluid: Fluid { kind: FluidKind::Water, height: 1.0, ..Fluid::default() }, air: false, ..Block::default() });
+        for (name, y) in [("air", 1.0e6), ("water", -200_000.0)] {
+            let from = PlayerState { position: Vec3::new(0.5, y, 0.5), ..PlayerState::default() };
+            self.stretch(&format!("extreme fall {name}"), &world, &from, &Input::default(), 20_000);
+        }
+    }
+    fn report(&self, (ticks, jumped): (u64, u64)) {
+        let mut jumps = self.jumps.clone();
+        jumps.sort();
+        let q = |p: f64| jumps.get(((jumps.len().max(1) - 1) as f64 * p) as usize).copied().unwrap_or(0);
+        println!("event face: recorded ticks {ticks}, jumped {jumped} ({:.1}%); with extremes {} of {}", 100.0 * jumped as f64 / ticks.max(1) as f64, self.jumped, self.ticks);
+        println!("jumps n={} median={} p90={} max={}", jumps.len(), q(0.5), q(0.9), q(1.0));
+        println!("stepped ticks by kind {:?}; calls by cause {:?}", self.stepped, self.causes);
+        println!("speed: face {:.0} ns/tick, core {:.0} ns/tick over {} ticks", self.face_time.as_nanos() as f64 / self.timed as f64,
+            self.step_time.as_nanos() as f64 / self.timed as f64, self.timed);
+        let (f, c, n) = self.jumpy;
+        println!("where nine ticks in ten jump: face {:.0} ns/tick, core {:.0} ns/tick over {n} ticks", f.as_nanos() as f64 / n.max(1) as f64, c.as_nanos() as f64 / n.max(1) as f64);
+        for row in &self.anomalies { println!("ANOMALY\t{row}"); }
+        assert!(self.anomalies.is_empty(), "{} anomalies", self.anomalies.len());
     }
 }

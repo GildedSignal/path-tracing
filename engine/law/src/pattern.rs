@@ -61,13 +61,6 @@ pub enum PatternError {
     UnknownQuery,
 }
 
-/// A whole model's content seen in `frame`, or None when the frame cannot carry it
-/// exactly. Equal content gives an equal digest whatever the block's name.
-pub fn model_digest(block: &Block, frame: Frame) -> Result<Option<u128>, PatternError> {
-    let mut bytes = Vec::new();
-    Ok(encode(&mut bytes, block, SHAPES | HOOKS, frame)?.then(|| fnv(&bytes)))
-}
-
 /// One cell's content under the queries in `mask`: what those queries return, nothing else.
 pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<crate::codec::Canonical, PatternError> {
     crate::codec::cell(block, loaded, mask)
@@ -76,11 +69,6 @@ pub fn cell_digest(block: &Block, loaded: bool, mask: u8) -> Result<crate::codec
 /// Canonical bytes for a query; equality must compare these, not the digest alone.
 pub fn cell_bytes(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
     Ok(crate::codec::cell(block, loaded, mask)?.bytes().to_vec())
-}
-
-/// Compatibility presence API: exact bytes, never a bare 128-bit equality witness.
-pub fn law_digest(block: &Block) -> Result<crate::codec::Canonical, PatternError> {
-    crate::codec::legs_presence(block)
 }
 
 pub(crate) fn encode_cell(block: &Block, loaded: bool, mask: u8) -> Result<Vec<u8>, PatternError> {
@@ -339,11 +327,6 @@ pub fn in_scope(scope: [[i32; 2]; 3], shift: BlockPos) -> bool {
     (0..3).all(|a| shift[a] == 0 || binade(scope[a]).is_some_and(|b| binade([scope[a][0] + shift[a], scope[a][1] + shift[a]]) == Some(b)))
 }
 
-/// FNV-1a 128 with explicit constants, independent of std's Hash.
-fn fnv(bytes: &[u8]) -> u128 {
-    crate::codec::digest(bytes)
-}
-
 fn f64s(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f64>) { values.into_iter().for_each(|v| bytes.extend(v.to_bits().to_le_bytes())); }
 
 /// Every grid cell, empty subdivisions included, as the law's planes see them.
@@ -383,7 +366,7 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         speed_factor, jump_factor, climbable, scaffolding, ladder_facing, open_trapdoor_facing,
         fluid, fluid_flow, inside, grounded_contact, stuck_multiplier, unsupported_fall_on,
         fall_on_multiplier, bed, suffocating, bounce, suppresses_bounce, slime, fence,
-        wall_or_gate, resets_fall_distance, end_portal_or_gateway, world_hook, air,
+        wall_or_gate, resets_fall_distance, end_portal_or_gateway, world_hook, lily_pad, air,
     } = block;
     let mut exact = true;
     bytes.push(groups);
@@ -421,11 +404,42 @@ fn encode(bytes: &mut Vec<u8>, block: &Block, groups: u8, frame: Frame) -> Resul
         if let Some(shape) = inside_shape { exact &= encode_shape(bytes, shape, frame)?; }
         for value in [*friction, *speed_factor, *jump_factor, *fall_on_multiplier, *bounce] { bytes.extend(value.to_bits().to_le_bytes()); }
         for value in [*water_block, *climbable, *scaffolding, *bed, *suffocating, *suppresses_bounce, *slime,
-            *fence, *wall_or_gate, *resets_fall_distance, *end_portal_or_gateway, *world_hook, *air] { bytes.push(value as u8); }
+            *fence, *wall_or_gate, *resets_fall_distance, *end_portal_or_gateway, *world_hook, *lily_pad, *air] { bytes.push(value as u8); }
         bytes.extend([*ladder_facing, *open_trapdoor_facing].map(|f| f.map_or(255, |f| frame.facing(f))));
-        bytes.push(match inside { Inside::None => 0, Inside::Cobweb => 1, Inside::PowderSnow => 2, Inside::Honey => 3, Inside::Unsupported(_) => unreachable!() });
-        bytes.push(match grounded_contact { crate::GroundedContact::None => 0,
-            crate::GroundedContact::DamageUnlessCareful(crate::ContactDamage::HotFloor) => 1 });
+        bytes.push(match inside {
+            Inside::None => 0,
+            Inside::Cobweb => 1,
+            Inside::PowderSnow => 2,
+            Inside::Honey => 3,
+            Inside::BubbleColumn { drag: false } => 4,
+            Inside::BubbleColumn { drag: true } => 5,
+            Inside::Fire { soul: false } => 6,
+            Inside::Fire { soul: true } => 7,
+            Inside::Campfire { soul: false } => 8,
+            Inside::Campfire { soul: true } => 9,
+            Inside::BerryBush { hurt: false } => 10,
+            Inside::BerryBush { hurt: true } => 11,
+            Inside::Cactus => 12,
+            Inside::Extinguish => 13,
+            Inside::Lava => 14,
+            Inside::EndPortal => 15,
+            Inside::NetherPortal => 16,
+            Inside::WitherRose => 17,
+            Inside::Unsupported(_) => unreachable!()
+        });
+        bytes.push(match grounded_contact {
+            crate::GroundedContact::None => 0,
+            crate::GroundedContact::DamageUnlessCareful(c) => match c {
+                crate::ContactDamage::HotFloor => 1,
+                crate::ContactDamage::OnFire => 2,
+                crate::ContactDamage::InFire { soul: false } => 3,
+                crate::ContactDamage::InFire { soul: true } => 4,
+                crate::ContactDamage::Campfire { soul: false } => 5,
+                crate::ContactDamage::Campfire { soul: true } => 6,
+                crate::ContactDamage::SweetBerryBush => 7,
+                crate::ContactDamage::Cactus => 8,
+            },
+        });
         bytes.push(stuck_multiplier.is_some() as u8);
         if let Some(v) = stuck_multiplier {
             // A per-axis scale: turns swap x and z, mirrors leave it.

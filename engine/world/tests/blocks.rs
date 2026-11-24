@@ -1,7 +1,7 @@
 //! Job 2.1b: the generated rule's census, Julien's tracks, and the new families' shapes against the jar.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use law::{Aabb, BoxWorld, CollisionContext, Input, PlayerState, Vec3, VoxelShape, World, tick_with_collision};
+use law::{Aabb, BoxWorld, CollisionContext, FluidKind, Input, Inside, PlayerState, Vec3, VoxelShape, World, tick_with_collision};
 use world::{BlockState, WorldReader, WorldSnapshot, model};
 fn fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world") }
 fn state(raw: &str) -> BlockState {
@@ -93,10 +93,17 @@ fn rule_flags_and_reasons() {
     assert!(model(&state("oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]")).unwrap().fence);
     assert!(model(&state("oak_fence_gate[facing=north,in_wall=false,open=false,powered=false]")).unwrap().wall_or_gate);
     assert!(model(&state("cobblestone_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]")).unwrap().wall_or_gate);
-    assert_eq!(model(&state("bamboo[age=0,leaves=none,stage=0]")).err().as_deref(), Some("offset collision"));
-    assert_eq!(model(&state("sweet_berry_bush[age=0]")).err().as_deref(), Some("hook entityInside SweetBerryBushBlock"));
-    assert_eq!(model(&state("lava[level=0]")).err().as_deref(), Some("fluid other than water"));
+    let bamboo = model(&state("bamboo[age=0,leaves=none,stage=0]")).unwrap();
+    assert!(!bamboo.shape.is_empty());
+    let berry0 = model(&state("sweet_berry_bush[age=0]")).unwrap();
+    assert_eq!(berry0.inside, Inside::BerryBush { hurt: false });
+    let berry1 = model(&state("sweet_berry_bush[age=1]")).unwrap();
+    assert_eq!(berry1.inside, Inside::BerryBush { hurt: true });
+    let lava = model(&state("lava[level=0]")).unwrap();
+    assert_eq!(lava.fluid.kind, FluidKind::Lava);
+    assert_eq!(lava.fluid.raw_amount, Some(8));
     assert_eq!(model(&state("moving_piston[facing=north,type=normal]")).err().as_deref(), Some("non-local shape"));
+    assert_eq!(model(&state("shulker_box[facing=up]")).err().as_deref(), Some("non-local shape"));
     // A button's powered and face never change its model; an unknown value still names the block.
     assert!(std::ptr::eq(model(&state("stone_button[face=wall,facing=east,powered=true]")).unwrap(), model(&state("stone_button[face=floor,facing=north,powered=false]")).unwrap()));
     assert_eq!(model(&state("oak_fence[east=maybe,north=false,south=false,waterlogged=false,west=false]")).err().as_deref(), Some("state unknown to the 26.2 table of minecraft:oak_fence"));

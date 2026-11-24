@@ -25,7 +25,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
                 words.push(answers(&[p.x < -29999999.0, p.x > 29999999.0, p.z < -29999999.0, p.z > 29999999.0])); // movement.rs:195, 196
             }
             F::velocity => {
-                let (v, g) = (s.velocity, s.gravity);
+                let (v, g) = (s.velocity, s.profile.gravity);
                 let honey = v.y / 0.98f32 as f64 + 0.08; // movement.rs:1059
                 words.push(answers(&[
                     v.horizontal_sqr() < 9.0e-6, // movement.rs:157
@@ -57,7 +57,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             F::fall_distance => words.push(answers(&[
                 s.fall_distance != 0.0, // movement.rs:730
                 s.fall_distance > 0.0, // movement.rs:822
-                s.fall_distance < s.step_height as f64, // movement.rs:540
+                s.fall_distance < s.profile.step_height as f64, // movement.rs:540
                 s.fall_distance > 2.5, // world.rs:446
             ])),
             F::no_jump_delay => words.push(answers(&[s.no_jump_delay > 0, s.no_jump_delay == 0])), // movement.rs:154, 175
@@ -71,15 +71,7 @@ pub fn state_answers(state: &PlayerState, reads: StateReads) -> Box<[u64]> {
             F::movement_this_tick => words.push(answers(&[s.movement_this_tick.is_some()])), // movement.rs:980
             // The block table and the toolkit: parameters of the generator, by their bits.
             // The flags are already yes-or-no answers.
-            F::input | F::yaw | F::pitch | F::on_ground | F::horizontal_collision | F::vertical_collision
-            | F::vertical_collision_below | F::minor_horizontal_collision | F::sprinting | F::sprint_speed_modifier
-            | F::no_physics | F::shift_key_down | F::pose | F::in_water | F::in_lava | F::on_climbable
-            | F::stuck_speed_multiplier | F::on_ground_no_blocks | F::crouching | F::swimming | F::underwater
-            | F::eye_in_water | F::was_eye_in_water | F::in_powder_snow | F::was_in_powder_snow | F::leather_boots
-            | F::movement_speed_base | F::speed_modifiers | F::speed | F::jump_strength | F::gravity | F::step_height
-            | F::friction_modifier | F::air_drag_modifier | F::water_movement_efficiency | F::movement_efficiency
-            | F::sneaking_speed | F::safe_fall_distance | F::fall_damage_multiplier | F::bounciness | F::fall_flying
-            | F::riding | F::boat | F::effects | F::flying | F::using_item | F::use_item_speed_multiplier | F::use_item_can_sprint => s.push_field_bits(field, &mut words),
+            _ => s.push_field_bits(field, &mut words),
         }
     }
     words.into()

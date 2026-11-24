@@ -54,7 +54,8 @@ impl<W: World> World for NoRegen<'_, W> {
     fn block(&self, p: BlockPos) -> &Block { self.0.block(p) }
     fn known_block(&self, p: BlockPos) -> Result<&Block, &str> { self.0.known_block(p) }
     fn hook_block(&self, p: BlockPos) -> &Block { self.0.hook_block(p) }
-    fn model_id(&self, p: BlockPos) -> Option<u16> { self.0.model_id(p) }
+    fn state_id(&self, p: BlockPos) -> Option<law::basis::cell::StateId> { self.0.state_id(p) }
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> { self.0.uniform(lo, hi) }
     fn fluid_block(&self, p: BlockPos) -> &Block { self.0.fluid_block(p) }
     fn raw_fluid_block(&self, p: BlockPos) -> Option<&Block> { self.0.raw_fluid_block(p) }
     fn loaded(&self, p: BlockPos) -> bool { self.0.loaded(p) }
@@ -280,6 +281,16 @@ fn cell_legs_tag(loaded: bool, b: &Block, rot: u8) -> u64 {
         Inside::PowderSnow => 2,
         Inside::Honey => 3,
         Inside::Unsupported(_) => 4,
+        Inside::BubbleColumn { drag } => 5 + u64::from(drag),
+        Inside::Fire { soul } => 7 + u64::from(soul),
+        Inside::Campfire { soul } => 9 + u64::from(soul),
+        Inside::BerryBush { hurt } => 11 + u64::from(hurt),
+        Inside::Cactus => 13,
+        Inside::Extinguish => 14,
+        Inside::Lava => 15,
+        Inside::EndPortal => 16,
+        Inside::NetherPortal => 17,
+        Inside::WitherRose => 18,
     };
     let flags = (b.climbable as u64)
         | ((b.scaffolding as u64) << 1)
@@ -399,7 +410,10 @@ pub(crate) fn motion_key(s: &PlayerState) -> Vec<u64> {
     use law::state_reads::StateField as F;
     let mut key = Vec::with_capacity(48);
     for &field in F::ALL {
-        if field == F::t || field == F::fall_distance || field.is_resource() {
+        if matches!(
+            field,
+            F::t | F::fall_distance | F::health | F::food_level | F::saturation | F::exhaustion | F::food_tick_timer
+        ) {
             continue;
         }
         s.push_field_bits(field, &mut key);
@@ -483,7 +497,7 @@ impl WordStore {
                     }
                     let Ok(b) = world.known_block(p) else { broken = true; break; };
                     let cur = match codec::cell(b, world.loaded(p), mask) {
-                        Ok(c) => c.fingerprint(),
+                        Ok(c) => codec::digest(c.bytes()),
                         Err(_) => { broken = true; break; }
                     };
                     if cur != digest {

@@ -64,7 +64,7 @@ impl Predicate {
             Self::SupportEnds => {
                 read(F::velocity);
                 read(F::step_height);
-                law::can_fall(state, world, state.velocity.x, state.velocity.z, state.step_height as f64)
+                law::can_fall(state, world, state.velocity.x, state.velocity.z, state.profile.step_height as f64)
             }
             Self::Since(ticks) => elapsed >= *ticks,
             Self::All(predicates) => predicates.iter().all(|p| p.matches(world, state, elapsed)),

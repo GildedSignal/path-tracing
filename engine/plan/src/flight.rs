@@ -57,7 +57,7 @@ impl Track {
             position: law::Vec3::new(self.a[0] as f64 + 0.5, self.a[1] as f64 + top, self.a[2] as f64 + 0.5),
             on_ground: true, main_supporting_block: Some(self.a), saturation: 20.0, ..Default::default()
         };
-        state.velocity.y = -state.gravity * f64::from(0.98f32);
+        state.velocity.y = -state.profile.gravity * f64::from(0.98f32);
         let position = state.position;
         let velocity = state.velocity;
         law::try_tick(&mut state, &world, &Default::default()).map_err(|e| e.0)?;

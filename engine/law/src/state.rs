@@ -1,7 +1,4 @@
-use crate::{
-    Aabb,
-    Vec3
-};
+use crate::{player::GameType, Aabb, SpeedModifier, SpeedOperation, Vec3};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Input {
@@ -20,7 +17,8 @@ pub struct Input {
 pub enum Pose {
     #[default] Standing,
     Crouching,
-    Swimming
+    Swimming,
+    FallFlying,
 }
 impl Pose {
     // Avatar.POSES
@@ -28,7 +26,7 @@ impl Pose {
         match self {
             Self::Standing => 1.8,
             Self::Crouching => 1.5,
-            Self::Swimming => 0.6
+            Self::Swimming | Self::FallFlying => 0.6
         }
     }
 
@@ -37,7 +35,7 @@ impl Pose {
         match self {
             Self::Standing => 1.62,
             Self::Crouching => 1.27,
-            Self::Swimming => 0.4
+            Self::Swimming | Self::FallFlying => 0.4
         }
     }
 }
@@ -49,227 +47,202 @@ pub struct HurtCooldown {
     pub last_raw_hit: f32,
 }
 
-#[derive(Debug)]
-pub struct PlayerState {
-    pub t: u64,
-    pub input: Input,
-    pub position: Vec3,
-    pub velocity: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub on_ground: bool,
-    pub horizontal_collision: bool,
-    pub vertical_collision: bool,
-    pub vertical_collision_below: bool,
-    pub minor_horizontal_collision: bool,
-    pub sprinting: bool,
-    /// MOVEMENT_SPEED modifier presence; entity-data packets update only `sprinting`.
-    pub sprint_speed_modifier: bool,
-    pub no_physics: bool,
-    pub shift_key_down: bool,
-    pub pose: Pose,
-    pub fall_distance: f64,
-    pub in_water: bool,
-    pub in_lava: bool,
-    pub on_climbable: bool,
-    pub health: f32,
-    pub hurt_cooldown: HurtCooldown,
-    pub food_level: i32,
-    pub saturation: f32,
-    pub exhaustion: f32,
-    pub food_tick_timer: u32,
-    pub remaining_fire_ticks: i32,
-    pub no_jump_delay: i32,
-    pub stuck_speed_multiplier: Vec3,
-    pub movement_this_tick: Option<Vec3>,
-    pub main_supporting_block: Option<[i32; 3]>,
-    pub on_ground_no_blocks: bool,
-    pub crouching: bool,
-    pub swimming: bool,
-    pub underwater: bool,
-    pub eye_in_water: bool,
-    pub was_eye_in_water: bool,
-    pub water_height: f64,
-    pub lava_height: f64,
-    pub in_powder_snow: bool,
-    pub was_in_powder_snow: bool,
-    pub ticks_frozen: i32,
-    pub leather_boots: bool,
-    pub movement_speed_base: f64,
-    pub speed_modifiers: Vec<crate::SpeedModifier>,
-    /// Observed Player.getSpeed(), refreshed from the attribute before travel.
-    pub speed: f32,
-    pub jump_strength: f64,
-    pub gravity: f64,
-    pub step_height: f32,
-    pub friction_modifier: f32,
-    pub air_drag_modifier: f32,
-    pub water_movement_efficiency: f32,
-    pub movement_efficiency: f32,
-    pub sneaking_speed: f32,
-    pub safe_fall_distance: f64,
-    pub fall_damage_multiplier: f64,
-    pub bounciness: f64,
-    pub fall_flying: bool,
-    pub riding: bool,
-    pub boat: bool,
-    pub effects: bool,
-    pub flying: bool,
-    pub using_item: bool,
-    pub use_item_speed_multiplier: Option<f32>,
-    pub use_item_can_sprint: Option<bool>,
-}
-// Test instrumentation sits at the type, so every Clone call is counted.
-#[cfg(feature = "count-state-copies")]
-std::thread_local! { static STATE_COPIES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
-#[cfg(feature = "count-state-copies")]
-pub fn player_state_copies() -> u64 { STATE_COPIES.with(|count| count.get()) }
-impl Clone for PlayerState {
-    fn clone(&self) -> Self {
-        #[cfg(feature = "count-state-copies")]
-        STATE_COPIES.with(|count| count.set(count.get() + 1));
-        Self {
-            t: self.t.clone(),
-            input: self.input.clone(),
-            position: self.position.clone(),
-            velocity: self.velocity.clone(),
-            yaw: self.yaw.clone(),
-            pitch: self.pitch.clone(),
-            on_ground: self.on_ground.clone(),
-            horizontal_collision: self.horizontal_collision.clone(),
-            vertical_collision: self.vertical_collision.clone(),
-            vertical_collision_below: self.vertical_collision_below.clone(),
-            minor_horizontal_collision: self.minor_horizontal_collision.clone(),
-            sprinting: self.sprinting.clone(),
-            sprint_speed_modifier: self.sprint_speed_modifier.clone(),
-            no_physics: self.no_physics.clone(),
-            shift_key_down: self.shift_key_down.clone(),
-            pose: self.pose.clone(),
-            fall_distance: self.fall_distance.clone(),
-            in_water: self.in_water.clone(),
-            in_lava: self.in_lava.clone(),
-            on_climbable: self.on_climbable.clone(),
-            health: self.health.clone(),
-            hurt_cooldown: self.hurt_cooldown.clone(),
-            food_level: self.food_level.clone(),
-            saturation: self.saturation.clone(),
-            exhaustion: self.exhaustion.clone(),
-            food_tick_timer: self.food_tick_timer.clone(),
-            remaining_fire_ticks: self.remaining_fire_ticks.clone(),
-            no_jump_delay: self.no_jump_delay.clone(),
-            stuck_speed_multiplier: self.stuck_speed_multiplier.clone(),
-            movement_this_tick: self.movement_this_tick.clone(),
-            main_supporting_block: self.main_supporting_block.clone(),
-            on_ground_no_blocks: self.on_ground_no_blocks.clone(),
-            crouching: self.crouching.clone(),
-            swimming: self.swimming.clone(),
-            underwater: self.underwater.clone(),
-            eye_in_water: self.eye_in_water.clone(),
-            was_eye_in_water: self.was_eye_in_water.clone(),
-            water_height: self.water_height.clone(),
-            lava_height: self.lava_height.clone(),
-            in_powder_snow: self.in_powder_snow.clone(),
-            was_in_powder_snow: self.was_in_powder_snow.clone(),
-            ticks_frozen: self.ticks_frozen.clone(),
-            leather_boots: self.leather_boots.clone(),
-            movement_speed_base: self.movement_speed_base.clone(),
-            speed_modifiers: self.speed_modifiers.clone(),
-            speed: self.speed.clone(),
-            jump_strength: self.jump_strength.clone(),
-            gravity: self.gravity.clone(),
-            step_height: self.step_height.clone(),
-            friction_modifier: self.friction_modifier.clone(),
-            air_drag_modifier: self.air_drag_modifier.clone(),
-            water_movement_efficiency: self.water_movement_efficiency.clone(),
-            movement_efficiency: self.movement_efficiency.clone(),
-            sneaking_speed: self.sneaking_speed.clone(),
-            safe_fall_distance: self.safe_fall_distance.clone(),
-            fall_damage_multiplier: self.fall_damage_multiplier.clone(),
-            bounciness: self.bounciness.clone(),
-            fall_flying: self.fall_flying.clone(),
-            riding: self.riding.clone(),
-            boat: self.boat.clone(),
-            effects: self.effects.clone(),
-            flying: self.flying.clone(),
-            using_item: self.using_item.clone(),
-            use_item_speed_multiplier: self.use_item_speed_multiplier.clone(),
-            use_item_can_sprint: self.use_item_can_sprint.clone(),
+/// The one declaration of the player's state: each field, its type and its value at
+/// spawn (Entity.<init>; LivingEntity.createLivingAttributes; Player.createAttributes;
+/// FoodData.<init>). The struct, its default, the footprint's field names and each
+/// field's raw bits come from this list. The hot part is what a tick reads and writes;
+/// the profile is what no tick writes (attributes, gear, game mode, observed effects),
+/// shared by every copy of the state until one of them changes it.
+macro_rules! player_state {
+    (hot { $($(#[$meta:meta])* $field:ident: $ty:ty = $default:expr,)* }
+     profile { $($(#[$pmeta:meta])* $pfield:ident: $pty:ty = $pdefault:expr,)* }) => {
+        #[derive(Clone, Debug)]
+        pub struct PlayerState { $($(#[$meta])* pub $field: $ty,)* pub profile: Shared<Profile> }
+        #[derive(Clone, Debug)]
+        pub struct Profile { $($(#[$pmeta])* pub $pfield: $pty,)* }
+        impl Default for PlayerState {
+            fn default() -> Self { Self { $($field: $default,)* profile: Shared::default() } }
         }
+        impl Default for Profile {
+            fn default() -> Self { Self { $($pfield: $pdefault,)* } }
+        }
+        #[allow(non_camel_case_types)]
+        #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+        #[repr(u8)]
+        pub enum StateField { $($field,)* $($pfield,)* }
+        impl StateField { pub const ALL: &'static [Self] = &[$(Self::$field,)* $(Self::$pfield,)*]; }
+        impl PlayerState {
+            /// Appends the field's raw bits, floats included.
+            pub fn push_field_bits(&self, field: StateField, out: &mut Vec<u64>) {
+                match field {
+                    $(StateField::$field => Wire::put(&self.$field, out),)*
+                    $(StateField::$pfield => Wire::put(&self.profile.$pfield, out),)*
+                }
+            }
+        }
+    };
+}
+
+/// A value shared by the copies of a state: reading is a pointer away, and writing
+/// copies it first if another state still holds it.
+#[derive(Clone, Debug, Default)]
+pub struct Shared<T>(std::sync::Arc<T>);
+impl<T> std::ops::Deref for Shared<T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T { &self.0 }
+}
+impl<T> From<T> for Shared<T> {
+    fn from(value: T) -> Self { Self(std::sync::Arc::new(value)) }
+}
+impl<T: Clone> std::ops::DerefMut for Shared<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T { std::sync::Arc::make_mut(&mut self.0) }
+}
+player_state! {
+    hot {
+        t: u64 = 0,
+        input: Input = Input::default(),
+        position: Vec3 = Vec3::default(),
+        velocity: Vec3 = Vec3::default(),
+        yaw: f32 = 0.0,
+        pitch: f32 = 0.0,
+        on_ground: bool = false,
+        horizontal_collision: bool = false,
+        vertical_collision: bool = false,
+        vertical_collision_below: bool = false,
+        minor_horizontal_collision: bool = false,
+        sprinting: bool = false,
+        /// MOVEMENT_SPEED modifier presence; entity-data packets update only `sprinting`.
+        sprint_speed_modifier: bool = false,
+        shift_key_down: bool = false,
+        pose: Pose = Pose::Standing,
+        fall_distance: f64 = 0.0,
+        in_water: bool = false,
+        in_lava: bool = false,
+        on_climbable: bool = false,
+        health: f32 = 20.0,
+        hurt_cooldown: HurtCooldown = HurtCooldown::default(),
+        food_level: i32 = 20,
+        saturation: f32 = 5.0,
+        exhaustion: f32 = 0.0,
+        food_tick_timer: u32 = 0,
+        remaining_fire_ticks: i32 = 0,
+        no_jump_delay: i32 = 0,
+        stuck_speed_multiplier: Vec3 = Vec3::default(),
+        movement_this_tick: Option<Vec3> = None,
+        main_supporting_block: Option<[i32; 3]> = None,
+        on_ground_no_blocks: bool = false,
+        crouching: bool = false,
+        swimming: bool = false,
+        underwater: bool = false,
+        eye_in_water: bool = false,
+        was_eye_in_water: bool = false,
+        water_height: f64 = 0.0,
+        lava_height: f64 = 0.0,
+        in_powder_snow: bool = false,
+        was_in_powder_snow: bool = false,
+        ticks_frozen: i32 = 0,
+        /// Observed Player.getSpeed(), refreshed from the attribute before travel.
+        speed: f32 = 0.1,
+        fall_flying: bool = false,
+        effects: bool = false,
+        flying: bool = false,
+        jump_trigger_time: i32 = 0,
+        sprint_trigger_time: i32 = 0,
+        sprint_window: i32 = 0,
+        absorption: f32 = 0.0,
+        /// The server's effect book (effects.rs) and the MAX_HEALTH it sets.
+        effect_book: Vec<crate::MobEffectInstance> = Vec::new(),
+        max_health: f32 = 20.0,
+    }
+    profile {
+        no_physics: bool = false,
+        leather_boots: bool = false,
+        movement_speed_base: f64 = 0.1f32 as f64,
+        speed_modifiers: Vec<SpeedModifier> = Vec::new(),
+        jump_strength: f64 = 0.42f32 as f64,
+        gravity: f64 = 0.08,
+        step_height: f32 = 0.6,
+        friction_modifier: f32 = 1.0,
+        air_drag_modifier: f32 = 1.0,
+        water_movement_efficiency: f32 = 0.0,
+        movement_efficiency: f32 = 0.0,
+        sneaking_speed: f32 = 0.3,
+        safe_fall_distance: f64 = 3.0,
+        fall_damage_multiplier: f64 = 1.0,
+        bounciness: f64 = 0.0,
+        riding: bool = false,
+        boat: bool = false,
+        using_item: bool = false,
+        use_item_speed_multiplier: Option<f32> = None,
+        use_item_can_sprint: Option<bool> = None,
+        game_mode: GameType = GameType::Survival,
+        mayfly: bool = false,
+        instabuild: bool = false,
+        invulnerable: bool = false,
+        may_build: bool = true,
+        flying_speed: f32 = 0.05f32,
+        jump_boost: Option<u8> = None,
+        speed_effect: Option<u8> = None,
+        slowness_effect: Option<u8> = None,
+        blindness: bool = false,
+        fire_resistance: bool = false,
+        unmodeled_effects: bool = false,
+        levitation: Option<u8> = None,
+        slow_falling: bool = false,
+        dolphins_grace: bool = false,
+        weaving: bool = false,
+        resistance: Option<u8> = None,
+        armor: f32 = 0.0,
+        armor_toughness: f32 = 0.0,
+        protection_epf: f32 = 0.0,
+        feather_falling_epf: f32 = 0.0,
+        soul_speed_active: bool = false,
     }
 }
 
-impl Default for PlayerState {
-    // Entity.<init>; LivingEntity.createLivingAttributes; Player.createAttributes; FoodData.<init>
-    fn default() -> Self {
-        Self {
-            t: 0,
-            input: Input::default(),
-            position: Vec3::default(),
-            velocity: Vec3::default(),
-            yaw: 0.0,
-            pitch: 0.0,
-            on_ground: false,
-            horizontal_collision: false,
-            vertical_collision: false,
-            vertical_collision_below: false,
-            minor_horizontal_collision: false,
-            sprinting: false,
-            sprint_speed_modifier: false,
-            no_physics: false,
-            shift_key_down: false,
-            pose: Pose::Standing,
-            fall_distance: 0.0,
-            in_water: false,
-            in_lava: false,
-            on_climbable: false,
-            health: 20.0,
-            hurt_cooldown: HurtCooldown::default(),
-            food_level: 20,
-            saturation: 5.0,
-            exhaustion: 0.0,
-            food_tick_timer: 0,
-            remaining_fire_ticks: 0,
-            no_jump_delay: 0,
-            stuck_speed_multiplier: Vec3::default(),
-            movement_this_tick: None,
-            main_supporting_block: None,
-            on_ground_no_blocks: false,
-            crouching: false,
-            swimming: false,
-            underwater: false,
-            eye_in_water: false,
-            was_eye_in_water: false,
-            water_height: 0.0,
-            lava_height: 0.0,
-            in_powder_snow: false,
-            was_in_powder_snow: false,
-            ticks_frozen: 0,
-            leather_boots: false,
-            movement_speed_base: 0.1f32 as f64,
-            speed_modifiers: Vec::new(),
-            speed: 0.1,
-            jump_strength: 0.42f32 as f64,
-            gravity: 0.08,
-            step_height: 0.6,
-            friction_modifier: 1.0,
-            air_drag_modifier: 1.0,
-            water_movement_efficiency: 0.0,
-            movement_efficiency: 0.0,
-            sneaking_speed: 0.3,
-            safe_fall_distance: 3.0,
-            fall_damage_multiplier: 1.0,
-            bounciness: 0.0,
-            fall_flying: false,
-            riding: false,
-            boat: false,
-            effects: false,
-            flying: false,
-            using_item: false,
-            use_item_speed_multiplier: None,
-            use_item_can_sprint: None
+/// The wire order of `bits` (the bot's mod speaks it over its channel, Recorder.java):
+/// a head, then tails sent only while they differ from the spawn state, so an older
+/// encoding without them still decodes.
+macro_rules! wire {
+    ($([$($($path:ident).+),* $(,)?])*) => {
+        const SECTIONS: usize = [$(stringify!($($($path).+)*)),*].len();
+        impl PlayerState {
+            fn put_wire(&self, out: &mut Vec<u64>, ends: &mut [usize; SECTIONS]) {
+                let mut section = 0;
+                $($(Wire::put(&self.$($path).+, out);)* ends[section] = out.len(); section += 1;)*
+                let _ = section;
+            }
+            fn take_wire(&mut self, b: &mut Bits<'_>) -> Result<(), Refusal> {
+                let mut section = 0;
+                $(if section == 0 || b.at < b.words.len() { $(self.$($path).+ = Wire::take(b)?;)* } section += 1;)*
+                let _ = section;
+                Ok(())
+            }
         }
-    }
+    };
 }
+wire! {
+    [t, input.yaw, input.pitch, yaw, pitch, pose, hurt_cooldown.remaining_ticks, hurt_cooldown.last_raw_hit,
+     food_level, food_tick_timer, remaining_fire_ticks, no_jump_delay, ticks_frozen,
+     input.forward, input.back, input.left, input.right, input.jump, input.sneak, input.sprint, on_ground,
+     horizontal_collision, vertical_collision, vertical_collision_below, minor_horizontal_collision,
+     sprinting, sprint_speed_modifier, profile.no_physics, shift_key_down, in_water, in_lava, on_climbable,
+     on_ground_no_blocks, crouching, swimming, underwater, eye_in_water, was_eye_in_water, in_powder_snow,
+     was_in_powder_snow, profile.leather_boots, fall_flying, profile.riding, profile.boat, effects, flying, profile.using_item,
+     health, saturation, exhaustion, speed, profile.step_height, profile.friction_modifier, profile.air_drag_modifier,
+     profile.water_movement_efficiency, profile.movement_efficiency, profile.sneaking_speed, profile.use_item_speed_multiplier, profile.use_item_can_sprint,
+     fall_distance, water_height, lava_height, profile.movement_speed_base, profile.jump_strength, profile.gravity, profile.safe_fall_distance,
+     profile.fall_damage_multiplier, profile.bounciness, position, velocity, stuck_speed_multiplier, movement_this_tick,
+     main_supporting_block, profile.speed_modifiers]
+    [profile.game_mode, profile.mayfly, profile.instabuild, profile.invulnerable, profile.may_build, profile.flying_speed, jump_trigger_time, sprint_trigger_time,
+     sprint_window, profile.jump_boost, profile.speed_effect, profile.slowness_effect, profile.blindness, profile.fire_resistance, profile.unmodeled_effects]
+    [profile.levitation, profile.slow_falling, profile.dolphins_grace, profile.weaving, profile.resistance, profile.armor, profile.armor_toughness, profile.protection_epf,
+     profile.feather_falling_epf, absorption, profile.soul_speed_active]
+    [max_health, effect_book]
+}
+
 impl PlayerState {
     // Entity.makeBoundingBox
     pub fn bounding_box(&self) -> Aabb {
@@ -277,86 +250,24 @@ impl PlayerState {
     }
 
     /// Every field as raw bits, floats included: two states are the same exactly
-    /// when these are. Exhaustive, so a new field must be added here.
+    /// when these are.
     pub fn bits(&self) -> Vec<u64> {
-        let PlayerState {
-            t, input, position, velocity, yaw, pitch, on_ground, horizontal_collision,
-            vertical_collision, vertical_collision_below, minor_horizontal_collision,
-            sprinting, sprint_speed_modifier, no_physics, shift_key_down, pose, fall_distance, in_water, in_lava,
-            on_climbable, health, hurt_cooldown, food_level, saturation, exhaustion,
-            food_tick_timer, remaining_fire_ticks, no_jump_delay, stuck_speed_multiplier,
-            movement_this_tick, main_supporting_block, on_ground_no_blocks, crouching,
-            swimming, underwater, eye_in_water, was_eye_in_water, water_height, lava_height,
-            in_powder_snow, was_in_powder_snow, ticks_frozen, leather_boots,
-            movement_speed_base, speed_modifiers, speed, jump_strength, gravity,
-            step_height, friction_modifier, air_drag_modifier, water_movement_efficiency,
-            movement_efficiency, sneaking_speed, safe_fall_distance, fall_damage_multiplier,
-            bounciness, fall_flying, riding, boat, effects, flying, using_item, use_item_speed_multiplier, use_item_can_sprint,
-        } = self;
-        let mut bits = vec![*t, input.yaw.to_bits() as u64, input.pitch.to_bits() as u64,
-            yaw.to_bits() as u64, pitch.to_bits() as u64, *pose as u64,
-            hurt_cooldown.remaining_ticks as u64, hurt_cooldown.last_raw_hit.to_bits() as u64,
-            *food_level as u64, *food_tick_timer as u64, *remaining_fire_ticks as u64,
-            *no_jump_delay as u64, *ticks_frozen as u64];
-        for value in [input.forward, input.back, input.left, input.right, input.jump, input.sneak,
-            input.sprint, *on_ground, *horizontal_collision, *vertical_collision, *vertical_collision_below,
-            *minor_horizontal_collision, *sprinting, *sprint_speed_modifier, *no_physics, *shift_key_down, *in_water, *in_lava,
-            *on_climbable, *on_ground_no_blocks, *crouching, *swimming, *underwater, *eye_in_water,
-            *was_eye_in_water, *in_powder_snow, *was_in_powder_snow, *leather_boots, *fall_flying,
-            *riding, *boat, *effects, *flying, *using_item] { bits.push(value as u64); }
-        for value in [health, saturation, exhaustion, speed, step_height, friction_modifier,
-            air_drag_modifier, water_movement_efficiency, movement_efficiency, sneaking_speed] {
-            bits.push(value.to_bits() as u64);
-        }
-        bits.push(use_item_speed_multiplier.is_some() as u64);
-        if let Some(value) = use_item_speed_multiplier { bits.push(value.to_bits() as u64); }
-        bits.push(use_item_can_sprint.is_some() as u64);
-        if let Some(value) = use_item_can_sprint { bits.push(*value as u64); }
-        for value in [fall_distance, water_height, lava_height, movement_speed_base, jump_strength,
-            gravity, safe_fall_distance, fall_damage_multiplier, bounciness] { bits.push(value.to_bits()); }
-        for v in [position, velocity, stuck_speed_multiplier] { bits.extend([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]); }
-        bits.push(movement_this_tick.is_some() as u64);
-        if let Some(v) = movement_this_tick { bits.extend([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]); }
-        bits.push(main_supporting_block.is_some() as u64);
-        if let Some(p) = main_supporting_block { bits.extend(p.map(|v| v as u64)); }
-        bits.push(speed_modifiers.len() as u64);
-        for modifier in speed_modifiers {
-            bits.push(modifier.id.len() as u64); bits.extend(modifier.id.bytes().map(u64::from));
-            bits.extend([modifier.amount.to_bits(), modifier.operation as u64]);
-        }
-        bits
+        static SPAWN: std::sync::OnceLock<(Vec<u64>, [usize; SECTIONS])> = std::sync::OnceLock::new();
+        let (spawn, spawn_ends) = SPAWN.get_or_init(|| {
+            let (mut out, mut ends) = (Vec::new(), [0; SECTIONS]);
+            PlayerState::default().put_wire(&mut out, &mut ends);
+            (out, ends)
+        });
+        let (mut out, mut ends) = (Vec::with_capacity(spawn.len() + 8), [0; SECTIONS]);
+        self.put_wire(&mut out, &mut ends);
+        // A tail is kept while it, or one after it, differs from the spawn state's.
+        let keep = (1..SECTIONS).rev()
+            .find(|&i| out[ends[i - 1]..ends[i]] != spawn[spawn_ends[i - 1]..spawn_ends[i]])
+            .unwrap_or(0);
+        out.truncate(ends[keep]);
+        out
     }
-}
 
-/// Invalid state encoding and the position of the offending or missing word.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refusal { pub position: usize, pub reason: &'static str }
-
-struct Bits<'a> { words: &'a [u64], at: usize }
-impl Bits<'_> {
-    fn word(&mut self) -> Result<u64, Refusal> {
-        let at = self.at;
-        let value = *self.words.get(at).ok_or(Refusal { position: at, reason: "missing word" })?;
-        self.at += 1; Ok(value)
-    }
-    fn boolean(&mut self) -> Result<bool, Refusal> {
-        let at = self.at;
-        match self.word()? { 0 => Ok(false), 1 => Ok(true), _ => Err(Refusal { position: at, reason: "boolean" }) }
-    }
-    fn f32(&mut self) -> Result<f32, Refusal> {
-        let at = self.at; let n = self.word()?;
-        if n > u32::MAX as u64 { return Err(Refusal { position: at, reason: "f32" }); }
-        Ok(f32::from_bits(n as u32))
-    }
-    fn f64(&mut self) -> Result<f64, Refusal> { Ok(f64::from_bits(self.word()?)) }
-    fn i32(&mut self) -> Result<i32, Refusal> {
-        let at = self.at; let n = self.word()?; let v = n as i32;
-        if v as u64 != n { return Err(Refusal { position: at, reason: "i32" }); }
-        Ok(v)
-    }
-    fn vec3(&mut self) -> Result<Vec3, Refusal> { Ok(Vec3::new(self.f64()?, self.f64()?, self.f64()?)) }
-}
-impl PlayerState {
     /// Decode an observation only when every encoded word is known.  The mask
     /// follows the variable-length `bits` schema, including option tags and
     /// modifier bytes; unknown values cannot be replaced with defaults.
@@ -374,93 +285,132 @@ impl PlayerState {
     pub fn from_bits(words: &[u64]) -> Result<Self, Refusal> {
         let mut b = Bits { words, at: 0 };
         let mut s = Self::default();
-        s.t = b.word()?; s.input.yaw = b.f32()?; s.input.pitch = b.f32()?;
-        s.yaw = b.f32()?; s.pitch = b.f32()?;
-        let at = b.at;
-        s.pose = match b.word()? { 0 => Pose::Standing, 1 => Pose::Crouching, 2 => Pose::Swimming,
-            _ => return Err(Refusal { position: at, reason: "pose" }) };
-        s.hurt_cooldown.remaining_ticks = b.i32()?; s.hurt_cooldown.last_raw_hit = b.f32()?;
-        s.food_level = b.i32()?;
-        let at = b.at; let n = b.word()?;
-        s.food_tick_timer = u32::try_from(n).map_err(|_| Refusal { position: at, reason: "u32" })?;
-        s.remaining_fire_ticks = b.i32()?; s.no_jump_delay = b.i32()?; s.ticks_frozen = b.i32()?;
-        s.input.forward = b.boolean()?;
-        s.input.back = b.boolean()?;
-        s.input.left = b.boolean()?;
-        s.input.right = b.boolean()?;
-        s.input.jump = b.boolean()?;
-        s.input.sneak = b.boolean()?;
-        s.input.sprint = b.boolean()?;
-        s.on_ground = b.boolean()?;
-        s.horizontal_collision = b.boolean()?;
-        s.vertical_collision = b.boolean()?;
-        s.vertical_collision_below = b.boolean()?;
-        s.minor_horizontal_collision = b.boolean()?;
-        s.sprinting = b.boolean()?;
-        s.sprint_speed_modifier = b.boolean()?;
-        s.no_physics = b.boolean()?;
-        s.shift_key_down = b.boolean()?;
-        s.in_water = b.boolean()?;
-        s.in_lava = b.boolean()?;
-        s.on_climbable = b.boolean()?;
-        s.on_ground_no_blocks = b.boolean()?;
-        s.crouching = b.boolean()?;
-        s.swimming = b.boolean()?;
-        s.underwater = b.boolean()?;
-        s.eye_in_water = b.boolean()?;
-        s.was_eye_in_water = b.boolean()?;
-        s.in_powder_snow = b.boolean()?;
-        s.was_in_powder_snow = b.boolean()?;
-        s.leather_boots = b.boolean()?;
-        s.fall_flying = b.boolean()?;
-        s.riding = b.boolean()?;
-        s.boat = b.boolean()?;
-        s.effects = b.boolean()?;
-        s.flying = b.boolean()?;
-        s.using_item = b.boolean()?;
-        s.health = b.f32()?;
-        s.saturation = b.f32()?;
-        s.exhaustion = b.f32()?;
-        s.speed = b.f32()?;
-        s.step_height = b.f32()?;
-        s.friction_modifier = b.f32()?;
-        s.air_drag_modifier = b.f32()?;
-        s.water_movement_efficiency = b.f32()?;
-        s.movement_efficiency = b.f32()?;
-        s.sneaking_speed = b.f32()?;
-        s.use_item_speed_multiplier = if b.boolean()? { Some(b.f32()?) } else { None };
-        s.use_item_can_sprint = if b.boolean()? { Some(b.boolean()?) } else { None };
-        s.fall_distance = b.f64()?;
-        s.water_height = b.f64()?;
-        s.lava_height = b.f64()?;
-        s.movement_speed_base = b.f64()?;
-        s.jump_strength = b.f64()?;
-        s.gravity = b.f64()?;
-        s.safe_fall_distance = b.f64()?;
-        s.fall_damage_multiplier = b.f64()?;
-        s.bounciness = b.f64()?;
-        s.position = b.vec3()?;
-        s.velocity = b.vec3()?;
-        s.stuck_speed_multiplier = b.vec3()?;
-        s.movement_this_tick = if b.boolean()? { Some(b.vec3()?) } else { None };
-        s.main_supporting_block = if b.boolean()? { Some([b.i32()?, b.i32()?, b.i32()?]) } else { None };
-        let at = b.at; let count = b.word()?;
-        if count > (words.len() - b.at) as u64 / 3 { return Err(Refusal { position: at, reason: "modifier count" }); }
-        for _ in 0..count {
-            let at = b.at; let len = b.word()?;
-            if len > (words.len() - b.at) as u64 { return Err(Refusal { position: at, reason: "id length" }); }
-            let start = b.at; let mut bytes = Vec::new();
-            for _ in 0..len {
-                let at = b.at; let n = b.word()?;
-                bytes.push(u8::try_from(n).map_err(|_| Refusal { position: at, reason: "id byte" })?);
-            }
-            let id = String::from_utf8(bytes).map_err(|e| Refusal { position: start + e.utf8_error().valid_up_to(), reason: "id utf8" })?;
-            let amount = b.f64()?; let at = b.at;
-            let operation = match b.word()? { 0 => crate::SpeedOperation::AddValue, 1 => crate::SpeedOperation::AddMultipliedBase,
-                2 => crate::SpeedOperation::AddMultipliedTotal, _ => return Err(Refusal { position: at, reason: "operation" }) };
-            s.speed_modifiers.push(crate::SpeedModifier { id, amount, operation });
-        }
+        s.take_wire(&mut b)?;
         if b.at != words.len() { return Err(Refusal { position: b.at, reason: "extra word" }); }
         Ok(s)
+    }
+}
+
+/// Invalid state encoding and the position of the offending or missing word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal { pub position: usize, pub reason: &'static str }
+
+pub(crate) struct Bits<'a> { pub(crate) words: &'a [u64], pub(crate) at: usize }
+impl Bits<'_> {
+    pub(crate) fn word(&mut self) -> Result<u64, Refusal> {
+        let at = self.at;
+        let value = *self.words.get(at).ok_or(Refusal { position: at, reason: "missing word" })?;
+        self.at += 1; Ok(value)
+    }
+    /// The next word as one of `n` codes.
+    pub(crate) fn code(&mut self, n: u64, reason: &'static str) -> Result<u64, Refusal> {
+        let at = self.at;
+        let value = self.word()?;
+        if value < n { Ok(value) } else { Err(Refusal { position: at, reason }) }
+    }
+}
+
+/// One value as words, both ways.
+pub(crate) trait Wire: Sized {
+    fn put(&self, out: &mut Vec<u64>);
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal>;
+}
+impl Wire for u64 {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { b.word() }
+}
+impl Wire for bool {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(b.code(2, "boolean")? == 1) }
+}
+impl Wire for f32 {
+    fn put(&self, out: &mut Vec<u64>) { out.push(self.to_bits() as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(f32::from_bits(b.code(1 << 32, "f32")? as u32)) }
+}
+impl Wire for f64 {
+    fn put(&self, out: &mut Vec<u64>) { out.push(self.to_bits()) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(f64::from_bits(b.word()?)) }
+}
+impl Wire for i32 {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> {
+        let at = b.at; let n = b.word()?; let v = n as i32;
+        if v as u64 == n { Ok(v) } else { Err(Refusal { position: at, reason: "i32" }) }
+    }
+}
+impl Wire for u32 {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(b.code(1 << 32, "u32")? as u32) }
+}
+impl Wire for Pose {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> {
+        Ok([Pose::Standing, Pose::Crouching, Pose::Swimming, Pose::FallFlying][b.code(4, "pose")? as usize])
+    }
+}
+impl Wire for GameType {
+    fn put(&self, out: &mut Vec<u64>) { out.push(*self as u64) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(GameType::ALL[b.code(4, "game mode")? as usize]) }
+}
+impl Wire for Vec3 {
+    fn put(&self, out: &mut Vec<u64>) { out.extend([self.x.to_bits(), self.y.to_bits(), self.z.to_bits()]) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(Vec3::new(f64::take(b)?, f64::take(b)?, f64::take(b)?)) }
+}
+impl Wire for [i32; 3] {
+    fn put(&self, out: &mut Vec<u64>) { out.extend(self.map(|c| c as u64)) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok([i32::take(b)?, i32::take(b)?, i32::take(b)?]) }
+}
+impl Wire for HurtCooldown {
+    fn put(&self, out: &mut Vec<u64>) { self.remaining_ticks.put(out); self.last_raw_hit.put(out); }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(Self { remaining_ticks: i32::take(b)?, last_raw_hit: f32::take(b)? }) }
+}
+impl Wire for Input {
+    fn put(&self, out: &mut Vec<u64>) {
+        for key in [self.forward, self.back, self.left, self.right, self.jump, self.sneak, self.sprint] { key.put(out); }
+        self.yaw.put(out); self.pitch.put(out);
+    }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> {
+        Ok(Self { forward: Wire::take(b)?, back: Wire::take(b)?, left: Wire::take(b)?, right: Wire::take(b)?,
+            jump: Wire::take(b)?, sneak: Wire::take(b)?, sprint: Wire::take(b)?, yaw: Wire::take(b)?, pitch: Wire::take(b)? })
+    }
+}
+/// An effect amplifier: u64::MAX when the effect is absent.
+impl Wire for Option<u8> {
+    fn put(&self, out: &mut Vec<u64>) { out.push(self.map_or(u64::MAX, u64::from)) }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> {
+        let at = b.at;
+        match b.word()? { u64::MAX => Ok(None), w => u8::try_from(w).map(Some).map_err(|_| Refusal { position: at, reason: "effect amplifier" }) }
+    }
+}
+macro_rules! tagged { ($($t:ty),*) => { $(impl Wire for Option<$t> {
+    fn put(&self, out: &mut Vec<u64>) { self.is_some().put(out); if let Some(v) = self { v.put(out); } }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> { Ok(if bool::take(b)? { Some(<$t>::take(b)?) } else { None }) }
+})* } }
+tagged!(f32, bool, Vec3, [i32; 3]);
+impl Wire for Vec<SpeedModifier> {
+    fn put(&self, out: &mut Vec<u64>) {
+        out.push(self.len() as u64);
+        for m in self {
+            out.push(m.id.len() as u64);
+            out.extend(m.id.bytes().map(u64::from));
+            out.extend([m.amount.to_bits(), m.operation as u64]);
+        }
+    }
+    fn take(b: &mut Bits<'_>) -> Result<Self, Refusal> {
+        let at = b.at; let count = b.word()?;
+        if count > (b.words.len() - b.at) as u64 / 3 { return Err(Refusal { position: at, reason: "modifier count" }); }
+        let mut modifiers = Vec::new();
+        for _ in 0..count {
+            let at = b.at; let len = b.word()?;
+            if len > (b.words.len() - b.at) as u64 { return Err(Refusal { position: at, reason: "id length" }); }
+            let start = b.at;
+            let bytes = (0..len).map(|_| b.code(256, "id byte").map(|n| n as u8)).collect::<Result<Vec<_>, _>>()?;
+            let id = String::from_utf8(bytes).map_err(|e| Refusal { position: start + e.utf8_error().valid_up_to(), reason: "id utf8" })?;
+            let amount = f64::take(b)?;
+            let operation = [SpeedOperation::AddValue, SpeedOperation::AddMultipliedBase, SpeedOperation::AddMultipliedTotal]
+                [b.code(3, "operation")? as usize];
+            modifiers.push(SpeedModifier { id, amount, operation });
+        }
+        Ok(modifiers)
     }
 }

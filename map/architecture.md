@@ -73,9 +73,9 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 
 | Crate | Holds |
 |---|---|
-| `engine/law` | `basis/` (the generators), the tick law (`movement.rs`, `shapes.rs`, `state.rs`), boats, mining, the sine table |
+| `engine/law` | `basis/` (the generators), `core.rs`, `face.rs`, `sim.rs` (`WorldDelta`), `shapes.rs`, `state.rs`, fluids/mining/place/interact/boats/portals/pistons/combat |
 | `engine/plan` | `solve`, `cut`, `defect` (`LocalGrid`, `TopoField`), `word_store` (`Word`, `NoRegen`), `certify`, `store`, `lattice`, `events`; `bin/plan-track`, `tests/generalize` |
-| `engine/world` | region files, block table, the world interface |
+| `engine/world` | region files; the 26.2 state table (`StateId`, `STATE_TO_MODEL`, `STATE_TO_BLOCK` in `law::basis::cell`); `16³` paletted sections with `4³` summary masks (`World::uniform`) |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |
 | `bot/` | the Fabric mod: the bot, the stick, tracks, recording, playback |

@@ -13,6 +13,9 @@ Push-Location $Build
 try {
     & "$java/java.exe" -cp $classpath ModelTable "$PSScriptRoot/../data"
     if ($LASTEXITCODE -ne 0) { throw 'ModelTable generation failed' }
+    # Every block's states in registry order: a cell's StateId is the jar's own state id.
+    & "$java/java.exe" -cp $classpath ModelTable --states "$PSScriptRoot/../data/states.tsv"
+    if ($LASTEXITCODE -ne 0) { throw 'ModelTable states failed' }
     # One state per family the 2.1b rule admitted, for the bit-exact shape test.
     $states = @('minecraft:oak_fence[east=true,north=false,south=false,waterlogged=false,west=true]',
         'minecraft:cobblestone_wall[east=low,north=none,south=tall,up=true,waterlogged=false,west=none]',

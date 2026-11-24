@@ -117,15 +117,22 @@ fn fixed_cache_bound_evicts_and_reloads() {
     assert!(WorldReader::with_cache_limit(fixture(),0).is_err());
 }
 #[test]
-fn snapshot_refuses_an_unmodeled_real_state() {
-    let error=WorldSnapshot::load(fixture(),[29,-55,89],[29,-55,89]).err().expect("bubble columns push the player from entityInside");
-    assert!(matches!(&error,world::LoadError::Unmodeled {position:[29,-55,89],reason,..} if reason=="hook entityInside BubbleColumnBlock"));
-    let message=error.to_string();
-    assert!(message.contains("minecraft:bubble_column[drag=true]"));
-    assert!(message.contains("(hook entityInside BubbleColumnBlock)"));
-    let partial=WorldSnapshot::load_for_plan(&fixture(),[29,-55,89],[29,-55,89]).unwrap();
-    assert!(partial.known_block([29,-55,89]).unwrap_err().contains("minecraft:bubble_column"));
-    assert!(WorldSnapshot::load(fixture(),[10,-58,2],[10,-58,2]).is_ok(),"a cherry fence keeps its arms in its state");
+fn snapshot_loads_bubble_column_and_model_refuses_non_local() {
+    let snapshot = WorldSnapshot::load(fixture(), [29, -55, 89], [29, -55, 89]).expect("bubble columns are modeled");
+    assert_eq!(snapshot.block([29, -55, 89]).inside, law::Inside::BubbleColumn { drag: true });
+    let error = world::model(&state("shulker_box[facing=up]")).unwrap_err();
+    assert_eq!(error, "non-local shape");
+    let display = world::LoadError::Unmodeled {
+        position: [29, -55, 89],
+        state: state("shulker_box[facing=up]"),
+        reason: error,
+    }.to_string();
+    assert!(display.contains("minecraft:shulker_box[facing=up]"));
+    assert!(display.contains("(non-local shape)"));
+    let partial = WorldSnapshot::load_for_plan(&fixture(), [10, -58, 2], [10, -58, 2]).unwrap();
+    assert!(partial.known_block([10, -58, 2]).is_ok());
+    assert!(partial.known_block([100, 0, 100]).is_err());
+    assert!(WorldSnapshot::load(fixture(), [10, -58, 2], [10, -58, 2]).is_ok(), "a cherry fence keeps its arms in its state");
 }
 #[test]
 fn probe_point_range_and_failure() {

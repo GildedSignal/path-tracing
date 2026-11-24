@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::basis::cell::{ModelId, StateId};
 use crate::{
     math,
     Aabb,
@@ -148,26 +149,60 @@ pub enum Inside {
     Cobweb,
     PowderSnow,
     Honey,
+    BubbleColumn { drag: bool },
+    Fire { soul: bool },
+    Campfire { soul: bool },
+    BerryBush { hurt: bool },
+    Cactus,
+    Extinguish,
+    Lava,
+    EndPortal,
+    NetherPortal,
+    WitherRose,
     Unsupported(String)
 }
 
-/// A damage request emitted by a grounded contact hook.
+/// A damage request emitted by a grounded or inside-block contact hook, or `baseTick` burn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContactDamage {
+    OnFire,
+    InFire { soul: bool },
+    Campfire { soul: bool },
     HotFloor,
+    SweetBerryBush,
+    Cactus,
 }
 
 impl ContactDamage {
     pub fn raw_amount(self) -> f32 {
         match self {
-            Self::HotFloor => 1.0,
+            Self::OnFire | Self::HotFloor | Self::SweetBerryBush | Self::Cactus => 1.0,
+            Self::InFire { soul } | Self::Campfire { soul } => if soul { 2.0 } else { 1.0 },
         }
     }
 
-    pub(crate) fn exhaustion(self) -> f32 {
+    pub fn exhaustion(self) -> f32 {
         match self {
-            Self::HotFloor => 0.1,
+            // data/minecraft/damage_type/on_fire.json: exhaustion = 0.0
+            Self::OnFire => 0.0,
+            Self::InFire { .. }
+            | Self::Campfire { .. }
+            | Self::HotFloor
+            | Self::SweetBerryBush
+            | Self::Cactus => 0.1,
         }
+    }
+
+    pub fn is_fire(self) -> bool {
+        matches!(self, Self::OnFire | Self::InFire { .. } | Self::Campfire { .. } | Self::HotFloor)
+    }
+
+    pub fn bypasses_armor(self) -> bool {
+        matches!(self, Self::OnFire)
+    }
+
+    pub fn is_fall(self) -> bool {
+        false
     }
 }
 
@@ -212,6 +247,8 @@ pub struct Block {
     pub end_portal_or_gateway: bool,
     /// A hook that changes only the world when the player touches the block (a plate, a tripwire, a button).
     pub world_hook: bool,
+    /// `LilyPadBlock`: `AbstractBoat.getGroundFriction` skips it.
+    pub lily_pad: bool,
     pub air: bool,
 }
 impl Default for Block {
@@ -249,6 +286,7 @@ impl Default for Block {
             resets_fall_distance: false,
             end_portal_or_gateway: false,
             world_hook: false,
+            lily_pad: false,
             air: true
         }
     }
@@ -301,7 +339,7 @@ impl CollisionContext {
             feet_y: state.bounding_box().min.y,
             descending: state.shift_key_down,
             fall_distance: state.fall_distance,
-            leather_boots: state.leather_boots
+            leather_boots: state.profile.leather_boots
         }
     }
 }
@@ -310,27 +348,33 @@ pub trait World {
     fn observe_tick(&self) {}
     fn observe_air_travel(&self, _forward: f64, _drag: f32) {}
     fn observe_speed_factor(&self, _factor: f64) {}
-    fn observe_axis_contact(&self,_contact:crate::contact::AxisContact) {}
+    fn observe_axis_contact(&self,_contact:crate::basis::sweep::AxisContact) {}
     fn block(&self, position: BlockPos) -> &Block;
     /// A partial observation may contain a palette entry whose law is unknown.
     fn known_block(&self, position: BlockPos) -> Result<&Block, &str> { Ok(self.block(position)) }
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
-    /// The block's row in the one static generated model table, when the world has it.
-    /// Pattern keys cache cell digests by it; the law never reads it.
-    fn model_id(&self, _position: BlockPos) -> Option<u16> { None }
+    /// The cell's canonical 26.2 block state, when the world holds states.
+    fn state_id(&self, _position: BlockPos) -> Option<StateId> { None }
+    /// The state's row in the one static generated model table. Pattern keys cache cell digests
+    /// by it; the law never reads it.
+    fn model_id(&self, position: BlockPos) -> Option<ModelId> { self.state_id(position).and_then(StateId::model) }
+    /// `Some(block)` proves every cell of the box `lo..=hi` is loaded and answers every query as
+    /// one cell holding `block` (the same reference); `None` proves nothing.
+    fn uniform(&self, _lo: BlockPos, _hi: BlockPos) -> Option<&Block> { None }
     fn fluid_block(&self, position: BlockPos) -> &Block { self.block(position) }
 
     /// Observation only. These cells remain dependencies when a fast path skips them.
     fn observe_region(&self, _query: crate::footprint::Query, _lo: BlockPos, _hi: BlockPos) {}
     /// Conservative body worldtube, including motion when inside hooks are absent.
     fn observe_sweep(&self, _from: Aabb, _to: Aabb) {}
-    /// Observation only: the state fields the law reads and writes, in order. A recording
-    /// world keeps those read before written (map/detail/vocabulary.md, section 3).
+    /// Observation only: the state groups a step reads, then those it overwrites whole. A
+    /// recording world keeps those read before written (map/detail/vocabulary.md, section 3).
     #[inline(always)]
-    fn read_state(&self, _field: crate::state_reads::StateField) {}
-    #[inline(always)]
-    fn write_state(&self, _field: crate::state_reads::StateField) {}
+    fn state_footprint(&self, _read: crate::state_reads::StateReads, _written: crate::state_reads::StateReads) {}
+    fn read_state(&self, field: crate::state_reads::StateField) {
+        self.state_footprint(crate::state_reads::StateReads::of(&[field]), crate::state_reads::StateReads(0));
+    }
 
     /// Conservative certificates: false proves these law hooks are absent.
     fn has_fluid(&self)->bool {true}
@@ -387,7 +431,7 @@ pub trait World {
             return false;
         }
         let inside_point = from.plus(movement.scale(0.001));
-        crate::blocks::traverse_blocks(from, to, |p| {
+        crate::basis::ray::cells(from, to, |p| {
             let block = self.hook_block(p);
             let height = if block.resets_fall_distance || block.end_portal_or_gateway {
                 1.0
@@ -482,38 +526,10 @@ pub trait World {
         &block.shape
     }
 
-    // Entity.collectCollidersIgnoringWorldBorder; BlockCollisions.computeNext
+    // Entity.collectCollidersIgnoringWorldBorder: the owned form of `visit_collisions`.
     fn collisions(&self, bounds: Aabb, context: CollisionContext) -> Vec<VoxelShape> {
-        let mut result = self.extra_collisions(bounds, context);
-        let lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
-        let hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
-        for z in lo[2]-1..=hi[2]+1 {
-            for y in lo[1]-1..=hi[1]+1 {
-                for x in lo[0]-1..=hi[0]+1 {
-                    let pos = [x, y, z];
-                    if !self.loaded(pos) {
-                        continue;
-                    }
-                    let local = self.collision_shape(pos, context);
-                    if local.is_empty() {
-                        continue;
-                    }
-                    let offset = Vec3::new(x as f64, y as f64, z as f64);
-                    if local.is_block() {
-                        if bounds.intersects(Aabb {
-                            min:offset, max:offset.plus(Vec3::new(1.0, 1.0, 1.0))
-                        }) {
-                            result.push(local.moved(offset));
-                        }
-                    } else {
-                        let shape = local.moved(offset);
-                        if shape.intersects(bounds) {
-                            result.push(shape);
-                        }
-                    }
-                }
-            }
-        }
+        let mut result = Vec::new();
+        self.visit_collisions(bounds, context, |s| { result.push(s.owned()); true });
         result
     }
 

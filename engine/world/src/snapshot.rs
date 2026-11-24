@@ -1,98 +1,54 @@
 use crate::{ BlockState, LoadError, WorldReader, nbt, region::metadata};
-use law::{Aabb, Block, BlockPos, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape, World};
-use std::{collections::BTreeMap, path::Path, sync::OnceLock};
+use law::{
+    basis::cell::{self, models, ModelId, StateId, BEYOND, OWN_CELL},
+    Aabb, Block, BlockPos, FluidKind, Inside, World,
+};
+use std::{collections::BTreeMap, path::Path};
 
 const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
-/// A shared generator: the properties that change a model, and their values' slots.
-struct Map { properties: Vec<&'static str>, slots: BTreeMap<&'static str, usize> }
-struct Models { maps: Vec<Map>, tables: BTreeMap<&'static str, (usize, Vec<u16>)>, blocks: Vec<Block>, reach: Vec<u8>, refusals: BTreeMap<&'static str, &'static str> }
-/// How far a model's collision reaches, in any context.
-const NOWHERE: u8 = 0;
-const OWN_CELL: u8 = 1;
-const BEYOND: u8 = 2;
-fn models() -> &'static Models {
-    static MODELS: OnceLock<Models> = OnceLock::new();
-    MODELS.get_or_init(|| {
-        let blocks = include_str!("../data/models.tsv").lines().map(parse_model).collect::<Vec<_>>();
-        // maps.tsv: relevant properties, then "values:slot" entries in that property order.
-        let maps = include_str!("../data/maps.tsv").lines().map(|line| {
-            let (properties, entries) = line.split_once('\t').expect("generated map row");
-            let slots = entries.split(' ').map(|e| {
-                let (key, slot) = e.rsplit_once(':').expect("generated map entry");
-                (key, slot.parse().expect("generated slot"))
-            }).collect();
-            Map { properties: properties.split(',').filter(|p| !p.is_empty()).collect(), slots }
-        }).collect::<Vec<_>>();
-        // blocks.tsv: block, its map, then the model id of each slot.
-        let tables = include_str!("../data/blocks.tsv").lines().map(|line| {
-            let [name, map, ids] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated block row") };
-            let map: usize = map.parse().expect("generated map index");
-            let ids = ids.split(',').map(|id| id.parse().expect("generated model id")).collect::<Vec<u16>>();
-            assert!(map < maps.len() && ids.iter().all(|&id| (id as usize) < blocks.len()));
-            assert!(maps[map].slots.values().all(|&s| s < ids.len()), "generated slots of {name}");
-            (name, (map, ids))
-        }).collect();
-        // census.tsv: block, bucket, state count. Every bucket other than "modeled" names a refusal.
-        let mut refusals = BTreeMap::new();
-        for line in include_str!("../data/census.tsv").lines().filter(|l| !l.starts_with('#')) {
-            let [block, bucket, _] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated census row") };
-            if bucket != "modeled" { assert!(refusals.insert(block, bucket).is_none(), "one refusal reason per block: {block}"); }
-        }
-        let reach = blocks.iter().map(|b| if b.never_collides() { NOWHERE } else if b.collision_within_cell() { OWN_CELL } else { BEYOND }).collect();
-        Models { maps, tables, blocks, reach, refusals }
-    })
-}
-/// Project the state onto its block's relevant properties, then look the values up.
-fn lookup(state: &BlockState) -> Result<u16, String> {
-    let registry = models();
-    if let Some(reason) = registry.refusals.get(state.name.as_str()) { return Err((*reason).into()); }
-    let Some((map, ids)) = registry.tables.get(state.name.as_str()) else { return Err(format!("{} is not a 26.2 registry block", state.name)); };
-    let map = &registry.maps[*map];
-    map.properties.iter().map(|p| state.properties.iter().find(|(k,_)| k == p).map(|(_,v)| v.as_str()))
-        .collect::<Option<Vec<_>>>().and_then(|values| map.slots.get(values.join(",").as_str()).map(|&slot| ids[slot]))
-        .ok_or_else(|| format!("state unknown to the 26.2 table of {}", state.name))
+const UNKNOWN_STATE: StateId = StateId(u16::MAX);
+const UNKNOWN_MODEL: ModelId = ModelId(u16::MAX);
+/// The state's canonical id, or the reason the law refuses it.
+pub fn state_id(state: &BlockState) -> Result<StateId, String> {
+    cell::lookup(&state.name, |p| state.properties.iter().find(|(k, _)| k == p).map(|(_, v)| v.as_str()))
 }
 /// The shared model table, indexed by model id. Every admitted state maps to one row.
 pub fn model_table() -> &'static [Block] { &models().blocks }
 /// The law's model of a block state, or the reason the generated rule refuses it.
 pub fn model(state: &BlockState) -> Result<&'static Block, String> {
-    lookup(state).map(|id| &models().blocks[id as usize])
+    state_id(state).map(StateId::model_block)
 }
-fn shape(raw: &str) -> VoxelShape {
-    let boxes = raw.split(';').filter(|s| !s.is_empty()).map(|s| {
-        let v = s.split(',').map(|s| s.parse::<f64>().expect("generated box number")).collect::<Vec<_>>();
-        assert_eq!(v.len(), 6);
-        Aabb::new(v[0],v[1],v[2],v[3],v[4],v[5])
-    }).collect::<Vec<_>>();
-    VoxelShape::boxes(&boxes)
-}
-fn parse_model(line: &str) -> Block {
-    let f: Vec<_> = line.split('\t').collect();
-    assert_eq!(f.len(), 21, "generated model schema");
-    let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i],16).expect("generated float bits"));
-    let bits: u16 = f[5].parse().unwrap();
-    let flag = |i: usize| bits & (1u16<<i) != 0;
-    let direction = |i: usize| match f[i] { "-1" => None, s => Some(s.parse().unwrap()) };
-    let amount: u8 = f[9].parse().unwrap();
-    let faces: u8 = f[12].parse().unwrap();
-    Block {
-        shape: shape(f[15]), inside_shape: Some(shape(f[16])),
-        above_shape: Some(shape(f[17])), below_shape: Some(shape(f[18])), sneak_shape: Some(shape(f[19])), inside_cell_shape: Some(shape(f[20])),
-        friction: fp(0), speed_factor: fp(1), jump_factor: fp(2), bounce: fp(3), fall_on_multiplier: fp(4),
-        air: flag(0), suffocating: flag(1), water_block: flag(2), climbable: flag(3), scaffolding: flag(4),
-        slime: flag(5), bed: flag(6), fence: flag(7), wall_or_gate: flag(8), suppresses_bounce: flag(9),
-        resets_fall_distance: flag(10), end_portal_or_gateway: flag(11), world_hook: flag(12),
-        ladder_facing: direction(6), open_trapdoor_facing: direction(7),
-        fluid: Fluid {
-            kind: match f[8] { "0" => FluidKind::Empty, "1" => FluidKind::Water, _ => panic!("generated fluid kind") },
-            raw_amount: (amount != 0).then_some(amount),
-            raw_falling: (amount != 0).then(|| f[10].parse().unwrap()),
-            ..Fluid::default()
-        },
-        fluid_flow: Some(FluidFlowBlock { blocks_motion: f[11].parse().unwrap(), solid_faces: std::array::from_fn(|i| faces & (1<<i) != 0) }),
-        inside: match f[13] { "none" => Inside::None, "cobweb" => Inside::Cobweb, "powderSnow" => Inside::PowderSnow, "honey" => Inside::Honey, _ => panic!("generated inside hook") },
-        grounded_contact: match f[14] { "none" => GroundedContact::None, "hotFloor" => GroundedContact::DamageUnlessCareful(ContactDamage::HotFloor), _ => panic!("generated step hook") },
-        ..Block::default()
+
+/// One 16³ section, its cells at `(y << 8) | (z << 4) | x`: a palette of states with their
+/// models, each cell's palette index packed at a power-of-two width (none when the section is
+/// uniform), and a summary of its 4³ subcells (bit `(y/4 << 4) | (z/4 << 2) | x/4`): `mixed`
+/// marks those holding more than one state, `other` those holding a state unlike the first.
+struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64 }
+impl Section {
+    fn new(cells: &[StateId; 4096]) -> Self {
+        let mut states = vec![cells[0]];
+        let index: Vec<u16> = cells.iter().map(|s| match states.iter().position(|p| p == s) {
+            Some(k) => k as u16,
+            None => { states.push(*s); (states.len() - 1) as u16 }
+        }).collect();
+        // The width in bits: none for one state, else the power of two that holds every index.
+        let width = if states.len() == 1 { 0 } else { (u16::BITS - (states.len() as u16 - 1).leading_zeros()).next_power_of_two() };
+        let mut data = vec![0u64; width as usize * 64];
+        let (mut mixed, mut other) = (0, 0);
+        for (i, &k) in index.iter().enumerate() {
+            if width > 0 { data[i * width as usize / 64] |= (k as u64) << (i * width as usize % 64); }
+            let bit = 1u64 << (((i >> 10) << 4) | (((i >> 6) & 3) << 2) | ((i >> 2) & 3));
+            if k != 0 { other |= bit; }
+            if k != index[i & 0xccc] { mixed |= bit; }
+        }
+        let models = states.iter().map(|&s| if s == UNKNOWN_STATE { UNKNOWN_MODEL } else { s.model().expect("a modeled state") }).collect();
+        Self { states: states.into(), models, width, data: data.into(), mixed, other }
+    }
+    #[inline]
+    fn index(&self, i: usize) -> usize {
+        if self.width == 0 { return 0; }
+        let bit = i * self.width as usize;
+        ((self.data[bit / 64] >> (bit % 64)) & ((1 << self.width) - 1)) as usize
     }
 }
 
@@ -100,32 +56,34 @@ fn parse_model(line: &str) -> Block {
 /// construction succeeds. Queries outside it panic: callers must load the entire
 /// collision/fluid footprint before running the law, including its read halo.
 /// Static block snapshots do not simulate world ticks, entities, or world borders.
+/// Cells are canonical states in the box's 16³ sections.
 pub struct WorldSnapshot {
     min: BlockPos,
     max: BlockPos,
-    widths: [usize;3],
-    cells: Box<[u16]>,
-    models: &'static Models,
+    /// The first section's coordinates and the sections along each axis.
+    origin: BlockPos,
+    span: [usize; 3],
+    sections: Box<[Section]>,
     difficulty: u8,
     natural_regeneration: bool,
     fluids: bool,
     inside: bool,
-    unknown: BTreeMap<BlockPos,String>,
+    unknown: BTreeMap<BlockPos, String>,
 }
 impl WorldSnapshot {
     pub fn load(world_dir: impl AsRef<Path>, min: BlockPos, max: BlockPos) -> Result<Self, LoadError> {
         Self::load_with_limit(world_dir, min, max, SNAPSHOT_BYTES)
     }
-    /// Limit covers the dense cell allocation; shared model data and the reader's
+    /// Limit covers the box's cells at two bytes each; shared model data and the reader's
     /// separately bounded cache and temporary parsing buffers are not included.
     pub fn load_with_limit(world_dir: impl AsRef<Path>, min: BlockPos, max: BlockPos, max_bytes: usize) -> Result<Self, LoadError> {
-        Self::read(world_dir.as_ref(),min,max,max_bytes,false)
+        Self::read(world_dir.as_ref(), min, max, max_bytes, false)
     }
     /// Keep unknown palette entries for the corridor and its fallible replay.
-    pub fn load_for_plan(world_dir:&Path,min:BlockPos,max:BlockPos)->Result<Self,LoadError> {
-        Self::read(world_dir,min,max,SNAPSHOT_BYTES,true)
+    pub fn load_for_plan(world_dir: &Path, min: BlockPos, max: BlockPos) -> Result<Self, LoadError> {
+        Self::read(world_dir, min, max, SNAPSHOT_BYTES, true)
     }
-    fn read(world_dir:&Path,min:BlockPos,max:BlockPos,max_bytes:usize,partial:bool)->Result<Self,LoadError> {
+    fn read(world_dir: &Path, min: BlockPos, max: BlockPos, max_bytes: usize, partial: bool) -> Result<Self, LoadError> {
         if (0..3).any(|i| min[i] > max[i]) { return Err(LoadError::Invalid("snapshot min exceeds max".into())); }
         let widths: [usize;3] = std::array::from_fn(|i| (max[i] as i64 - min[i] as i64 + 1) as usize);
         let count = widths.into_iter().try_fold(1usize, |n,w| n.checked_mul(w))
@@ -146,67 +104,107 @@ impl WorldSnapshot {
         let natural_regeneration = match rules.required("data")?.required("minecraft:natural_health_regeneration")?.byte()? {
             0 => false, 1 => true, _ => return Err(LoadError::Invalid("natural_health_regeneration is not boolean".into())),
         };
-        let registry = models();
-        let mut cells = vec![0u16;count].into_boxed_slice();
-        let mut fluids = false;
-        let mut inside = false;
-        let mut unknown=BTreeMap::new();
-        // Chunk order avoids region rereads for every interleaved row of a large box.
-        for cz in min[2].div_euclid(16)..=max[2].div_euclid(16) {
-            for cx in min[0].div_euclid(16)..=max[0].div_euclid(16) {
-                for z in min[2].max(cz*16)..=max[2].min(cz*16+15) {
-                    for y in min[1]..=max[1] {
-                        for x in min[0].max(cx*16)..=max[0].min(cx*16+15) {
-                            let p = [x,y,z];
-                            let state = reader.block_state(p)?;
-                            let id = match lookup(state) {
-                                Ok(id)=>id,
-                                Err(reason) if partial=>{
-                                    fluids=true;
-                                    inside=true;
-                                    unknown.insert(p,format!("{state}: {reason}"));
-                                    cells[index(min,widths,p)]=u16::MAX;
-                                    continue;
-                                }
-                                Err(reason)=>return Err(LoadError::Unmodeled { position:p,state:state.clone(),reason }),
-                            };
-                            let block = &registry.blocks[id as usize];
-                            fluids |= block.fluid.kind != FluidKind::Empty;
-                            inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
-                            cells[index(min,widths,p)] = id;
-                        }
-                    }
+        let origin = min.map(|v| v >> 4);
+        let span: [usize; 3] = std::array::from_fn(|i| ((max[i] >> 4) - origin[i] + 1) as usize);
+        let mut sections: Vec<Option<Section>> = (0..span.iter().product()).map(|_| None).collect();
+        let (mut fluids, mut inside) = (false, false);
+        let mut unknown = BTreeMap::new();
+        let mut read = |p: BlockPos| {
+            let state = reader.block_state(p)?;
+            let id = match state_id(state) {
+                Ok(id) => id,
+                Err(reason) if partial => {
+                    fluids = true;
+                    inside = true;
+                    unknown.insert(p, format!("{state}: {reason}"));
+                    return Ok::<_, LoadError>(UNKNOWN_STATE);
                 }
-            }
-        }
-        Ok(Self { min, max, widths, cells, models: registry, difficulty: reader.difficulty, natural_regeneration, fluids, inside,unknown })
+                Err(reason) => return Err(LoadError::Unmodeled { position: p, state: state.clone(), reason }),
+            };
+            let block = id.model_block();
+            fluids |= block.fluid.kind != FluidKind::Empty;
+            inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
+            Ok::<_, LoadError>(id)
+        };
+        // Chunk order avoids region rereads for every interleaved row of a large box.
+        for sz in 0..span[2] { for sx in 0..span[0] { for sy in 0..span[1] {
+            let base = [0, 1, 2].map(|i| (origin[i] + [sx, sy, sz][i] as i32) * 16);
+            let (lo, hi) = ([0, 1, 2].map(|i| min[i].max(base[i])), [0, 1, 2].map(|i| max[i].min(base[i] + 15)));
+            // Cells outside the box are never asked; they hold the state of its first cell here.
+            let mut cells = [read(lo)?; 4096];
+            for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] { cells[local([x, y, z])] = read([x, y, z])?; } } }
+            sections[(sz * span[1] + sy) * span[0] + sx] = Some(Section::new(&cells));
+        } } }
+        let sections = sections.into_iter().map(|s| s.expect("every section loaded")).collect();
+        Ok(Self { min, max, origin, span, sections, difficulty: reader.difficulty, natural_regeneration, fluids, inside, unknown })
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
     fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
     fn assert_covered(&self, p: BlockPos) {
         assert!(self.covers(p), "snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint",self.min,self.max);
     }
+    #[inline]
+    fn section(&self, p: BlockPos) -> &Section {
+        self.assert_covered(p);
+        let s = [0, 1, 2].map(|a| ((p[a] >> 4) - self.origin[a]) as usize);
+        &self.sections[(s[2] * self.span[1] + s[1]) * self.span[0] + s[0]]
+    }
+    /// The one state every cell of `lo..=hi` holds, if one does. Each 4³ subcell the box meets
+    /// answers from its section's summary; cells are read only in subcells holding two states.
+    pub fn uniform_state(&self, lo: BlockPos, hi: BlockPos) -> Option<StateId> {
+        if !self.covers(lo) || !self.covers(hi) { return None; }
+        let mut found = None;
+        let mut agree = |s: StateId| s != UNKNOWN_STATE && *found.get_or_insert(s) == s;
+        for sz in lo[2] >> 4..=hi[2] >> 4 { for sy in lo[1] >> 4..=hi[1] >> 4 { for sx in lo[0] >> 4..=hi[0] >> 4 {
+            let base = [sx * 16, sy * 16, sz * 16];
+            let section = self.section([0, 1, 2].map(|i| lo[i].max(base[i])));
+            if section.width == 0 {
+                if !agree(section.states[0]) { return None; }
+                continue;
+            }
+            let (a, b): (BlockPos, BlockPos) = ([0, 1, 2].map(|i| lo[i].max(base[i]) - base[i]), [0, 1, 2].map(|i| hi[i].min(base[i] + 15) - base[i]));
+            for qy in a[1] >> 2..=b[1] >> 2 { for qz in a[2] >> 2..=b[2] >> 2 { for qx in a[0] >> 2..=b[0] >> 2 {
+                let bit = 1u64 << ((qy << 4) | (qz << 2) | qx);
+                if section.other & bit == 0 { if !agree(section.states[0]) { return None; } continue; }
+                if section.mixed & bit == 0 { if !agree(section.states[section.index(((qy << 10) | (qz << 6) | (qx << 2)) as usize)]) { return None; } continue; }
+                for y in a[1].max(qy * 4)..=b[1].min(qy * 4 + 3) { for z in a[2].max(qz * 4)..=b[2].min(qz * 4 + 3) { for x in a[0].max(qx * 4)..=b[0].min(qx * 4 + 3) {
+                    if !agree(section.states[section.index(((y << 8) | (z << 4) | x) as usize)]) { return None; }
+                } } }
+            } } }
+        } } }
+        found
+    }
 }
-fn index(min: BlockPos, widths: [usize;3], p: BlockPos) -> usize {
-    ((p[2] as i64-min[2] as i64) as usize * widths[1] + (p[1] as i64-min[1] as i64) as usize)*widths[0] + (p[0] as i64-min[0] as i64) as usize
-}
+#[inline]
+fn local(p: BlockPos) -> usize { (((p[1] & 15) << 8) | ((p[2] & 15) << 4) | (p[0] & 15)) as usize }
 fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),LoadError> {
     let found = root.required("DataVersion")?.int()?;
     if expected != found { return Err(LoadError::Invalid(format!("{file} DataVersion {found} differs from level.dat {expected}"))); }
     Ok(())
 }
 impl World for WorldSnapshot {
-    fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
-        if !self.covers(p) {return Err("outside the saved snapshot");}
-        let id=self.cells[index(self.min,self.widths,p)];
-        self.models.blocks.get(id as usize).ok_or_else(||self.unknown[&p].as_str())
+    fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
+        if !self.covers(p) { return Err("outside the saved snapshot"); }
+        if let Some(why) = self.unknown.get(&p) { return Err(why.as_str()); }
+        Ok(self.block(p))
     }
+    #[inline]
     fn block(&self, p: BlockPos) -> &Block {
-        self.assert_covered(p);
-        &self.models.blocks[self.cells[index(self.min,self.widths,p)] as usize]
+        if let Some(why) = self.unknown.get(&p) { panic!("unmodeled cell at {p:?}: {why}"); }
+        let section = self.section(p);
+        section.models[section.index(local(p))].block_at(p)
+    }
+    fn state_id(&self, p: BlockPos) -> Option<StateId> {
+        let section = self.section(p);
+        let s = section.states[section.index(local(p))];
+        (s != UNKNOWN_STATE).then_some(s)
+    }
+    /// A box of one state answers as one cell unless its model is offset per position.
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> {
+        let model = self.uniform_state(lo, hi)?.model()?;
+        model.fixed().then(|| model.block_at(lo))
     }
     fn loaded(&self, p: BlockPos) -> bool { self.assert_covered(p); true }
-    fn model_id(&self, p: BlockPos) -> Option<u16> { self.assert_covered(p); Some(self.cells[index(self.min,self.widths,p)]) }
     fn min_y(&self) -> i32 { -64 }
     fn difficulty(&self) -> u8 { self.difficulty }
     fn natural_regeneration(&self) -> bool { self.natural_regeneration }
@@ -214,31 +212,20 @@ impl World for WorldSnapshot {
     fn has_inside_effects(&self) -> bool { self.inside || self.fluids }
     /// The law's order (z, y, x), from the cells' own models: a cell that never collides
     /// is left out, and one whose collision stays in its cell is left out of the halo,
-    /// where it cannot meet `bounds`.
+    /// where it cannot meet `bounds`. A cell outside the snapshot panics where the full scan
+    /// would first ask it.
     fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
         let near_lo = [bounds.min.x, bounds.min.y, bounds.min.z].map(law::math::floor);
         let near_hi = [bounds.max.x, bounds.max.y, bounds.max.z].map(law::math::floor);
         let near = |a: usize, v: i32| v >= near_lo[a] && v <= near_hi[a];
-        if !self.covers(lo) || !self.covers(hi) {
-            // The full scan asks every cell in this order and stops only at a visit, so it
-            // meets the first cell outside the snapshot exactly where this does.
-            for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] {
-                self.assert_covered([x, y, z]);
-                let reach = self.models.reach[self.cells[index(self.min, self.widths, [x, y, z])] as usize];
-                if (reach == BEYOND || reach == OWN_CELL && near(2, z) && near(1, y) && near(0, x)) && !visit([x, y, z]) { return false; }
-            } } }
-            return true;
-        }
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                let row = index(self.min, self.widths, [lo[0], y, z]);
-                let near_row = near(2, z) && near(1, y);
-                for x in lo[0]..=hi[0] {
-                    let reach = self.models.reach[self.cells[row + (x - lo[0]) as usize] as usize];
-                    if (reach == BEYOND || reach == OWN_CELL && near_row && near(0, x)) && !visit([x, y, z]) { return false; }
-                }
-            }
-        }
+        let reach = &models().reach;
+        for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] {
+            let p = [x, y, z];
+            let section = self.section(p);
+            let m = section.models[section.index(local(p))];
+            let r = if m == UNKNOWN_MODEL { BEYOND } else { reach[m.0 as usize] };
+            if (r == BEYOND || r == OWN_CELL && near(2, z) && near(1, y) && near(0, x)) && !visit(p) { return false; }
+        } } }
         true
     }
 }
@@ -270,6 +257,87 @@ mod tests {
         assert!(honey.suppresses_bounce);
         let slab=block("minecraft:stone_slab[type=bottom,waterlogged=true]");
         assert_eq!(slab.fluid.kind,FluidKind::Water);assert!(!slab.water_block);
+    }
+    #[test]
+    fn ported_hooks_fluids_and_fall_multipliers_are_present() {
+        for name in ["minecraft:water_cauldron", "minecraft:powder_snow_cauldron"] {
+            for level in 1..=3 {
+                let cauldron = block(&format!("{name}[level={level}]"));
+                assert_eq!(cauldron.inside, Inside::Extinguish);
+                assert!(!cauldron.world_hook);
+                let top = cauldron.inside_shape.as_ref().unwrap();
+                assert!(top.intersects(Aabb::new(0.2, 0.3, 0.2, 0.8, 0.5625 + (level - 1) as f64 * 0.1875, 0.8)));
+            }
+        }
+        let lava_cauldron = block("minecraft:lava_cauldron");
+        assert_eq!(lava_cauldron.inside, Inside::Lava);
+        assert_eq!(
+            lava_cauldron.inside_shape.as_ref().unwrap().coords,
+            block("minecraft:water_cauldron[level=3]").inside_shape.as_ref().unwrap().coords
+        );
+        let portal = block("minecraft:end_portal");
+        assert_eq!(portal.inside, Inside::EndPortal);
+        assert!(portal.end_portal_or_gateway);
+        assert_eq!(
+            portal.inside_shape.as_ref().unwrap().coords[1],
+            vec![0.375, 0.75]
+        );
+        let gateway = block("minecraft:end_gateway");
+        assert_eq!(gateway.inside, Inside::EndPortal);
+        assert!(gateway.end_portal_or_gateway);
+        assert!(gateway.inside_shape.as_ref().unwrap().is_block());
+        assert_eq!(block("minecraft:nether_portal[axis=x]").inside, Inside::NetherPortal);
+        assert_eq!(block("minecraft:wither_rose").inside, Inside::WitherRose);
+        for tilt in ["none", "unstable", "partial", "full"] {
+            let leaf = block(&format!("minecraft:big_dripleaf[facing=north,tilt={tilt},waterlogged=false]"));
+            assert_eq!(leaf.inside, Inside::None);
+            assert!(leaf.world_hook);
+            assert_eq!(leaf.shape.is_empty(), tilt == "full");
+        }
+        assert_eq!(block("minecraft:fire[age=0,east=false,north=false,south=false,up=false,west=false]").inside, Inside::Fire { soul: false });
+        assert_eq!(block("minecraft:soul_fire").inside, Inside::Fire { soul: true });
+        assert_eq!(block("minecraft:campfire[facing=north,lit=true,signal_fire=false,waterlogged=false]").inside, Inside::Campfire { soul: false });
+        assert_eq!(block("minecraft:soul_campfire[facing=north,lit=false,signal_fire=false,waterlogged=false]").inside, Inside::None);
+        assert_eq!(block("minecraft:cactus[age=0]").inside, Inside::Cactus);
+        assert!(block("minecraft:farmland[moisture=0]").world_hook);
+        let stalagmite = block("minecraft:pointed_dripstone[thickness=tip,vertical_direction=up,waterlogged=false]");
+        assert_eq!(stalagmite.fall_on_multiplier.to_bits(), 2.0f32.to_bits());
+        assert_eq!(block("minecraft:pointed_dripstone[thickness=base,vertical_direction=up,waterlogged=false]").fall_on_multiplier.to_bits(), 1.0f32.to_bits());
+        assert!(block("minecraft:wheat[age=0]").world_hook);
+        assert!(block("minecraft:detector_rail[powered=false,shape=north_south,waterlogged=false]").world_hook);
+        assert!(block("minecraft:redstone_ore[lit=false]").world_hook);
+        assert!(block("minecraft:turtle_egg[eggs=1,hatch=0]").world_hook);
+    }
+    #[test]
+    fn section_uniform_and_subcell_summary_masks() {
+        let air = state_id(&BlockState { name: "minecraft:air".into(), properties: Vec::new() }).unwrap();
+        let stone = state_id(&BlockState { name: "minecraft:stone".into(), properties: Vec::new() }).unwrap();
+        let dirt = state_id(&BlockState { name: "minecraft:dirt".into(), properties: Vec::new() }).unwrap();
+
+        let uniform = Section::new(&[air; 4096]);
+        assert_eq!(uniform.width, 0);
+        assert_eq!(uniform.other, 0);
+        assert_eq!(uniform.mixed, 0);
+
+        let mut cells = [air; 4096];
+        // Fill subcell (qx=1, qz=0, qy=0) uniformly with stone, and subcell (qx=2, qz=0, qy=0) mixed with dirt.
+        for y in 0..4 { for z in 0..4 { for x in 4..8 { cells[(y << 8) | (z << 4) | x] = stone; } } }
+        cells[8] = dirt;
+        let sec = Section::new(&cells);
+        assert!(sec.width > 0);
+        assert_eq!(sec.other, (1u64 << 1) | (1u64 << 2));
+        assert_eq!(sec.mixed, 1u64 << 2);
+
+        let snap = WorldSnapshot {
+            min: [0, 0, 0], max: [31, 15, 15], origin: [0, 0, 0], span: [2, 1, 1],
+            sections: vec![uniform, sec].into(),
+            difficulty: 2, natural_regeneration: true, fluids: false, inside: false, unknown: BTreeMap::new(),
+        };
+        assert_eq!(snap.uniform_state([0, 0, 0], [15, 15, 15]), Some(air));
+        assert_eq!(snap.uniform_state([20, 0, 0], [23, 3, 3]), Some(stone));
+        assert_eq!(snap.uniform_state([16, 0, 0], [20, 3, 3]), None);
+        assert_eq!(snap.uniform_state([24, 0, 0], [27, 3, 3]), None);
+        assert_eq!(snap.uniform_state([25, 0, 0], [27, 3, 3]), Some(air));
     }
 }
 

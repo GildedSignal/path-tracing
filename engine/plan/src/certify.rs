@@ -86,8 +86,7 @@ pub(crate) fn certify_route<W: World>(
         for (&p, &mask) in &fp.reads {
             let b = world.known_block(p).map_err(|_| Refusal::Coverage)?;
             let cell = codec::cell(b, world.loaded(p), mask).map_err(Refusal::Law)?;
-            let entry = reads_map.entry((p, mask)).or_insert(cell.fingerprint());
-            *entry = *entry;
+            reads_map.entry((p, mask)).or_insert_with(|| codec::digest(cell.bytes()));
         }
 
         // Measure unmitigated damage when any tick altered health (zero cost on non-damaging words).

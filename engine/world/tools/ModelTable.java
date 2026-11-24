@@ -19,7 +19,7 @@ import net.minecraft.world.level.*;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.*;
-import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.block.state.properties.*;
 import net.minecraft.world.level.material.*;
 import net.minecraft.world.phys.shapes.*;
 
@@ -34,11 +34,51 @@ public final class ModelTable {
     // the CLIMBABLE tag. "world": the implementation only changes the world, never the player, this
     // tick (26.2 bytecode). An implementation missing here refuses every state of its blocks.
     static final Map<String,Map<Class<?>,String>> HOOKS = Map.of(
-        "entityInside", Map.of(BlockBehaviour.class,"none", WebBlock.class,"cobweb", PowderSnowBlock.class,"powderSnow",
-            HoneyBlock.class,"honey", BasePressurePlateBlock.class,"world", TripWireBlock.class,"world", ButtonBlock.class,"world"),
-        "stepOn", Map.of(Block.class,"none", SlimeBlock.class,"none", MagmaBlock.class,"hotFloor"),
-        "fallOn", Map.of(Block.class,"none", HayBlock.class,"none", HoneyBlock.class,"none", BedBlock.class,"none",
-            SlimeBlock.class,"none", PowderSnowBlock.class,"none"));
+        "entityInside", Map.ofEntries(
+            Map.entry(BlockBehaviour.class, "none"),
+            Map.entry(WebBlock.class, "cobweb"),
+            Map.entry(PowderSnowBlock.class, "powderSnow"),
+            Map.entry(HoneyBlock.class, "honey"),
+            Map.entry(BubbleColumnBlock.class, "bubbleColumn"),
+            Map.entry(CactusBlock.class, "cactus"),
+            Map.entry(CampfireBlock.class, "campfire"),
+            Map.entry(BaseFireBlock.class, "fire"),
+            Map.entry(SweetBerryBushBlock.class, "berryBush"),
+            Map.entry(LayeredCauldronBlock.class, "extinguish"),
+            Map.entry(LavaCauldronBlock.class, "lava"),
+            Map.entry(EndPortalBlock.class, "endPortal"),
+            Map.entry(EndGatewayBlock.class, "endPortal"),
+            Map.entry(NetherPortalBlock.class, "netherPortal"),
+            Map.entry(WitherRoseBlock.class, "witherRose"),
+            Map.entry(BigDripleafBlock.class, "world"),
+            Map.entry(BasePressurePlateBlock.class, "world"),
+            Map.entry(TripWireBlock.class, "world"),
+            Map.entry(ButtonBlock.class, "world"),
+            Map.entry(DetectorRailBlock.class, "world"),
+            Map.entry(CropBlock.class, "world"),
+            Map.entry(PitcherCropBlock.class, "world"),
+            Map.entry(EyeblossomBlock.class, "world"),
+            Map.entry(LilyPadBlock.class, "world"),
+            Map.entry(FrogspawnBlock.class, "world"),
+            Map.entry(HopperBlock.class, "world")),
+        "stepOn", Map.of(
+            Block.class, "none",
+            SlimeBlock.class, "none",
+            MagmaBlock.class, "hotFloor",
+            SculkSensorBlock.class, "world",
+            SculkShriekerBlock.class, "world",
+            RedStoneOreBlock.class, "world",
+            TurtleEggBlock.class, "world"),
+        "fallOn", Map.of(
+            Block.class, "none",
+            HayBlock.class, "none",
+            HoneyBlock.class, "none",
+            BedBlock.class, "none",
+            SlimeBlock.class, "none",
+            PowderSnowBlock.class, "none",
+            FarmlandBlock.class, "world",
+            TurtleEggBlock.class, "world",
+            PointedDripstoneBlock.class, "dripstone"));
     static final Map<String,Class<?>> HOOK_BASE = Map.of("entityInside",BlockBehaviour.class, "stepOn",Block.class, "fallOn",Block.class);
     static final BlockGetter LOCAL = new BlockGetter() {
         public BlockState getBlockState(BlockPos p) { throw new Refused("non-local shape"); }
@@ -101,20 +141,44 @@ public final class ModelTable {
             .map(p -> p.getName()+"="+property(s,p)).collect(Collectors.joining(","));
         return name+(props.isEmpty()?"":"["+props+"]");
     }
+    static String resolveEntityInside(BlockState s, Block b, String base) {
+        return switch (base) {
+            case "bubbleColumn" -> s.getValue(BubbleColumnBlock.DRAG_DOWN) ? "bubbleColumnDown" : "bubbleColumnUp";
+            case "campfire" -> !s.getValue(CampfireBlock.LIT) ? "none" : (b == Blocks.SOUL_CAMPFIRE ? "soulCampfire" : "campfire");
+            case "fire" -> {
+                if (b instanceof SoulFireBlock) yield "soulFire";
+                if (b instanceof FireBlock) yield "fire";
+                throw new Refused("hook entityInside " + b.getClass().getSimpleName());
+            }
+            case "berryBush" -> s.getValue(SweetBerryBushBlock.AGE) > 0 ? "berryBushHurt" : "berryBush";
+            default -> base;
+        };
+    }
     static String model(BlockState s) {
         Block b=s.getBlock();
-        String inside=hook(b,"entityInside"), step=hook(b,"stepOn"), fall=hook(b,"fallOn");
+        String inside=resolveEntityInside(s, b, hook(b,"entityInside")), step=hook(b,"stepOn"), fall=hook(b,"fallOn");
         boolean world=inside.equals("world")||step.equals("world")||fall.equals("world");
         var fluid=s.getFluidState();
-        if (!fluid.isEmpty() && !fluid.getType().isSame(Fluids.WATER)) throw new Refused("fluid other than water");
+        boolean isLava = fluid.getType().isSame(Fluids.LAVA);
+        boolean isWater = fluid.getType().isSame(Fluids.WATER);
+        if (!fluid.isEmpty() && !isWater && !isLava) throw new Refused("fluid other than water or lava");
         var collision=Arrays.stream(CONTEXTS).map(c -> s.getCollisionShape(LOCAL,BlockPos.ZERO,c)).toList();
-        // An offset follows the position, not the state: it may only move shapes nothing collides with.
-        if (s.hasOffsetFunction() && collision.stream().anyMatch(c -> !c.isEmpty())) throw new Refused("offset collision");
+        String offset="none";
+        if (s.hasOffsetFunction() && collision.stream().anyMatch(c -> !c.isEmpty())) {
+            if (b instanceof BambooStalkBlock) {
+                offset = "bamboo";
+            } else if (b instanceof SpeleothemBlock) {
+                offset = "speleothem:" + s.getValue(SpeleothemBlock.THICKNESS).getSerializedName()
+                    + ":" + s.getValue(SpeleothemBlock.TIP_DIRECTION).getSerializedName();
+            } else {
+                throw new Refused("offset collision");
+            }
+        }
         // Entity.getOnPos tests the FENCES and WALLS tags and FenceGateBlock.
-        boolean[] flags={s.isAir(),s.isSuffocating(LOCAL,BlockPos.ZERO),b instanceof LiquidBlock && fluid.getType().isSame(Fluids.WATER),
+        boolean[] flags={s.isAir(),s.isSuffocating(LOCAL,BlockPos.ZERO),b instanceof LiquidBlock && isWater,
             tag(s,BlockTags.CLIMBABLE),b instanceof ScaffoldingBlock,b instanceof SlimeBlock,b instanceof BedBlock,
             tag(s,BlockTags.FENCES),tag(s,BlockTags.WALLS)||b instanceof FenceGateBlock,tag(s,BlockTags.SUPPRESSES_BOUNCE),
-            tag(s,BlockTags.FALL_DAMAGE_RESETTING),false,world};
+            tag(s,BlockTags.FALL_DAMAGE_RESETTING),b instanceof EndPortalBlock || b instanceof EndGatewayBlock,world};
         int bits=0; for(int i=0;i<flags.length;i++) if(flags[i]) bits|=1<<i;
         int faces=0; int i=0;
         for(var d:new Direction[]{Direction.NORTH,Direction.EAST,Direction.SOUTH,Direction.WEST}) {
@@ -122,15 +186,19 @@ public final class ModelTable {
         }
         int ladder=b instanceof LadderBlock?s.getValue(LadderBlock.FACING).get3DDataValue():-1;
         int trap=b instanceof TrapDoorBlock && s.getValue(TrapDoorBlock.OPEN)?s.getValue(TrapDoorBlock.FACING).get3DDataValue():-1;
+        float fallMult = (b instanceof HayBlock || b instanceof HoneyBlock) ? 0.2f
+            : (fall.equals("dripstone") && s.getValue(PointedDripstoneBlock.TIP_DIRECTION) == Direction.UP
+                && s.getValue(PointedDripstoneBlock.THICKNESS) == SpeleothemThickness.TIP ? 2.0f : 1f);
+        String fluidKind = fluid.isEmpty() ? "0" : (isLava ? "2" : "1");
         return String.join("\t",fp(b.getFriction()),fp(b.getSpeedFactor()),fp(b.getJumpFactor()),fp(b.getBounceRestitution()),
-            fp(b instanceof HayBlock || b instanceof HoneyBlock?0.2f:1f),Integer.toString(bits),Integer.toString(ladder),Integer.toString(trap),
-            fluid.isEmpty()?"0":"1",fluid.isEmpty()?"0":Integer.toString(fluid.getAmount()),
+            fp(fallMult),Integer.toString(bits),Integer.toString(ladder),Integer.toString(trap),
+            fluidKind,fluid.isEmpty()?"0":Integer.toString(fluid.getAmount()),
             fluid.isEmpty()?"false":fluid.getValue(FlowingFluid.FALLING).toString(),Boolean.toString(s.blocksMotion()),Integer.toString(faces),
             inside.equals("world")?"none":inside, step.equals("hotFloor")?"hotFloor":"none",
             shape(collision.get(0)),
             // PowderSnowBlock returns Shapes.block when the unbooted collision shape is empty (26.2 bytecode).
             shape(b instanceof PowderSnowBlock?Shapes.block():s.getEntityInsideCollisionShape(LOCAL,BlockPos.ZERO,null)),
-            shape(collision.get(1)),shape(collision.get(2)),shape(collision.get(3)),shape(collision.get(4)));
+            shape(collision.get(1)),shape(collision.get(2)),shape(collision.get(3)),shape(collision.get(4)),offset);
     }
     // The jar's collision boxes for named states, in each law context, as exact double bits.
     static void shapes(Path out, String[] states) throws Exception {
@@ -145,9 +213,37 @@ public final class ModelTable {
         }
         Files.write(out,lines);
     }
+    // states.tsv: every block in registry order (its row is its id), its default state's index, then
+    // each property with its values, in the StateDefinition's order. A state's id is the block's first
+    // id plus the mixed-radix index of its values, the first property the most significant.
+    static void states(Path out) throws Exception {
+        var lines=new ArrayList<String>(); int base=0;
+        for(Block b:BuiltInRegistries.BLOCK) {
+            if (BuiltInRegistries.BLOCK.getId(b)!=lines.size()) throw new AssertionError("registry order");
+            var props=new ArrayList<>(b.getStateDefinition().getProperties());
+            var states=b.getStateDefinition().getPossibleStates();
+            for (BlockState s:states) {
+                int local=0;
+                for (Property p:props) local=local*p.getPossibleValues().size()+p.getPossibleValues().indexOf(s.getValue(p));
+                if (Block.BLOCK_STATE_REGISTRY.getId(s)!=base+local) throw new AssertionError(state(s)+" has id "+Block.BLOCK_STATE_REGISTRY.getId(s)+", not "+(base+local));
+            }
+            int dflt=Block.BLOCK_STATE_REGISTRY.getId(b.defaultBlockState())-base;
+            var line=new StringBuilder(BuiltInRegistries.BLOCK.getKey(b)+"\t"+dflt);
+            for (Property p:props) {
+                var values=new ArrayList<String>();
+                for (Object v:p.getPossibleValues()) values.add(p.getName((Comparable)v));
+                line.append("\t"+p.getName()+":"+String.join(",",values));
+            }
+            lines.add(line.toString());
+            base+=states.size();
+        }
+        if (base!=Block.BLOCK_STATE_REGISTRY.size()) throw new AssertionError(base+" states");
+        Files.write(out,lines);
+    }
     public static void main(String[] args) throws Exception {
         SharedConstants.tryDetectVersion(); Bootstrap.bootStrap();
         if (args[0].equals("--shapes")) { shapes(Path.of(args[1]),Arrays.copyOfRange(args,2,args.length)); return; }
+        if (args[0].equals("--states")) { states(Path.of(args[1])); return; }
         var rows=new TreeMap<String,String>();
         // Each registry state lands in one bucket of its block: "modeled", or the reason it is refused.
         var census=new TreeMap<String,Integer>();

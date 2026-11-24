@@ -11,5 +11,3 @@ law = { path = "../law" }
 words = { path = "../words" }
 world = { path = "../world" }
 
-[dev-dependencies]
-law = { path = "../law", features = ["count-state-copies"] }
