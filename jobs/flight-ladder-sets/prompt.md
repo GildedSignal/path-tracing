@@ -184,7 +184,7 @@ Copy the git-ignored `engine/world/tests/fixtures/world` from `C:\Users\PASCAL\D
    - Learn the family with the section 3 stop, then sample 2^6, 2^10 and 2^14 entries evenly on the ordered lattice, plus ±8 ulps around every computed cut. Replay each with `law::try_tick`.
    - Assert, at every resolution:
      - the sampled partition, by signature and contact letters up to the first pin, equals the computed pieces;
-     - every sampled exit is bit-equal to `predict()`, or for `Points` to one declared variant, differing from the others only in `minor_horizontal_collision`;
+     - every sampled exit matches `predict()` (or for `Points`, one declared variant differing from the others only in `minor_horizontal_collision`) bit-for-bit across all non-resource motion fields (`!f.is_resource() && !matches!(f, F::t | F::yaw | F::pitch | F::input | F::fall_distance)`, matching section 1.1; resources including sprint exhaustion travel as `UseInterval` + `Guard`, never as centimetre cuts on clamped points), AND `piece.uses.contains(&start, &got.end)` holds;
      - the piece count is the same at every resolution.
    - Print the counts; do not pin them.
 2. **`real_time.rs`: a decorated-ground series.**
