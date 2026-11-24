@@ -123,6 +123,8 @@ fn snapshot_refuses_an_unmodeled_real_state() {
     let message=error.to_string();
     assert!(message.contains("minecraft:bubble_column[drag=true]"));
     assert!(message.contains("(hook entityInside BubbleColumnBlock)"));
+    let partial=WorldSnapshot::load_for_plan(&fixture(),[29,-55,89],[29,-55,89]).unwrap();
+    assert!(partial.known_block([29,-55,89]).unwrap_err().contains("minecraft:bubble_column"));
     assert!(WorldSnapshot::load(fixture(),[10,-58,2],[10,-58,2]).is_ok(),"a cherry fence keeps its arms in its state");
 }
 #[test]

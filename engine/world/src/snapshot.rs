@@ -110,6 +110,7 @@ pub struct WorldSnapshot {
     natural_regeneration: bool,
     fluids: bool,
     inside: bool,
+    unknown: BTreeMap<BlockPos,String>,
 }
 impl WorldSnapshot {
     pub fn load(world_dir: impl AsRef<Path>, min: BlockPos, max: BlockPos) -> Result<Self, LoadError> {
@@ -118,6 +119,13 @@ impl WorldSnapshot {
     /// Limit covers the dense cell allocation; shared model data and the reader's
     /// separately bounded cache and temporary parsing buffers are not included.
     pub fn load_with_limit(world_dir: impl AsRef<Path>, min: BlockPos, max: BlockPos, max_bytes: usize) -> Result<Self, LoadError> {
+        Self::read(world_dir.as_ref(),min,max,max_bytes,false)
+    }
+    /// Keep unknown palette entries for the corridor and its fallible replay.
+    pub fn load_for_plan(world_dir:&Path,min:BlockPos,max:BlockPos)->Result<Self,LoadError> {
+        Self::read(world_dir,min,max,SNAPSHOT_BYTES,true)
+    }
+    fn read(world_dir:&Path,min:BlockPos,max:BlockPos,max_bytes:usize,partial:bool)->Result<Self,LoadError> {
         if (0..3).any(|i| min[i] > max[i]) { return Err(LoadError::Invalid("snapshot min exceeds max".into())); }
         let widths: [usize;3] = std::array::from_fn(|i| (max[i] as i64 - min[i] as i64 + 1) as usize);
         let count = widths.into_iter().try_fold(1usize, |n,w| n.checked_mul(w))
@@ -142,6 +150,7 @@ impl WorldSnapshot {
         let mut cells = vec![0u16;count].into_boxed_slice();
         let mut fluids = false;
         let mut inside = false;
+        let mut unknown=BTreeMap::new();
         // Chunk order avoids region rereads for every interleaved row of a large box.
         for cz in min[2].div_euclid(16)..=max[2].div_euclid(16) {
             for cx in min[0].div_euclid(16)..=max[0].div_euclid(16) {
@@ -150,7 +159,17 @@ impl WorldSnapshot {
                         for x in min[0].max(cx*16)..=max[0].min(cx*16+15) {
                             let p = [x,y,z];
                             let state = reader.block_state(p)?;
-                            let id = lookup(state).map_err(|reason| LoadError::Unmodeled { position: p, state: state.clone(), reason })?;
+                            let id = match lookup(state) {
+                                Ok(id)=>id,
+                                Err(reason) if partial=>{
+                                    fluids=true;
+                                    inside=true;
+                                    unknown.insert(p,format!("{state}: {reason}"));
+                                    cells[index(min,widths,p)]=u16::MAX;
+                                    continue;
+                                }
+                                Err(reason)=>return Err(LoadError::Unmodeled { position:p,state:state.clone(),reason }),
+                            };
                             let block = &registry.blocks[id as usize];
                             fluids |= block.fluid.kind != FluidKind::Empty;
                             inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
@@ -160,7 +179,7 @@ impl WorldSnapshot {
                 }
             }
         }
-        Ok(Self { min, max, widths, cells, models: registry, difficulty: reader.difficulty, natural_regeneration, fluids, inside })
+        Ok(Self { min, max, widths, cells, models: registry, difficulty: reader.difficulty, natural_regeneration, fluids, inside,unknown })
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
     fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
@@ -177,6 +196,11 @@ fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),Loa
     Ok(())
 }
 impl World for WorldSnapshot {
+    fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
+        if !self.covers(p) {return Err("outside the saved snapshot");}
+        let id=self.cells[index(self.min,self.widths,p)];
+        self.models.blocks.get(id as usize).ok_or_else(||self.unknown[&p].as_str())
+    }
     fn block(&self, p: BlockPos) -> &Block {
         self.assert_covered(p);
         &self.models.blocks[self.cells[index(self.min,self.widths,p)] as usize]

@@ -23,6 +23,7 @@ pub use movement::{
     try_tick,
     Refusal,
     tick_with_collision,
+    try_tick_with_collision,
     tick_with_contact,
     tick_server_resources
 };

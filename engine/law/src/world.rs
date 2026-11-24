@@ -254,8 +254,8 @@ impl Default for Block {
     }
 }
 impl Block {
-    fn has_inside_effects(&self)->bool { self.inside!=Inside::None || self.stuck_multiplier.is_some() || self.fluid.kind!=FluidKind::Empty }
-    fn collision_shapes(&self)->impl Iterator<Item=&VoxelShape> {
+    pub fn has_inside_effects(&self)->bool { self.inside!=Inside::None || self.stuck_multiplier.is_some() || self.fluid.kind!=FluidKind::Empty }
+    pub fn collision_shapes(&self)->impl Iterator<Item=&VoxelShape> {
         std::iter::once(&self.shape).chain(self.above_shape.iter()).chain(self.below_shape.iter()).chain(self.sneak_shape.iter()).chain(self.inside_cell_shape.iter())
     }
     /// No collision shape in any context leaves the block's own cell.
@@ -312,6 +312,8 @@ pub trait World {
     fn observe_speed_factor(&self, _factor: f64) {}
     fn observe_axis_contact(&self,_contact:crate::contact::AxisContact) {}
     fn block(&self, position: BlockPos) -> &Block;
+    /// A partial observation may contain a palette entry whose law is unknown.
+    fn known_block(&self, position: BlockPos) -> Result<&Block, &str> { Ok(self.block(position)) }
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
     /// The block's row in the one static generated model table, when the world has it.

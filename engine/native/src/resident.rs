@@ -37,6 +37,9 @@ impl Source {
     }
 }
 impl World for Source {
+    fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
+        self.cell(p).ok_or("section not received")?.as_deref().map_err(String::as_str)
+    }
     fn block(&self, p: BlockPos) -> &Block {
         match self.cell(p) {
             Some(Ok(block)) => block,
@@ -186,9 +189,13 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     // The corridor between the bot and the goal, from the bottom of the world to a little above both.
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
     // The ground: the block it stands on, or mid-jump the first solid block below it.
-    let below = (1..=8).map(|d| [p[0],p[1]-d,p[2]]).find(|&c| source.loaded(c) && !source.block(c).air);
-    let Some(a) = state.main_supporting_block.or(below) else { return refusal(requested,"no ground under the bot within 8 blocks"); };
-    let near = [p[0].min(goal[0])-2, lo[1], p[2].min(goal[2])-2]; let far = [p[0].max(goal[0])+2, p[1].max(goal[1])+8, p[2].max(goal[2])+2];
+    let mut support = state.main_supporting_block;
+    if support.is_none() { for depth in 1..=8 {
+        let cell=[p[0],p[1]-depth,p[2]];
+        match source.known_block(cell) {Ok(block) if block.air=>(),Ok(_)=>{support=Some(cell);break;},Err(reason)=>return refusal(requested,format!("support {cell:?}: {reason}"))}
+    }}
+    let Some(a) = support else { return refusal(requested,"no ground under the bot within 8 blocks"); };
+    let near = [p[0].min(goal[0])-4, lo[1], p[2].min(goal[2])-4]; let far = [p[0].max(goal[0])+4, p[1].max(goal[1])+8, p[2].max(goal[2])+4];
     let (cl, ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
     if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
     let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
