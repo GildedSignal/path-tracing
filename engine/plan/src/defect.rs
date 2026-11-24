@@ -6,8 +6,10 @@ use std::{
     collections::{BinaryHeap, HashMap},
 };
 use law::{
-    Aabb, Block, BlockPos, CollisionContext, FluidKind, PlayerState, World,
+    Aabb, Block, BlockPos, CollisionContext, FluidKind, PlayerState, Vec3, World,
+    basis::cell::StateId,
     codec::{Interner, LabelId},
+    sim::WorldDelta,
 };
 use words::{
     Arguments, Program,
@@ -16,6 +18,12 @@ use words::{
 use crate::{
     Goal, cut,
     inline::List,
+    kit::{
+        KitCounts, KitOp, KitView, ObligationLedger, RestoreMode, VerbKind,
+        WRITE_FALL_RESET, WRITE_SHAPE_CLEAR, WRITE_SHAPE_SOLID, WRITE_SHAPE_TOGGLE,
+        air_state, can_place_at, digest_edits, powder_snow_state, state_static,
+        toggle_open_state, water_source_state,
+    },
     solve::{Stage, ThinkingCosts, WordEvents, WordStep, extend_corridor},
     source::{CorridorProof, CorridorSource},
     state_view::StateAt,
@@ -25,6 +33,30 @@ use crate::{
         defect_sig,
     },
 };
+
+trait DefectWorld: World {
+    fn fast_can_fall(&self, s: &PlayerState) -> bool;
+}
+
+impl<S: World> DefectWorld for LocalGrid<'_, S> {
+    #[inline]
+    fn fast_can_fall(&self, s: &PlayerState) -> bool {
+        fast_can_fall(self, s)
+    }
+}
+
+impl<W: DefectWorld> DefectWorld for WorldDelta<'_, W> {
+    #[inline]
+    fn fast_can_fall(&self, s: &PlayerState) -> bool {
+        if !s.on_ground {
+            return false;
+        }
+        if self.edited_since(0).next().is_none() {
+            return self.base().fast_can_fall(s);
+        }
+        law::can_fall(s, self, 0.0, 0.0, f64::from(s.profile.step_height))
+    }
+}
 
 const MAX_STEPS: usize = 128;
 const MAX_GRID_CELLS: usize = 196_608;
@@ -217,6 +249,11 @@ impl<S: World> World for LocalGrid<'_, S> {
     }
 
     #[inline]
+    fn state_id(&self, p: BlockPos) -> Option<law::basis::cell::StateId> {
+        self.source.state_id(p)
+    }
+
+    #[inline]
     fn loaded(&self, p: BlockPos) -> bool {
         matches!(self.lookup(p), Some((_, true)))
     }
@@ -341,14 +378,78 @@ fn has_step_support<S: World>(grid: &LocalGrid<'_, S>, p: BlockPos) -> bool {
     ok
 }
 
+#[inline]
+fn kit_step_cost<S: World>(grid: &LocalGrid<'_, S>, kv: &KitView, cur: BlockPos, n: BlockPos) -> Option<u16> {
+    let writes = kv.writes_mask();
+    let passable = cell_passable(grid, n);
+    if passable {
+        let supported = has_step_support(grid, n);
+        if !supported {
+            if n[1] < cur[1] {
+                if writes & WRITE_SHAPE_SOLID != 0 {
+                    let below = [n[0], n[1] - 1, n[2]];
+                    if let Some(sid) = grid.state_id(below) {
+                        if state_static(sid).replaceable() {
+                            return Some(11 + if kv.spec.restore_required { 4 } else { 0 });
+                        }
+                    }
+                }
+                return None;
+            }
+            if n[1] == cur[1] {
+                if writes & WRITE_SHAPE_SOLID != 0 {
+                    let below = [n[0], n[1] - 1, n[2]];
+                    if let Some(sid) = grid.state_id(below) {
+                        if state_static(sid).replaceable() {
+                            return Some(5 + if kv.spec.restore_required { 1 } else { 0 });
+                        }
+                    }
+                }
+                return Some(5);
+            }
+        }
+        return Some(if n[1] == cur[1] { 3 } else if n[1] < cur[1] { 7 } else { 2 });
+    }
+    let mut extra = 0u16;
+    for cell in [n, [n[0], n[1] + 1, n[2]]] {
+        let b = grid.block(cell);
+        if b.never_collides() {
+            continue;
+        }
+        let Some(sid) = grid.state_id(cell) else { return None };
+        let st = state_static(sid);
+        if writes & WRITE_SHAPE_TOGGLE != 0 && st.interact_kind().is_hand_toggleable() {
+            extra = extra.saturating_add(5);
+        } else if writes & WRITE_SHAPE_CLEAR != 0 {
+            let row = kv.breaking.get(sid.block(), sid);
+            if row.break_ticks_ground == u16::MAX
+                || (kv.spec.restore_required && row.restore_mode == RestoreMode::Irreversible)
+            {
+                return None;
+            }
+            extra = extra.saturating_add(row.break_ticks_ground.min(200).max(1));
+            if kv.spec.restore_required {
+                extra = extra.saturating_add(4);
+            }
+        } else {
+            return None;
+        }
+    }
+    if extra == 0 {
+        return None;
+    }
+    let base: u16 = if n[1] == cur[1] { 3 } else if n[1] < cur[1] { 7 } else { 2 };
+    Some(base.saturating_add(extra))
+}
+
 impl TopoField {
-    fn build<S: World>(grid: &LocalGrid<'_, S>, from: &PlayerState, goal: Goal) -> Self {
+    fn build<S: World>(grid: &LocalGrid<'_, S>, from: &PlayerState, goal: Goal, kit: Option<&KitView>) -> Self {
         let fx = from.position.x.floor() as i32;
         let fy = from.position.y.floor() as i32;
         let fz = from.position.z.floor() as i32;
         let min = [
             fx.min(goal.cell[0]).saturating_sub(20).max(grid.min[0]),
-            fy.min(goal.cell[1]).saturating_sub(4).max(grid.min[1]),
+            fy.min(goal.cell[1]).saturating_sub(if kit.is_some() { 32 } else { 4 }).max(grid.min[1]),
             fz.min(goal.cell[2]).saturating_sub(20).max(grid.min[2]),
         ];
         let max = [
@@ -364,7 +465,6 @@ impl TopoField {
             return Self { min, max: [min[0] - 1, min[1], min[2]], dx: 0, dy: 0, dist: Vec::new() };
         }
         let mut field = Self { min, max, dx, dy, dist: vec![u16::MAX; vol] };
-        let mut buckets: [Vec<BlockPos>; 16] = std::array::from_fn(|_| Vec::new());
 
         let seeds = [
             goal.cell,
@@ -375,6 +475,43 @@ impl TopoField {
             [goal.cell[0], goal.cell[1], goal.cell[2] + 1],
             [goal.cell[0], goal.cell[1], goal.cell[2] - 1],
         ];
+        const DIRS: [BlockPos; 6] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
+
+        if let Some(kv) = kit {
+            let mut heap: BinaryHeap<Reverse<(u16, BlockPos)>> = BinaryHeap::new();
+            for p in seeds {
+                if let Some(i) = field.idx(p) {
+                    if field.dist[i] == u16::MAX && cell_passable(grid, p) {
+                        field.dist[i] = 0;
+                        heap.push(Reverse((0, p)));
+                    }
+                }
+            }
+            let mut pops = 0usize;
+            while let Some(Reverse((cur_d, cur))) = heap.pop() {
+                if pops >= 12_000 {
+                    break;
+                }
+                let Some(ci) = field.idx(cur) else { continue };
+                if cur_d != field.dist[ci] {
+                    continue;
+                }
+                pops += 1;
+                for d in DIRS {
+                    let n = [cur[0] + d[0], cur[1] + d[1], cur[2] + d[2]];
+                    let Some(ni) = field.idx(n) else { continue };
+                    let Some(step_w) = kit_step_cost(grid, kv, cur, n) else { continue };
+                    let nd = cur_d.saturating_add(step_w);
+                    if nd < field.dist[ni] {
+                        field.dist[ni] = nd;
+                        heap.push(Reverse((nd, n)));
+                    }
+                }
+            }
+            return field;
+        }
+
+        let mut buckets: [Vec<BlockPos>; 16] = std::array::from_fn(|_| Vec::new());
         for p in seeds {
             if let Some(i) = field.idx(p) {
                 if field.dist[i] == u16::MAX && cell_passable(grid, p) {
@@ -384,7 +521,6 @@ impl TopoField {
             }
         }
 
-        const DIRS: [BlockPos; 6] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
         let mut cost = 0usize;
         let mut idle = 0usize;
         let mut pops = 0usize;
@@ -480,11 +616,14 @@ struct Bucket {
     climbable: bool,
     fast: bool,
     quad: u8,
+    edits_hash: u64,
+    open_ob: u16,
+    has_blocks: bool,
 }
 
 impl Bucket {
     #[inline]
-    fn of(s: &PlayerState) -> Self {
+    fn of(s: &PlayerState, edits_hash: u64, open_ob: u16, has_blocks: bool) -> Self {
         let h2 = s.velocity.horizontal_sqr();
         let fast = h2 >= 0.04;
         let quad = if h2 < 0.01 {
@@ -503,6 +642,9 @@ impl Bucket {
             climbable: s.on_climbable,
             fast,
             quad,
+            edits_hash,
+            open_ob,
+            has_blocks,
         }
     }
 }
@@ -515,6 +657,9 @@ struct ArenaNode {
     parent: Option<usize>,
     edge_steps: Vec<WordStep>,
     edge_obs: Vec<ObservedStep>,
+    edits: Vec<(BlockPos, StateId)>,
+    counts: KitCounts,
+    ledger: ObligationLedger,
 }
 
 fn reconstruct(
@@ -656,8 +801,9 @@ enum AtomicOutcome {
     Failed,
 }
 
-fn exec_atomic_raw<S: World>(
-    grid: &LocalGrid<'_, S>,
+fn exec_atomic_raw<W: DefectWorld>(
+    world: &W,
+    grid_missing: Option<&LocalGrid<'_, impl World>>,
     programs: &[Program],
     start: &PlayerState,
     goal: Goal,
@@ -668,6 +814,10 @@ fn exec_atomic_raw<S: World>(
     site_label: LabelId,
     provenance_hash: [u8; 32],
     sig: DefectSig,
+    place_trigger: Option<StateId>,
+    clutch_trigger: bool,
+    restore_obs: &[BlockPos],
+    kit_edge_stop: bool,
     raw_ticks: &mut u64,
 ) -> AtomicOutcome {
     let yaw_idx = aim.resolve(start, goal, sig.rot);
@@ -676,14 +826,24 @@ fn exec_atomic_raw<S: World>(
     let held = program.held_input(args);
     let mut s = start.clone();
     let start_entry = EntryClass::of(start);
-    let mut prev_can_fall = fast_can_fall(grid, &s);
+    let mut prev_can_fall = world.fast_can_fall(&s);
+    let non_jump_prog = matches!(program_id, P_FS | P_F);
+    let mut prev_edge_next_fall = kit_edge_stop && non_jump_prog && s.on_ground
+        && law::can_fall(&s, world, s.velocity.x * 1.15, s.velocity.z * 1.15, f64::from(s.profile.step_height));
+    let mut prev_in_ob: u32 = 0;
+    for (i, &op) in restore_obs.iter().take(32).enumerate() {
+        if s.bounding_box().intersects(cell_box(op)) {
+            prev_in_ob |= 1u32 << i;
+        }
+    }
+    let gc = goal.center();
     let (gx, gz) = dir_to_goal(&s, goal);
     let (hx, hz) = crate::lattice::direction(yaw_idx);
     let heading_dot_goal = hx * gx + hz * gz;
     let steering = heading_dot_goal < 0.72;
-    let mut prev_open_goal = can_clear_probe(grid, &s, gx, gz, 0.95);
-    let mut prev_left_open = steering && can_clear_probe(grid, &s, -hz, hx, 1.05);
-    let mut prev_right_open = steering && can_clear_probe(grid, &s, hz, -hx, 1.05);
+    let mut prev_open_goal = can_clear_probe(world, &s, gx, gz, 0.95);
+    let mut prev_left_open = steering && can_clear_probe(world, &s, -hz, hx, 1.05);
+    let mut prev_right_open = steering && can_clear_probe(world, &s, hz, -hx, 1.05);
     let mut last_half = [((s.position.x + 0.25) * 2.0).floor() as i32, ((s.position.z + 0.25) * 2.0).floor() as i32];
 
     let cap = max_ticks.min(if steering && s.on_ground && !s.on_climbable && !s.in_water { 24 } else { 80 });
@@ -700,13 +860,13 @@ fn exec_atomic_raw<S: World>(
 
         let input = match held {
             Some(inp) => inp,
-            None => match program.select(grid, &s, tick - 1, args) {
+            None => match program.select(world, &s, tick - 1, args) {
                 Some((_, inp)) => inp,
                 None => return AtomicOutcome::Failed,
             },
         };
-        grid.reset_missing();
-        if law::try_tick(&mut s, grid, &input).is_err() || grid.check().is_err() {
+        if let Some(g) = grid_missing { g.reset_missing(); }
+        if law::try_tick(&mut s, world, &input).is_err() || grid_missing.is_some_and(|g| g.check().is_err()) {
             return AtomicOutcome::Failed;
         }
         *raw_ticks += 1;
@@ -728,10 +888,71 @@ fn exec_atomic_raw<S: World>(
             && (s.position.y - prev_pos.y).abs() < 1e-6
             && s.position.minus(prev_pos).horizontal_sqr() < 1e-6
             && tick >= 2;
-        let cur_can_fall = fast_can_fall(grid, &s);
+        let cur_can_fall = world.fast_can_fall(&s);
         let support_ends = cur_can_fall && !prev_can_fall;
         prev_can_fall = cur_can_fall;
         let medium_changed = s.on_climbable != prev_climbable || s.in_water != prev_in_water;
+
+        // Kit event exits: mid-air bridge place window and pre-impact fall clutch window.
+        let mut kit_window = false;
+        if let Some(place_blk) = place_trigger {
+            if !s.on_ground && tick >= 2 && s.velocity.y < 0.05 {
+                let fy = (s.position.y - 0.99).floor() as i32;
+                let fx = s.position.x.floor() as i32;
+                let fz = s.position.z.floor() as i32;
+                let sx = if s.velocity.x > 0.05 { 1 } else if s.velocity.x < -0.05 { -1 } else { 0 };
+                let sz = if s.velocity.z > 0.05 { 1 } else if s.velocity.z < -0.05 { -1 } else { 0 };
+                for cell in [[fx, fy, fz], [fx + sx, fy, fz + sz], [fx + sx, fy - 1, fz + sz], [fx, fy - 1, fz]] {
+                    if world.block(cell).never_collides() && can_place_at(world, &s, cell, place_blk) {
+                        kit_window = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !kit_window && clutch_trigger && !s.on_ground && s.fall_distance > 2.2 && s.velocity.y < -0.15 {
+            let fx = s.position.x.floor() as i32;
+            let fz = s.position.z.floor() as i32;
+            let next_y = (s.position.y + s.velocity.y).floor() as i32;
+            let cur_y = s.position.y.floor() as i32;
+            for check_y in (next_y - 1)..=cur_y {
+                if !world.block([fx, check_y, fz]).never_collides() {
+                    kit_window = true;
+                    break;
+                }
+            }
+        }
+        if kit_edge_stop && non_jump_prog && s.on_ground && !cur_can_fall && s.velocity.horizontal_sqr() > 0.015 {
+            let next_fall = law::can_fall(&s, world, s.velocity.x * 1.15, s.velocity.z * 1.15, f64::from(s.profile.step_height));
+            if !kit_window && next_fall && !prev_edge_next_fall && tick >= 2 {
+                kit_window = true;
+            }
+            prev_edge_next_fall = next_fall;
+        } else {
+            prev_edge_next_fall = false;
+        }
+        if !restore_obs.is_empty() {
+            let eye = law::interact::get_eye_position(s.position, s.pose.eye_height());
+            let s_gd2 = (gc.x - s.position.x).powi(2) + (gc.z - s.position.z).powi(2);
+            for (i, &op) in restore_obs.iter().take(32).enumerate() {
+                let now_in = s.bounding_box().intersects(cell_box(op));
+                let was_in = (prev_in_ob & (1u32 << i)) != 0;
+                if now_in {
+                    prev_in_ob |= 1u32 << i;
+                    continue;
+                }
+                prev_in_ob &= !(1u32 << i);
+                let ob_gd2 = (gc.x - (f64::from(op[0]) + 0.5)).powi(2) + (gc.z - (f64::from(op[2]) + 0.5)).powi(2);
+                if s_gd2 + 0.55 < ob_gd2 && law::interact::is_within_block_interaction_range(eye, 4.4, op, 0.0) {
+                    let eye_d2 = (eye.x - (f64::from(op[0]) + 0.5)).powi(2)
+                        + (eye.y - (f64::from(op[1]) + 0.5)).powi(2)
+                        + (eye.z - (f64::from(op[2]) + 0.5)).powi(2);
+                    if was_in || (tick >= 2 && eye_d2 > 3.6 * 3.6) {
+                        kit_window = true;
+                    }
+                }
+            }
+        }
 
         // Check doorway/corner clearing once per shifted 0.5-block boundary centered on [k+0.25..k+0.75].
         let mut opening_cleared = false;
@@ -740,14 +961,14 @@ fn exec_atomic_raw<S: World>(
             last_half = cur_half;
             if s.on_ground && (steering || !prev_open_goal || prev_hcoll) {
                 let (cgx, cgz) = dir_to_goal(&s, goal);
-                let cur_open_goal = can_clear_probe(grid, &s, cgx, cgz, 0.95);
+                let cur_open_goal = can_clear_probe(world, &s, cgx, cgz, 0.95);
                 if tick >= 2 && !prev_open_goal && cur_open_goal {
                     opening_cleared = true;
                 }
                 prev_open_goal = cur_open_goal;
                 if steering {
-                    let l_open = can_clear_probe(grid, &s, -hz, hx, 1.05);
-                    let r_open = can_clear_probe(grid, &s, hz, -hx, 1.05);
+                    let l_open = can_clear_probe(world, &s, -hz, hx, 1.05);
+                    let r_open = can_clear_probe(world, &s, hz, -hx, 1.05);
                     if tick >= 2 && ((!prev_left_open && l_open) || (!prev_right_open && r_open)) {
                         opening_cleared = true;
                     }
@@ -762,7 +983,7 @@ fn exec_atomic_raw<S: World>(
             return AtomicOutcome::Failed;
         }
 
-        if landed || stepped || hit_wall || stalled || stuck_on_ground || support_ends || medium_changed || opening_cleared {
+        if landed || stepped || hit_wall || stalled || stuck_on_ground || support_ends || medium_changed || opening_cleared || kit_window {
             break;
         }
     }
@@ -792,6 +1013,7 @@ fn exec_atomic_raw<S: World>(
             version: provenance_hash,
         },
         end: StateAt::point(s.clone()),
+        edit: None,
     };
     let obs_step = ObservedStep {
         program: program_id,
@@ -814,7 +1036,7 @@ fn try_tail_extend<S: CorridorSource>(
     store: &GeneratorStore,
     codec: &mut Interner,
 ) -> Option<Vec<WordStep>> {
-    if !state.on_ground || goal.cell[1] != source.floor_y(state) {
+    if state.crouching || state.pose != PlayerState::default().pose || !state.on_ground || goal.cell[1] != source.floor_y(state) {
         return None;
     }
     if !state.main_supporting_block.is_some_and(|p| p[1] == goal.cell[1]) {
@@ -828,8 +1050,9 @@ fn try_tail_extend<S: CorridorSource>(
     Some(words.into_iter().collect())
 }
 
-fn exec_word_chain<S: CorridorSource>(
-    grid: &LocalGrid<'_, S>,
+fn exec_word_chain<S: CorridorSource, W: DefectWorld>(
+    world: &W,
+    grid_missing: Option<&LocalGrid<'_, S>>,
     word_store: &WordStore,
     programs: &[Program],
     start: &PlayerState,
@@ -839,6 +1062,8 @@ fn exec_word_chain<S: CorridorSource>(
     label: LabelId,
     provenance: [u8; 32],
     sig: DefectSig,
+    place_trigger: Option<StateId>,
+    clutch_trigger: bool,
     raw_ticks: &mut u64,
 ) -> Option<(PlayerState, Vec<WordStep>, Vec<ObservedStep>, bool)> {
     let mut seq = Vec::new();
@@ -849,7 +1074,8 @@ fn exec_word_chain<S: CorridorSource>(
     let mut cur_sig = sig;
     for (prog, aim, max_t) in seq {
         match exec_atomic_raw(
-            grid,
+            world,
+            grid_missing,
             programs,
             &s,
             goal,
@@ -860,6 +1086,10 @@ fn exec_word_chain<S: CorridorSource>(
             label,
             provenance,
             cur_sig,
+            place_trigger,
+            clutch_trigger,
+            &[],
+            false,
             raw_ticks,
         ) {
             AtomicOutcome::Failed => return None,
@@ -870,7 +1100,7 @@ fn exec_word_chain<S: CorridorSource>(
                     return Some((end, steps, obs_list, true));
                 }
                 s = end;
-                cur_sig = defect_sig(grid, &s, goal);
+                cur_sig = defect_sig(world, &s, goal);
             }
         }
     }
@@ -886,13 +1116,26 @@ fn euclid_h(s: &PlayerState, goal: Goal) -> u64 {
 }
 
 #[inline]
-fn priority_key_topo(arrival: u64, s: &PlayerState, goal: Goal, topo: &TopoField) -> u64 {
+fn priority_key_topo(
+    arrival: u64,
+    s: &PlayerState,
+    goal: Goal,
+    topo: &TopoField,
+    ledger: &ObligationLedger,
+    kit: Option<&KitView>,
+) -> u64 {
     let d = topo.query(s);
-    if d < u16::MAX {
+    let base = if d < u16::MAX {
         arrival.saturating_add(u64::from(d))
     } else {
         arrival.saturating_add(500).saturating_add(euclid_h(s, goal))
+    };
+    if let Some(kv) = kit {
+        if !ledger.open.is_empty() {
+            return base.saturating_add(u64::from(ledger.open_debt_lb(s, goal, &kv.cone)));
+        }
     }
+    base
 }
 
 fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool) -> List<AimRule, 12> {
@@ -931,7 +1174,7 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool) ->
     out
 }
 
-fn programs_for<S: World>(grid: &LocalGrid<'_, S>, s: &PlayerState) -> List<u16, 8> {
+fn programs_for<W: DefectWorld>(world: &W, s: &PlayerState) -> List<u16, 8> {
     let mut out = List::new();
     if s.in_water || s.in_lava || s.on_climbable {
         for &p in &[P_FSJ, P_FJ, P_FS, P_F] {
@@ -942,8 +1185,8 @@ fn programs_for<S: World>(grid: &LocalGrid<'_, S>, s: &PlayerState) -> List<u16,
     for &p in &[P_FSG, P_FS, P_FG, P_F] {
         out.push(p);
     }
-    let low_headroom = !can_clear_shift_y(grid, s, 0.35);
-    let on_ledge = s.on_ground && fast_can_fall(grid, s);
+    let low_headroom = !can_clear_shift_y(world, s, 0.35);
+    let on_ledge = s.on_ground && world.fast_can_fall(s);
     if s.crouching || low_headroom || on_ledge {
         out.push(P_FC);
     }
@@ -951,6 +1194,542 @@ fn programs_for<S: World>(grid: &LocalGrid<'_, S>, s: &PlayerState) -> List<u16,
         out.push(P_FCJ);
     }
     out
+}
+
+#[inline]
+fn cell_box(p: BlockPos) -> Aabb {
+    Aabb::new(
+        f64::from(p[0]), f64::from(p[1]), f64::from(p[2]),
+        f64::from(p[0] + 1), f64::from(p[1] + 1), f64::from(p[2] + 1),
+    )
+}
+
+#[inline]
+fn update_edits(edits: &mut Vec<(BlockPos, StateId)>, base: &impl World, pos: BlockPos, after: StateId) {
+    if base.state_id(pos) == Some(after) {
+        if let Some(i) = edits.iter().position(|&(p, _)| p == pos) {
+            edits.remove(i);
+        }
+        return;
+    }
+    if let Some(slot) = edits.iter_mut().find(|(p, _)| *p == pos) {
+        slot.1 = after;
+    } else {
+        edits.push((pos, after));
+        edits.sort_unstable_by_key(|&(p, _)| (p[2], p[1], p[0]));
+    }
+}
+
+#[inline]
+fn door_partner(world: &impl World, pos: BlockPos, sid: StateId, open_to_same: Option<bool>) -> Option<(BlockPos, StateId)> {
+    let st = state_static(sid);
+    let partner_pos = if st.lower_half() {
+        [pos[0], pos[1] + 1, pos[2]]
+    } else if st.upper_half() {
+        [pos[0], pos[1] - 1, pos[2]]
+    } else {
+        return None;
+    };
+    let ps = world.state_id(partner_pos)?;
+    if ps.block() != sid.block() {
+        return None;
+    }
+    let after = if let Some(target_open) = open_to_same {
+        let cur = ps.get("open")? == "true";
+        if cur == target_open { ps } else { toggle_open_state(ps)? }
+    } else {
+        toggle_open_state(ps)?
+    };
+    Some((partner_pos, after))
+}
+
+fn step_kit_node<S: World>(
+    delta: &mut WorldDelta<'_, LocalGrid<'_, S>>,
+    grid: &LocalGrid<'_, S>,
+    programs: &[Program],
+    start: &PlayerState,
+    goal: Goal,
+    prog_id: u16,
+    yaw: u16,
+    ticks: u32,
+    op: KitOp,
+    apply_at_end: bool,
+    bounds: Aabb,
+    label: LabelId,
+    provenance: [u8; 32],
+    raw_ticks: &mut u64,
+) -> Option<(PlayerState, WordStep, bool)> {
+    let mark = delta.checkpoint();
+    if !apply_at_end {
+        match op {
+            KitOp::Interact { pos, after, partner } => {
+                delta.set(pos, after);
+                if let Some((pp, pa)) = partner { delta.set(pp, pa); }
+            }
+            KitOp::Place { pos, after }
+            | KitOp::BucketEmpty { pos, after }
+            | KitOp::BucketPickup { pos, after }
+            | KitOp::Break { pos, after, .. } => delta.set(pos, after),
+        }
+    }
+    let args = Arguments { refined_yaw: Some(crate::lattice::yaw(yaw)), ..Default::default() };
+    let prog = &programs[prog_id as usize];
+    let held = prog.held_input(args);
+    let mut s = start.clone();
+    let mut hit_goal = false;
+    let mut actual = 0u32;
+    for t in 0..ticks {
+        let prev = s.bounding_box();
+        let inp = if matches!(op, KitOp::Break { .. }) {
+            Default::default()
+        } else {
+            match held {
+                Some(i) => i,
+                None => match prog.select(delta, &s, t, args) {
+                    Some((_, i)) => i,
+                    None => {
+                        delta.rollback(mark);
+                        return None;
+                    }
+                },
+            }
+        };
+        grid.reset_missing();
+        if law::try_tick(&mut s, delta, &inp).is_err() || grid.check().is_err() {
+            delta.rollback(mark);
+            return None;
+        }
+        *raw_ticks += 1;
+        actual += 1;
+        if s.health <= 0.0 || !s.bounding_box().intersects(bounds) {
+            delta.rollback(mark);
+            return None;
+        }
+        if !apply_at_end && goal.touched_boxes(prev, s.bounding_box()) {
+            hit_goal = true;
+            break;
+        }
+        if matches!(op, KitOp::BucketEmpty { .. })
+            && actual >= 1
+            && s.fall_distance < 0.5
+            && (s.on_ground || s.in_water || s.velocity.y.abs() < 0.25)
+        {
+            break;
+        }
+    }
+    if apply_at_end {
+        if let KitOp::Break { pos, after, .. } = op {
+            delta.set(pos, after);
+        }
+        if goal.touched(&s, &s) {
+            hit_goal = true;
+        }
+    }
+    delta.rollback(mark);
+    if actual == 0 {
+        return None;
+    }
+    let step = WordStep {
+        program: prog_id,
+        args,
+        ticks: actual,
+        expected_end_t: s.t,
+        events: WordEvents::default(),
+        certificate: CorridorProof { label, min: [0; 3], max: [0; 3], version: provenance },
+        end: StateAt::point(s.clone()),
+        edit: Some(op),
+    };
+    Some((s, step, hit_goal))
+}
+
+struct KitCandidate {
+    op: KitOp,
+    apply_at_end: bool,
+    ticks: u32,
+    prog_id: u16,
+    yaw: u16,
+    d_blocks: i32,
+    d_water: i8,
+    d_snow: i8,
+    score: u16,
+}
+
+fn expand_kit_ops<S: World>(
+    delta: &mut WorldDelta<'_, LocalGrid<'_, S>>,
+    grid: &LocalGrid<'_, S>,
+    programs: &[Program],
+    kv: &KitView,
+    node: &ArenaNode,
+    node_idx: usize,
+    goal: Goal,
+    topo: &TopoField,
+    bounds: Aabb,
+    label: LabelId,
+    provenance: [u8; 32],
+    best_ub: u64,
+    incumbent_at: &mut Option<u64>,
+    best: &mut Option<(u64, usize, Vec<WordStep>, Vec<ObservedStep>)>,
+    arena: &mut Vec<ArenaNode>,
+    best_bucket: &mut HashMap<Bucket, u64>,
+    heap: &mut BinaryHeap<Reverse<(u64, u64, usize)>>,
+    raw_learn_ticks: &mut u64,
+) {
+    let s = &node.state;
+    let eye = law::interact::get_eye_position(s.position, s.pose.eye_height());
+    let writes = kv.writes_mask();
+    let fx = s.position.x.floor() as i32;
+    let fy = s.position.y.floor() as i32;
+    let fz = s.position.z.floor() as i32;
+    let (_, fwd, _) = approach_frame(s, goal);
+    let aim_yaw = AimRule::GoalOffset(0).resolve(s, goal, 0);
+    let gc = goal.center();
+    let s_goal_d2 = (gc.x - s.position.x).powi(2) + (gc.z - s.position.z).powi(2);
+    let mut cands: Vec<KitCandidate> = Vec::new();
+
+    // 0. Priority-0: close open obligations inside 4.5 eye reach (incl. <=4t bucket pickup).
+    for ob in &node.ledger.open {
+        if !law::interact::is_within_block_interaction_range(eye, 4.5, ob.pos, 0.0) {
+            continue;
+        }
+        let Some(cur) = delta.state_id(ob.pos) else { continue };
+        let st_orig = state_static(ob.original_state);
+        let st_cur = state_static(cur);
+        let ob_d2 = (gc.x - (f64::from(ob.pos[0]) + 0.5)).powi(2) + (gc.z - (f64::from(ob.pos[2]) + 0.5)).powi(2);
+        let past_or_goal = goal.touched(s, s) || s_goal_d2 + 0.55 < ob_d2;
+
+        if cur == water_source_state() || cur == powder_snow_state() {
+            let age = node.arrival.saturating_sub(ob.opened_tick);
+            let can_pick = (s.on_ground && s.fall_distance < 0.5) || age >= 1;
+            if can_pick && (age <= 4 || cur == powder_snow_state()) {
+                let d_w = if cur == water_source_state() { 1 } else { 0 };
+                let d_sn = if cur == powder_snow_state() { 1 } else { 0 };
+                cands.push(KitCandidate {
+                    op: KitOp::BucketPickup { pos: ob.pos, after: ob.original_state },
+                    apply_at_end: false,
+                    ticks: 1,
+                    prog_id: P_FC,
+                    yaw: aim_yaw,
+                    d_blocks: 0,
+                    d_water: d_w,
+                    d_snow: d_sn,
+                    score: 0,
+                });
+            }
+            continue;
+        }
+
+        if st_orig.interact_kind().is_hand_toggleable() {
+            if !s.bounding_box().intersects(cell_box(ob.pos)) && past_or_goal {
+                let partner = if st_orig.lower_half() || st_orig.upper_half() {
+                    let pp = if st_orig.lower_half() { [ob.pos[0], ob.pos[1] + 1, ob.pos[2]] } else { [ob.pos[0], ob.pos[1] - 1, ob.pos[2]] };
+                    grid.state_id(pp).filter(|ps| ps.block() == ob.original_state.block()).map(|ps| (pp, ps))
+                } else {
+                    None
+                };
+                cands.push(KitCandidate {
+                    op: KitOp::Interact { pos: ob.pos, after: ob.original_state, partner },
+                    apply_at_end: false,
+                    ticks: 1,
+                    prog_id: P_FC,
+                    yaw: aim_yaw,
+                    d_blocks: 0,
+                    d_water: 0,
+                    d_snow: 0,
+                    score: 1,
+                });
+            }
+            continue;
+        }
+
+        if ob.original_state == air_state() || st_orig.replaceable() {
+            let body_box = s.bounding_box();
+            let cbox = cell_box(ob.pos);
+            let standing_on = (body_box.min.y - cbox.max.y).abs() < 0.08
+                && body_box.max.x > cbox.min.x && body_box.min.x < cbox.max.x
+                && body_box.max.z > cbox.min.z && body_box.min.z < cbox.max.z;
+            if !standing_on && !body_box.intersects(cbox) && past_or_goal {
+                let row = kv.breaking.get(cur.block(), cur);
+                let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+                if bt < u16::MAX && bt <= 240 && st_cur.interact_kind() == crate::kit::InteractKind::None {
+                    cands.push(KitCandidate {
+                        op: KitOp::Break { pos: ob.pos, after: ob.original_state, break_ticks: bt.max(1) },
+                        apply_at_end: true,
+                        ticks: u32::from(bt.max(1)),
+                        prog_id: P_FC,
+                        yaw: aim_yaw,
+                        d_blocks: 1,
+                        d_water: 0,
+                        d_snow: 0,
+                        score: 2 + bt.min(200),
+                    });
+                }
+            }
+        } else if !s.bounding_box().intersects(cell_box(ob.pos)) && past_or_goal && can_place_at(delta, s, ob.pos, ob.original_state) {
+            cands.push(KitCandidate {
+                op: KitOp::Place { pos: ob.pos, after: ob.original_state },
+                apply_at_end: false,
+                ticks: 1,
+                prog_id: P_FC,
+                yaw: aim_yaw,
+                d_blocks: 0,
+                d_water: 0,
+                d_snow: 0,
+                score: 2,
+            });
+        }
+    }
+
+    // 1. Fall reset clutch (`BucketWater` or Nether `BucketPowderSnow`).
+    if writes & WRITE_FALL_RESET != 0 && !s.on_ground && s.fall_distance > 2.2 && s.velocity.y < -0.1 {
+        for dy in (-4..=0).rev() {
+            let floor_p = [fx, fy + dy, fz];
+            if delta.block(floor_p).never_collides() {
+                continue;
+            }
+            let land = [fx, fy + dy + 1, fz];
+            if !law::interact::is_within_block_interaction_range(eye, 4.5, land, 0.0) {
+                break;
+            }
+            let Some(lsid) = delta.state_id(land) else { break };
+            if !state_static(lsid).replaceable() {
+                break;
+            }
+            if kv.verb_effects.iter().any(|v| v.kind == VerbKind::BucketWater) && node.counts.water_buckets > 0 {
+                cands.push(KitCandidate {
+                    op: KitOp::BucketEmpty { pos: land, after: water_source_state() },
+                    apply_at_end: false,
+                    ticks: 4,
+                    prog_id: P_F,
+                    yaw: aim_yaw,
+                    d_blocks: 0,
+                    d_water: -1,
+                    d_snow: 0,
+                    score: 3,
+                });
+            } else if kv.verb_effects.iter().any(|v| v.kind == VerbKind::BucketPowderSnow) && node.counts.powder_snow_buckets > 0 {
+                cands.push(KitCandidate {
+                    op: KitOp::BucketEmpty { pos: land, after: powder_snow_state() },
+                    apply_at_end: false,
+                    ticks: 4,
+                    prog_id: P_F,
+                    yaw: aim_yaw,
+                    d_blocks: 0,
+                    d_water: 0,
+                    d_snow: -1,
+                    score: 3,
+                });
+            }
+            break;
+        }
+    }
+
+    // 2. Interact (`Door`, `TrapDoor`, `FenceGate`) and `Break` (blocked forward cells).
+    if writes & (WRITE_SHAPE_TOGGLE | WRITE_SHAPE_CLEAR) != 0 {
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                for dy in 0..=1 {
+                    let p = [fx + dx, fy + dy, fz + dz];
+                    if !law::interact::is_within_block_interaction_range(eye, 4.5, p, 0.0) {
+                        continue;
+                    }
+                    let blk = delta.block(p);
+                    if blk.never_collides() {
+                        continue;
+                    }
+                    let Some(sid) = delta.state_id(p) else { continue };
+                    let st = state_static(sid);
+                    if writes & WRITE_SHAPE_TOGGLE != 0 && st.interact_kind().is_hand_toggleable() {
+                        if st.upper_half() && delta.state_id([p[0], p[1] - 1, p[2]]).is_some_and(|ls| ls.block() == sid.block()) {
+                            continue;
+                        }
+                        if node.ledger.open.iter().any(|o| o.pos == p) || node.edits.iter().any(|&(ep, _)| ep == p) {
+                            continue;
+                        }
+                        if let Some(after) = toggle_open_state(sid) {
+                            let target_open = after.get("open").map(|v| v == "true");
+                            let partner = door_partner(delta, p, sid, target_open);
+                            let stand_d = topo.idx([p[0], fy, p[2]]).map_or(500, |i| topo.dist[i]);
+                            cands.push(KitCandidate {
+                                op: KitOp::Interact { pos: p, after, partner },
+                                apply_at_end: false,
+                                ticks: 1,
+                                prog_id: P_FS,
+                                yaw: aim_yaw,
+                                d_blocks: 0,
+                                d_water: 0,
+                                d_snow: 0,
+                                score: 5 + stand_d.min(200),
+                            });
+                        }
+                        continue;
+                    }
+                    if writes & WRITE_SHAPE_CLEAR != 0 && !st.interact_kind().is_hand_toggleable() {
+                        let dot_fwd = (dx * fwd[0] + dz * fwd[1]) >= 0;
+                        if !dot_fwd && (dx != 0 || dz != 0) {
+                            continue;
+                        }
+                        let row = kv.breaking.get(sid.block(), sid);
+                        let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+                        if bt == u16::MAX || bt > 240 || (kv.spec.restore_required && row.restore_mode == RestoreMode::Irreversible) {
+                            continue;
+                        }
+                        let clear_sid = if st.waterlogged() { water_source_state() } else { air_state() };
+                        let stand_d = topo.idx([p[0], fy, p[2]]).map_or(500, |i| topo.dist[i]);
+                        cands.push(KitCandidate {
+                            op: KitOp::Break { pos: p, after: clear_sid, break_ticks: bt.max(1) },
+                            apply_at_end: true,
+                            ticks: u32::from(bt.max(1)),
+                            prog_id: P_FC,
+                            yaw: aim_yaw,
+                            d_blocks: 0,
+                            d_water: 0,
+                            d_snow: 0,
+                            score: 10 + bt + stand_d.min(200),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Place (`Bridge` / `Mid-air catch` / `Pillar`).
+    if writes & WRITE_SHAPE_SOLID != 0 && node.counts.blocks > 0 {
+        let ys: &[i32] = if s.on_ground {
+            let need_step_up = goal.cell[1] >= fy || s.horizontal_collision;
+            if need_step_up { &[fy - 1, fy] } else { &[fy - 1] }
+        } else if goal.cell[1] >= fy {
+            &[fy - 2, fy - 1, fy]
+        } else {
+            &[fy - 2, fy - 1]
+        };
+        let mut place_cands: Vec<(u16, BlockPos, u16, u16)> = Vec::new();
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                for &py in ys {
+                    let p = [fx + dx, py, fz + dz];
+                    if node.edits.iter().any(|&(ep, _)| ep == p) {
+                        continue;
+                    }
+                    if !delta.block(p).never_collides() || !can_place_at(delta, s, p, kv.spec.place_block) {
+                        continue;
+                    }
+                    let d_top = topo.idx([p[0], p[1] + 1, p[2]]).map_or(u16::MAX, |i| topo.dist[i]);
+                    if d_top == u16::MAX {
+                        continue;
+                    }
+                    let forward_pref = if (p[0] - fx) * fwd[0] + (p[2] - fz) * fwd[1] >= 0 { 0 } else { 20 };
+                    let prog = if s.on_ground {
+                        if py == fy { P_FSG } else { P_FS }
+                    } else {
+                        P_FS
+                    };
+                    let step_center = Vec3::new(f64::from(p[0]) + 0.5, f64::from(p[1]) + 1.0, f64::from(p[2]) + 0.5);
+                    let to_p = Goal { cell: [p[0], p[1] + 1, p[2]] };
+                    let dir_yaw = if s.position.minus(step_center).horizontal_sqr() > 0.04 {
+                        AimRule::GoalOffset(0).resolve(s, to_p, 0)
+                    } else {
+                        aim_yaw
+                    };
+                    place_cands.push((d_top.saturating_add(forward_pref), p, prog, dir_yaw));
+                }
+            }
+        }
+        place_cands.sort_unstable_by_key(|c| c.0);
+        for (sc, p, prog_id, pyaw) in place_cands.into_iter().take(2) {
+            cands.push(KitCandidate {
+                op: KitOp::Place { pos: p, after: kv.spec.place_block },
+                apply_at_end: false,
+                ticks: 1,
+                prog_id,
+                yaw: pyaw,
+                d_blocks: -1,
+                d_water: 0,
+                d_snow: 0,
+                score: 8 + sc.min(300),
+            });
+        }
+    }
+
+    cands.sort_unstable_by_key(|c| c.score);
+    for cand in cands.into_iter().take(6) {
+        let Some((end_s, step, hit_goal)) = step_kit_node(
+            delta, grid, programs, s, goal, cand.prog_id, cand.yaw, cand.ticks,
+            cand.op, cand.apply_at_end, bounds, label, provenance, raw_learn_ticks,
+        ) else {
+            continue;
+        };
+        let arr = node.arrival.saturating_add(u64::from(step.ticks));
+        if arr >= best_ub {
+            continue;
+        }
+        let mut next_edits = node.edits.clone();
+        let mut next_ledger = node.ledger.clone();
+        let mut next_counts = node.counts;
+        next_counts.blocks = (i32::from(next_counts.blocks) + cand.d_blocks).clamp(0, i32::from(u16::MAX)) as u16;
+        next_counts.water_buckets = (i16::from(next_counts.water_buckets) + i16::from(cand.d_water)).clamp(0, 127) as u8;
+        next_counts.powder_snow_buckets = (i16::from(next_counts.powder_snow_buckets) + i16::from(cand.d_snow)).clamp(0, 127) as u8;
+
+        match cand.op {
+            KitOp::Interact { pos, after, partner } => {
+                let before = delta.state_id(pos).unwrap_or_else(air_state);
+                update_edits(&mut next_edits, grid, pos, after);
+                if let Some((pp, pa)) = partner {
+                    update_edits(&mut next_edits, grid, pp, pa);
+                }
+                if kv.spec.restore_required {
+                    next_ledger.record_edit(pos, before, after, node.arrival, 1);
+                }
+            }
+            KitOp::Break { pos, after, .. } => {
+                let before = delta.state_id(pos).unwrap_or_else(air_state);
+                update_edits(&mut next_edits, grid, pos, after);
+                if kv.spec.restore_required {
+                    next_ledger.record_edit(pos, before, after, node.arrival, 1);
+                }
+            }
+            KitOp::Place { pos, after } => {
+                let before = delta.state_id(pos).unwrap_or_else(air_state);
+                update_edits(&mut next_edits, grid, pos, after);
+                if kv.spec.restore_required {
+                    let row = kv.breaking.get(after.block(), after);
+                    next_ledger.record_edit(pos, before, after, node.arrival, row.break_ticks_ground.min(200).max(1));
+                }
+            }
+            KitOp::BucketEmpty { pos, after } | KitOp::BucketPickup { pos, after } => {
+                let before = delta.state_id(pos).unwrap_or_else(air_state);
+                update_edits(&mut next_edits, grid, pos, after);
+                next_ledger.record_edit(pos, before, after, node.arrival, 1);
+            }
+        }
+
+        let ledger_clear = !kv.spec.restore_required || next_ledger.open.is_empty();
+        if hit_goal && ledger_clear {
+            let (pl, full_s, full_o) = reconstruct(arena, node_idx, vec![step], Vec::new());
+            *best = Some((arr, pl, full_s, full_o));
+            incumbent_at.get_or_insert(*raw_learn_ticks);
+            return;
+        }
+        let ehash = digest_edits(&next_edits);
+        let b = Bucket::of(&end_s, ehash, next_ledger.open.len() as u16, next_counts.blocks > 0);
+        if best_bucket.get(&b).is_some_and(|&prev| prev <= arr) {
+            continue;
+        }
+        let p = priority_key_topo(arr, &end_s, goal, topo, &next_ledger, Some(kv));
+        let nid = arena.len();
+        arena.push(ArenaNode {
+            state: end_s,
+            arrival: arr,
+            depth: node.depth + 1,
+            prefix_len: node.prefix_len,
+            parent: Some(node_idx),
+            edge_steps: vec![step],
+            edge_obs: Vec::new(),
+            edits: next_edits,
+            counts: next_counts,
+            ledger: next_ledger,
+        });
+        heap.push(Reverse((p, arr, nid)));
+    }
 }
 
 /// Cross the defect: Phase A proposes from generalized `WordStore` in microseconds;
@@ -963,6 +1742,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     source: &S,
     store: &GeneratorStore,
     codec: &mut Interner,
+    kit: Option<&KitView>,
     stages: &mut List<Stage, 16>,
     thinking: &mut ThinkingCosts,
 ) -> Result<(Vec<WordStep>, Vec<ObservedStep>), (usize, String)> {
@@ -971,6 +1751,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
     let bounds = bounds_aabb(source, from, goal, &win);
     let grid = LocalGrid::new(source, bounds);
     let provenance = source.provenance();
+    let init_counts = kit.map_or(KitCounts { blocks: 0, water_buckets: 0, powder_snow_buckets: 0, boats: 0, pearls: 0 }, |k| k.spec.counts());
+    let restore_required = kit.is_some_and(|k| k.spec.restore_required);
+    let place_trigger = kit.and_then(|k| (k.writes_mask() & WRITE_SHAPE_SOLID != 0 && init_counts.blocks > 0).then_some(k.spec.place_block));
+    let clutch_trigger = kit.is_some_and(|k| k.writes_mask() & WRITE_FALL_RESET != 0);
 
     let mut seeds: Vec<ArenaNode> = Vec::with_capacity(win.prefixes.len().max(1));
     for pref in win.prefixes {
@@ -985,6 +1769,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
             parent: None,
             edge_steps: pref.into_iter().collect(),
             edge_obs: Vec::new(),
+            edits: Vec::new(),
+            counts: init_counts,
+            ledger: ObligationLedger::default(),
         });
     }
     if seeds.is_empty() {
@@ -996,6 +1783,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
             parent: None,
             edge_steps: Vec::new(),
             edge_obs: Vec::new(),
+            edits: Vec::new(),
+            counts: init_counts,
+            ledger: ObligationLedger::default(),
         });
     }
 
@@ -1007,7 +1797,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     let mut best: Option<(u64, usize, Vec<WordStep>, Vec<ObservedStep>)> = None;
     let propose_budget_ticks = 4_000u64;
     let mut prop_ticks = 0u64;
-    let has_words = store.words.borrow().work.words_total > 0;
+    let has_words = store.words.borrow().work.words_total > 0 && kit.is_none();
 
     if has_words {
         let mut heap: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
@@ -1024,6 +1814,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
                 parent: None,
                 edge_steps: s.edge_steps.clone(),
                 edge_obs: Vec::new(),
+                edits: Vec::new(),
+                counts: init_counts,
+                ledger: ObligationLedger::default(),
             });
             heap.push(Reverse((p, s.arrival, idx)));
         }
@@ -1039,7 +1832,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
             if arena[idx].depth >= MAX_STEPS {
                 continue;
             }
-            let b = Bucket::of(&arena[idx].state);
+            let b = Bucket::of(&arena[idx].state, 0, 0, false);
             if best_bucket.get(&b).is_some_and(|&prev| prev <= arena[idx].arrival) {
                 continue;
             }
@@ -1074,6 +1867,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
                     let cur_sig = if rep == 0 { sig } else { defect_sig(&grid, &cur_s, goal) };
                     let Some((ex, st_list, ob_list, hit)) = exec_word_chain(
                         &grid,
+                        Some(&grid),
                         &ws,
                         &programs,
                         &cur_s,
@@ -1083,6 +1877,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         label,
                         provenance,
                         cur_sig,
+                        None,
+                        false,
                         &mut prop_ticks,
                     ) else {
                         break;
@@ -1117,7 +1913,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
                     if rep >= 1 && euclid_h(&cur_s, goal) > prev_h.saturating_add(6) {
                         break;
                     }
-                    let cb = Bucket::of(&cur_s);
+                    let cb = Bucket::of(&cur_s, 0, 0, false);
                     if best_bucket.get(&cb).is_some_and(|&prev| prev <= cur_arr) {
                         continue;
                     }
@@ -1131,6 +1927,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         parent: Some(idx),
                         edge_steps: cur_steps.clone(),
                         edge_obs: cur_obs.clone(),
+                        edits: Vec::new(),
+                        counts: init_counts,
+                        ledger: ObligationLedger::default(),
                     });
                     heap.push(Reverse((p, cur_arr, nid)));
                 }
@@ -1141,16 +1940,16 @@ pub(super) fn solve_defect<S: CorridorSource>(
         }
     }
 
-    // Phase B: Raw best-first learning search guided by local-topology BFS (ONLY when Phase A missed).
+    // Phase B: Raw best-first learning search guided by unfolded TopoField (ONLY when Phase A missed).
     if best.is_none() {
-        let topo = TopoField::build(&grid, from, goal);
+        let topo = TopoField::build(&grid, from, goal, kit);
         let mut heap: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
         let mut arena: Vec<ArenaNode> = Vec::with_capacity(2048);
         let mut best_bucket: HashMap<Bucket, u64> = HashMap::with_capacity(2048);
 
         for s in seeds {
             let idx = arena.len();
-            let p = priority_key_topo(s.arrival, &s.state, goal, &topo);
+            let p = priority_key_topo(s.arrival, &s.state, goal, &topo, &s.ledger, kit);
             heap.push(Reverse((p, s.arrival, idx)));
             arena.push(s);
         }
@@ -1159,6 +1958,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let word_budget = cold_cap / 5;
         let mut phase_b_word_ticks = 0u64;
         let mut incumbent_at: Option<u64> = None;
+        let mut delta = WorldDelta::new(&grid);
+        let has_words_b = store.words.borrow().work.words_total > 0;
 
         while let Some(Reverse((_, _, idx))) = heap.pop() {
             if raw_learn_ticks >= cold_cap {
@@ -1170,19 +1971,27 @@ pub(super) fn solve_defect<S: CorridorSource>(
                 }
             }
             let ub = best.as_ref().map_or(u64::MAX, |b| b.0);
-            if arena[idx].arrival.saturating_add(u64::from(goal.lower_bound(&arena[idx].state))) >= ub {
+            let node_lb = kit.map_or_else(
+                || u64::from(goal.lower_bound(&arena[idx].state)),
+                |kv| u64::from(kv.cone.lower_bound(&arena[idx].state, goal))
+                    .max(if restore_required { u64::from(arena[idx].ledger.open_debt_lb(&arena[idx].state, goal, &kv.cone)) } else { 0 }),
+            );
+            if arena[idx].arrival.saturating_add(node_lb) >= ub {
                 continue;
             }
             if arena[idx].depth >= MAX_STEPS {
                 continue;
             }
-            let b = Bucket::of(&arena[idx].state);
+            let node_ehash = digest_edits(&arena[idx].edits);
+            let b = Bucket::of(&arena[idx].state, node_ehash, arena[idx].ledger.open.len() as u16, arena[idx].counts.blocks > 0);
             if best_bucket.get(&b).is_some_and(|&prev| prev <= arena[idx].arrival) {
                 continue;
             }
             best_bucket.insert(b, arena[idx].arrival);
 
-            if goal.touched(&arena[idx].state, &arena[idx].state) {
+            if goal.touched(&arena[idx].state, &arena[idx].state)
+                && (!restore_required || arena[idx].ledger.open.is_empty())
+            {
                 if arena[idx].arrival < ub {
                     let (pl, steps, obs) = reconstruct(&arena, idx, Vec::new(), Vec::new());
                     best = Some((arena[idx].arrival, pl, steps, obs));
@@ -1191,22 +2000,56 @@ pub(super) fn solve_defect<S: CorridorSource>(
                 continue;
             }
 
-            if let Some(tail) = try_tail_extend(&arena[idx].state, goal, source, store, codec) {
-                let tail_t: u64 = tail.iter().map(|w| u64::from(w.ticks)).sum();
-                let tot = arena[idx].arrival.saturating_add(tail_t);
-                if tot < ub {
-                    let (pl, steps, obs) = reconstruct(&arena, idx, tail, Vec::new());
-                    best = Some((tot, pl, steps, obs));
-                    incumbent_at.get_or_insert(raw_learn_ticks);
+            if arena[idx].edits.is_empty() && (!restore_required || arena[idx].ledger.open.is_empty()) {
+                if let Some(tail) = try_tail_extend(&arena[idx].state, goal, source, store, codec) {
+                    let tail_t: u64 = tail.iter().map(|w| u64::from(w.ticks)).sum();
+                    let tot = arena[idx].arrival.saturating_add(tail_t);
+                    if tot < ub {
+                        let (pl, steps, obs) = reconstruct(&arena, idx, tail, Vec::new());
+                        best = Some((tot, pl, steps, obs));
+                        incumbent_at.get_or_insert(raw_learn_ticks);
+                    }
                 }
+            }
+
+            delta.rollback(0);
+            for &(ep, es) in &arena[idx].edits {
+                delta.set(ep, es);
+            }
+
+            if let Some(kv) = kit {
+                let ub_now = best.as_ref().map_or(u64::MAX, |b| b.0);
+                let snap_node = ArenaNode {
+                    state: arena[idx].state.clone(),
+                    arrival: arena[idx].arrival,
+                    depth: arena[idx].depth,
+                    prefix_len: arena[idx].prefix_len,
+                    parent: arena[idx].parent,
+                    edge_steps: Vec::new(),
+                    edge_obs: Vec::new(),
+                    edits: arena[idx].edits.clone(),
+                    counts: arena[idx].counts,
+                    ledger: arena[idx].ledger.clone(),
+                };
+                expand_kit_ops(
+                    &mut delta, &grid, &programs, kv, &snap_node, idx, goal, &topo,
+                    bounds, label, provenance, ub_now, &mut incumbent_at, &mut best,
+                    &mut arena, &mut best_bucket, &mut heap, &mut raw_learn_ticks,
+                );
             }
 
             let state_here = arena[idx].state.clone();
             let arr_here = arena[idx].arrival;
             let depth_here = arena[idx].depth;
             let pl_here = arena[idx].prefix_len;
+            let cur_edits = arena[idx].edits.clone();
+            let cur_counts = arena[idx].counts;
+            let cur_ledger = arena[idx].ledger.clone();
+            let cur_place_trig = place_trigger.filter(|_| cur_counts.blocks > 0);
+            let cur_clutch_trig = clutch_trigger && (cur_counts.water_buckets > 0 || cur_counts.powder_snow_buckets > 0);
+            let ledger_clear = !restore_required || cur_ledger.open.is_empty();
 
-            let sig = if has_words && phase_b_word_ticks < word_budget {
+            let sig = if has_words_b && phase_b_word_ticks < word_budget && cur_edits.is_empty() {
                 let sig = defect_sig(&grid, &state_here, goal);
                 let entry = EntryClass::of(&state_here);
                 let wids = store.words.borrow().propose_local(sig, entry);
@@ -1227,6 +2070,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         let mut word_ticks = 0u64;
                         let chain = exec_word_chain(
                             &grid,
+                            Some(&grid),
                             &ws,
                             &programs,
                             &cur_s,
@@ -1236,6 +2080,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
                             label,
                             provenance,
                             cur_sig,
+                            cur_place_trig,
+                            cur_clutch_trig,
                             &mut word_ticks,
                         );
                         raw_learn_ticks += word_ticks;
@@ -1252,17 +2098,17 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         if cur_depth > MAX_STEPS || cur_arr >= best.as_ref().map_or(u64::MAX, |b| b.0) {
                             break;
                         }
-                        if hit {
+                        if hit && ledger_clear {
                             let (pl, full_s, full_o) = reconstruct(&arena, idx, cur_steps, cur_obs);
                             best = Some((cur_arr, pl, full_s, full_o));
                             incumbent_at.get_or_insert(raw_learn_ticks);
                             break;
                         }
-                        let cb = Bucket::of(&cur_s);
+                        let cb = Bucket::of(&cur_s, node_ehash, cur_ledger.open.len() as u16, cur_counts.blocks > 0);
                         if best_bucket.get(&cb).is_some_and(|&prev| prev <= cur_arr) {
                             continue;
                         }
-                        let p = priority_key_topo(cur_arr, &cur_s, goal, &topo);
+                        let p = priority_key_topo(cur_arr, &cur_s, goal, &topo, &cur_ledger, kit);
                         let nid = arena.len();
                         arena.push(ArenaNode {
                             state: cur_s.clone(),
@@ -1272,22 +2118,38 @@ pub(super) fn solve_defect<S: CorridorSource>(
                             parent: Some(idx),
                             edge_steps: cur_steps.clone(),
                             edge_obs: cur_obs.clone(),
+                            edits: cur_edits.clone(),
+                            counts: cur_counts,
+                            ledger: cur_ledger.clone(),
                         });
                         heap.push(Reverse((p, cur_arr, nid)));
                     }
                 }
                 sig
+            } else if cur_edits.is_empty() {
+                DefectSig { fine: 0, coarse: 0, rot: approach_frame(&state_here, goal).0 }
             } else {
                 DefectSig { fine: 0, coarse: 0, rot: approach_frame(&state_here, goal).0 }
             };
 
             let (gx, gz) = dir_to_goal(&state_here, goal);
+            let restore_obs: Vec<BlockPos> = if restore_required {
+                cur_ledger.open.iter().map(|o| o.pos).collect()
+            } else {
+                Vec::new()
+            };
+            let eye_here = law::interact::get_eye_position(state_here.position, state_here.pose.eye_height());
+            let has_far_open_ob = restore_obs.iter().any(|&op| {
+                !law::interact::is_within_block_interaction_range(eye_here, 4.4, op, 0.0)
+            });
             let direct_blocked = state_here.horizontal_collision
-                || !can_clear_probe(&grid, &state_here, gx, gz, 0.75)
-                || state_here.velocity.horizontal_sqr() < 0.01;
+                || !can_clear_probe(&delta, &state_here, gx, gz, 0.75)
+                || state_here.velocity.horizontal_sqr() < 0.01
+                || has_far_open_ob;
             let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked);
-            let progs = programs_for(&grid, &state_here);
+            let progs = programs_for(&delta, &state_here);
             let sprint_ok = sprint_allowed(&state_here);
+            let kit_edge_stop = kit.is_some();
 
             let mut expanded = 0usize;
             for &prog in &progs {
@@ -1302,7 +2164,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         break;
                     }
                     match exec_atomic_raw(
-                        &grid,
+                        &delta,
+                        Some(&grid),
                         &programs,
                         &state_here,
                         goal,
@@ -1313,6 +2176,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
                         label,
                         provenance,
                         sig,
+                        cur_place_trig,
+                        cur_clutch_trig,
+                        &restore_obs,
+                        kit_edge_stop,
                         &mut raw_learn_ticks,
                     ) {
                         AtomicOutcome::Failed => {}
@@ -1322,16 +2189,16 @@ pub(super) fn solve_defect<S: CorridorSource>(
                             if arr >= best.as_ref().map_or(u64::MAX, |b| b.0) {
                                 continue;
                             }
-                            if hit_goal {
+                            if hit_goal && ledger_clear {
                                 let (pl, full_s, full_o) = reconstruct(&arena, idx, vec![step], vec![obs]);
                                 best = Some((arr, pl, full_s, full_o));
                                 incumbent_at.get_or_insert(raw_learn_ticks);
                                 continue;
                             }
-                            if best_bucket.get(&Bucket::of(&end)).is_some_and(|&prev| prev <= arr) {
+                            if best_bucket.get(&Bucket::of(&end, node_ehash, cur_ledger.open.len() as u16, cur_counts.blocks > 0)).is_some_and(|&prev| prev <= arr) {
                                 continue;
                             }
-                            let p = priority_key_topo(arr, &end, goal, &topo);
+                            let p = priority_key_topo(arr, &end, goal, &topo, &cur_ledger, kit);
                             let nid = arena.len();
                             arena.push(ArenaNode {
                                 state: end,
@@ -1341,6 +2208,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
                                 parent: Some(idx),
                                 edge_steps: vec![step],
                                 edge_obs: vec![obs],
+                                edits: cur_edits.clone(),
+                                counts: cur_counts,
+                                ledger: cur_ledger.clone(),
                             });
                             heap.push(Reverse((p, arr, nid)));
                         }
@@ -1355,7 +2225,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
                             break;
                         }
                         if let AtomicOutcome::Stopped { end, step, hit_goal, obs } = exec_atomic_raw(
-                            &grid,
+                            &delta,
+                            Some(&grid),
                             &programs,
                             &state_here,
                             goal,
@@ -1366,21 +2237,25 @@ pub(super) fn solve_defect<S: CorridorSource>(
                             label,
                             provenance,
                             sig,
+                            cur_place_trig,
+                            cur_clutch_trig,
+                            &restore_obs,
+                            kit_edge_stop,
                             &mut raw_learn_ticks,
                         ) {
                             let arr = arr_here.saturating_add(u64::from(step.ticks));
                             if arr >= best.as_ref().map_or(u64::MAX, |b| b.0) {
                                 continue;
                             }
-                            if hit_goal {
+                            if hit_goal && ledger_clear {
                                 let (pl, full_s, full_o) = reconstruct(&arena, idx, vec![step], vec![obs]);
                                 best = Some((arr, pl, full_s, full_o));
                                 incumbent_at.get_or_insert(raw_learn_ticks);
                             } else {
-                                if best_bucket.get(&Bucket::of(&end)).is_some_and(|&prev| prev <= arr) {
+                                if best_bucket.get(&Bucket::of(&end, node_ehash, cur_ledger.open.len() as u16, cur_counts.blocks > 0)).is_some_and(|&prev| prev <= arr) {
                                     continue;
                                 }
-                                let p = priority_key_topo(arr, &end, goal, &topo);
+                                let p = priority_key_topo(arr, &end, goal, &topo, &cur_ledger, kit);
                                 let nid = arena.len();
                                 arena.push(ArenaNode {
                                     state: end,
@@ -1390,6 +2265,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
                                     parent: Some(idx),
                                     edge_steps: vec![step],
                                     edge_obs: vec![obs],
+                                    edits: cur_edits.clone(),
+                                    counts: cur_counts,
+                                    ledger: cur_ledger.clone(),
                                 });
                                 heap.push(Reverse((p, arr, nid)));
                             }

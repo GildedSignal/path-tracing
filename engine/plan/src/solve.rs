@@ -12,8 +12,7 @@ use crate::{
 };
 use words::Arguments;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kit { BareLegs }
+pub use crate::kit::{Kit, KitCone, KitCounts, KitOp, KitSpec, KitView, Obligation, ObligationLedger};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bracket { pub lb: u64, pub ub: Option<u64> }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +35,7 @@ pub struct WordStep {
     pub events: WordEvents,
     pub certificate: CorridorProof,
     pub end: StateAt,
+    pub edit: Option<KitOp>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct WordEvents {
@@ -173,7 +173,7 @@ impl Crossing<'_> {
         if self.words.last().is_some_and(|w| w.args.refined_yaw != args.refined_yaw) {
             events.marks.push(Event { tick: start.t, kind: EventKind::YawSwitch });
         }
-        self.words.push(WordStep { program, args, ticks, expected_end_t: m.t, events, certificate: self.proof.clone(), end });
+        self.words.push(WordStep { program, args, ticks, expected_end_t: m.t, events, certificate: self.proof.clone(), end, edit: None });
         Ok(())
     }
     fn bearing(&self, m: Motion, rows: &[Phase]) -> [u16; 2] {
@@ -351,14 +351,30 @@ pub fn solve<S: CorridorSource>(
     codec: &mut Interner,
     deadline_ticks: u64,
 ) -> SolveResult {
-    let Kit::BareLegs = kit;
+    let kit_view = match kit {
+        Kit::BareLegs => None,
+        Kit::Carried(spec) => Some(KitView::for_spec(spec)),
+    };
+    let kit_key = match kit {
+        Kit::BareLegs => 0,
+        Kit::Carried(spec) => spec.capability_key(),
+    };
+    let restore_required = match kit {
+        Kit::BareLegs => true,
+        Kit::Carried(spec) => spec.restore_required,
+    };
     let mut stages = crate::list![Stage::Bracket, Stage::ClosedCheck];
-    let bracket = Bracket { lb: to.lower_bound(from) as u64, ub: None };
+    let lb_u32 = match &kit_view {
+        None => to.lower_bound(from),
+        Some(kv) => kv.cone.lower_bound(from, to),
+    };
+    let bracket = Bracket { lb: u64::from(lb_u32), ub: None };
     let clock = std::time::Instant::now();
-    let mut work = || -> Result<PlanOutcome, String> {
+    let mut note: Option<String> = None;
+    let work = (|| -> Result<PlanOutcome, String> {
         if !store.bind_codec(codec) { return Ok(PlanOutcome::Unknown(Refusal::Schema)); }
         let at_goal = to.touched(from, from);
-        let known = if at_goal { None } else { store.words.borrow().route(from, to) };
+        let known = if at_goal { None } else { store.words.borrow().route_for_kit_in_world(from, to, kit_key, source) };
         let label = match known.as_ref().and_then(|route| route.words.first()) {
             Some(word) => word.certificate.label,
             None => source.entry_label(codec, from).map_err(|e| format!("entry label: {e:?}"))?,
@@ -371,7 +387,7 @@ pub fn solve<S: CorridorSource>(
             r
         } else {
             let blocked = [
-                ("difficulty", source.difficulty() != 0),
+                ("difficulty", kit_view.is_none() && source.difficulty() != 0),
                 ("effects", from.effects),
                 ("boat", from.profile.boat),
                 ("riding", from.profile.riding),
@@ -386,37 +402,50 @@ pub fn solve<S: CorridorSource>(
                 return Err(format!("word needs bare legs and invariant resource guards: {name}"));
             }
             stages.push(Stage::Extend);
-            let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
-            let ticks = store.preparation_ticks();
-            let g = store.gait(label, source, from, program)?;
-            thinking.entry_ns = clock.elapsed().as_nanos();
-            if store.preparation_ticks() != ticks {
-                stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
-            }
-            let support = source.support_cell(from);
-            let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
-            let top = f64::from(support[1]) + height;
-            let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
-            let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
-            let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
-            let mut crossing = Crossing {
-                gait: &g,
-                from,
-                goal: to,
-                top,
-                radius,
-                min: m.p,
-                max: m.p,
-                words: List::new(),
-                proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
-                bearing_ns: 0,
+            let cut_outcome = (|| -> Result<cut::Cut, String> {
+                let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
+                let ticks = store.preparation_ticks();
+                let g = store.gait(label, source, from, program)?;
+                thinking.entry_ns = clock.elapsed().as_nanos();
+                if store.preparation_ticks() != ticks {
+                    stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
+                }
+                let support = source.support_cell(from);
+                let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
+                let top = f64::from(support[1]) + height;
+                let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
+                let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
+                let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
+                let mut crossing = Crossing {
+                    gait: &g,
+                    from,
+                    goal: to,
+                    top,
+                    radius,
+                    min: m.p,
+                    max: m.p,
+                    words: List::new(),
+                    proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
+                    bearing_ns: 0,
+                };
+                let time = std::time::Instant::now();
+                let arrival = crossing.run(m);
+                thinking.bearing_ns = crossing.bearing_ns;
+                thinking.inverse_ns = time.elapsed().as_nanos() - thinking.bearing_ns;
+                cut::cut(crossing, arrival, source, codec)
+            })();
+            let cut_outcome = match cut_outcome {
+                Ok(c) => c,
+                Err(_) if kit_view.is_some() => {
+                    let p = [from.position.x.floor() as i32, from.position.y.floor() as i32, from.position.z.floor() as i32];
+                    let lo = [p[0].min(to.cell[0]) - 2, p[1].min(to.cell[1]) - 4, p[2].min(to.cell[2]) - 2];
+                    let hi = [p[0].max(to.cell[0]) + 2, p[1].max(to.cell[1]) + 4, p[2].max(to.cell[2]) + 2];
+                    cut::Cut::Defect(cut::Window { first: p, exceptions: 1, bounds: (lo, hi), prefixes: Vec::new() })
+                }
+                Err(e) => return Err(e),
             };
             let time = std::time::Instant::now();
-            let arrival = crossing.run(m);
-            thinking.bearing_ns = crossing.bearing_ns;
-            thinking.inverse_ns = time.elapsed().as_nanos() - thinking.bearing_ns;
-            let time = std::time::Instant::now();
-            match cut::cut(crossing, arrival, source, codec)? {
+            match cut_outcome {
                 cut::Cut::Clear(mut words) => {
                     if let Some(w) = words.first_mut() {
                         w.events.marks.push(Event { tick: from.t, kind: EventKind::FoodGuard { sprint_allowed: sprint_allowed(from) } });
@@ -433,21 +462,25 @@ pub fn solve<S: CorridorSource>(
                     stages.push(Stage::Cut);
                     let first_pos = win.first;
                     let exceptions = win.exceptions;
-                    let (raw_steps, obs) = match defect::solve_defect(from, to, label, win, source, store, codec, &mut stages, &mut thinking) {
+                    let (raw_steps, obs) = match defect::solve_defect(from, to, label, win, source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking) {
                         Ok(res) => res,
                         Err((ex_count, why)) => {
-                            let _ = why;
+                            note = Some(why);
                             return Ok(PlanOutcome::NeedsJoints { exception: first_pos, exceptions: ex_count, bracket });
                         }
                     };
                     let mut cert_ticks = 0u64;
                     let programs = words::tiny_programs();
-                    let (route, cached) = match certify::certify_route(from, to, label, source.provenance(), source, &programs, &raw_steps, &mut cert_ticks) {
+                    let (route, cached) = match certify::certify_route(from, to, label, source.provenance(), source, &programs, &raw_steps, kit_key, restore_required, &mut cert_ticks) {
                         Ok(c) => c,
-                        Err(Refusal::Coverage) => {
+                        Err((Refusal::Coverage, why)) => {
+                            note = Some(format!("certify:{why}"));
                             return Ok(PlanOutcome::NeedsJoints { exception: first_pos, exceptions, bracket });
                         }
-                        Err(r) => return Ok(PlanOutcome::Unknown(r)),
+                        Err((r, why)) => {
+                            note = Some(format!("certify:{why}"));
+                            return Ok(PlanOutcome::Unknown(r));
+                        }
                     };
                     if let Some(Stage::Defect { certify_ticks, .. }) = stages.iter_mut().rev().find(|s| matches!(s, Stage::Defect { .. })) {
                         *certify_ticks = cert_ticks;
@@ -456,8 +489,10 @@ pub fn solve<S: CorridorSource>(
                         let mut ws = store.words.borrow_mut();
                         ws.work.certify_ticks += cert_ticks;
                         ws.work.law_ticks += cert_ticks;
-                        ws.promote_route(&obs);
-                        ws.file_route(from, to, cached);
+                        if kit_view.is_none() || raw_steps.iter().all(|s| s.edit.is_none()) {
+                            ws.promote_route(&obs);
+                        }
+                        ws.file_route_for_kit(from, to, kit_key, cached);
                     }
                     stages.push(Stage::Compose);
                     route
@@ -475,9 +510,9 @@ pub fn solve<S: CorridorSource>(
             lattice_cost: Default::default(),
             thinking,
         }))
-    };
-    match work() {
-        Ok(outcome) => SolveResult { outcome, stages, explanation: None },
+    })();
+    match work {
+        Ok(outcome) => SolveResult { outcome, stages, explanation: note },
         Err(e) => SolveResult { outcome: PlanOutcome::Unknown(Refusal::StateOrContext), stages, explanation: Some(e) },
     }
 }

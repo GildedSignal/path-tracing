@@ -112,6 +112,10 @@ pub struct GeneratorSuperflatSource {
     pub scars:BTreeMap<BlockPos,Block>, pub provenance_hash:[u8;32],
     layers:BTreeMap<i32,Block>, unknown:BTreeMap<BlockPos,String>, costs:Cell<ReadCost>,
     first_uncovered:Cell<Option<BlockPos>>,
+    floor_state:Option<law::basis::cell::StateId>,
+    air_state:Option<law::basis::cell::StateId>,
+    layer_states:BTreeMap<i32,law::basis::cell::StateId>,
+    scar_states:BTreeMap<BlockPos,law::basis::cell::StateId>,
 }
 impl GeneratorSuperflatSource {
     pub fn first_uncovered(&self) -> Option<BlockPos> { self.first_uncovered.get() }
@@ -121,7 +125,7 @@ impl GeneratorSuperflatSource {
         for b in [&floor_block,&air_block] {bytes.extend(codec::legs_presence(b).expect("qualified generator model").bytes());}
         let mut provenance_hash=[0;32];provenance_hash[..16].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
         bytes.push(1);provenance_hash[16..].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
-        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),unknown:BTreeMap::new(),costs:Cell::default(),first_uncovered:Cell::new(None)}
+        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),unknown:BTreeMap::new(),costs:Cell::default(),first_uncovered:Cell::new(None),floor_state:None,air_state:None,layer_states:BTreeMap::new(),scar_states:BTreeMap::new()}
     }
     /// Factor the saved cells into A's supporting layers and sparse differences.
     /// This is ingestion, before the command clock. Playback reads the original snapshot.
@@ -134,7 +138,11 @@ impl GeneratorSuperflatSource {
         source.air_block=world::model(&world::BlockState {name:"minecraft:air".into(),properties:Vec::new()})?.clone();
         source.difficulty=world.difficulty();
         source.natural_regeneration=world.natural_regeneration();
-        for y in lo[1]..a[1] {if let Ok(b)=world.known_block([a[0],y,a[2]]) {if codec::legs_presence(b).is_ok() {source.layers.insert(y,b.clone());}}}
+        source.floor_state=world.state_id(a);
+        if source.floor_state.is_some() {
+            source.air_state=law::basis::cell::StateId::parse("minecraft:air",|_| None).ok();
+        }
+        for y in lo[1]..a[1] {if let Ok(b)=world.known_block([a[0],y,a[2]]) {if codec::legs_presence(b).is_ok() {source.layers.insert(y,b.clone()); if let Some(sid)=world.state_id([a[0],y,a[2]]) {source.layer_states.insert(y,sid);}}}}
         let mut differences=std::collections::HashMap::new();
         for y in lo[1]..=hi[1] {
             for z in lo[2]..=hi[2] {for x in lo[0]..=hi[0] {
@@ -151,6 +159,11 @@ impl GeneratorSuperflatSource {
                     }
                 };
                 if differs {source.scars.insert(p,block.clone());}
+                if let Some(sid)=world.state_id(p) {
+                    if source.base_state(p) != Some(sid) {
+                        source.scar_states.insert(p,sid);
+                    }
+                }
             }}
         }
         Ok(source)
@@ -158,6 +171,7 @@ impl GeneratorSuperflatSource {
     pub fn costs(&self)->ReadCost {self.costs.get()}
     pub fn reset_costs(&self) {self.costs.set(ReadCost::default());}
     fn base(&self,p:BlockPos)->&Block {if p[1]==self.floor_y {&self.floor_block} else {self.layers.get(&p[1]).unwrap_or(&self.air_block)}}
+    fn base_state(&self,p:BlockPos)->Option<law::basis::cell::StateId> {if p[1]==self.floor_y {self.floor_state} else {self.layer_states.get(&p[1]).copied().or(self.air_state)}}
     fn covered(&self,p:BlockPos)->bool {(0..3).all(|a|p[a]>=self.loaded_min[a] && p[a]<=self.loaded_max[a])}
 }
 impl World for GeneratorSuperflatSource {
@@ -172,6 +186,10 @@ impl World for GeneratorSuperflatSource {
     fn block(&self,p:BlockPos)->&Block {
         let mut c=self.costs.get();c.blocks+=1;self.costs.set(c);
         self.scars.get(&p).unwrap_or_else(||self.base(p))
+    }
+    fn state_id(&self,p:BlockPos)->Option<law::basis::cell::StateId> {
+        if !self.covered(p) || self.unknown.contains_key(&p) { return None; }
+        self.scar_states.get(&p).copied().or_else(|| self.base_state(p))
     }
     fn loaded(&self,p:BlockPos)->bool {let mut c=self.costs.get();c.loaded+=1;self.costs.set(c);self.covered(p) && !self.unknown.contains_key(&p)}
     fn difficulty(&self)->u8 {self.difficulty}

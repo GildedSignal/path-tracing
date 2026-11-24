@@ -21,6 +21,8 @@ pub mod solve;
 pub use solve::{solve, Bracket, Kit, Plan, PlanOutcome, Stage, WordStep};
 
 pub mod inline;
+pub mod kit;
+pub use kit::{KitCounts, KitOp, KitSpec, KitView};
 pub mod state_view;
 
 #[cfg(feature = "solve-counters")]

@@ -395,6 +395,7 @@ pub struct ObservedStep {
 
 #[derive(Clone, Debug)]
 pub struct CachedRoute {
+    pub kit_key: u64,
     pub motion_key: Vec<u64>,
     pub guard: Guard,
     pub damage_no_regen: f64,
@@ -421,6 +422,20 @@ pub(crate) fn motion_key(s: &PlayerState) -> Vec<u64> {
     key
 }
 
+fn rebase_route(orig: &Route, start_t: u64) -> Route {
+    let mut route = orig.clone();
+    let dt = start_t as i64 - route.words.first().map_or(start_t, |w| w.end.t - u64::from(w.ticks)) as i64;
+    if dt != 0 {
+        let rebase_t = |t: u64| (t as i64 + dt) as u64;
+        for w in &mut route.words {
+            w.expected_end_t = rebase_t(w.expected_end_t);
+            w.end.t = rebase_t(w.end.t);
+        }
+        route.end.t = rebase_t(route.end.t);
+    }
+    route
+}
+
 #[derive(Default)]
 pub struct WordStore {
     pub work: Work,
@@ -444,29 +459,56 @@ impl WordStore {
     }
 
     pub fn route(&self, start: &PlayerState, goal: Goal) -> Option<Route> {
+        self.route_for_kit(start, goal, 0)
+    }
+
+    pub fn route_for_kit(&self, start: &PlayerState, goal: Goal, kit_key: u64) -> Option<Route> {
         let list = self.routes.get(&goal.cell)?;
         let mk = motion_key(start);
         let guard = Guard::of(start);
         let entry = list
             .iter()
-            .find(|c| c.motion_key == mk && c.guard.admits(guard, c.damage_no_regen))?;
-        let mut route = entry.route.clone();
-        let dt = start.t as i64 - route.words.first().map_or(start.t, |w| w.end.t - u64::from(w.ticks)) as i64;
-        if dt != 0 {
-            let rebase_t = |t: u64| (t as i64 + dt) as u64;
-            for w in &mut route.words {
-                w.expected_end_t = rebase_t(w.expected_end_t);
-                w.end.t = rebase_t(w.end.t);
-            }
-            route.end.t = rebase_t(route.end.t);
-        }
-        Some(route)
+            .find(|c| c.kit_key == kit_key && c.motion_key == mk && c.guard.admits(guard, c.damage_no_regen))?;
+        Some(rebase_route(&entry.route, start.t))
     }
 
-    pub fn file_route(&mut self, _start: &PlayerState, goal: Goal, cached: CachedRoute) {
+    pub fn route_for_kit_in_world(
+        &self,
+        start: &PlayerState,
+        goal: Goal,
+        kit_key: u64,
+        world: &impl World,
+    ) -> Option<Route> {
+        let list = self.routes.get(&goal.cell)?;
+        let mk = motion_key(start);
+        let guard = Guard::of(start);
+        let env = (world.difficulty(), world.natural_regeneration(), world.min_y(), world.fast_lava());
+        let entry = list.iter().find(|c| {
+            c.kit_key == kit_key
+                && c.env == env
+                && c.motion_key == mk
+                && c.guard.admits(guard, c.damage_no_regen)
+                && c.reads.iter().all(|&(p, mask, digest)| {
+                    world
+                        .known_block(p)
+                        .ok()
+                        .and_then(|b| codec::cell(b, world.loaded(p), mask).ok())
+                        .is_some_and(|cell| codec::digest(cell.bytes()) == digest)
+                })
+        })?;
+        Some(rebase_route(&entry.route, start.t))
+    }
+
+    pub fn file_route(&mut self, start: &PlayerState, goal: Goal, cached: CachedRoute) {
+        self.file_route_for_kit(start, goal, 0, cached);
+    }
+
+    pub fn file_route_for_kit(&mut self, _start: &PlayerState, goal: Goal, kit_key: u64, mut cached: CachedRoute) {
+        cached.kit_key = kit_key;
         let bucket = self.routes.entry(goal.cell).or_default();
         if let Some(slot) = bucket.iter_mut().find(|c| {
-            c.motion_key == cached.motion_key
+            c.kit_key == cached.kit_key
+                && c.motion_key == cached.motion_key
                 && c.guard == cached.guard
                 && c.damage_no_regen == cached.damage_no_regen
         }) {
