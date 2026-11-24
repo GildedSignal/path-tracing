@@ -61,7 +61,7 @@ Learning opens where no set arrives or a bracket stays open: search in the law, 
 
 ## 6. Many bots: one mind in the server (detail/scales.md, detail/server.md)
 
-Bots are real players, driven by one engine in the server. Fields are shared, particles (bots, items, tasks) are individual; coupling only where footprints meet; a bot on a certified path is not ticked until something can touch it. Building is the same problem in (max, +).
+Bots are real players, driven ES-native by one engine toward a `10⁹`-bot target. Fields are shared; coupling happens only where footprints meet. Quiet streams stay folded in ES `shipmem` (`Form-P` + `Ef` scars + `seal()`) on `calendar::Wheel` (L3-resident); contacts promote to dense `Battle` (`push_pair`) and dissolve back to `Form-P`. Pure observer extraction reads only visible bots (`< 1 ms` max frame, zero mutation). One `16³` section + `4×4×4` 64-bit mask spine serves `O(1)` uniform-box queries (`law::face::advance`), reversible 4D `World(t)` edits, and `SpaceTimeIndex` wake-ups (streams, arrows, periodic `WorldGait`s). Building is (max, +).
 
 ## 7. The machine
 

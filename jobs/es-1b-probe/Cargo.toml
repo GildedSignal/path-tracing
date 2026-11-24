@@ -1,0 +1,8 @@
+[package]
+name = "es-1b-probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+law = { path = "../../engine/law" }
+plan = { path = "../../engine/plan" }

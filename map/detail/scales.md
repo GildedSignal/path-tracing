@@ -118,10 +118,10 @@ Demolition from the outside in is always accessible. Reversed, it is a build ord
 ### 4.7 Micro: data shaped like its access
 
 - **The log is the truth, state is a fold** (programs plus scars; exact replay).
-- **A bot's hot state is about 24 bytes** (segment id, phase, anchor, start tick): 10⁴ bots fit in L2.
+- **Active tuple vs. ES-folded streams:** an individual active/scarred bot's logical hot tuple is ~24–32 B (`10⁴` fit in L2), while quiet streams folded in ES `shipmem` (`Form-P` + `Ef` scars + `seal()`) compress `10⁹` bots + `10⁶` scars into `4.28 MB` (`0.0045 B/bot`), resident in L3 ([es-1b-probe](../../jobs/es-1b-probe/report.md)).
 - **The planning world lives in class space:** maybe 1 to 6 KB per chunk, so 10k × 10k fits in 0.4 to 2 GB against 12 to 39 GB in the JVM. The engine holds the map; the server holds tubes.
 - **Times are integer ticks,** stored as small deltas, so min-plus runs 16 lanes wide.
-- **The slack queue is a timing wheel;** a block edit finds its certificates through an inverted index per section. A wildcard's cone is one entry on it: checked at the earliest tick it can reach a worldtube, never every tick.
+- **The slack queue is ES `calendar::Wheel`;** a block edit finds its certificates through the `16³` section / `64`-bit `4×4×4` subcell `SpaceTimeIndex`, waking intersecting streams (`1` handle, `O(1)` split), flying arrows, and periodic `WorldGait` clocks (`0` wheel wake-ups while undisturbed). A wildcard's cone is one entry on it: checked at the earliest tick it can reach a worldtube, never every tick.
 - **Latency before throughput** (S124). Thinking that fits before the next dispatch opportunity costs zero ticks, so the acting path is sized in microseconds and guarded at p99: no allocation, no lock, one pinned thread, results published by a pointer swap.
 - **The L3 is the resource:** 96 MB on this machine, a hit about 10 ns against about 80 for memory (Fermi inputs). The hot set (the generator store, the active corridor's sets and labels, the presence planes) must fit it.
 - **Shaped like its access.** A set is a sorted array of piece edges (families, points and holds, S203), found by a 16-lane compare and a popcount with no branch. A label is two parallel arrays swept once. A presence plane is a bitboard: a section is eight 512-bit words.

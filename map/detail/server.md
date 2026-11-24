@@ -17,7 +17,7 @@ Swarm 0 (`D:\path-tracing-evidence\swarm-0-20261109-d`): server-side `ServerPlay
 - **Memory:** about 2.5 MB resident per bot (1,751 → 1,994 MiB from 1 to 100 bots). At 10⁴ bots that's about 25 GB on a 31 GB machine.
 - **Next measurement:** Swarm 0 again, through the packet path, with the cost split by component (`Profile.java`). Until then the 30 µs kill threshold has no data behind it.
 
-The Fermi floor (representation.md) is about 3 ms per tick at 10⁴ bots, with one mind and lazy bots. The server mod, not the planner, decides scale.
+The Fermi floor (representation.md) is about 3 ms per tick at 10⁴ active/visible bots, with one mind and lazy bots, while ES-folded streams extend total engine residency to 10⁹ bots (`O(visible + active contacts)` server work; [es-1b-probe](../../jobs/es-1b-probe/report.md)). The server mod, not the planner, decides scale.
 
 ## The savings (all in the server mod)
 
@@ -51,11 +51,11 @@ A bot never sees its own packets, so "the connection sends nothing" would freeze
 ## Lazy bots
 
 A bot executing a certified word skips the server's tick, and its state is the word evaluated at the current tick. Skipping the tick drops a lot (`ServerPlayer.tick`, `Player.tick`, `FoodData.tick`, stats, cooldowns, pickups, pushing, `Entity.move`'s vibrations and `stepOn`/`fallOn`). So:
-- **(a) Positions are written every tick** (`absSnapTo`, plus `ChunkMap.move` on a section change). Chunk tickets, mobs, spawning and despawn never act on a ghost.
+- **(a) Positions stay folded outside live light cones; observed/active bots sync per tick:** bots outside every human observer's and active loaded chunk's light cone stay folded in ES `Form-P` streams (`0` per-tick server work, `0` `absSnapTo` calls). For bots inside visible frustums or active loaded areas, pure observer light-cone extraction reads state read-only (`O(visible)`, `< 1 ms` worst frame, zero simulation mutation) and writes vanilla positions (`absSnapTo`, plus `ChunkMap.move` on a section change) so chunk tickets, mobs, spawning and despawn never act on a ghost.
 - **(b) Lazy only on a quiet footprint:** the word's footprint, widened by listener and interaction radii, holds no hooked block, no game-event listener (sculk) and no entity.
 - **(c) Materializing writes a state record:** food with its tick timer and exhaustion, effects, cooldowns, air, fire, freeze and portal timers, `tickCount`, stats.
 - **(d) A frozen gate:** lazy-then-materialized equals ticked-throughout, on the saved player NBT and the fields in (c).
-- **(e) Visibility covers every channel** a real client receives: tracking, waypoints, sounds, block changes. A bot visible through tracking, sounds or block changes is ticked. Bots do appear on the locator bar (S52). It carries only positions, and (a) writes those every tick, so the locator bar alone doesn't force a tick.
+- **(e) Visibility covers every channel** a real client receives: tracking, waypoints, sounds, block changes. A bot visible to a live observer through tracking, sounds or block changes renders from observer extraction or ticks when interactive; bots outside every observer's and active loaded chunk's light cone do zero per-tick work. Bots do appear on the locator bar (S52) when in observed range; it carries only positions, and (a) extracts those cleanly without waking the bot's tick.
 - At the 1,000-bot flight Julien sees every bot, so laziness saves nothing there. At 30 µs per active bot that's 30 ms per tick: fine at 20 TPS, and about 330 bots fit at 100 TPS.
 
 ## Hosting the engine: a separate process

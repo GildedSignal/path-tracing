@@ -52,13 +52,11 @@ Each is folded when its step comes and a judge or a flight is there for it; ever
 
 - Judge Astra's checkpoint `c74c4a5c` (`wt/flight-ladder`): tests, thinking ≤ 15 µs, the 7 MB of full regions out of the commit (read `lab/track-world/` instead); merge what passes; he flies flowers and stonestaircase. Astra resumes from `jobs/flight-ladder/continue.md` when Codex resets.
 - `wt/port-fold`'s commits after `38a49808` are local, unpushed. After Astra's merge: `plan` onto the event face (`arith.rs`, `events.rs`'s inverse half go), then the 40 B of the hot state.
-- Tonight's lanes, claims unchecked: GLM's four in `lab/results/local-20261123-2*` (154 ground classes; 15 body rows, 0 differing ticks; 21 clock rows, 0 mismatches; steps, fences and stairs, 0 deviations over 331,200 ticks). Vibe's step lane claims the opposite (below); its ground and body lanes wrote no dossier; its clock lane did not run. `glm-chain.ps1` has no `-Model`; `lab/tests/test-harness.sh` needs the deleted `lab/checker.md`; no meter reads Mistral.
+- Four GLM lanes audited (`lab/results/local-20261123-2*`): 154 ground classes (`17,040` ticks, `0` mismatches), 15 affine body rows (`45/45` exact), 21 clock rows (`36,400` ticks, `0` mismatches), and `8,280` `LocalPlayer` step/fence/stair runs (`331,200` ticks, `0` deviations). Vibe fails the Checked-band bake-off (2 empty `39 B` dossiers; step-up `Witness.java` subclasses `Player` instead of `LocalPlayer` with `setSprinting(true)` and `zza = 1.0f`). `glm-chain.ps1` lacks `-Model`; `lab/tests/test-harness.sh` cites deleted `lab/checker.md`; no meter reads Mistral.
 - 73 of his 91 track recordings wait for their world (51 lack chunks, 22 predate the fixture).
 - On disk for him to delete: `D:\pt-base`, `D:\path-tracing-deps\omp\omp-18.16.0.exe.bak`.
 
 ## Known anomalies (each blocks only what depends on it)
-
-- Step-up: GLM's lane finds `main`'s law bit-exact on 8,280 jar runs of steps, slabs, stairs, fences, walls, carpets, snow and trapdoors; Vibe's lane, on 2,448 runs, finds 620 diverging (`mismatches.tsv` in `lab/results/local-20261123-211111-10332-1-0-gen-step-fence-stair-witnesses`). Reproduce one of Vibe's rows against the jar first.
 
 - Entity push sits unwired on `wt/port-fold` (`Sketch` in `entity_contact.rs` / `sim.rs`), not yet flown on `main` (five bots on one crossing).
 - Sprint at an exactly axis-aligned wall depends on rounding in Mojang's own `acos` (`movement.rs:818`), ported faithfully.

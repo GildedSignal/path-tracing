@@ -2,7 +2,7 @@
 
 "make minecraft's best path tracing algo in the world, which means we'll have to go first principle, it should be extremely fast to run and get to the point in the shortest amount of time T" (S6). "this is meant to be world class, garbage in, garbage out." (X1)
 
-Path tracing here means pathfinding: a bot reaches the point Julien clicks with the stick in the least time T. Then many bots, then thousands, as real players on his server, sharing work (S18, S35, S45): "we're building a cathedral here."
+Path tracing here means pathfinding: a bot reaches the point Julien clicks with the stick in the least time T. Then many bots — up to one billion (`10⁹`) resident on ES generators and scars, with live players in the observer's light cone sharing work on his server (S18, S35, S45): "we're building a cathedral here."
 
 ## T, the one currency
 
@@ -39,6 +39,7 @@ Each row is shown beside its Fermi floor, with the gap in orders of magnitude.
 | a law tick | 0.1–0.3 µs | 0.6–0.95 µs | ~0.5 order |
 | a new joint pattern | ~12 ms, once | — | — |
 | 10⁴ bots deciding | ~0.03 core | — | — |
+| 10⁹ bots (ES Form-P + 10⁶ scars, offline probe) | L3 resident, O(1) edit split, < 1 ms observer frame | 4.28 MB (0.0045 B/bot), 172 µs split, 129.8 µs max frame | offline; server flight pending |
 
 ## Where the work is
 
