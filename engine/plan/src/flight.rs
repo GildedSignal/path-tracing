@@ -113,7 +113,10 @@ pub fn solve_track(track:&Track,path:&std::path::Path)->Result<(u32,u128),String
         let repeat_ns=repeat.elapsed().as_nanos();
         let ticks=|r:&crate::solve::SolveResult|match &r.outcome {PlanOutcome::Ready(p)=>Some(p.ticks),_=>None};
         if ticks(&result)!=ticks(&again) {return Err("same command changed verdict".into());}
-        eprintln!("MEASURE first_us={micros} repeat_ns={repeat_ns} prepared={prepared}/{} his={:?}",store.preparation_ticks()-prepared,track.his.iter().min());
+        let w = store.words.borrow().work;
+        eprintln!("MEASURE first_us={micros} repeat_ns={repeat_ns} prepared={prepared}/{} his={:?} proposals={} hits={} learn_ticks={} certify_ticks={} words={} compounds={} stages={:?}",
+            store.preparation_ticks()-prepared, track.his.iter().min(),
+            w.proposals_tried, w.proposal_hits, w.learn_ticks, w.certify_ticks, w.words_total, w.compounds_total, result.stages);
     }
     let PlanOutcome::Ready(plan)=result.outcome else {
         return Err(format!("{:?} {:?}",result.outcome,result.explanation));

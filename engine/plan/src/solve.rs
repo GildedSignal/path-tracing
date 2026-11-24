@@ -1,285 +1,483 @@
 //! One command extends a word, then certifies its swept corridor.
 use std::sync::Arc;
-use law::{Aabb,BlockPos,PlayerState,Vec3,codec::{Interner,LabelId,proof::Refusal}};
-use crate::{Goal,events::{self,Event,EventKind},inline::List,lattice,source::{CorridorSource,CorridorResult,CorridorProof},state_view::StateAt,store::{Gait,GeneratorStore,Phase,SPRINT,SPRINT_JUMP,WALK,sprint_allowed}};
+use law::{Aabb, BlockPos, PlayerState, Vec3, codec::{Interner, LabelId, proof::Refusal}};
+use crate::{
+    Goal, certify, cut, defect,
+    events::{self, Event, EventKind},
+    inline::List,
+    lattice,
+    source::{CorridorProof, CorridorResult, CorridorSource},
+    state_view::StateAt,
+    store::{Gait, GeneratorStore, Phase, SPRINT, SPRINT_JUMP, WALK, sprint_allowed},
+};
 use words::Arguments;
 
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum Kit {BareLegs}
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub struct Bracket {pub lb:u64,pub ub:Option<u64>}
-#[derive(Clone,Debug,PartialEq,Eq)]
-pub enum Stage {Bracket,ClosedCheck,Extend,Cut,Compose,Allocate,Learn {program:u16,ticks:u64,nanos:u128}}
-#[derive(Clone,Debug)]
-pub struct WordStep {pub program:u16,pub args:Arguments,pub ticks:u32,pub expected_end_t:u64,pub events:WordEvents,pub certificate:CorridorProof,pub end:StateAt}
-#[derive(Clone,Debug,Default)]
-pub struct WordEvents {
-    marks:List<Event,3>, span:Option<Span>,
-    trace:std::cell::OnceCell<(Vec<Event>,usize)>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kit { BareLegs }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bracket { pub lb: u64, pub ub: Option<u64> }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Bracket,
+    ClosedCheck,
+    Extend,
+    Cut,
+    Defect { proposals: u32, learn_ticks: u64, certify_ticks: u64, nanos: u128 },
+    Compose,
+    Allocate,
+    Learn { program: u16, ticks: u64, nanos: u128 },
 }
-#[derive(Clone,Debug)]
-struct Span {gait:Arc<Gait>,start:Motion,top:f64,held:bool,yaw:u16,ticks:u32,count:u32}
+#[derive(Clone, Debug)]
+pub struct WordStep {
+    pub program: u16,
+    pub args: Arguments,
+    pub ticks: u32,
+    pub expected_end_t: u64,
+    pub events: WordEvents,
+    pub certificate: CorridorProof,
+    pub end: StateAt,
+}
+#[derive(Clone, Debug, Default)]
+pub struct WordEvents {
+    pub(crate) marks: List<Event, 3>,
+    pub(crate) span: Option<Span>,
+    trace: std::cell::OnceCell<(Vec<Event>, usize)>,
+}
 impl WordEvents {
-    fn trace(&self)->&(Vec<Event>,usize) {
+    pub(crate) fn push_mark_unique(&mut self, ev: Event) {
+        if !self.marks.iter().any(|e| e == &ev) {
+            self.marks.push(ev);
+        }
+    }
+    fn trace(&self) -> &(Vec<Event>, usize) {
         self.trace.get_or_init(|| {
-            let mut events=self.marks.to_vec();let mut segments=0;
-            if let Some(s)=&self.span {
-                let mut m=s.start;let dir=direction(s.yaw);
-                let rows=if s.held {std::slice::from_ref(&s.gait.grounded)} else {&s.gait.phases};
-                let mut ds=[Vec::new(),Vec::new()];
-                let n=if s.count>1 {rows.len()} else {s.ticks as usize};
+            let mut events = self.marks.to_vec();
+            let mut segments = 0;
+            if let Some(s) = &self.span {
+                let mut m = s.start;
+                let dir = direction(s.yaw);
+                let rows = if s.held { std::slice::from_ref(&s.gait.grounded) } else { &s.gait.phases };
+                let mut ds = [Vec::new(), Vec::new()];
+                let n = if s.count > 1 { rows.len() } else { s.ticks as usize };
                 for _ in 0..n {
-                    let phase=m.phase;
-                    let d=m.tick(&rows[phase],dir,(phase+1)%rows.len(),s.top);
-                    for a in 0..2 {ds[a].push(d[a]);}
+                    let phase = m.phase;
+                    let d = m.tick(&rows[phase], dir, (phase + 1) % rows.len(), s.top);
+                    for a in 0..2 { ds[a].push(d[a]); }
                 }
-                for (axis,(ds,p)) in ds.into_iter().zip([s.start.p.x,s.start.p.z]).enumerate() {
-                    segments+=events::Map::axis(axis,ds).trace_boundaries(p,s.ticks.into(),|t|
-                        events.push(Event {tick:s.start.t+t,kind:EventKind::BinadeCrossing})).1;
+                for (axis, (ds, p)) in ds.into_iter().zip([s.start.p.x, s.start.p.z]).enumerate() {
+                    segments += events::Map::axis(axis, ds).trace_boundaries(p, s.ticks.into(), |t|
+                        events.push(Event { tick: s.start.t + t, kind: EventKind::BinadeCrossing })).1;
                 }
             }
-            events.sort_by_key(|e|e.tick);
+            events.sort_by_key(|e| e.tick);
             events.dedup();
-            (events,segments)
+            (events, segments)
         })
     }
-    pub fn map_segments(&self)->usize {self.trace().1}
+    pub fn map_segments(&self) -> usize { self.trace().1 }
 }
 impl std::ops::Deref for WordEvents {
-    type Target=[Event];
-    fn deref(&self)->&[Event] {&self.trace().0}
+    type Target = [Event];
+    fn deref(&self) -> &[Event] { &self.trace().0 }
 }
-#[derive(Clone,Debug)]
-pub struct Plan {pub ticks:u64,pub words:List<WordStep,12>,pub end:StateAt,pub bracket:Bracket,pub label:LabelId,pub deadline:u64,pub lattice_cost:lattice::LatticeCost,pub thinking:ThinkingCosts}
-#[derive(Clone,Copy,Default,Debug)]
-pub struct ThinkingCosts {pub entry_ns:u128,pub bearing_ns:u128,pub inverse_ns:u128,pub output_ns:u128}
-#[derive(Clone,Debug)]
-pub enum PlanOutcome {Ready(Plan),NeedsJoints {exception:BlockPos,exceptions:usize,bracket:Bracket},Unknown(Refusal)}
-#[derive(Clone,Debug)]
-pub struct SolveResult {pub outcome:PlanOutcome,pub stages:List<Stage,16>,pub explanation:Option<String>}
+#[derive(Clone, Debug)]
+pub(crate) struct Span {
+    pub(crate) gait: Arc<Gait>,
+    pub(crate) start: Motion,
+    pub(crate) top: f64,
+    pub(crate) held: bool,
+    pub(crate) yaw: u16,
+    pub(crate) ticks: u32,
+    pub(crate) count: u32,
+}
+#[derive(Clone, Debug)]
+pub struct Plan {
+    pub ticks: u64,
+    pub words: List<WordStep, 12>,
+    pub end: StateAt,
+    pub bracket: Bracket,
+    pub label: LabelId,
+    pub deadline: u64,
+    pub lattice_cost: lattice::LatticeCost,
+    pub thinking: ThinkingCosts,
+}
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ThinkingCosts { pub entry_ns: u128, pub bearing_ns: u128, pub inverse_ns: u128, pub output_ns: u128 }
+#[derive(Clone, Debug)]
+pub enum PlanOutcome { Ready(Plan), NeedsJoints { exception: BlockPos, exceptions: usize, bracket: Bracket }, Unknown(Refusal) }
+#[derive(Clone, Debug)]
+pub struct SolveResult { pub outcome: PlanOutcome, pub stages: List<Stage, 16>, pub explanation: Option<String> }
 
-#[derive(Clone,Copy,Debug)]
-struct Motion {p:Vec3,v:Vec3,phase:usize,t:u64,wanted:Vec3}
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Motion { pub(crate) p: Vec3, pub(crate) v: Vec3, pub(crate) phase: usize, pub(crate) t: u64, pub(crate) wanted: Vec3 }
 impl Motion {
-    fn tick(&mut self,row:&Phase,dir:[f64;2],next:usize,top:f64)->[f64;2] {
-        #[cfg(feature="solve-counters")] crate::solve_meter::phase(row);
-        if self.v.horizontal_sqr()<9.0e-6 {self.v.x=0.0;self.v.z=0.0;}
-        let axis=|v:f64,d:f64| (v+d*row.impulse)+d*row.forward;
-        let x=axis(self.v.x,dir[0]);let z=axis(self.v.z,dir[1]);
-        self.wanted=Vec3::new(x,row.wanted_y,z);
-        let moved=|d:f64|if row.contact && d.abs()<1.0e-7 {0.0} else {d};
-        let ds=[moved(x),moved(z)];
-        self.p.x+=ds[0];self.p.z+=ds[1];
-        self.p.y=if row.after.on_ground {top} else {self.p.y+row.dy};
-        self.v=Vec3::new((x*row.factor)*row.drag,row.after.velocity.y,(z*row.factor)*row.drag);
-        self.t+=1;self.phase=next;
+    pub(crate) fn tick(&mut self, row: &Phase, dir: [f64; 2], next: usize, top: f64) -> [f64; 2] {
+        #[cfg(feature = "solve-counters")] crate::solve_meter::phase(row);
+        if self.v.horizontal_sqr() < 9.0e-6 { self.v.x = 0.0; self.v.z = 0.0; }
+        let axis = |v: f64, d: f64| (v + d * row.impulse) + d * row.forward;
+        let x = axis(self.v.x, dir[0]);
+        let z = axis(self.v.z, dir[1]);
+        self.wanted = Vec3::new(x, row.wanted_y, z);
+        let moved = |d: f64| if row.contact && d.abs() < 1.0e-7 { 0.0 } else { d };
+        let ds = [moved(x), moved(z)];
+        self.p.x += ds[0];
+        self.p.z += ds[1];
+        self.p.y = if row.after.on_ground { top } else { self.p.y + row.dy };
+        self.v = Vec3::new((x * row.factor) * row.drag, row.after.velocity.y, (z * row.factor) * row.drag);
+        self.t += 1;
+        self.phase = next;
         ds
     }
 }
-fn direction(yaw:u16)->[f64;2] {let (x,z)=lattice::direction(yaw);[x,z]}
-fn dot(a:Vec3,b:[f64;2])->f64 {a.x*b[0]+a.z*b[1]}
-fn cross(a:Vec3,b:[f64;2])->f64 {a.x*b[1]-a.z*b[0]}
+pub(crate) fn direction(yaw: u16) -> [f64; 2] { let (x, z) = lattice::direction(yaw); [x, z] }
+fn dot(a: Vec3, b: [f64; 2]) -> f64 { a.x * b[0] + a.z * b[1] }
+fn cross(a: Vec3, b: [f64; 2]) -> f64 { a.x * b[1] - a.z * b[0] }
 
-struct Crossing<'a> {
-    gait:&'a Arc<Gait>, from:&'a PlayerState, goal:Goal, top:f64, radius:f64,
-    min:Vec3,max:Vec3, words:List<WordStep,12>, proof:CorridorProof, bearing_ns:u128,
+pub(crate) struct Crossing<'a> {
+    pub(crate) gait: &'a Arc<Gait>,
+    pub(crate) from: &'a PlayerState,
+    pub(crate) goal: Goal,
+    pub(crate) top: f64,
+    pub(crate) radius: f64,
+    pub(crate) min: Vec3,
+    pub(crate) max: Vec3,
+    pub(crate) words: List<WordStep, 12>,
+    pub(crate) proof: CorridorProof,
+    pub(crate) bearing_ns: u128,
 }
 impl Crossing<'_> {
-    fn include(&mut self,p:Vec3) {
-        self.min=Vec3::new(self.min.x.min(p.x),self.min.y.min(p.y),self.min.z.min(p.z));
-        self.max=Vec3::new(self.max.x.max(p.x),self.max.y.max(p.y),self.max.z.max(p.z));
+    fn include(&mut self, p: Vec3) {
+        self.min = Vec3::new(self.min.x.min(p.x), self.min.y.min(p.y), self.min.z.min(p.z));
+        self.max = Vec3::new(self.max.x.max(p.x), self.max.y.max(p.y), self.max.z.max(p.z));
     }
-    fn emit(&mut self,start:Motion,m:Motion,row:&Phase,program:u16,yaw:u16,count:u64)->Result<(),String> {
-        if start.t==m.t {return Ok(());}
-        let mut end=StateAt::shared(row.after.clone());
-        end.position=m.p;end.velocity=m.v;end.movement=Some(m.wanted);end.t=m.t;end.yaw=lattice::yaw(yaw);
-        end.main_supporting_block=row.after.main_supporting_block.map(|_|[m.p.x.floor() as i32,self.proof.min[1],m.p.z.floor() as i32]);
-        end.health=self.from.health;end.food_level=self.from.food_level;end.food_tick_timer=self.from.food_tick_timer;
-        end.saturation=self.from.saturation;end.exhaustion=self.from.exhaustion;
-        let args=Arguments {count:count.try_into().map_err(|_|"count width")?,refined_yaw:Some(end.yaw),..Default::default()};
-        let ticks=(m.t-start.t).try_into().map_err(|_|"tick width")?;
-        let mut events=WordEvents {span:Some(Span {gait:self.gait.clone(),start,top:self.top,
-            held:program!=SPRINT_JUMP,yaw,ticks,count:args.count}),..Default::default()};
-        if self.words.last().is_some_and(|w|w.args.refined_yaw!=args.refined_yaw) {events.marks.push(Event {tick:start.t,kind:EventKind::YawSwitch});}
-        self.words.push(WordStep {program,args,ticks,expected_end_t:m.t,
-            events,certificate:self.proof.clone(),end});
+    fn emit(&mut self, start: Motion, m: Motion, row: &Phase, program: u16, yaw: u16, count: u64) -> Result<(), String> {
+        if start.t == m.t { return Ok(()); }
+        let mut end = StateAt::shared(row.after.clone());
+        end.position = m.p;
+        end.velocity = m.v;
+        end.movement = Some(m.wanted);
+        end.t = m.t;
+        end.yaw = lattice::yaw(yaw);
+        end.main_supporting_block = row.after.main_supporting_block.map(|_| [m.p.x.floor() as i32, self.proof.min[1], m.p.z.floor() as i32]);
+        end.health = self.from.health;
+        end.food_level = self.from.food_level;
+        end.food_tick_timer = self.from.food_tick_timer;
+        end.saturation = self.from.saturation;
+        end.exhaustion = self.from.exhaustion;
+        let args = Arguments { count: count.try_into().map_err(|_| "count width")?, refined_yaw: Some(end.yaw), ..Default::default() };
+        let ticks = (m.t - start.t).try_into().map_err(|_| "tick width")?;
+        let mut events = WordEvents {
+            span: Some(Span { gait: self.gait.clone(), start, top: self.top, held: program != SPRINT_JUMP, yaw, ticks, count: args.count }),
+            ..Default::default()
+        };
+        if self.words.last().is_some_and(|w| w.args.refined_yaw != args.refined_yaw) {
+            events.marks.push(Event { tick: start.t, kind: EventKind::YawSwitch });
+        }
+        self.words.push(WordStep { program, args, ticks, expected_end_t: m.t, events, certificate: self.proof.clone(), end });
         Ok(())
     }
-    // Momentum shifts the origin of the bearing. Sum the geometric tail of the
-    // carried velocity over one period; this chooses an aim, never a touch tick.
-    fn bearing(&self,m:Motion,rows:&[Phase])->[u16;2] {
-        let mut drag=1.0;let mut carry=0.0;
+    fn bearing(&self, m: Motion, rows: &[Phase]) -> [u16; 2] {
+        let mut drag = 1.0;
+        let mut carry = 0.0;
         for i in 0..rows.len() {
-            let row=&rows[(m.phase+i)%rows.len()];
-            carry+=drag;drag*=row.factor*row.drag;
+            let row = &rows[(m.phase + i) % rows.len()];
+            carry += drag;
+            drag *= row.factor * row.drag;
         }
-        let d=self.goal.center().minus(m.p);
-        let memory=carry/(1.0-drag);
-        lattice::bracket(d.x-memory*m.v.x,d.z-memory*m.v.z)
+        let d = self.goal.center().minus(m.p);
+        let memory = carry / (1.0 - drag);
+        lattice::bracket(d.x - memory * m.v.x, d.z - memory * m.v.z)
     }
-    fn run(&mut self,mut m:Motion)->Result<(),String> {
-        let gait=self.gait;
-        let mut held=gait.program==WALK;
+    fn run(&mut self, mut m: Motion) -> Result<(), String> {
+        let gait = self.gait;
+        let mut held = gait.program == WALK;
         loop {
-            let rows=if held {std::slice::from_ref(&gait.grounded)} else {&gait.phases};
-            let program=if held && gait.program==SPRINT_JUMP {SPRINT} else {gait.program};
-            let clock=std::time::Instant::now();
-            let pair=self.bearing(m,rows);
-            let yaw=pair[0];let dir=direction(yaw);
-            self.bearing_ns+=clock.elapsed().as_nanos();
-            let mut start=m;
+            let rows = if held { std::slice::from_ref(&gait.grounded) } else { &gait.phases };
+            let program = if held && gait.program == SPRINT_JUMP { SPRINT } else { gait.program };
+            let clock = std::time::Instant::now();
+            let pair = self.bearing(m, rows);
+            let yaw = pair[0];
+            let dir = direction(yaw);
+            self.bearing_ns += clock.elapsed().as_nanos();
+            let mut start = m;
             loop {
-                let before=m;
-                let mut lo=before.p;let mut hi=before.p;
-                // A partial cycle at entry ends at the next landing.
+                let before = m;
+                let mut lo = before.p;
+                let mut hi = before.p;
                 for i in m.phase..rows.len() {
-                    let next=if i+1==rows.len() {0} else {i+1};
-                    m.tick(&rows[i],dir,next,self.top);
-                    lo=Vec3::new(lo.x.min(m.p.x),lo.y.min(m.p.y),lo.z.min(m.p.z));
-                    hi=Vec3::new(hi.x.max(m.p.x),hi.y.max(m.p.y),hi.z.max(m.p.z));
+                    let next = if i + 1 == rows.len() { 0 } else { i + 1 };
+                    m.tick(&rows[i], dir, next, self.top);
+                    lo = Vec3::new(lo.x.min(m.p.x), lo.y.min(m.p.y), lo.z.min(m.p.z));
+                    hi = Vec3::new(hi.x.max(m.p.x), hi.y.max(m.p.y), hi.z.max(m.p.z));
                 }
-                self.include(lo);self.include(hi);
-                let height=self.from.pose.height();
-                let body=|p|Aabb::player(p,height);
-                if self.goal.touched_boxes(body(lo),body(hi)) {
-                    let mut probe=before;
+                self.include(lo);
+                self.include(hi);
+                let height = self.from.pose.height();
+                let body = |p| Aabb::player(p, height);
+                if self.goal.touched_boxes(body(lo), body(hi)) {
+                    let mut probe = before;
                     for i in before.phase..rows.len() {
-                        let prior=probe.p;
-                        probe.tick(&rows[i],dir,if i+1==rows.len() {0} else {i+1},self.top);
-                        if self.goal.touched_boxes(body(prior),body(probe.p)) {
-                            self.emit(start,probe,&rows[i],program,yaw,1)?;
+                        let prior = probe.p;
+                        probe.tick(&rows[i], dir, if i + 1 == rows.len() { 0 } else { i + 1 }, self.top);
+                        if self.goal.touched_boxes(body(prior), body(probe.p)) {
+                            self.emit(start, probe, &rows[i], program, yaw, 1)?;
                             return Ok(());
                         }
                     }
                 }
-                let remaining=self.goal.center().minus(m.p);
-                let projection=dot(remaining,dir);
-                // B can enter the next jump's swept horizontal interval. Read
-                // that jump first, then hold this landing if the jump misses B.
-                let edge=(self.radius+0.5)*(dir[0].abs()+dir[1].abs());
-                if projection<=edge && !held && before.phase==0 {
-                    m=before;
-                    self.emit(start,m,gait.phases.last().unwrap(),program,yaw,1)?;
-                    let ground_body=body(Vec3::new(m.p.x,self.top,m.p.z));
-                    let (above,below)=self.goal.axis_sides(ground_body,ground_body,1);
-                    if !(above && below) {return Err("goal lies outside the landing's vertical interval".into());}
-                    held=true;break;
+                let remaining = self.goal.center().minus(m.p);
+                let projection = dot(remaining, dir);
+                let edge = (self.radius + 0.5) * (dir[0].abs() + dir[1].abs());
+                if projection <= edge && !held && before.phase == 0 {
+                    m = before;
+                    self.emit(start, m, gait.phases.last().unwrap(), program, yaw, 1)?;
+                    let ground_body = body(Vec3::new(m.p.x, self.top, m.p.z));
+                    let (above, below) = self.goal.axis_sides(ground_body, ground_body, 1);
+                    if !(above && below) { return Err("goal lies outside the landing's vertical interval".into()); }
+                    held = true;
+                    break;
                 }
-                if projection<=0.0 && held {
-                    self.emit(start,m,&gait.grounded,program,yaw,1)?;
-                    if remaining.horizontal_sqr()>=self.goal.center().minus(start.p).horizontal_sqr() {
+                if projection <= 0.0 && held {
+                    self.emit(start, m, &gait.grounded, program, yaw, 1)?;
+                    if remaining.horizontal_sqr() >= self.goal.center().minus(start.p).horizontal_sqr() {
                         return Err("bearing cannot bring the body to the goal".into());
                     }
                     break;
                 }
-                if before.phase!=0 || m.v.x!=before.v.x || m.v.z!=before.v.z {continue;}
+                if before.phase != 0 || m.v.x != before.v.x || m.v.z != before.v.z { continue; }
 
-                // At equal velocities the next period has the same addition operands.
-                // The bearing changes at the second table yaw, or at B's near face.
-                self.emit(start,m,rows.last().unwrap(),program,yaw,1)?;
-                let mut dx=List::<f64,16>::new();let mut dz=List::<f64,16>::new();
-                let mut probe=m;
-                for (i,row) in rows.iter().enumerate() {
-                    let d=probe.tick(row,dir,if i+1==rows.len() {0} else {i+1},self.top);
-                    dx.push(d[0]);dz.push(d[1]);
+                self.emit(start, m, rows.last().unwrap(), program, yaw, 1)?;
+                let mut dx = List::<f64, 16>::new();
+                let mut dz = List::<f64, 16>::new();
+                let mut probe = m;
+                for (i, row) in rows.iter().enumerate() {
+                    let d = probe.tick(row, dir, if i + 1 == rows.len() { 0 } else { i + 1 }, self.top);
+                    dx.push(d[0]);
+                    dz.push(d[1]);
                 }
-                let displacement=Vec3::new(dx.iter().sum(),0.0,dz.iter().sum());
-                let speed=dot(displacement,dir);
-                if speed<=0.0 {return Err("word has zero advance".into());}
-                let count=((projection-edge)/speed).floor().max(0.0);
-                let other=direction(pair[1]);let det=cross(displacement,other);
-                let switch=cross(remaining,other)/det;
-                let count=if switch>=1.0 && switch<count {switch.floor()} else {count};
-                if count>f64::from(u32::MAX)/rows.len() as f64 {return Err("word exceeds script width".into());}
-                let q=count as u64;
-                start=m;
-                let at=|cycles|Vec3::new(events::advance_cycles(0,start.p.x,&dx,cycles),start.p.y,
-                    events::advance_cycles(1,start.p.z,&dz,cycles));
-                let enters=|end|[0,2].into_iter().all(|axis| {
-                    let (low,high)=self.goal.axis_sides(body(start.p),body(end),axis);
+                let displacement = Vec3::new(dx.iter().sum(), 0.0, dz.iter().sum());
+                let speed = dot(displacement, dir);
+                if speed <= 0.0 { return Err("word has zero advance".into()); }
+                let count = ((projection - edge) / speed).floor().max(0.0);
+                let other = direction(pair[1]);
+                let det = cross(displacement, other);
+                let switch = cross(remaining, other) / det;
+                let count = if switch >= 1.0 && switch < count { switch.floor() } else { count };
+                if count > f64::from(u32::MAX) / rows.len() as f64 { return Err("word exceeds script width".into()); }
+                let q = count as u64;
+                start = m;
+                let at = |cycles| Vec3::new(
+                    events::advance_cycles(0, start.p.x, &dx, cycles),
+                    start.p.y,
+                    events::advance_cycles(1, start.p.z, &dz, cycles),
+                );
+                let enters = |end| [0, 2].into_iter().all(|axis| {
+                    let (low, high) = self.goal.axis_sides(body(start.p), body(end), axis);
                     low && high
                 });
-                let mut safe=q;
-                m.p=at(safe);
-                if safe>0 && enters(m.p) {
-                    let mut first=0;
-                    while first<safe {
-                        let mid=first+(safe-first)/2;
-                        if enters(at(mid)) {safe=mid;} else {first=mid+1;}
+                let mut safe = q;
+                m.p = at(safe);
+                if safe > 0 && enters(m.p) {
+                    let mut first = 0;
+                    while first < safe {
+                        let mid = first + (safe - first) / 2;
+                        if enters(at(mid)) { safe = mid; } else { first = mid + 1; }
                     }
-                    safe=first.saturating_sub(1);
-                    m.p=at(safe);
+                    safe = first.saturating_sub(1);
+                    m.p = at(safe);
                 }
-                m.t+=safe*rows.len() as u64;
+                m.t += safe * rows.len() as u64;
                 self.include(m.p);
-                self.emit(start,m,rows.last().unwrap(),program,yaw,safe)?;
-                if safe>0 {break;}
-                // The next period crosses the near face; take it through the
-                // same exact two-axis and vertical touch predicate.
-                start=m;
+                self.emit(start, m, rows.last().unwrap(), program, yaw, safe)?;
+                if safe > 0 { break; }
+                start = m;
             }
-            if m.t-self.from.t>Arguments::MAX_TICKS {return Err("sentence exceeds script width".into());}
-            if held {m.phase=0;}
+            if m.t - self.from.t > Arguments::MAX_TICKS { return Err("sentence exceeds script width".into()); }
+            if held { m.phase = 0; }
         }
     }
 }
-pub fn solve<S:CorridorSource>(from:&PlayerState,to:Goal,kit:Kit,source:&S,store:&GeneratorStore,codec:&mut Interner,deadline_ticks:u64)->SolveResult {
-    let Kit::BareLegs=kit;
-    let mut stages=crate::list![Stage::Bracket,Stage::ClosedCheck];
-    let bracket=Bracket {lb:to.lower_bound(from) as u64,ub:None};
-    let clock=std::time::Instant::now();
-    let mut work=||->Result<PlanOutcome,String> {
-        if !store.bind_codec(codec) {return Ok(PlanOutcome::Unknown(Refusal::Schema));}
-        let at_goal=to.touched(from,from);
-        let known=if at_goal {None} else {store.joints.borrow_mut().route(from,to)};
-        let label=match known.as_ref().and_then(|route|route.words.first()) {
-            Some(word)=>word.certificate.label,
-            None=>source.entry_label(codec,from).map_err(|e|format!("entry label: {e:?}"))?,
-        };
-        let mut thinking=ThinkingCosts::default();
-        let route=if at_goal {crate::joints::Route {words:List::new(),ticks:0,end:StateAt::point(from.clone())}}
-        else if let Some(r)=known {stages.extend([Stage::Extend,Stage::Cut,Stage::Compose]);r}
-        else {
-            let blocked=[("difficulty",source.difficulty()!=0),("effects",from.effects),("boat",from.boat),("riding",from.riding),("fall_flying",from.fall_flying),
-                ("flying",from.flying),("using_item",from.using_item),("in_lava",from.in_lava),("in_water",from.in_water),("crouching",from.crouching)];
-            if let Some((name,_))=blocked.iter().find(|(_,b)|*b) {return Err(format!("word needs bare legs and invariant resource guards: {name}"));}
-            stages.push(Stage::Extend);
-            let program=if sprint_allowed(from) {SPRINT_JUMP} else {WALK};
-            let ticks=store.preparation_ticks();
-            let g=store.gait(label,source,from,program)?;
-            thinking.entry_ns=clock.elapsed().as_nanos();
-            if store.preparation_ticks()!=ticks {stages.push(Stage::Learn {program,ticks:store.preparation_ticks()-ticks,nanos:thinking.entry_ns});}
-            let support=source.support_cell(from);
-            let height=source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
-            let top=f64::from(support[1])+height;
-            let phase=g.entry(from,top).ok_or("vertical phase outside this word")?;
-            let m=Motion {p:from.position,v:from.velocity,phase,t:from.t,wanted:from.movement_this_tick.unwrap_or_default()};
-            let radius=Aabb::player(Vec3::default(),from.pose.height()).max.x;
-            let mut crossing=Crossing {gait:&g,from,goal:to,top,radius,min:m.p,max:m.p,words:List::new(),
-                proof:CorridorProof {label,min:support,max:support,version:law::LAW_HASH},bearing_ns:0};
-            let time=std::time::Instant::now();
-            let arrival=crossing.run(m);
-            thinking.bearing_ns=crossing.bearing_ns;
-            thinking.inverse_ns=time.elapsed().as_nanos()-thinking.bearing_ns;
-            let time=std::time::Instant::now();
-            let lo=[(crossing.min.x-radius).floor() as i32,support[1].min(crossing.min.y.floor() as i32),(crossing.min.z-radius).floor() as i32];
-            let hi=[(crossing.max.x+radius).floor() as i32,(crossing.max.y+f64::from(from.pose.height())).floor() as i32,(crossing.max.z+radius).floor() as i32];
-            let proof=match source.corridor_query(codec,label,lo,hi) {
-                CorridorResult::Clear(p)=>p,
-                CorridorResult::Exception {first_pos,exceptions}=>{stages.push(Stage::Cut);store.joints.borrow_mut().enqueue(from,bracket.lb,format!("corridor exception {first_pos:?}"));return Ok(PlanOutcome::NeedsJoints {exception:first_pos,exceptions,bracket});},
-                CorridorResult::Unknown(r)=>return Ok(PlanOutcome::Unknown(r)),
-            };
-            arrival?;
-            let mut words=crossing.words;
-            for w in &mut words {w.certificate=proof.clone();}
-            if let Some(w)=words.first_mut() {w.events.marks.push(Event {tick:from.t,kind:EventKind::FoodGuard {sprint_allowed:sprint_allowed(from)}});}
-            if let Some(w)=words.last_mut() {w.events.marks.push(Event {tick:w.end.t,kind:EventKind::GoalBoundary});}
-            stages.extend([Stage::Cut,Stage::Compose]);
-            thinking.output_ns=time.elapsed().as_nanos();
-            crate::joints::compose_chain(from,to,words,&mut store.joints.borrow_mut().work)
-        };
-        stages.extend([Stage::ClosedCheck,Stage::Allocate]);
-        Ok(PlanOutcome::Ready(Plan {ticks:route.ticks,words:route.words,end:route.end,bracket:Bracket {lb:bracket.lb,ub:Some(route.ticks)},label,deadline:deadline_ticks,lattice_cost:Default::default(),thinking}))
+
+/// Shared corridor extend helper for `solve()` and defect tail handoffs.
+pub(crate) fn extend_corridor<S: CorridorSource>(
+    from: &PlayerState,
+    to: Goal,
+    label: LabelId,
+    source: &S,
+    store: &GeneratorStore,
+    codec: &mut Interner,
+) -> Result<List<WordStep, 12>, String> {
+    let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
+    let g = store.gait(label, source, from, program)?;
+    let support = source.support_cell(from);
+    let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
+    let top = f64::from(support[1]) + height;
+    let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
+    let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
+    let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
+    let mut crossing = Crossing {
+        gait: &g,
+        from,
+        goal: to,
+        top,
+        radius,
+        min: m.p,
+        max: m.p,
+        words: List::new(),
+        proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
+        bearing_ns: 0,
     };
-    match work() {Ok(outcome)=>SolveResult {outcome,stages,explanation:None},Err(e)=>SolveResult {outcome:PlanOutcome::Unknown(Refusal::StateOrContext),stages,explanation:Some(e)}}
+    crossing.run(m)?;
+    let bounds = cut::cells(Aabb { min: crossing.min, max: crossing.max }, support[1], radius, from.pose.height());
+    match source.corridor_query(codec, label, bounds.0, bounds.1) {
+        CorridorResult::Clear(proof) => {
+            for w in &mut crossing.words {
+                w.certificate = proof.clone();
+            }
+            Ok(crossing.words)
+        }
+        CorridorResult::Exception { .. } | CorridorResult::Unknown(_) => {
+            Err("tail corridor is not clear".into())
+        }
+    }
+}
+
+pub fn solve<S: CorridorSource>(
+    from: &PlayerState,
+    to: Goal,
+    kit: Kit,
+    source: &S,
+    store: &GeneratorStore,
+    codec: &mut Interner,
+    deadline_ticks: u64,
+) -> SolveResult {
+    let Kit::BareLegs = kit;
+    let mut stages = crate::list![Stage::Bracket, Stage::ClosedCheck];
+    let bracket = Bracket { lb: to.lower_bound(from) as u64, ub: None };
+    let clock = std::time::Instant::now();
+    let mut work = || -> Result<PlanOutcome, String> {
+        if !store.bind_codec(codec) { return Ok(PlanOutcome::Unknown(Refusal::Schema)); }
+        let at_goal = to.touched(from, from);
+        let known = if at_goal { None } else { store.words.borrow().route(from, to) };
+        let label = match known.as_ref().and_then(|route| route.words.first()) {
+            Some(word) => word.certificate.label,
+            None => source.entry_label(codec, from).map_err(|e| format!("entry label: {e:?}"))?,
+        };
+        let mut thinking = ThinkingCosts::default();
+        let route = if at_goal {
+            crate::word_store::Route { words: List::new(), ticks: 0, end: StateAt::point(from.clone()) }
+        } else if let Some(r) = known {
+            stages.extend([Stage::Extend, Stage::Cut, Stage::Compose]);
+            r
+        } else {
+            let blocked = [
+                ("difficulty", source.difficulty() != 0),
+                ("effects", from.effects),
+                ("boat", from.boat),
+                ("riding", from.riding),
+                ("fall_flying", from.fall_flying),
+                ("flying", from.flying),
+                ("using_item", from.using_item),
+                ("in_lava", from.in_lava),
+                ("in_water", from.in_water),
+                ("crouching", from.crouching),
+            ];
+            if let Some((name, _)) = blocked.iter().find(|(_, b)| *b) {
+                return Err(format!("word needs bare legs and invariant resource guards: {name}"));
+            }
+            stages.push(Stage::Extend);
+            let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
+            let ticks = store.preparation_ticks();
+            let g = store.gait(label, source, from, program)?;
+            thinking.entry_ns = clock.elapsed().as_nanos();
+            if store.preparation_ticks() != ticks {
+                stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
+            }
+            let support = source.support_cell(from);
+            let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
+            let top = f64::from(support[1]) + height;
+            let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
+            let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
+            let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
+            let mut crossing = Crossing {
+                gait: &g,
+                from,
+                goal: to,
+                top,
+                radius,
+                min: m.p,
+                max: m.p,
+                words: List::new(),
+                proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
+                bearing_ns: 0,
+            };
+            let time = std::time::Instant::now();
+            let arrival = crossing.run(m);
+            thinking.bearing_ns = crossing.bearing_ns;
+            thinking.inverse_ns = time.elapsed().as_nanos() - thinking.bearing_ns;
+            let time = std::time::Instant::now();
+            match cut::cut(crossing, arrival, source, codec)? {
+                cut::Cut::Clear(mut words) => {
+                    if let Some(w) = words.first_mut() {
+                        w.events.marks.push(Event { tick: from.t, kind: EventKind::FoodGuard { sprint_allowed: sprint_allowed(from) } });
+                    }
+                    if let Some(w) = words.last_mut() {
+                        w.events.marks.push(Event { tick: w.end.t, kind: EventKind::GoalBoundary });
+                    }
+                    stages.extend([Stage::Cut, Stage::Compose]);
+                    thinking.output_ns = time.elapsed().as_nanos();
+                    crate::word_store::compose_chain(from, to, words, &mut store.words.borrow_mut().work)
+                }
+                cut::Cut::Unknown(r) => return Ok(PlanOutcome::Unknown(r)),
+                cut::Cut::Defect(win) => {
+                    stages.push(Stage::Cut);
+                    let first_pos = win.first;
+                    let exceptions = win.exceptions;
+                    let (raw_steps, obs) = match defect::solve_defect(from, to, label, win, source, store, codec, &mut stages, &mut thinking) {
+                        Ok(res) => res,
+                        Err((ex_count, why)) => {
+                            let _ = why;
+                            return Ok(PlanOutcome::NeedsJoints { exception: first_pos, exceptions: ex_count, bracket });
+                        }
+                    };
+                    let mut cert_ticks = 0u64;
+                    let programs = words::tiny_programs();
+                    let (route, cached) = match certify::certify_route(from, to, label, source.provenance(), source, &programs, &raw_steps, &mut cert_ticks) {
+                        Ok(c) => c,
+                        Err(Refusal::Coverage) => {
+                            return Ok(PlanOutcome::NeedsJoints { exception: first_pos, exceptions, bracket });
+                        }
+                        Err(r) => return Ok(PlanOutcome::Unknown(r)),
+                    };
+                    if let Some(Stage::Defect { certify_ticks, .. }) = stages.iter_mut().rev().find(|s| matches!(s, Stage::Defect { .. })) {
+                        *certify_ticks = cert_ticks;
+                    }
+                    {
+                        let mut ws = store.words.borrow_mut();
+                        ws.work.certify_ticks += cert_ticks;
+                        ws.work.law_ticks += cert_ticks;
+                        ws.promote_route(&obs);
+                        ws.file_route(from, to, cached);
+                    }
+                    stages.push(Stage::Compose);
+                    route
+                }
+            }
+        };
+        stages.extend([Stage::ClosedCheck, Stage::Allocate]);
+        Ok(PlanOutcome::Ready(Plan {
+            ticks: route.ticks,
+            words: route.words,
+            end: route.end,
+            bracket: Bracket { lb: bracket.lb, ub: Some(route.ticks) },
+            label,
+            deadline: deadline_ticks,
+            lattice_cost: Default::default(),
+            thinking,
+        }))
+    };
+    match work() {
+        Ok(outcome) => SolveResult { outcome, stages, explanation: None },
+        Err(e) => SolveResult { outcome: PlanOutcome::Unknown(Refusal::StateOrContext), stages, explanation: Some(e) },
+    }
 }

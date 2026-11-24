@@ -4,12 +4,12 @@
 
 | Who | For |
 |---|---|
-| the integrator (main Claude session) | specs and prompts, merges, the map, talking with him |
-| Astra (`gpt-6.2-astra`, Codex) | the core and the hard builds; the Codex window is hers |
+| the integrator + Julien | core planner, representation, learning architecture, merges, the map |
+| Opus (Claude headless / sub-agent) | structural ports and hard refactors (`wt/port-state-spine`), red-teams of one-way doors |
+| Astra (`gpt-6.2-astra`, Codex) | hard spec-driven builds when Codex window is open |
 | Sol (`gpt-6.2-sol`, Codex) | strong builds beside the core |
 | Terra (`gpt-6.1-terra`, Codex) | builds from a closed spec, the leftover window |
-| Opus (native sub-agent) | red-teams of one-way doors, design, hard merges |
-| Sonnet (native sub-agent) | judges GPT's work; the work that needs no taste: cleaning, digests, linting the map against his words |
+| Sonnet (native sub-agent) | judging diffs, cleaning, digests, linting the map against his words |
 | GLM 5.4 (Z.ai, omp) | parameter table rows, Mojang scars, and jar witnesses against the generator basis, plus compiled `lab/wiki/` pages |
 | Vibe (Mistral, omp) | the same lane as GLM, a second family whose rows check GLM's; enters through the bake-off (detail/clan.md) |
 

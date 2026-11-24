@@ -27,6 +27,15 @@ pub trait CorridorSource: World + Source {
     fn support_cell(&self,state:&PlayerState)->BlockPos {
         state.main_supporting_block.unwrap_or_else(||[state.position.x.floor() as i32,state.position.y.floor() as i32-1,state.position.z.floor() as i32])
     }
+    fn floor_y(&self, state: &PlayerState) -> i32 {
+        self.support_cell(state)[1]
+    }
+    fn provenance(&self) -> [u8; 32] {
+        [0; 32]
+    }
+    fn bounds_box(&self) -> Option<(BlockPos, BlockPos)> {
+        None
+    }
     fn entry_label(&self,codec:&mut Interner,state:&PlayerState)->Result<LabelId,Refusal> where Self:Sized {
         label(codec,self,state)
     }
@@ -45,6 +54,7 @@ impl<W:World> World for MeteredWorld<'_,W> {
     fn observe_axis_contact(&self,c:law::contact::AxisContact) {self.world.observe_axis_contact(c);}
     fn observe_tick(&self) {self.ticks.set(self.ticks.get()+1);self.world.observe_tick();}
     fn block(&self,p:BlockPos)->&Block {self.world.block(p)}
+    fn known_block(&self,p:BlockPos)->Result<&Block,&str> {self.world.known_block(p)}
     fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}
     fn fluid_block(&self,p:BlockPos)->&Block {self.world.fluid_block(p)}
     fn raw_fluid_block(&self,p:BlockPos)->Option<&Block> {self.world.raw_fluid_block(p)}
@@ -74,6 +84,9 @@ impl<W:Source> Source for MeteredWorld<'_,W> {
 }
 impl<W:CorridorSource> CorridorSource for MeteredWorld<'_,W> {
     fn support_cell(&self,s:&PlayerState)->BlockPos {self.world.support_cell(s)}
+    fn floor_y(&self, state: &PlayerState) -> i32 {self.world.floor_y(state)}
+    fn provenance(&self) -> [u8; 32] {self.world.provenance()}
+    fn bounds_box(&self) -> Option<(BlockPos, BlockPos)> {self.world.bounds_box()}
     fn entry_label(&self,c:&mut Interner,s:&PlayerState)->Result<LabelId,Refusal> {self.world.entry_label(c,s)}
     fn corridor_query(&self,c:&mut Interner,l:LabelId,lo:BlockPos,hi:BlockPos)->CorridorResult {self.world.corridor_query(c,l,lo,hi)}
 }
@@ -100,15 +113,17 @@ pub struct GeneratorSuperflatSource {
     pub difficulty:u8, pub natural_regeneration:bool,
     pub scars:BTreeMap<BlockPos,Block>, pub provenance_hash:[u8;32],
     layers:BTreeMap<i32,Block>, unknown:BTreeMap<BlockPos,String>, costs:Cell<ReadCost>,
+    first_uncovered:Cell<Option<BlockPos>>,
 }
 impl GeneratorSuperflatSource {
+    pub fn first_uncovered(&self) -> Option<BlockPos> { self.first_uncovered.get() }
     pub fn new(floor_y:i32,floor_block:Block,loaded_min:BlockPos,loaded_max:BlockPos)->Self {
         let air_block=Block::default();let mut bytes=b"generator-superflat/1".to_vec();bytes.extend(codec::SCHEMA);
         bytes.extend(floor_y.to_le_bytes());for p in [loaded_min,loaded_max] {for v in p {bytes.extend(v.to_le_bytes());}}
         for b in [&floor_block,&air_block] {bytes.extend(codec::legs_presence(b).expect("qualified generator model").bytes());}
         let mut provenance_hash=[0;32];provenance_hash[..16].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
         bytes.push(1);provenance_hash[16..].copy_from_slice(&codec::digest(&bytes).to_le_bytes());
-        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),unknown:BTreeMap::new(),costs:Cell::default()}
+        Self {floor_y,floor_block,air_block,loaded_min,loaded_max,difficulty:0,natural_regeneration:true,scars:BTreeMap::new(),provenance_hash,layers:BTreeMap::new(),unknown:BTreeMap::new(),costs:Cell::default(),first_uncovered:Cell::new(None)}
     }
     /// Factor the saved cells into A's supporting layers and sparse differences.
     /// This is ingestion, before the command clock. Playback reads the original snapshot.
@@ -149,7 +164,10 @@ impl GeneratorSuperflatSource {
 }
 impl World for GeneratorSuperflatSource {
     fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
-        if !self.covered(p) {return Err("outside the source");}
+        if !self.covered(p) {
+            if self.first_uncovered.get().is_none() { self.first_uncovered.set(Some(p)); }
+            return Err("outside the source");
+        }
         if let Some(reason)=self.unknown.get(&p) {return Err(reason);}
         Ok(self.block(p))
     }
@@ -197,6 +215,9 @@ impl Source for GeneratorSuperflatSource {
 }
 impl CorridorSource for GeneratorSuperflatSource {
     fn support_cell(&self,s:&PlayerState)->BlockPos {[s.position.x.floor() as i32,self.floor_y,s.position.z.floor() as i32]}
+    fn floor_y(&self, _: &PlayerState) -> i32 { self.floor_y }
+    fn provenance(&self) -> [u8; 32] { self.provenance_hash }
+    fn bounds_box(&self) -> Option<(BlockPos, BlockPos)> { Some((self.loaded_min, self.loaded_max)) }
     fn entry_label(&self,codec:&mut Interner,state:&PlayerState)->Result<LabelId,Refusal> {
         let p=state.position;
         let feet=[p.x.floor() as i32,p.y.floor() as i32,p.z.floor() as i32];
@@ -246,21 +267,52 @@ impl CorridorSource for GeneratorSuperflatSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    struct Partial {floor:Block, air:Block}
+    struct Partial { floor: Block, air: Block, wall: bool }
     impl World for Partial {
-        fn block(&self,p:BlockPos)->&Block {if p[1]==0 {&self.floor} else {&self.air}}
-        fn difficulty(&self)->u8 {0}
-        fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
-            if p==[0,1,15] {Err("unmodeled non-local stair shape")} else {Ok(self.block(p))}
+        fn block(&self, p: BlockPos) -> &Block { if p[1] == 0 { &self.floor } else { &self.air } }
+        fn difficulty(&self) -> u8 { 0 }
+        fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
+            let blocked = if self.wall { p[2] == 15 && p[1] >= 1 } else { p == [0, 1, 15] };
+            if blocked { Err("unmodeled non-local stair shape") } else { Ok(self.block(p)) }
         }
     }
     #[test]
     fn unknown_shape_in_corridor_is_an_exception() {
-        let world=Partial {floor:Block::full(),air:world::model(&world::BlockState {name:"minecraft:air".into(),properties:Vec::new()}).unwrap().clone()};
-        let source=GeneratorSuperflatSource::from_world(&world,([-8,-4,-8],[8,12,60]),[0,0,0]).unwrap();
-        let mut start=crate::settle(&crate::Still(&source),[0.5,1.0,0.5],0).unwrap();
-        start.saturation=20.0;
-        let result=crate::solve(&start,crate::Goal {cell:[0,0,40]},crate::Kit::BareLegs,&source,&crate::store::GeneratorStore::default(),&mut Interner::default(),u64::MAX);
-        assert!(matches!(result.outcome,crate::PlanOutcome::NeedsJoints {exception:[0,1,15],..}),"{:?} {:?}",result.outcome,result.explanation);
+        let floor = Block::full();
+        let air = world::model(&world::BlockState { name: "minecraft:air".into(), properties: Vec::new() }).unwrap().clone();
+        // Isolated unknown cell at [0, 1, 15] may be steered around safely (verified by game replay) or reported.
+        let world_one = Partial { floor: floor.clone(), air: air.clone(), wall: false };
+        let source_one = GeneratorSuperflatSource::from_world(&world_one, ([-8, -4, -8], [8, 12, 60]), [0, 0, 0]).unwrap();
+        let mut start = crate::settle(&crate::Still(&source_one), [0.5, 1.0, 0.5], 0).unwrap();
+        start.saturation = 20.0;
+        let goal = crate::Goal { cell: [0, 0, 40] };
+        let result = crate::solve(&start, goal, crate::Kit::BareLegs, &source_one, &crate::store::GeneratorStore::default(), &mut Interner::default(), u64::MAX);
+        match &result.outcome {
+            crate::PlanOutcome::NeedsJoints { exception: [0, 1, 15], .. } => {}
+            crate::PlanOutcome::Ready(plan) => {
+                let programs = words::tiny_programs();
+                let obs = ObservedWorld::new(&world_one);
+                let mut sim = start.clone();
+                let mut hit = false;
+                for step in &plan.words {
+                    for elapsed in 0..step.ticks {
+                        let (_, inp) = programs[step.program as usize].select(&obs, &sim, elapsed, step.args).expect("row matches");
+                        let before = sim.bounding_box();
+                        law::try_tick(&mut sim, &obs, &inp).expect("tick fails");
+                        obs.check().expect("plan touched unknown cell [0, 1, 15]");
+                        if goal.touched_boxes(before, sim.bounding_box()) {
+                            hit = true;
+                        }
+                    }
+                }
+                assert!(hit || goal.touched(&sim, &sim));
+            }
+            other => panic!("unexpected outcome on isolated unknown block: {other:?}"),
+        }
+        // Full unknown wall at z = 15 leaves no known bypass and must surface the z = 15 exception.
+        let world_wall = Partial { floor, air, wall: true };
+        let source_wall = GeneratorSuperflatSource::from_world(&world_wall, ([-8, -4, -8], [8, 12, 60]), [0, 0, 0]).unwrap();
+        let res_wall = crate::solve(&start, goal, crate::Kit::BareLegs, &source_wall, &crate::store::GeneratorStore::default(), &mut Interner::default(), u64::MAX);
+        assert!(matches!(res_wall.outcome, crate::PlanOutcome::NeedsJoints { exception: [_, _, 15], .. }), "{:?} {:?}", res_wall.outcome, res_wall.explanation);
     }
 }

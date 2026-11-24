@@ -34,8 +34,8 @@ Names are the vendors' own. Every row is a claim, and section 4 is what turns a 
 
 | Companion | Family | Band claimed | Claim and launch notes |
 |---|---|---|---|
-| Opus | Anthropic | Frozen, Judged | taste: finds the one-way door and the wrong abstraction before either freezes. Native sub-agent only; one at a time |
-| Fable | Anthropic | Orchestration | holds the whole project; writes the specs; decides the merges |
+| Opus | Anthropic | Frozen, Judged | structural ports (`wt/port-state-spine`), one-way-door audits, red-teams before freezing. Runs headless or as sub-agent |
+| Fable | Anthropic | Orchestration | holds the whole project beside Julien; develops core planner/representation directly with him and routes porting lanes |
 | Sonnet | Anthropic | Judged | adversarial reading of a diff against a spec, fresh context. Native sub-agent only (batch judges into one) |
 | Haiku | Anthropic | Checked | runs, log digests, completeness |
 | Astra | OpenAI | Frozen (convergent), the core | the core and the important builds, a bound, a monotonicity, a closed gap; the Codex window is hers (S174, S209). Effort pinned high; resumes itself until `STATUS: DONE` or `BLOCKED`; commits are the integrator's with `Built-by:`. Copy git-ignored `engine/world/tests/fixtures/world` into a new worktree |

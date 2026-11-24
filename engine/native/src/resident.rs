@@ -5,7 +5,6 @@ use plan::Goal;
 
 pub const READY: u64 = 0;
 pub const WORD_PLAN: u64 = 1;
-pub const HARD: u64 = 2;
 pub const REFUSAL: u64 = 3;
 pub fn refusal(version: u64, reason: impl AsRef<str>) -> Vec<u64> {
     let at = crate::qpc().0 as u64;
@@ -139,8 +138,27 @@ fn resident() -> &'static Resident {
                 match work {
                     Work::Delta(data) => {
                         let reset = data.first() == Some(&0);
+                        let kind = data.first().copied().unwrap_or(0);
+                        let p = if data.len() >= 6 && matches!(kind, 1 | 2 | 3) {
+                            Some([data[3] as i32, data[4] as i32, data[5] as i32])
+                        } else { None };
                         if let Err(why) = delta(&mut source, &data) { source.error = Some(why.clone()); let _ = done.send(refusal(0,why)); }
-                        if reset { store = plan::store::GeneratorStore::default(); codec = law::codec::Interner::default(); }
+                        if reset {
+                            store = plan::store::GeneratorStore::default();
+                            codec = law::codec::Interner::default();
+                        } else if kind == 4 || (kind == 0 && !reset) {
+                            store.words.borrow_mut().environment_event();
+                        } else if store.words.borrow().has_certificates() {
+                            if let Some(cell) = p {
+                                if kind == 2 {
+                                    store.words.borrow_mut().edit(&mut codec, cell, &source);
+                                } else {
+                                    for z in 0..16 { for y in 0..16 { for x in 0..16 {
+                                        store.words.borrow_mut().edit(&mut codec, [cell[0]*16+x, cell[1]*16+y, cell[2]*16+z], &source);
+                                    }}}
+                                }
+                            }
+                        }
                     }
                     Work::Goal(request) => {
                         let version = request.version;
@@ -196,30 +214,61 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     }}
     let Some(a) = support else { return refusal(requested,"no ground under the bot within 8 blocks"); };
     let near = [p[0].min(goal[0])-4, lo[1], p[2].min(goal[2])-4]; let far = [p[0].max(goal[0])+4, p[1].max(goal[1])+8, p[2].max(goal[2])+4];
-    let (cl, ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
+    let (mut cl, mut ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
     if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
-    let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
-    let result = plan::solve(&state, Goal { cell: goal }, plan::Kit::BareLegs, &corridor, store, codec, u64::MAX);
-    if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
-    let plan::PlanOutcome::Ready(found) = result.outcome else { return refusal(requested,format!("{:?} {}",result.outcome,result.explanation.unwrap_or_default())); };
+    let mut found = None;
+    for _ in 0..8 {
+        let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
+        let result = plan::solve(&state, Goal { cell: goal }, plan::Kit::BareLegs, &corridor, store, codec, u64::MAX);
+        if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
+        match result.outcome {
+            plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
+            other => {
+                if let Some(unc) = corridor.first_uncovered() {
+                    let prev = (cl, ch);
+                    for i in [0, 2] {
+                        cl[i] = cl[i].min(unc[i] - 4).max(lo[i]);
+                        ch[i] = ch[i].max(unc[i] + 4).min(hi[i]);
+                    }
+                    if (cl, ch) != prev { continue; }
+                }
+                return refusal(requested,format!("{:?} {}",other,result.explanation.unwrap_or_default()));
+            }
+        }
+    }
+    let Some(found) = found else { return refusal(requested,"corridor growth exceeded pass cap"); };
     let programs = words::tiny_programs();
-    match inputs(source, &programs, &state, found.words.iter().map(|w| (w.program,w.args,w.ticks))) {
+    match inputs(source, &programs, &state, found.words.iter().map(|w| (w.program,w.args,w.ticks)), Goal { cell: goal }, found.ticks) {
         Ok(inputs) => {
             let mut out = vec![WORD_PLAN,requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
-            let bits = state.bits(); out.push(bits.len() as u64); out.extend(bits); out.extend(inputs); out
+            let bits = state.bits(); out.push(bits.len() as u64); out.extend(bits); out.extend(inputs);
+            let mut hx0 = i32::MAX; let mut hz0 = i32::MAX; let mut hx1 = i32::MIN; let mut hz1 = i32::MIN;
+            for w in &found.words {
+                hx0 = hx0.min(w.certificate.min[0]); hz0 = hz0.min(w.certificate.min[2]);
+                hx1 = hx1.max(w.certificate.max[0]); hz1 = hz1.max(w.certificate.max[2]);
+            }
+            if hx0 > hx1 { hx0 = cl[0]; hz0 = cl[2]; hx1 = ch[0]; hz1 = ch[2]; }
+            out.extend([i64::from(hx0) as u64, i64::from(hz0) as u64, i64::from(hx1) as u64, i64::from(hz1) as u64]);
+            out
         }
         Err(why) => refusal(requested,why),
     }
 }
 /// The plan's words × counts as tick inputs, each tick's input from the word's program, run through the law.
-fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, words: impl Iterator<Item=(u16,words::Arguments,u32)>) -> Result<Vec<u64>,String> {
+fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, words: impl Iterator<Item=(u16,words::Arguments,u32)>, goal: Goal, predicted_ticks: u64) -> Result<Vec<u64>,String> {
     let mut state = start.clone(); let mut inputs = Vec::new();
+    let mut first_touch = goal.touched(start, start).then_some(0u64);
     for (program,args,ticks) in words { for elapsed in 0..ticks {
         let (_,input) = programs[program as usize].select(source,&state,elapsed,args).ok_or("a word's program has no row here")?;
         let keys = [input.forward,input.back,input.left,input.right,input.jump,input.sneak,input.sprint].iter().enumerate().fold(0,|n,(i,b)| n | ((*b as u64)<<i));
         inputs.extend([keys,input.yaw.to_bits() as u64,input.pitch.to_bits() as u64]);
+        let before = state.bounding_box();
         law::try_tick(&mut state,source,&input).map_err(|e| e.0)?;
+        if goal.touched_boxes(before, state.bounding_box()) { first_touch.get_or_insert(state.t - start.t); }
     } }
+    if predicted_ticks > 0 && first_touch != Some(predicted_ticks) {
+        return Err(format!("replay deviates: first touch {:?} predicted {}", first_touch, predicted_ticks));
+    }
     Ok(inputs)
 }
 
@@ -252,6 +301,6 @@ mod tests {
         let request = Request { state,meta:vec![7,1,0,0,0,1,2,123,125],goal:[8,0,12],issue:123,version:3 };
         let answer = plan(&source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),request,&AtomicU64::new(3),&AtomicU64::new(1));
         assert_eq!(answer[0],WORD_PLAN,"{answer:?}"); assert_eq!(answer[2],123);
-        let n = answer[8] as usize; assert_eq!(answer[9..9+n],bits); assert!(answer[7]>0); assert_eq!(answer.len(),9+n+answer[7] as usize*3);
+        let n = answer[8] as usize; assert_eq!(answer[9..9+n],bits); assert!(answer[7]>0); assert_eq!(answer.len(),9+n+answer[7] as usize*3+4);
     }
 }

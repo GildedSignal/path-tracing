@@ -22,7 +22,7 @@ Four folds remove the raw problem's dimensions:
 | kit classes: a block is its answers to the kit's verbs ("A flower is air", S134) | the block alphabet |
 
 - **Words live in velocity space:** on ground each horizontal axis is `v ← (v + input(yaw)) × friction × drag`, a contraction onto the gait; position is its running sum, read by exact integer maps per binade.
-- **The objects:** a **zone** is where one word's certificate holds, found by one corridor query; a **joint** is where one word may end and another begin (an event at a face); a **set** at a joint holds the arriving states from which a known sentence reaches the target, as **families** cut into **pieces**, **points** and **holds** at the law's own comparisons; a **site** is joints closer than momentum's memory, handing up a portal table; a **label** is a joint's T to and from hubs; a **field** is T-to-go for one goal, shared by every bot going there.
+- **The objects:** a **zone** is where one word's certificate holds, found by one corridor query; a **word** (`Word` = `Atomic` or recursive `Compound(Vec<WordId>)` with `AimRule`, universal `self_chains`, Zipf rank, and rotation-invariant `DefectSig`) is a coordinate-free local program learned raw on `(LocalGrid, TopoField)` and merged across tracks; a **route certificate** (`CachedRoute` + `NoRegen` resource guard) is recorded once for the winning path only (`RecordingWorld`) and invalidated locally by block edits inside its footprint; a **site** (`WordStore.routes` keyed by `goal.cell`) hands instant cached segments back; a **label** is T to and from hubs; a **field** is T-to-go for one goal.
 - **A tool is a law input you carry** (bucket = water block, block = floor, pearl = teleporter, boat = a surface that ignores falls). An edit is a toll with a debt (its undo); a portal or a pearl is a wormhole. No tool gets search code.
 - **Two-regime singularity boundary (other players):** outside contact, the crystal stays pure (`(word, count)`, `(min, +)`, `(max, +)`) and chooses where and when contact happens; inside melee reach, an autonomous rival acts as a branching singularity handed off to a short-horizon dense solver on the same `k = 1` generator kernel, leaving `Word` certificates strictly pure (`found / forbidden / searched / refused`; reference [pvp-strategy-2026-11-22.txt](../archive/research/pvp-strategy-2026-11-22.txt)).
 
@@ -31,12 +31,14 @@ Four folds remove the raw problem's dimensions:
 ```
 solve(from, to, kit, deadline):
   1. bracket   LB from the kit's light cone; UB from what is known.
-  2. closed?   If no narrowing can change the next word, emit it.
+  2. closed?   Exact cached route match (NoRegen guard) or straight gait closes at once.
   3. extend    The biggest word the kit holds; one presence query over its
                worldtube gives its count and the first exception.
-  4. cut       The exception's joints split the problem; each part is solve().
-  5. compose   Sets come backward in min-plus; the point goes forward.
-  6. allocate  Think where it can change the decision due soonest.
+  4. cut       Bisects the straight extend to the last clear prefix before the defect.
+  5. propose   Phase A queries WordStore (fine -> coarse -> Zipf head) in raw law::try_tick.
+     -> learn  Phase B explores raw only on miss via LocalGrid + TopoField Dial BFS.
+  6. certify   Single RecordingWorld pass on the winning route + NoRegen damage guard,
+               promoting recursive compounds before returning.
 ```
 
 - The bot moves at once when the first word's bracket closes; the rest is thought while it moves (free compute).
@@ -72,7 +74,7 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 | Crate | Holds |
 |---|---|
 | `engine/law` | `basis/` (the generators), the tick law (`movement.rs`, `shapes.rs`, `state.rs`), boats, mining, the sine table |
-| `engine/plan` | `solve`, the gait store, joints and sets, lattice, events; `bin/plan-track` (to the game), `bin/deviation` |
+| `engine/plan` | `solve`, `cut`, `defect` (`LocalGrid`, `TopoField`), `word_store` (`Word`, `NoRegen`), `certify`, `store`, `lattice`, `events`; `bin/plan-track`, `tests/generalize` |
 | `engine/world` | region files, block table, the world interface |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |
