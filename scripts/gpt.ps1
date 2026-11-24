@@ -58,7 +58,7 @@ $effortArg = "model_reasoning_effort=`"$Effort`""
 # A writable root must already exist; the sandbox cannot create it.
 New-Item -ItemType Directory -Force 'D:\path-tracing-target' | Out-Null
 # A resumed session must keep its worktree, writable roots and report file, or it loses write access (job 1.1).
-$codexArgs = if ($Resume) { @('exec', 'resume', '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', (Join-Path $dir 'last.md'), $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-c', $effortArg, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
+$codexArgs = if ($Resume) { @('exec', 'resume', '-m', $Model, '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', (Join-Path $dir 'last.md'), $Resume, '-') } else { @('exec', '-m', $Model, '-s', 'workspace-write', '-c', $roots, '-c', $effortArg, '-C', $Worktree, '--json', '-o', (Join-Path $dir 'last.md'), '-') }
 function Invoke-Codex($arguments, $stdin, $n) {
   # Start-Process joins arguments with spaces and does not quote them; the repo path has a space.
   $quoted = $arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
@@ -81,7 +81,7 @@ for ($n = 1; $n -le $MaxResumes -and $session; $n++) {
   $lastLog = Join-Path $dir $(if ($n -gt 1) { "log-$($n-1).jsonl" } else { 'log.jsonl' })
   if (Select-String -Path $lastLog -Pattern 'hit your usage limit' -Quiet -ErrorAction SilentlyContinue) { "usage limit: not resuming"; break }
   Copy-Item $report (Join-Path $dir "last-$($n-1).md") -Force -ErrorAction SilentlyContinue
-  $resumeArgs = @('exec', 'resume', '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', $report, $session, '-')
+  $resumeArgs = @('exec', 'resume', '-m', $Model, '-c', $roots, '-c', $effortArg, '-c', 'sandbox_mode=workspace-write', '--json', '-o', $report, $session, '-')
   Invoke-Codex $resumeArgs $more $n
 }
 "last message: $report"
