@@ -3,7 +3,8 @@
 //! - `E2-combo` & `E2-swap`: 10,000 kits fit in `< 1 MB` factored tables, stack decrements share `Arc`s
 //! - `KT16`: `KitCone::lower_bound` monotonic + admissible over 500 triples + witnessed runs
 //! - `R-lego-1..4`, `E3-nether-bucket`, `E2-last-block` shadow price
-//! - Real `doorcorridor` fixture (`T=98` his best) + diagnostic readout on companion tracks.
+//! - Real `doorcorridor` fixture (`T=98` his best) and the survival tracks `amertystcoral`,
+//!   `ametwoodbox` (restored) and `mud` (unrestored), replayed and beating his best.
 //! - Slice 2 `G-kit`: a door corridor and a wall breach learned once generalize to a site
 //!   translated by (+25, 0, +17) and turned 90° with `learn_ticks == 0`, and `edit()` drops the
 //!   certified route only inside its footprint.
@@ -280,7 +281,7 @@ fn solve_ready(
 fn full_survival_kit() -> KitSpec {
     KitSpec {
         body: BodyMovementKey { boots_depth_strider: 3, soul_speed: 3, leather_boots: true },
-        tool: ToolProfileKey::silk_diamond(),
+        tool: ToolProfileKey { pickaxe_tier: 4, axe_tier: 4, shovel_tier: 4, efficiency: 5, silk_touch: true, haste: 0 },
         blocks: 64,
         place_block: default_stone_state(),
         interact: true,
@@ -675,27 +676,26 @@ fn real_track_doorcorridor_unfolded() {
         p_restore.ticks,
     );
 
-    // Diagnostic check on survival companion tracks (`ametwoodbox`, `mud`, `amertystcoral`).
-    let diag_kit = Kit::Carried(full_survival_kit());
-    for name in ["ametwoodbox", "mud", "amertystcoral"] {
-        if let Some(line) = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)) {
-            if let Ok(t) = track(line) {
-                if let Ok(src) = GeneratorSuperflatSource::snapshot(&t.world, t.a) {
-                    let obs0 = ObservedWorld::new(&t.world);
-                    if let Some(top) = obs0.block(t.a).shape.coords[1].last().copied() {
-                        if let Ok(mut s) = plan::settle(&plan::Still(&t.world), [f64::from(t.a[0]) + 0.5, top + f64::from(t.a[1]), f64::from(t.a[2]) + 0.5], 0) {
-                            s.saturation = 20.0;
-                            let res = solve(&s, Goal { cell: t.b }, diag_kit, &src, &store, &mut codec, u64::MAX);
-                            match res.outcome {
-                                PlanOutcome::Ready(p) => println!("DIAG track={name} READY T={} his={:?} (replay skipped in diag)", p.ticks, t.his.iter().min()),
-                                other => println!("DIAG track={name} outcome={other:?} his={:?}", t.his.iter().min()),
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // Survival companion tracks, each replayed through WorldDelta + law::try_tick. The kit is
+    // the full survival kit (silk diamond pickaxe, axe and shovel, 64 cobblestone, buckets).
+    let full = full_survival_kit();
+    let mud_open = KitSpec { restore_required: false, ..full };
+    for (name, spec) in [("amertystcoral", full), ("ametwoodbox", full), ("mud", mud_open)] {
+        let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)).expect("track in tracks.txt");
+        let t = track(line).expect("load track");
+        let (src, s) = load_start(&t);
+        let (p, learn) = solve_ready(&t.world, &src, &s, Goal { cell: t.b }, Kit::Carried(spec), &store, &mut codec);
+        let edits = p.words.iter().filter(|w| w.edit.is_some()).count();
+        println!("SURVIVAL track={name} restore={} T={} his_best={:?} learn_ticks={learn} edits={edits}", spec.restore_required, p.ticks, t.his.iter().min());
+        assert!(t.his.iter().min().is_some_and(|&his| p.ticks < u64::from(his)), "{name}: T={} must beat his best", p.ticks);
     }
+    // mud restored: the pillar's base under the walkway is out of reach from it, and the
+    // restoring plan (breach the mud box, rebuild it, pillar outside) is not found in budget.
+    let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some("mud")).expect("mud");
+    let t = track(line).expect("load mud");
+    let (src, s) = load_start(&t);
+    let r = solve(&s, Goal { cell: t.b }, Kit::Carried(full), &src, &store, &mut codec, u64::MAX);
+    println!("DIAG track=mud restore=true outcome={:?} why={:?}", r.outcome, r.explanation);
 }
 
 /// A site in local coordinates (`x` across, `z` along the approach), placed at `origin` and

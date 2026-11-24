@@ -1584,7 +1584,18 @@ fn expand_kit_ops<S: World>(
             }
         }
         place_cands.sort_unstable_by_key(|c| c.0);
-        for (sc, p, prog_id, pyaw) in place_cands.into_iter().take(2) {
+        place_cands.truncate(2);
+        // The pillar: airborne below a higher goal, the cell under the feet is always offered,
+        // whatever the field says of the cells nearer the goal.
+        let under = [fx, fy - 1, fz];
+        if !s.on_ground && goal.cell[1] >= fy && !place_cands.iter().any(|c| c.1 == under)
+            && !node.edits.iter().any(|&(ep, _)| ep == under)
+            && delta.block(under).never_collides() && can_place_at(delta, s, under, kv.spec.place_block)
+        {
+            let d_top = topo.idx([fx, fy, fz]).map_or(u16::MAX, |i| topo.dist[i]);
+            place_cands.push((d_top, under, P_FS, aim_yaw));
+        }
+        for (sc, p, prog_id, pyaw) in place_cands {
             cands.push(KitCandidate {
                 op: KitOp::Place { pos: p, after: kv.spec.place_block },
                 ticks: 1,

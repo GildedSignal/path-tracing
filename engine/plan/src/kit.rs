@@ -1107,27 +1107,26 @@ pub fn can_place_at(
     if s.bounding_box().intersects(placed_box) {
         return false;
     }
-    // Needs at least one non-air / sturdy neighbor face (supporting face opposite offset).
-    // Faces: [D=0, U=1, N=2, S=3, W=4, E=5]; neighbor at offset holds opposite face sturdy!
-    const NEIGHBORS: [([i32; 3], usize); 6] = [
-        ([0, -1, 0], 1), // below has Up sturdy
-        ([0, 1, 0], 0),  // above has Down sturdy
-        ([0, 0, -1], 3), // north has South sturdy
-        ([0, 0, 1], 2),  // south has North sturdy
-        ([-1, 0, 0], 5), // west has East sturdy
-        ([1, 0, 0], 4),  // east has West sturdy
-    ];
     let _ = place_block;
-    for (d, opp_face) in NEIGHBORS {
-        let np = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-        if let Some(nsid) = world.state_id(np) {
-            let nst = state_static(nsid);
-            if nst.is_sturdy(opp_face) {
-                return true;
-            }
-        }
-    }
-    false
+    place_faces(world, pos).next().is_some()
+}
+
+/// Unit normals of the faces `[D, U, N, S, W, E]` (Minecraft's 3D data values).
+pub const FACE_NORMALS: [[i32; 3]; 6] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+
+/// The faces a block placed at `pos` can be clicked against: face `f` of the neighbour at
+/// `pos - FACE_NORMALS[f]`. Vanilla places against any face of a block that has a shape and is
+/// neither replaceable (a click there replaces it) nor used by the hand (a door or a switch
+/// would toggle); the face need not be full or sturdy.
+pub fn place_faces(world: &impl World, pos: BlockPos) -> impl Iterator<Item = usize> + '_ {
+    (0..6).filter(move |&f| {
+        let n = FACE_NORMALS[f];
+        let np = [pos[0] - n[0], pos[1] - n[1], pos[2] - n[2]];
+        world.state_id(np).is_some_and(|sid| {
+            let st = state_static(sid);
+            !st.replaceable() && st.interact_kind() == InteractKind::None && !world.block(np).never_collides()
+        })
+    })
 }
 
 /// Checks exact `RecordingWorld` digest check consistency on `kit` hash helper.

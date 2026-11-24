@@ -177,7 +177,7 @@ pub fn read(body: &[u64]) -> Carried {
     Carried { kit: Kit::Carried(spec), hotbar, selected: selected as u8 }
 }
 
-const NORMALS: [[i32; 3]; 6] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+use kit::FACE_NORMALS as NORMALS;
 fn face_point(clicked: BlockPos, face: usize) -> Vec3 {
     let n = NORMALS[face];
     Vec3::new(f64::from(clicked[0]) + 0.5 + 0.5 * f64::from(n[0]), f64::from(clicked[1]) + 0.5 + 0.5 * f64::from(n[1]), f64::from(clicked[2]) + 0.5 + 0.5 * f64::from(n[2]))
@@ -236,10 +236,7 @@ impl Carried {
                 let id = name(after);
                 // Item drops are not modelled: a restore places from what the hotbar holds.
                 let slot = self.slot_of(|i| i.id == id).ok_or_else(|| format!("placing {id} needs it in the hotbar (item drops are not modelled)"))?;
-                let support = (0..6).filter(|&f| {
-                    let n = NORMALS[f];
-                    world.state_id([pos[0] - n[0], pos[1] - n[1], pos[2] - n[2]]).is_some_and(|sid| kit::state_static(sid).is_sturdy(f))
-                }).min_by(|&a, &b| {
+                let support = kit::place_faces(world, pos).min_by(|&a, &b| {
                     let key = |f: usize| {
                         let n = NORMALS[f];
                         let p = face_point([pos[0] - n[0], pos[1] - n[1], pos[2] - n[2]], f);
@@ -248,7 +245,7 @@ impl Carried {
                         (hidden, to_eye.iter().map(|v| v * v).sum::<f64>())
                     };
                     key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
-                }).ok_or("no sturdy face to place against")?;
+                }).ok_or("no face to place against")?;
                 (slot, OP_PLACE, support)
             }
         };
