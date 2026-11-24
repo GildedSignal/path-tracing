@@ -27,7 +27,9 @@ Copy the git-ignored `engine/world/tests/fixtures/world` from `C:\Users\PASCAL\D
 - The wave exists (`joints.rs:287`, `family_wave.rs:77`), and so do `Family::learn` (`families.rs:110`) and `learn_family` (`family_wave.rs:15`). Nothing calls them.
 - Fourteen blockers (B1–B14 in the report) stand between them and acting. The decisions below fix each one.
 
-## The design (frozen: build exactly this; a measured contradiction is the one stop)
+## The design (reference blueprint — full S237 agency)
+
+Follow the map's principles and architecture: one mechanism (no terrain/block branching), monotone backward state-sets, no search in acting, store the generator, bit-exact against `law::try_tick`, and the scoreboard gates below. Sections 1–9 are a blueprint, not frozen micro-formulas: whenever a local formula, guard, predicate, key, or helper hits a law edge case or you find a simpler way that upholds the principles and passes the gates, fix or simplify it directly from the law, document the change in `report.md`, and keep going.
 
 ### 1. Keys, nodes and the resource guard (`joints.rs`, `families.rs`)
 
@@ -37,14 +39,12 @@ Copy the git-ignored `engine/world/tests/fixtures/world` from `C:\Users\PASCAL\D
    - `F::fall_distance`, `F::yaw`, `F::pitch`, `F::input`.
 
    Everything else stays as it is today: the free axis keeps only its exponent bits, and the support is stored relative to `floor(position)`.
-2. **The guard replaces `Resources::same_bits`** (`joints.rs:25`) everywhere: `consume`, `equivalent_points`, and both `same_bits` checks in `family_wave.rs`.
-   - `struct Guard {class:[u64;4], health:f32, fall_distance:f64}`, with `class = codec::resource_guards(food, health)`.
-   - A piece admits an entry state `e` when all three hold:
-     - `resource_guards(e.food_level, e.health) == learned.class`;
-     - `e.health + piece.uses.lo[4] > 0.0`;
-     - `e.fall_distance.to_bits() == learned.fall_distance.to_bits()`.
-   - `UseInterval` (`families.rs:7`) gains a fifth component: the health delta, `end.health − start.health`.
-   - The guard is sound only at difficulty 0, which `solve.rs:243` already requires. Write that on the type.
+2. **The guard replaces `Resources::same_bits`** (`joints.rs:25`) everywhere: `consume`, `equivalent_points`, and both `same_bits` checks in `family_wave.rs`, without crediting unguaranteed `food_tick_timer` regen against landing damage.
+   - Measure unmitigated damage once at learn time whenever a piece changes health: wrap `&world` in a local `plan`-crate `NoRegen<'a, W>(&'a W)` (`natural_regeneration() -> false`, zero edits to `engine/law`) starting at `start.health.max(20.0)` and record `damage_no_regen = (start_h - end_h).max(0.0)` (zero extra work on non-damaging words).
+   - `Guard` carries `class = codec::resource_guards(food, health)`, `fall_distance`, and exact resource bits `(health, food_level, saturation, exhaustion, food_tick_timer)`.
+   - A piece admits `e` when `class` and `fall_distance` match AND either `f64::from(e.health) > damage_no_regen` (safe margin: freely admits across timers/saturation/exhaustion at difficulty 0) OR exact resource bits match (razor-thin fallback when survival depends on timer-gated regen).
+   - In `wave`/`route` (§6), carry additive `damage_no_regen` across chained edges (never a hardcoded `0.0`) so multi-edge drops cannot die downstream.
+   - `UseInterval` (`families.rs:7`) keeps the fifth component (health delta, `end.health − start.health`). Difficulty 0 only (`solve.rs:243`); note that on the type.
 3. **`JointStore::node`** (`joints.rs:156`) interns by `write_key(s, 0, None)` plus the guard's `class`. The stored state is a copy with `t = 0`, as `law/src/pattern.rs:317` does.
 4. **Certificates use entry-relative ticks:** `before.t − entry.t`. Every `edit` call passes `(0, u64::MAX)`.
 
@@ -247,13 +247,11 @@ A rung that cannot be reached is written as its refusal, and you go on to the ne
    - the share of T spent on site words above the floor layer on `birchparkourmedium` and `stonestaircase`.
 8. **Expected against seen.** For every rung, `write_script`'s replay touches B on the predicted tick. At each word boundary, the replayed state's `write_key` must equal the planned end's. List every field that differs as a deviation.
 
-## The one stop
+## Stop rule (S237 agency)
 
-Stop (`STATUS: BLOCKED`) **only** for a genuine architectural break:
-- a rung forces a second mechanism (a branch on terrain kind, block name, or track; a tolerance on a predicted tick; or search in acting); or
-- a core architectural invariant breaks (the resource guard admits a state whose motion differs; the monotone backward min-plus wave cannot compose prefix + site + tail).
+**Do NOT stop (`STATUS: BLOCKED`) for spec/formula edge cases, guard/predicate/key bugs, witness refinements, or wall-clock timing noise.** You own the implementation from first principles: fix any local law issue directly against `law::try_tick`, simplify where the principles allow, document the decision and raw evidence in `report.md`, and keep pushing straight through Sections 1–10, the full offline ladder, and Gates 1–8 to `STATUS: DONE`.
 
-**Do NOT stop** on local predicate, witness-harness, or formula edge cases (such as `can_fall` offset/depth, movement-gate holds, or helper signatures) that do not change the architecture: fix them directly from the law, verify against `law::try_tick`, record the exact fix and inputs in `report.md`, and keep going through all of sections 1–10, the offline ladder, and gates 1–8.
+Stop with `STATUS: BLOCKED` **only** if an external environment block (missing permissions/sandbox/fixture you cannot create) makes progress impossible, or if climbing the ladder fundamentally cannot work without violating **one mechanism** (adding terrain-specific branches or search in acting).
 
 ## Output
 
