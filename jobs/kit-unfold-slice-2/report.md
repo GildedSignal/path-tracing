@@ -79,7 +79,7 @@ Branch `wt/kit-unfold-slice-2` from `537a70ac`, three local commits (2A wire, 2B
 | `kit_unfold` | **6/6**. Zero tax `bare_T=60 kit_T=60`, median 5.5–7.0 µs (≤ 25 µs). 10,000 kits in `356,196 B` (< 1 MB). KT16 0/500 violations |
 | `generalize` | 5/5, every `XFER` line identical to the baseline |
 | `hard_track` | 5/5 |
-| `real_time` | 0 refused, 0 warm `law_ticks`. Medians standing 15.6 µs, moving 15.85 µs, repeat 5.2 µs. Warm `allocated_bytes=168` per command in every series: no test asserts on it, and `solve`'s bare path is not in this diff (not checked at the baseline) |
+| `real_time` | 0 refused, 0 warm `law_ticks`. Medians in three runs: standing 15.6 / 13.75 / 14.6 µs, moving 15.85 / 13.7 / 13.65 µs, repeat 5.2 µs. The baseline `537a70ac`, built the same way, gives standing 11.8 / 14.05 µs, moving 13.0 / 13.1 µs, repeat 5.2 µs: no difference beyond noise. Warm `allocated_bytes=168` per command in every series, the same at the baseline, so it predates this job (the gate's "0 warm allocated bytes" does not hold there either) |
 | `world` | 21/21 (7 + 0 + 7 + 7 + 0) |
 | `law --lib` | 95/95 |
 
