@@ -1,5 +1,6 @@
 //! Resident JNI bridge. JNI function indices are from the JNI specification.
 use std::ffi::c_void;
+mod kit_wire;
 mod resident;
 
 type JNIEnv = *const *const c_void;

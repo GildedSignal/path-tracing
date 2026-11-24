@@ -178,21 +178,6 @@ fn settled_on(world: &impl World, cell: BlockPos) -> PlayerState {
     s
 }
 
-fn apply_op<W: World>(delta: &mut WorldDelta<'_, W>, op: KitOp) {
-    match op {
-        KitOp::Interact { pos, after, partner } => {
-            delta.set(pos, after);
-            if let Some((pp, pa)) = partner {
-                delta.set(pp, pa);
-            }
-        }
-        KitOp::Break { pos, after, .. }
-        | KitOp::Place { pos, after }
-        | KitOp::BucketEmpty { pos, after }
-        | KitOp::BucketPickup { pos, after } => delta.set(pos, after),
-    }
-}
-
 fn replay_and_verify(
     world: &impl World,
     start: &PlayerState,
@@ -209,30 +194,21 @@ fn replay_and_verify(
     let mut ops_log: Vec<(BlockPos, u64, KitOp)> = Vec::new();
 
     for (idx, step) in plan_res.words.iter().enumerate() {
-        let is_break = matches!(step.edit, Some(KitOp::Break { .. }));
+        let still = step.edit.is_some_and(KitOp::holds_still);
         if let Some(op) = step.edit {
-            let p = match op {
-                KitOp::Interact { pos, partner, .. } => {
-                    if let Some((pp, _)) = partner {
-                        edited.insert(pp);
-                    }
-                    pos
-                }
-                KitOp::Break { pos, .. }
-                | KitOp::Place { pos, .. }
-                | KitOp::BucketEmpty { pos, .. }
-                | KitOp::BucketPickup { pos, .. } => pos,
-            };
-            edited.insert(p);
-            ops_log.push((p, s.t - start.t, op));
-            if !is_break {
-                apply_op(&mut delta, op);
+            if let KitOp::Interact { partner: Some((pp, _)), .. } = op {
+                edited.insert(pp);
             }
+            edited.insert(op.pos());
+            ops_log.push((op.pos(), s.t - start.t, op));
         }
         let is_last = idx + 1 == plan_res.words.len();
         for elapsed in 0..step.ticks {
+            if let Some(op) = step.edit.filter(|op| op.lands_at(step.ticks) == elapsed) {
+                op.apply(&mut delta);
+            }
             let before = s.bounding_box();
-            let inp = if is_break {
+            let inp = if still {
                 Default::default()
             } else {
                 programs[step.program as usize]
@@ -247,13 +223,8 @@ fn replay_and_verify(
                 touched = true;
             }
         }
-        if is_break {
-            if let Some(op) = step.edit {
-                apply_op(&mut delta, op);
-                if is_last && goal.touched(&s, &s) {
-                    touched = true;
-                }
-            }
+        if still && is_last && goal.touched(&s, &s) {
+            touched = true;
         }
     }
 

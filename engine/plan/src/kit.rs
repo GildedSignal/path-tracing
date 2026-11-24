@@ -953,6 +953,62 @@ pub enum KitOp {
     BucketPickup { pos: BlockPos, after: StateId },
 }
 
+impl KitOp {
+    /// The edited cell (a door's partner half moves with it).
+    pub fn pos(self) -> BlockPos {
+        match self {
+            Self::Interact { pos, .. } | Self::Break { pos, .. } | Self::Place { pos, .. }
+            | Self::BucketEmpty { pos, .. } | Self::BucketPickup { pos, .. } => pos,
+        }
+    }
+
+    /// A break holds still while it mines: no movement input on its ticks.
+    pub fn holds_still(self) -> bool {
+        matches!(self, Self::Break { .. })
+    }
+
+    /// The tick of a `ticks`-long step before whose physics the edit lands. A click lands
+    /// before the first tick; a break lands before the last, because the client's
+    /// `startDestroyBlock` + `continueDestroyBlock` on the first tick adds the first progress
+    /// and the `n`-th call destroys the block before that tick's movement.
+    pub fn lands_at(self, ticks: u32) -> u32 {
+        if self.holds_still() { ticks.saturating_sub(1) } else { 0 }
+    }
+
+    pub fn apply<W: World>(self, delta: &mut WorldDelta<'_, W>) {
+        match self {
+            Self::Interact { pos, after, partner } => {
+                delta.set(pos, after);
+                if let Some((pp, pa)) = partner {
+                    delta.set(pp, pa);
+                }
+            }
+            Self::Break { pos, after, .. } | Self::Place { pos, after }
+            | Self::BucketEmpty { pos, after } | Self::BucketPickup { pos, after } => delta.set(pos, after),
+        }
+    }
+}
+
+/// The tool a block is mined with fastest: what the bot holds while it breaks the block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolKind {
+    Hand,
+    Pickaxe,
+    Axe,
+    Shovel,
+}
+
+pub fn tool_for(sid: StateId) -> ToolKind {
+    let classes = block_break_classes();
+    let cid = classes.by_block.get(sid.block().0 as usize).copied().unwrap_or(0) as usize;
+    match classes.classes.get(cid).map(|c| c.pref) {
+        Some(PrefTool::Pickaxe(_)) => ToolKind::Pickaxe,
+        Some(PrefTool::Axe) => ToolKind::Axe,
+        Some(PrefTool::Shovel) => ToolKind::Shovel,
+        _ => ToolKind::Hand,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Obligation {
     pub pos: BlockPos,

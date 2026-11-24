@@ -99,9 +99,15 @@ public final class Recorder {
     }
 
     static Path planRecording() { return outputPath; }
+    /** Plan ticks started so far. */
+    static int planTick() { return planTick; }
 
     static void cancelPlan(Minecraft mc) {
-        if (planInputs != null) { planInputs = null; TickInput.release(mc); ResidentRunner.playbackEnded(); }
+        if (planInputs != null) {
+            planInputs = null; TickInput.release(mc);
+            if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+            ResidentRunner.playbackEnded();
+        }
     }
     private static double[] start;
     private static int settled;
@@ -325,6 +331,8 @@ public final class Recorder {
             else {
                 TickInput input = planInputs.get(planTick++);
                 input.apply(mc);
+                // A kit action may hold this tick: it is played again until its break lands.
+                if (!ResidentRunner.act(mc, planTick - 1) && planInputs != null) planTick--;
                 HopCapture.input(planTick - 1);
                 Tracks.firstInput(mc, input.forward() || input.back() || input.left() || input.right() || input.jump() || input.sneak() || input.sprint());
             }

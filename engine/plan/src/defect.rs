@@ -1253,25 +1253,14 @@ fn step_kit_node<S: World>(
     yaw: u16,
     ticks: u32,
     op: KitOp,
-    apply_at_end: bool,
     bounds: Aabb,
     label: LabelId,
     provenance: [u8; 32],
     raw_ticks: &mut u64,
 ) -> Option<(PlayerState, WordStep, bool)> {
     let mark = delta.checkpoint();
-    if !apply_at_end {
-        match op {
-            KitOp::Interact { pos, after, partner } => {
-                delta.set(pos, after);
-                if let Some((pp, pa)) = partner { delta.set(pp, pa); }
-            }
-            KitOp::Place { pos, after }
-            | KitOp::BucketEmpty { pos, after }
-            | KitOp::BucketPickup { pos, after }
-            | KitOp::Break { pos, after, .. } => delta.set(pos, after),
-        }
-    }
+    let still = op.holds_still();
+    let land = op.lands_at(ticks);
     let args = Arguments { refined_yaw: Some(crate::lattice::yaw(yaw)), ..Default::default() };
     let prog = &programs[prog_id as usize];
     let held = prog.held_input(args);
@@ -1279,8 +1268,11 @@ fn step_kit_node<S: World>(
     let mut hit_goal = false;
     let mut actual = 0u32;
     for t in 0..ticks {
+        if t == land {
+            op.apply(delta);
+        }
         let prev = s.bounding_box();
-        let inp = if matches!(op, KitOp::Break { .. }) {
+        let inp = if still {
             Default::default()
         } else {
             match held {
@@ -1305,7 +1297,7 @@ fn step_kit_node<S: World>(
             delta.rollback(mark);
             return None;
         }
-        if !apply_at_end && goal.touched_boxes(prev, s.bounding_box()) {
+        if !still && goal.touched_boxes(prev, s.bounding_box()) {
             hit_goal = true;
             break;
         }
@@ -1317,13 +1309,8 @@ fn step_kit_node<S: World>(
             break;
         }
     }
-    if apply_at_end {
-        if let KitOp::Break { pos, after, .. } = op {
-            delta.set(pos, after);
-        }
-        if goal.touched(&s, &s) {
-            hit_goal = true;
-        }
+    if still && goal.touched(&s, &s) {
+        hit_goal = true;
     }
     delta.rollback(mark);
     if actual == 0 {
@@ -1344,7 +1331,6 @@ fn step_kit_node<S: World>(
 
 struct KitCandidate {
     op: KitOp,
-    apply_at_end: bool,
     ticks: u32,
     prog_id: u16,
     yaw: u16,
@@ -1405,7 +1391,6 @@ fn expand_kit_ops<S: World>(
                 let d_sn = if cur == powder_snow_state() { 1 } else { 0 };
                 cands.push(KitCandidate {
                     op: KitOp::BucketPickup { pos: ob.pos, after: ob.original_state },
-                    apply_at_end: false,
                     ticks: 1,
                     prog_id: P_FC,
                     yaw: aim_yaw,
@@ -1428,7 +1413,6 @@ fn expand_kit_ops<S: World>(
                 };
                 cands.push(KitCandidate {
                     op: KitOp::Interact { pos: ob.pos, after: ob.original_state, partner },
-                    apply_at_end: false,
                     ticks: 1,
                     prog_id: P_FC,
                     yaw: aim_yaw,
@@ -1453,7 +1437,6 @@ fn expand_kit_ops<S: World>(
                 if bt < u16::MAX && bt <= 240 && st_cur.interact_kind() == crate::kit::InteractKind::None {
                     cands.push(KitCandidate {
                         op: KitOp::Break { pos: ob.pos, after: ob.original_state, break_ticks: bt.max(1) },
-                        apply_at_end: true,
                         ticks: u32::from(bt.max(1)),
                         prog_id: P_FC,
                         yaw: aim_yaw,
@@ -1467,7 +1450,6 @@ fn expand_kit_ops<S: World>(
         } else if !s.bounding_box().intersects(cell_box(ob.pos)) && past_or_goal && can_place_at(delta, s, ob.pos, ob.original_state) {
             cands.push(KitCandidate {
                 op: KitOp::Place { pos: ob.pos, after: ob.original_state },
-                apply_at_end: false,
                 ticks: 1,
                 prog_id: P_FC,
                 yaw: aim_yaw,
@@ -1497,7 +1479,6 @@ fn expand_kit_ops<S: World>(
             if kv.verb_effects.iter().any(|v| v.kind == VerbKind::BucketWater) && node.counts.water_buckets > 0 {
                 cands.push(KitCandidate {
                     op: KitOp::BucketEmpty { pos: land, after: water_source_state() },
-                    apply_at_end: false,
                     ticks: 4,
                     prog_id: P_F,
                     yaw: aim_yaw,
@@ -1509,7 +1490,6 @@ fn expand_kit_ops<S: World>(
             } else if kv.verb_effects.iter().any(|v| v.kind == VerbKind::BucketPowderSnow) && node.counts.powder_snow_buckets > 0 {
                 cands.push(KitCandidate {
                     op: KitOp::BucketEmpty { pos: land, after: powder_snow_state() },
-                    apply_at_end: false,
                     ticks: 4,
                     prog_id: P_F,
                     yaw: aim_yaw,
@@ -1551,7 +1531,6 @@ fn expand_kit_ops<S: World>(
                             let stand_d = topo.idx([p[0], fy, p[2]]).map_or(500, |i| topo.dist[i]);
                             cands.push(KitCandidate {
                                 op: KitOp::Interact { pos: p, after, partner },
-                                apply_at_end: false,
                                 ticks: 1,
                                 prog_id: P_FS,
                                 yaw: aim_yaw,
@@ -1577,7 +1556,6 @@ fn expand_kit_ops<S: World>(
                         let stand_d = topo.idx([p[0], fy, p[2]]).map_or(500, |i| topo.dist[i]);
                         cands.push(KitCandidate {
                             op: KitOp::Break { pos: p, after: clear_sid, break_ticks: bt.max(1) },
-                            apply_at_end: true,
                             ticks: u32::from(bt.max(1)),
                             prog_id: P_FC,
                             yaw: aim_yaw,
@@ -1638,7 +1616,6 @@ fn expand_kit_ops<S: World>(
         for (sc, p, prog_id, pyaw) in place_cands.into_iter().take(2) {
             cands.push(KitCandidate {
                 op: KitOp::Place { pos: p, after: kv.spec.place_block },
-                apply_at_end: false,
                 ticks: 1,
                 prog_id,
                 yaw: pyaw,
@@ -1654,7 +1631,7 @@ fn expand_kit_ops<S: World>(
     for cand in cands.into_iter().take(6) {
         let Some((end_s, step, hit_goal)) = step_kit_node(
             delta, grid, programs, s, goal, cand.prog_id, cand.yaw, cand.ticks,
-            cand.op, cand.apply_at_end, bounds, label, provenance, raw_learn_ticks,
+            cand.op, bounds, label, provenance, raw_learn_ticks,
         ) else {
             continue;
         };
