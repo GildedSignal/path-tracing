@@ -330,7 +330,7 @@ pub fn get_signal(world: &impl WorldMut, pos: BlockPos, _dir: Direction) -> u8 {
         CellState::Lever(l) => l.signal(),
         _ => 0,
     };
-    if cell.props.is_redstone_conductor {
+    if cell.props().is_redstone_conductor {
         own.max(get_direct_signal_to(world, pos))
     } else {
         own

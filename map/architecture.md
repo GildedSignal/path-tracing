@@ -71,7 +71,7 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 |---|---|
 | `engine/law` | the tick law (`movement.rs`, `shapes.rs`, `state.rs`), boats, mining, the sine table |
 | `engine/plan` | `solve`, the gait store, joints and sets, lattice, events; `bin/plan-track` (to the game), `bin/deviation` |
-| `engine/world` | region files, block table, the world interface |
+| `engine/world` | region files; the 26.2 state table (a cell is a `StateId`, the jar's own id; `STATE_TO_MODEL`, `STATE_TO_BLOCK` in `law::basis::cell`); snapshots in 16³ paletted sections with a 4³ summary that answers a uniform box without reading its cells |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |
 | `bot/` | the Fabric mod: the bot, the stick, tracks, recording, playback |

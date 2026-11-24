@@ -142,7 +142,7 @@ impl<W: World> World for ContactRecorder<'_, W> {
     fn hook_block(&self, p: BlockPos) -> &Block { self.world.hook_block(p) }
     fn fluid_block(&self, p: BlockPos) -> &Block { self.world.fluid_block(p) }
     fn raw_fluid_block(&self, p: BlockPos) -> Option<&Block> { self.world.raw_fluid_block(p) }
-    fn model_id(&self, p: BlockPos) -> Option<u16> { self.world.model_id(p) }
+    fn state_id(&self, p: BlockPos) -> Option<crate::basis::cell::StateId> { self.world.state_id(p) }
     fn loaded(&self, p: BlockPos) -> bool { self.world.loaded(p) }
     fn difficulty(&self) -> u8 { self.world.difficulty() }
     fn natural_regeneration(&self) -> bool { self.world.natural_regeneration() }

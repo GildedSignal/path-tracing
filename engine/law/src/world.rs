@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::basis::cell::{ModelId, StateId};
 use crate::{
     math,
     Aabb,
@@ -351,9 +352,14 @@ pub trait World {
     fn block(&self, position: BlockPos) -> &Block;
 
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
-    /// The block's row in the one static generated model table, when the world has it.
-    /// Pattern keys cache cell digests by it; the law never reads it.
-    fn model_id(&self, _position: BlockPos) -> Option<u16> { None }
+    /// The cell's canonical 26.2 block state, when the world holds states.
+    fn state_id(&self, _position: BlockPos) -> Option<StateId> { None }
+    /// The state's row in the one static generated model table. Pattern keys cache cell digests
+    /// by it; the law never reads it.
+    fn model_id(&self, position: BlockPos) -> Option<ModelId> { self.state_id(position).and_then(StateId::model) }
+    /// `Some(block)` proves every cell of the box `lo..=hi` is loaded and answers every query as
+    /// one cell holding `block` (the same reference); `None` proves nothing.
+    fn uniform(&self, _lo: BlockPos, _hi: BlockPos) -> Option<&Block> { None }
     fn fluid_block(&self, position: BlockPos) -> &Block { self.block(position) }
 
     /// Observation only. These cells remain dependencies when a fast path skips them.

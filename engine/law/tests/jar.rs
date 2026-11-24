@@ -398,8 +398,8 @@ fn jar_world_hooks() {
     const IRON_PLATE_ID: BlockId = BlockId(13);
     const STONE_BTN_ID: BlockId = BlockId(20);
     const OAK_BTN_ID: BlockId = BlockId(21);
-    const WIRE_ID: BlockId = BlockId(1038); // census rows: the tripwire rules build cells of these blocks
-    const HOOK_ID: BlockId = BlockId(1039);
+    const WIRE_ID: BlockId = BlockId(402); // registry rows: the tripwire rules build cells of these blocks
+    const HOOK_ID: BlockId = BlockId(401);
     assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
 
     struct MapBucketWorld {
@@ -4114,10 +4114,10 @@ fn jar_world_sim() {
     use law::place::{DoorHinge, DoorPlaceState, Half};
     use law::interact::{BlockId, LeverState};
     use law::sim::{
-        CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldOverlay,
+        CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldDelta,
     };
     use law::world_hooks::BucketContent;
-    use law::{Block, BlockPos, BoxWorld, PlayerState, Vec3, World};
+    use law::{BlockPos, BoxWorld, PlayerState, Vec3, World};
 
     fn parse_h64(s: &str) -> u64 {
         u64::from_str_radix(s, 16).unwrap_or_else(|e| panic!("bad h64 {s:?}: {e}"))
@@ -4223,24 +4223,50 @@ fn jar_world_sim() {
     let base = BoxWorld::default();
 
     // -------------------------------------------------------------------------
-    // WorldOverlay + Footprint invalidation check
+    // WorldDelta: footprint invalidation, and undo gives back the base's certificates
     // -------------------------------------------------------------------------
     {
-        let mut ov = WorldOverlay::new(&base);
-        ov.set_block([5, 64, 5], Block::full());
-        let rec = RecordingWorld::new(&ov);
+        let state = |name: &str, props: &[(&str, &str)]| law::basis::cell::StateId::of(BlockId::of(name), props);
+        let mut delta = WorldDelta::new(&base);
+        delta.set([5, 64, 5], state("stone", &[]));
+        let rec = RecordingWorld::new(&delta);
         let mut player = PlayerState {
             position: Vec3::new(5.5, 65.0, 5.5),
             ..PlayerState::default()
         };
         law::tick(&mut player, &rec, &law::Input::default());
         let fp = rec.footprint();
-        ov.clear_dirty();
-        assert!(!ov.invalidates_footprint(&fp));
-        ov.set_block([5, 64, 5], Block::default());
-        assert!(ov.invalidates_footprint(&fp));
-        assert!(ov.dirty_positions().contains(&[5, 64, 5]));
-        assert_eq!(ov.dirty_bounds(), Some(([5, 64, 5], [5, 64, 5])));
+        let mark = delta.checkpoint();
+        assert!(!delta.invalidates(mark, &fp));
+        delta.set([5, 64, 5], state("water", &[("level", "0")]));
+        assert!(delta.invalidates(mark, &fp) && delta.has_fluid());
+        assert!(delta.edited_since(mark).eq([[5, 64, 5]]));
+        delta.rollback(mark);
+        assert!(!delta.has_fluid());
+        assert_eq!(delta.state_id([5, 64, 5]), Some(state("stone", &[])));
+        assert_eq!(delta.model_id([5, 64, 5]), state("stone", &[]).model());
+        delta.rollback(0);
+        assert_eq!(delta.state_id([5, 64, 5]), None);
+
+        struct UniformBase(law::Block);
+        impl World for UniformBase {
+            fn block(&self, _: BlockPos) -> &law::Block { &self.0 }
+            fn uniform(&self, _: BlockPos, _: BlockPos) -> Option<&law::Block> { Some(&self.0) }
+            fn loaded(&self, _: BlockPos) -> bool { true }
+        }
+        let ubase = UniformBase(law::Block::default());
+        let mut udelta = WorldDelta::new(&ubase);
+        assert!(udelta.uniform([5, 64, 5], [5, 64, 5]).is_some());
+        udelta.set([5, 64, 5], state("stone", &[]));
+        let umark = udelta.checkpoint();
+        udelta.set([20, 64, 20], state("stone", &[]));
+        assert!(udelta.uniform([5, 64, 5], [5, 64, 5]).is_none());
+        assert!(udelta.uniform([20, 64, 20], [20, 64, 20]).is_none());
+        udelta.rollback(umark);
+        assert!(udelta.uniform([20, 64, 20], [20, 64, 20]).is_some());
+        assert!(udelta.uniform([5, 64, 5], [5, 64, 5]).is_none());
+        udelta.rollback(0);
+        assert!(udelta.uniform([5, 64, 5], [5, 64, 5]).is_some());
     }
 
     // -------------------------------------------------------------------------

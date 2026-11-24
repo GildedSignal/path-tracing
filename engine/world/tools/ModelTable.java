@@ -213,9 +213,37 @@ public final class ModelTable {
         }
         Files.write(out,lines);
     }
+    // states.tsv: every block in registry order (its row is its id), its default state's index, then
+    // each property with its values, in the StateDefinition's order. A state's id is the block's first
+    // id plus the mixed-radix index of its values, the first property the most significant.
+    static void states(Path out) throws Exception {
+        var lines=new ArrayList<String>(); int base=0;
+        for(Block b:BuiltInRegistries.BLOCK) {
+            if (BuiltInRegistries.BLOCK.getId(b)!=lines.size()) throw new AssertionError("registry order");
+            var props=new ArrayList<>(b.getStateDefinition().getProperties());
+            var states=b.getStateDefinition().getPossibleStates();
+            for (BlockState s:states) {
+                int local=0;
+                for (Property p:props) local=local*p.getPossibleValues().size()+p.getPossibleValues().indexOf(s.getValue(p));
+                if (Block.BLOCK_STATE_REGISTRY.getId(s)!=base+local) throw new AssertionError(state(s)+" has id "+Block.BLOCK_STATE_REGISTRY.getId(s)+", not "+(base+local));
+            }
+            int dflt=Block.BLOCK_STATE_REGISTRY.getId(b.defaultBlockState())-base;
+            var line=new StringBuilder(BuiltInRegistries.BLOCK.getKey(b)+"\t"+dflt);
+            for (Property p:props) {
+                var values=new ArrayList<String>();
+                for (Object v:p.getPossibleValues()) values.add(p.getName((Comparable)v));
+                line.append("\t"+p.getName()+":"+String.join(",",values));
+            }
+            lines.add(line.toString());
+            base+=states.size();
+        }
+        if (base!=Block.BLOCK_STATE_REGISTRY.size()) throw new AssertionError(base+" states");
+        Files.write(out,lines);
+    }
     public static void main(String[] args) throws Exception {
         SharedConstants.tryDetectVersion(); Bootstrap.bootStrap();
         if (args[0].equals("--shapes")) { shapes(Path.of(args[1]),Arrays.copyOfRange(args,2,args.length)); return; }
+        if (args[0].equals("--states")) { states(Path.of(args[1])); return; }
         var rows=new TreeMap<String,String>();
         // Each registry state lands in one bucket of its block: "modeled", or the reason it is refused.
         var census=new TreeMap<String,Integer>();

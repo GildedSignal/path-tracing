@@ -1,14 +1,13 @@
-//! Sparse mutable world overlay and unified Mojang 26.2 world-tick simulator.
+//! The world's edits and the unified Mojang 26.2 world-tick simulator.
 //!
 //! Wires the standalone ported 26.2 subsystems together without duplicating their rules:
-//! - [`WorldOverlay`] provides sparse block/fluid overrides over any immutable `&'a W: World`
-//!   while recording mutated `BlockPos` footprints (`dirty_positions()`) for certificate
-//!   invalidation and repair.
+//! - [`WorldDelta`] holds each edited cell's canonical state over any immutable `&'a W: World`,
+//!   journaled so edits undo and certificates their footprint meets can be found.
 //! - [`SimWorld`] executes [`SERVER_TICK_PHASES`] (`ticks::LevelTicks`, `fluid`, `neighbor`,
 //!   `piston`, `falling`, `entity_contact`, `boat`, `pearl`, `place`, `mining`, `interact`,
-//!   `world_hooks`, `explosion`, `combat`) against data-driven cell descriptors.
+//!   `world_hooks`, `explosion`, `combat`) against the cells' canonical states.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use crate::boat::{self, BoatBody, Controls as BoatControls};
 use crate::entity_contact::{ContactEntity, ContactKind, SpatialCrowdIndex, TeamCollisionRule};
@@ -35,6 +34,7 @@ use crate::piston::{
 use crate::place::{
     self, ScaffoldingCell,
 };
+use crate::basis::cell::StateId;
 use crate::basis::sweep::shapes as collide_with_shapes;
 use crate::ticks::{
     ChunkPos, LevelTicks, MAX_TICKS_PER_TICK, ScheduledTick, SubTickCounter, TickPriority,
@@ -49,40 +49,30 @@ use crate::world_hooks::{
 use crate::{
     Aabb, Block, BlockPos, CollisionContext, FluidKind, Inside, Vec3, VoxelShape, World,
 };
+// ============================================================================
+// 2. WorldDelta<'a, W: World>: canonical states over a read-only world, journaled
+// ============================================================================
+
+/// The edits over a read-only world: each edited cell's canonical state, kept in the law's z, y,
+/// x order, and a journal of what each edit replaced, so any run of edits undoes. The hooks the
+/// edited cells bring (a collision leaving its cell, a fluid, an inside effect) are counted, so
+/// undoing the last one gives the base's certificate back.
+pub struct WorldDelta<'a, W: World> {
+    base: &'a W,
+    cells: BTreeMap<(i32, i32, i32), StateId>,
+    journal: Vec<(BlockPos, Option<StateId>, Option<(BlockPos, BlockPos)>)>,
+    bounds: Option<(BlockPos, BlockPos)>,
+    hooks: [u32; 3],
+}
 
 #[inline]
-fn zyx_key(p: BlockPos) -> (i32, i32, i32) {
+fn zyx(p: BlockPos) -> (i32, i32, i32) {
     (p[2], p[1], p[0])
 }
 
-// ============================================================================
-// 2. WorldOverlay<'a, W: World>
-// ============================================================================
-
-/// Sparse mutable block/fluid overlay over any immutable `&'a W: World`.
-/// Tracks mutated `BlockPos` footprints (`dirty_positions()`) for local certificate
-/// invalidation and repair while preserving exact `World` z/y/x traversal order.
-pub struct WorldOverlay<'a, W: World> {
-    base: &'a W,
-    overrides: HashMap<BlockPos, Block>,
-    dirty: BTreeSet<BlockPos>,
-    bounds: Option<(BlockPos, BlockPos)>,
-    unbounded: bool,
-    extra_fluids: bool,
-    extra_inside: bool,
-}
-
-impl<'a, W: World> WorldOverlay<'a, W> {
+impl<'a, W: World> WorldDelta<'a, W> {
     pub fn new(base: &'a W) -> Self {
-        Self {
-            base,
-            overrides: HashMap::new(),
-            dirty: BTreeSet::new(),
-            bounds: None,
-            unbounded: false,
-            extra_fluids: false,
-            extra_inside: false,
-        }
+        Self { base, cells: BTreeMap::new(), journal: Vec::new(), bounds: None, hooks: [0; 3] }
     }
 
     #[inline]
@@ -90,164 +80,106 @@ impl<'a, W: World> WorldOverlay<'a, W> {
         self.base
     }
 
-    /// Inserts or replaces a block override at `pos` and records `pos` as dirty.
-    pub fn set_block(&mut self, pos: BlockPos, block: Block) {
-        self.unbounded |= !block.collision_within_cell();
-        self.extra_fluids |= block.fluid.kind != FluidKind::Empty;
-        self.extra_inside |=
-            block.inside != Inside::None || block.stuck_multiplier.is_some() || block.fluid.kind != FluidKind::Empty;
+    /// Edits the cell at `pos` to `state`.
+    pub fn set(&mut self, pos: BlockPos, state: StateId) {
+        let prev_bounds = self.bounds;
         let (lo, hi) = self.bounds.get_or_insert((pos, pos));
         for a in 0..3 {
             lo[a] = lo[a].min(pos[a]);
             hi[a] = hi[a].max(pos[a]);
         }
-        self.overrides.insert(pos, block);
-        self.dirty.insert(pos);
+        let before = self.cells.insert(zyx(pos), state);
+        self.count(before, Some(state));
+        self.journal.push((pos, before, prev_bounds));
     }
 
-    /// Deterministic sorted set of mutated `BlockPos` cells since creation / last clear.
-    #[inline]
-    pub fn dirty_positions(&self) -> &BTreeSet<BlockPos> {
-        &self.dirty
-    }
-
-    #[inline]
-    pub fn clear_dirty(&mut self) {
-        self.dirty.clear();
-    }
-
-    /// Inclusive bounding box of all currently dirty positions, if non-empty.
-    pub fn dirty_bounds(&self) -> Option<(BlockPos, BlockPos)> {
-        let mut iter = self.dirty.iter().copied();
-        let first = iter.next()?;
-        let mut lo = first;
-        let mut hi = first;
-        for p in iter {
-            for a in 0..3 {
-                lo[a] = lo[a].min(p[a]);
-                hi[a] = hi[a].max(p[a]);
-            }
+    fn count(&mut self, gone: Option<StateId>, come: Option<StateId>) {
+        let hooks = |s: Option<StateId>| s.map_or([false; 3], |s| {
+            let (b, fluid) = (s.model_block(), s.model_block().fluid.kind != FluidKind::Empty);
+            [!b.collision_within_cell(), fluid, fluid || b.inside != Inside::None || b.stuck_multiplier.is_some()]
+        });
+        for ((n, g), c) in self.hooks.iter_mut().zip(hooks(gone)).zip(hooks(come)) {
+            *n = *n + c as u32 - g as u32;
         }
-        Some((lo, hi))
     }
 
-    /// Conservative check: returns `true` iff any mutated cell touches `footprint`'s read or swept set.
-    pub fn invalidates_footprint(&self, footprint: &Footprint) -> bool {
-        self.dirty.iter().any(|&pos| footprint.contains(pos))
+    /// A mark to undo to.
+    pub fn checkpoint(&self) -> usize {
+        self.journal.len()
     }
 
-    fn override_cell_bounds(
-        &self,
-        bounds: Aabb,
-        lo: BlockPos,
-        hi: BlockPos,
-    ) -> Option<(BlockPos, BlockPos)> {
+    /// Undoes every edit since `mark`, the last first.
+    pub fn rollback(&mut self, mark: usize) {
+        while self.journal.len() > mark {
+            let (pos, before, prev_bounds) = self.journal.pop().expect("an edit");
+            let after = match before {
+                Some(s) => self.cells.insert(zyx(pos), s),
+                None => self.cells.remove(&zyx(pos)),
+            };
+            self.count(after, before);
+            self.bounds = prev_bounds;
+        }
+    }
+
+    /// The cells edited since `mark`, in edit order.
+    pub fn edited_since(&self, mark: usize) -> impl Iterator<Item = BlockPos> + '_ {
+        self.journal[mark..].iter().map(|e| e.0)
+    }
+
+    /// Whether an edit since `mark` touches what `footprint` read or swept.
+    pub fn invalidates(&self, mark: usize, footprint: &Footprint) -> bool {
+        self.edited_since(mark).any(|p| footprint.contains(p))
+    }
+
+    /// The box of edited cells a collision query over `bounds` within `lo..=hi` can meet.
+    fn edited_cell_bounds(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
         let (mut min, mut max) = self.bounds?;
-        if !self.unbounded {
-            let tight_lo = block_pos(bounds.min);
-            let tight_hi = block_pos(bounds.max);
-            for a in 0..3 {
+        let (tight_lo, tight_hi) = (block_pos(bounds.min), block_pos(bounds.max));
+        for a in 0..3 {
+            if self.hooks[0] == 0 {
                 min[a] = min[a].max(tight_lo[a]);
                 max[a] = max[a].min(tight_hi[a]);
             }
-        }
-        for a in 0..3 {
             min[a] = min[a].max(lo[a]);
             max[a] = max[a].min(hi[a]);
         }
-        if (0..3).any(|a| min[a] > max[a]) {
-            None
-        } else {
-            Some((min, max))
-        }
+        (0..3).all(|a| min[a] <= max[a]).then_some((min, max))
     }
 }
 
-impl<W: World> World for WorldOverlay<'_, W> {
+impl<W: World> World for WorldDelta<'_, W> {
     #[inline]
-    fn block(&self, position: BlockPos) -> &Block {
-        self.overrides
-            .get(&position)
-            .unwrap_or_else(|| self.base.block(position))
+    fn block(&self, p: BlockPos) -> &Block {
+        self.cells.get(&zyx(p)).map_or_else(|| self.base.block(p), |s| s.block_at(p))
     }
-
     #[inline]
-    fn model_id(&self, position: BlockPos) -> Option<u16> {
-        if self.overrides.contains_key(&position) {
-            None
-        } else {
-            self.base.model_id(position)
+    fn state_id(&self, p: BlockPos) -> Option<StateId> {
+        self.cells.get(&zyx(p)).copied().or_else(|| self.base.state_id(p))
+    }
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> {
+        let edited = self.bounds.is_some_and(|(a, b)| (0..3).all(|i| a[i] <= hi[i] && b[i] >= lo[i]));
+        if edited { None } else { self.base.uniform(lo, hi) }
+    }
+    fn raw_fluid_block(&self, p: BlockPos) -> Option<&Block> {
+        match self.cells.get(&zyx(p)) {
+            Some(s) => self.base.loaded(p).then(|| s.block_at(p)),
+            None => self.base.raw_fluid_block(p),
         }
     }
-
-    #[inline]
-    fn loaded(&self, position: BlockPos) -> bool {
-        self.base.loaded(position)
+    fn has_fluid(&self) -> bool { self.hooks[1] > 0 || self.base.has_fluid() }
+    fn has_inside_effects(&self) -> bool { self.hooks[2] > 0 || self.base.has_inside_effects() }
+    fn loaded(&self, p: BlockPos) -> bool { self.base.loaded(p) }
+    fn min_y(&self) -> i32 { self.base.min_y() }
+    fn fast_lava(&self) -> bool { self.base.fast_lava() }
+    fn difficulty(&self) -> u8 { self.base.difficulty() }
+    fn natural_regeneration(&self) -> bool { self.base.natural_regeneration() }
+    fn extra_collisions(&self, b: Aabb, c: CollisionContext) -> Vec<VoxelShape> { self.base.extra_collisions(b, c) }
+    fn visit_extra_collisions(&self, b: Aabb, c: CollisionContext, v: impl FnMut(crate::shapes::ShapeView<'_>) -> bool) -> bool {
+        self.base.visit_extra_collisions(b, c, v)
     }
 
-    #[inline]
-    fn min_y(&self) -> i32 {
-        self.base.min_y()
-    }
-
-    #[inline]
-    fn fast_lava(&self) -> bool {
-        self.base.fast_lava()
-    }
-
-    #[inline]
-    fn difficulty(&self) -> u8 {
-        self.base.difficulty()
-    }
-
-    #[inline]
-    fn natural_regeneration(&self) -> bool {
-        self.base.natural_regeneration()
-    }
-
-    #[inline]
-    fn has_fluid(&self) -> bool {
-        self.extra_fluids || self.base.has_fluid()
-    }
-
-    #[inline]
-    fn has_inside_effects(&self) -> bool {
-        self.extra_inside || self.base.has_inside_effects()
-    }
-
-    #[inline]
-    fn raw_fluid_block(&self, position: BlockPos) -> Option<&Block> {
-        if let Some(ov) = self.overrides.get(&position) {
-            self.base.loaded(position).then_some(ov)
-        } else {
-            self.base.raw_fluid_block(position)
-        }
-    }
-
-    #[inline]
-    fn extra_collisions(&self, bounds: Aabb, context: CollisionContext) -> Vec<VoxelShape> {
-        self.base.extra_collisions(bounds, context)
-    }
-
-    #[inline]
-    fn visit_extra_collisions(
-        &self,
-        bounds: Aabb,
-        context: CollisionContext,
-        visit: impl FnMut(crate::shapes::ShapeView<'_>) -> bool,
-    ) -> bool {
-        self.base.visit_extra_collisions(bounds, context, visit)
-    }
-
-    fn collision_cell_bounds(
-        &self,
-        bounds: Aabb,
-        lo: BlockPos,
-        hi: BlockPos,
-    ) -> Option<(BlockPos, BlockPos)> {
-        let base_b = self.base.collision_cell_bounds(bounds, lo, hi);
-        let ov_b = self.override_cell_bounds(bounds, lo, hi);
-        match (base_b, ov_b) {
+    fn collision_cell_bounds(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
+        match (self.base.collision_cell_bounds(bounds, lo, hi), self.edited_cell_bounds(bounds, lo, hi)) {
             (None, None) => None,
             (Some(b), None) | (None, Some(b)) => Some(b),
             (Some((mut alo, mut ahi)), Some((blo, bhi))) => {
@@ -260,61 +192,33 @@ impl<W: World> World for WorldOverlay<'_, W> {
         }
     }
 
-    fn visit_collision_cells(
-        &self,
-        bounds: Aabb,
-        lo: BlockPos,
-        hi: BlockPos,
-        mut visit: impl FnMut(BlockPos) -> bool,
-    ) -> bool {
-        let Some((ov_lo, ov_hi)) = self.override_cell_bounds(bounds, lo, hi) else {
+    /// The base's visits with the edited cells that may collide merged in, in z, y, x order.
+    fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
+        let Some((a, b)) = self.edited_cell_bounds(bounds, lo, hi) else {
             return self.base.visit_collision_cells(bounds, lo, hi, visit);
         };
-        let mut extra: Vec<BlockPos> = self
-            .overrides
-            .iter()
-            .filter_map(|(&p, blk)| {
-                let in_box = (0..3).all(|a| p[a] >= ov_lo[a] && p[a] <= ov_hi[a]);
-                (in_box && !blk.never_collides()).then_some(p)
-            })
-            .collect();
-        if extra.is_empty() {
+        let mut edits = self.cells.range(zyx(a)..=zyx(b)).map(|(&(z, y, x), &s)| ([x, y, z], s))
+            .filter(|&(p, s)| (0..3).all(|i| p[i] >= a[i] && p[i] <= b[i]) && !s.block_at(p).never_collides())
+            .map(|(p, _)| p).peekable();
+        if edits.peek().is_none() {
             return self.base.visit_collision_cells(bounds, lo, hi, visit);
         }
-        extra.sort_unstable_by_key(|&p| zyx_key(p));
-
-        let mut ei = 0usize;
         let mut stopped = false;
-        let base_ok = self.base.visit_collision_cells(bounds, lo, hi, |bp| {
-            let bkey = zyx_key(bp);
-            while ei < extra.len() && zyx_key(extra[ei]) < bkey {
-                if !visit(extra[ei]) {
+        let finished = self.base.visit_collision_cells(bounds, lo, hi, |p| {
+            while let Some(&e) = edits.peek().filter(|&&e| zyx(e) <= zyx(p)) {
+                edits.next();
+                if zyx(e) < zyx(p) && !visit(e) {
                     stopped = true;
                     return false;
                 }
-                ei += 1;
             }
-            if ei < extra.len() && zyx_key(extra[ei]) == bkey {
-                ei += 1;
-            }
-            if !visit(bp) {
-                stopped = true;
-                return false;
-            }
-            true
+            stopped = !visit(p);
+            !stopped
         });
-        if !base_ok || stopped {
-            return false;
-        }
-        while ei < extra.len() {
-            if !visit(extra[ei]) {
-                return false;
-            }
-            ei += 1;
-        }
-        true
+        finished && !stopped && edits.all(&mut visit)
     }
 }
+
 
 // ============================================================================
 // 3. The cell (`basis::cell`): a block id, the family's state, the table's rows
@@ -558,8 +462,7 @@ pub struct WorldTick {
 // ============================================================================
 
 pub struct SimWorld<'a, W: World> {
-    overlay: WorldOverlay<'a, W>,
-    cells: HashMap<BlockPos, SimCell>,
+    world: WorldDelta<'a, W>,
     pub game_time: i64,
     pub min_y: i32,
     pub max_y: i32,
@@ -595,8 +498,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         Self {
             min_y: base.min_y(),
             fast_lava: base.fast_lava(),
-            overlay: WorldOverlay::new(base),
-            cells: HashMap::new(),
+            world: WorldDelta::new(base),
             game_time: 0,
             max_y: 319,
             lava_source_conversion: false,
@@ -628,13 +530,8 @@ impl<'a, W: World> SimWorld<'a, W> {
 
 
     #[inline]
-    pub fn world(&self) -> &WorldOverlay<'a, W> {
-        &self.overlay
-    }
-
-    #[inline]
-    pub fn dirty_positions(&self) -> &BTreeSet<BlockPos> {
-        self.overlay.dirty_positions()
+    pub fn world(&self) -> &WorldDelta<'a, W> {
+        &self.world
     }
 
     pub fn set_rng_seed(&mut self, seed: u64) {
@@ -658,80 +555,23 @@ impl<'a, W: World> SimWorld<'a, W> {
         ((self.next_u64() >> 40) as f32) / ((1u32 << 24) as f32)
     }
 
-    /// Reads the rich simulation cell at `pos`, inferring from the base `World` when unedited.
+    /// The rule's view of the cell at `pos`: its canonical state, edited or the base's. A base
+    /// that holds no states is read by its model: air, a fluid, slime, honey, else stone.
     pub fn cell(&self, pos: BlockPos) -> SimCell {
-        if let Some(c) = self.cells.get(&pos) {
-            return c.clone();
+        if let Some(state) = self.world.state_id(pos) {
+            return SimCell::from_state(state, self.fast_lava);
         }
-        let b = self.overlay.base().block(pos);
-        if b.air {
-            return SimCell::air(BlockId::of("air"));
-        }
-        if b.fluid.kind == FluidKind::Water {
-            let amt = b.fluid.raw_amount.unwrap_or(8);
-            let falling = b.fluid.raw_falling.unwrap_or(false);
-            return SimCell::water(
-                BlockId::of("water"),
-                FluidCell {
-                    amount: amt,
-                    falling,
-                    source: amt == 8 && !falling,
-                },
-            );
-        }
-        if b.fluid.kind == FluidKind::Lava {
-            let amt = b.fluid.raw_amount.unwrap_or(8);
-            let falling = b.fluid.raw_falling.unwrap_or(false);
-            return SimCell::lava(
-                BlockId::of("lava"),
-                self.fast_lava,
-                FluidCell {
-                    amount: amt,
-                    falling,
-                    source: amt == 8 && !falling,
-                },
-            );
-        }
-        if b.slime {
-            return SimCell::plain(BlockId::of("slime_block"));
-        }
-        if b.inside == Inside::Honey {
-            return SimCell::plain(BlockId::of("honey_block"));
-        }
-        let blocks_motion = b
-            .fluid_flow
-            .map_or(!b.shape.is_empty(), |ff| ff.blocks_motion);
-        let full = b.shape.is_block();
-        let sturdy = b
-            .fluid_flow
-            .map_or([full; 6], |ff| {
-                [
-                    full,
-                    full,
-                    ff.solid_faces[0],
-                    ff.solid_faces[2],
-                    ff.solid_faces[3],
-                    ff.solid_faces[1],
-                ]
-            });
-        SimCell {
-            id: BlockId::of("stone"),
-            state: CellState::Plain,
-            props: CellProps {
-                destroy_speed: 1.5,
-                requires_correct_tool: true,
-                is_redstone_conductor: full,
-                sturdy_faces: sturdy,
-                push_reaction: PushReaction::Normal,
-                piston_kind: PistonBlockKind::Other,
-                blocks_motion,
-                replaceable_by_fluid: true,
-                can_be_replaced: false,
-                is_signal_source: false,
-                has_block_entity: false,
-                survive_rule: SurviveRule::Always,
-            },
-            block: b.clone(),
+        let b = self.world.base().block(pos);
+        let amount = b.fluid.raw_amount.unwrap_or(8);
+        let falling = b.fluid.raw_falling.unwrap_or(false);
+        let fluid = FluidCell { amount, falling, source: amount == 8 && !falling };
+        match b.fluid.kind {
+            _ if b.air => SimCell::air(BlockId::of("air")),
+            FluidKind::Water => SimCell::water(BlockId::of("water"), fluid),
+            FluidKind::Lava => SimCell::lava(BlockId::of("lava"), self.fast_lava, fluid),
+            _ if b.slime => SimCell::plain(BlockId::of("slime_block")),
+            _ if b.inside == Inside::Honey => SimCell::plain(BlockId::of("honey_block")),
+            _ => SimCell::plain(BlockId::of("stone")),
         }
     }
 
@@ -740,11 +580,16 @@ impl<'a, W: World> SimWorld<'a, W> {
     }
 
     /// Direct setup write without triggering neighbor/shape updates (for building fixtures).
-    pub fn set_cell_raw(&mut self, pos: BlockPos, mut cell: SimCell) {
-        cell.sync_block();
+    pub fn set_cell_raw(&mut self, pos: BlockPos, cell: SimCell) {
         self.update_hook_tracking(pos, &cell);
-        self.overlay.set_block(pos, cell.block.clone());
-        self.cells.insert(pos, cell);
+        self.put(pos, cell);
+    }
+
+    /// Writes `cell` as its canonical state; a cell no state holds is refused.
+    fn put(&mut self, pos: BlockPos, cell: SimCell) {
+        let state = cell.state_id();
+        assert_eq!(SimCell::from_state(state, self.fast_lava), cell, "no canonical state holds this cell");
+        self.world.set(pos, state);
     }
 
     fn update_hook_tracking(&mut self, pos: BlockPos, cell: &SimCell) {
@@ -852,22 +697,20 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self,
         mut queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
-        mut new_cell: SimCell,
+        new_cell: SimCell,
         flags: i32,
         recursion_limit: i32,
     ) -> bool {
         if !self.in_world_bounds(pos) {
             return false;
         }
-        new_cell.sync_block();
         let old_cell = self.cell(pos);
-        if old_cell.id == new_cell.id && old_cell.state == new_cell.state {
+        if old_cell == new_cell {
             return false;
         }
 
         self.update_hook_tracking(pos, &new_cell);
-        self.overlay.set_block(pos, new_cell.block.clone());
-        self.cells.insert(pos, new_cell.clone());
+        self.put(pos, new_cell);
 
         let moved_by_piston = (flags & update_flags::MOVE_BY_PISTON) != 0;
         if old_cell.id != new_cell.id {
@@ -1070,7 +913,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         for dir in Direction::HORIZONTAL {
             let side = dir.relative_by(pos, 1);
             self.enqueue_update_neighbors(queue.as_deref_mut(), side, wire_id, None);
-            let target = if self.cell(side).props.is_redstone_conductor {
+            let target = if self.cell(side).props().is_redstone_conductor {
                 Direction::Up.relative_by(side, 1)
             } else {
                 Direction::Down.relative_by(side, 1)
@@ -1215,7 +1058,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                             DoorHalf::Upper => Direction::Down,
                         };
                         if direction == Direction::Down && door.half == DoorHalf::Lower {
-                            if !self.cell(neighbor_pos).props.sturdy_faces[Direction::Up as usize] {
+                            if !self.cell(neighbor_pos).props().sturdy_faces[Direction::Up as usize] {
                                 let action = neighbor::decide_update_or_destroy(
                                     true,
                                     true,
@@ -1282,7 +1125,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         );
                     }
                     _ => {
-                        if cell.props.survive_rule != SurviveRule::Always && !self.can_survive(pos, &cell)
+                        if cell.props().survive_rule != SurviveRule::Always && !self.can_survive(pos, &cell)
                         {
                             let action = neighbor::decide_update_or_destroy(
                                 true,
@@ -1331,27 +1174,27 @@ impl<'a, W: World> SimWorld<'a, W> {
     }
 
     fn can_survive(&self, pos: BlockPos, cell: &SimCell) -> bool {
-        match cell.props.survive_rule {
+        match cell.props().survive_rule {
             SurviveRule::Always => true,
             SurviveRule::FloorSturdy => {
                 let below = self.cell(Direction::Down.relative_by(pos, 1));
-                below.props.sturdy_faces[Direction::Up as usize]
+                below.props().sturdy_faces[Direction::Up as usize]
             }
             SurviveRule::Attached => match cell.state {
                 CellState::Lever(l) => {
                     let attach = l.connected_direction().opposite();
                     let support = attach.relative_by(pos, 1);
-                    self.cell(support).props.sturdy_faces[attach.opposite() as usize]
+                    self.cell(support).props().sturdy_faces[attach.opposite() as usize]
                 }
                 CellState::Button(b) => {
                     let attach = b.connected_direction().opposite();
                     let support = attach.relative_by(pos, 1);
-                    self.cell(support).props.sturdy_faces[attach.opposite() as usize]
+                    self.cell(support).props().sturdy_faces[attach.opposite() as usize]
                 }
                 CellState::TripwireHook(h) => {
                     let attach = h.facing.opposite();
                     let support = attach.relative_by(pos, 1);
-                    self.cell(support).props.sturdy_faces[(h.facing) as usize]
+                    self.cell(support).props().sturdy_faces[(h.facing) as usize]
                 }
                 _ => true,
             },
@@ -1365,16 +1208,16 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn wire_has_connections(&self, pos: BlockPos) -> [bool; 4] {
         let above_conductor = self
             .cell(Direction::Up.relative_by(pos, 1))
-            .props
+            .props()
             .is_redstone_conductor;
         let mut conn = [false; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
             let side = dir.relative_by(pos, 1);
             let sc = self.cell(side);
-            let flat = matches!(sc.state, CellState::RedstoneWire { .. }) || sc.props.is_signal_source;
+            let flat = matches!(sc.state, CellState::RedstoneWire { .. }) || sc.props().is_signal_source;
             if flat {
                 conn[i] = true;
-            } else if sc.props.is_redstone_conductor {
+            } else if sc.props().is_redstone_conductor {
                 if !above_conductor {
                     let up = Direction::Up.relative_by(side, 1);
                     conn[i] = matches!(self.cell(up).state, CellState::RedstoneWire { .. });
@@ -1422,7 +1265,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             CellState::TripwireHook(h) => h.own_signal(),
             _ => 0,
         };
-        if cell.props.is_redstone_conductor {
+        if cell.props().is_redstone_conductor {
             own.max(self.get_direct_signal_to(pos, wire_should_signal))
         } else {
             own
@@ -1513,7 +1356,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let block_sig = self.get_best_neighbor_signal(pos, false);
         let above_conductor = self
             .cell(Direction::Up.relative_by(pos, 1))
-            .props
+            .props()
             .is_redstone_conductor;
         let mut incoming = [0u8; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
@@ -1533,7 +1376,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             };
             incoming[i] = neighbor::redstone_wire_side_signal(
                 flat,
-                side_cell.props.is_redstone_conductor,
+                side_cell.props().is_redstone_conductor,
                 above_conductor,
                 up_wire,
                 down_wire,
@@ -1658,16 +1501,16 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn can_pass_through_wall(&self, _dir: Direction, from: BlockPos, to: BlockPos) -> bool {
         let a = self.cell(from);
         let b = self.cell(to);
-        !a.props.blocks_motion && !b.props.blocks_motion
+        !a.props().blocks_motion && !b.props().blocks_motion
             || (a.is_waterlogged_container() || b.is_waterlogged_container())
-                && !b.block.shape.is_block()
+                && !b.block().shape.is_block()
     }
 
     fn can_hold_any_fluid(cell: &SimCell) -> bool {
-        if cell.is_air() || cell.props.replaceable_by_fluid || cell.is_waterlogged_container() {
+        if cell.is_air() || cell.props().replaceable_by_fluid || cell.is_waterlogged_container() {
             return true;
         }
-        !cell.props.blocks_motion
+        !cell.props().blocks_motion
     }
 
     fn can_hold_specific_fluid(cell: &SimCell, kind: FlowKind) -> bool {
@@ -1722,7 +1565,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
         let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
-        let below_solid_or_same_source = !below_cell.is_air() && below_cell.props.blocks_motion
+        let below_solid_or_same_source = !below_cell.is_air() && below_cell.props().blocks_motion
             || below_cell
                 .fluid_info()
                 .is_some_and(|(bk, bf)| Self::same_fluid_kind(kind, bk) && bf.source);
@@ -1764,7 +1607,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             TargetBlock::Air
         } else if target_cell.is_waterlogged_container() {
             TargetBlock::Container
-        } else if target_cell.props.replaceable_by_fluid {
+        } else if target_cell.props().replaceable_by_fluid {
             TargetBlock::Destroyable
         } else {
             TargetBlock::Solid
@@ -1932,9 +1775,8 @@ impl<'a, W: World> SimWorld<'a, W> {
     ) {
         let has_signal = self.piston_has_neighbor_signal(pos, facing);
         if has_signal && !extended {
-            let pworld = SimPistonView { sim: self };
             let mut resolver = Resolver::new(pos, facing, true);
-            if resolver.resolve(&pworld) {
+            if resolver.resolve(&*self) {
                 self.queue_block_event(pos, block_id, piston_trigger::EXTEND, facing as i32);
             }
         } else if !has_signal && extended {
@@ -2070,11 +1912,8 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
 
         let mut resolver = Resolver::new(piston_pos, facing, extending);
-        {
-            let pworld = SimPistonView { sim: self };
-            if !resolver.resolve(&pworld) {
-                return false;
-            }
+        if !resolver.resolve(&*self) {
+            return false;
         }
         let to_push: Vec<BlockPos> = resolver.to_push().to_vec();
         let to_destroy: Vec<BlockPos> = resolver.to_destroy().to_vec();
@@ -2223,21 +2062,21 @@ impl<'a, W: World> SimWorld<'a, W> {
         if entry.moving.is_source_piston {
             (piston_head_boxes(entry.moving.direction), 2)
         } else {
-            Self::extract_shape_boxes(&entry.carried.block.shape)
+            Self::extract_shape_boxes(&entry.carried.block().shape)
         }
     }
 
     fn collect_world_collisions(&self, bounds: Aabb, ctx: CollisionContext) -> Vec<VoxelShape> {
-        let mut shapes = self.overlay.collisions(bounds, ctx);
+        let mut shapes = self.world.collisions(bounds, ctx);
         for entry in self.moving_pistons.values() {
             if !entry.moving.extending
                 && entry.moving.is_source_piston
                 && matches!(
-                    entry.carried.props.piston_kind,
+                    entry.carried.props().piston_kind,
                     PistonBlockKind::Piston { .. } | PistonBlockKind::StickyPiston { .. }
                 )
             {
-                let base = crate::basis::cell::model(BlockId::of("piston"), &[("extended", "true"), ("facing", crate::basis::cell::DIRECTION[entry.moving.direction as usize])]);
+                let base = StateId::of(BlockId::of("piston"), &[("extended", "true"), ("facing", crate::basis::cell::DIRECTION[entry.moving.direction as usize])]).model_block();
                 let c = &base.shape.coords;
                 let base_box = Aabb::new(c[0][0], c[1][0], c[2][0], c[0][1], c[1][1], c[2][1]).moved(Vec3::new(
                     entry.pos[0] as f64,
@@ -2274,8 +2113,8 @@ impl<'a, W: World> SimWorld<'a, W> {
         if nboxes == 0 {
             return;
         }
-        let slime_moved = entry.carried.props.piston_kind == PistonBlockKind::SlimeBlock;
-        let honey_moved = entry.carried.props.piston_kind == PistonBlockKind::HoneyBlock;
+        let slime_moved = entry.carried.props().piston_kind == PistonBlockKind::SlimeBlock;
+        let honey_moved = entry.carried.props().piston_kind == PistonBlockKind::HoneyBlock;
         let move_dir = piston::movement_direction(entry.moving.extending, entry.moving.direction);
         let delta = (new_progress - entry.moving.progress) as f64;
 
@@ -2441,7 +2280,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     below.is_air(),
                     false,
                     matches!(below.state, CellState::Fluid { .. }),
-                    below.props.can_be_replaced,
+                    below.props().can_be_replaced,
                 );
                 if below_is_free && pos[1] >= self.min_y {
                     self.spawn_falling_block(pos, cell);
@@ -2612,7 +2451,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     let has_w = nc
                         .fluid_info()
                         .is_some_and(|(k, _)| matches!(k, FlowKind::Water));
-                    neigh_water[di] = has_w && !nc.props.sturdy_faces[d.opposite() as usize];
+                    neigh_water[di] = has_w && !nc.props().sturdy_faces[d.opposite() as usize];
                 }
                 falling::concrete_powder_should_solidify(in_water, neigh_water)
             } else {
@@ -2625,7 +2464,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 below_cell.is_air(),
                 false,
                 matches!(below_cell.state, CellState::Fluid { .. }),
-                below_cell.props.can_be_replaced,
+                below_cell.props().can_be_replaced,
             );
             let ctx = LandingContext {
                 on_ground: fb.on_ground,
@@ -2635,7 +2474,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     CellState::MovingPiston { .. }
                 ),
                 cancel_drop: fb.cancel_drop,
-                landing_can_be_replaced: landing_cell.is_air() || landing_cell.props.can_be_replaced,
+                landing_can_be_replaced: landing_cell.is_air() || landing_cell.props().can_be_replaced,
                 carried_can_survive: self.can_survive(bpos, &fb.cell),
                 below_is_free,
                 is_concrete_powder,
@@ -2704,7 +2543,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     fn tick_boats(&mut self) -> usize {
         let mut ticked = 0usize;
-        let query = &self.overlay;
+        let query = &self.world;
         for boat in &mut self.boats {
             if boat.removed {
                 continue;
@@ -2752,7 +2591,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 reset_fall_distance,
                 damage,
                 ..
-            }) = pearl::pearl_tick(&self.overlay, &mut p.state, &targets, owner_ok)
+            }) = pearl::pearl_tick(&self.world, &mut p.state, &targets, owner_ok)
             {
                 if let Some(idx) = p.owner_idx {
                     if let Some(owner) = self.living_entities.get_mut(idx) {
@@ -3021,7 +2860,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     ) -> bool {
         let mut events = Vec::new();
         let ok = {
-            let mut bw = SimBucketView::new(self);
+            let mut bw = Pending::new(self);
             world_hooks::bucket_empty_contents(
                 &mut bw,
                 content,
@@ -3065,17 +2904,12 @@ impl<'a, W: World> SimWorld<'a, W> {
             return SimCell::air(BlockId::of("air"));
         }
         if let Some((fluid, level)) = bc.liquid_block {
-            let amount = if level == 0 { 8 } else { 8u8.saturating_sub(level) };
-            let fcell = FluidCell {
-                amount,
-                falling: level >= 8,
-                source: level == 0,
+            let name = match fluid {
+                BucketContent::Water => "water",
+                BucketContent::Lava => "lava",
+                BucketContent::Empty => return SimCell::air(BlockId::of("air")),
             };
-            return match fluid {
-                BucketContent::Water => SimCell::water(BlockId::of("water"), fcell),
-                BucketContent::Lava => SimCell::lava(BlockId::of("lava"), self.fast_lava, fcell),
-                BucketContent::Empty => SimCell::air(BlockId::of("air")),
-            };
+            return SimCell::from_state(StateId::of(BlockId::of(name), &[("level", &level.to_string())]), self.fast_lava);
         }
         let mut existing = self.cell(pos);
         if let Some(wl) = bc.waterlogged {
@@ -3096,8 +2930,8 @@ impl<'a, W: World> SimWorld<'a, W> {
             _ => ScaffoldingCell {
                 is_scaffolding: false,
                 distance: 0,
-                sturdy_up: c.props.sturdy_faces[Direction::Up as usize],
-                replaceable: c.is_air() || c.props.can_be_replaced,
+                sturdy_up: c.props().sturdy_faces[Direction::Up as usize],
+                replaceable: c.is_air() || c.props().can_be_replaced,
             },
         }
     }
@@ -3223,24 +3057,20 @@ impl<'a, W: World> SimWorld<'a, W> {
 // 6. Subsystem Trait Views over SimWorld (zero-duplication bridges)
 // ============================================================================
 
-struct SimPistonView<'s, 'a, W: World> {
-    sim: &'s SimWorld<'a, W>,
-}
-
-impl<W: World> PistonWorld for SimPistonView<'_, '_, W> {
+impl<W: World> PistonWorld for SimWorld<'_, W> {
     fn block(&self, position: BlockPos) -> PistonBlock {
-        self.sim.cell(position).as_piston_block()
+        self.cell(position).as_piston_block()
     }
     fn min_y(&self) -> i32 {
-        self.sim.min_y
+        self.min_y
     }
     fn max_y(&self) -> i32 {
-        self.sim.max_y
+        self.max_y
     }
 }
 
-/// The world a rule edits while it runs: its own writes, over the sim's cells. The sim then
-/// applies the rule's events with their update flags.
+/// The world a rule edits while it runs (cell by cell, or bucket by bucket): its own writes,
+/// over the sim's cells. The sim then applies the rule's events with their update flags.
 struct Pending<'s, 'a, W: World> {
     sim: &'s mut SimWorld<'a, W>,
     pending: HashMap<BlockPos, SimCell>,
@@ -3265,21 +3095,7 @@ impl<W: World> WorldMut for Pending<'_, '_, W> {
     }
 }
 
-struct SimBucketView<'s, 'a, W: World> {
-    sim: &'s mut SimWorld<'a, W>,
-    pending: HashMap<BlockPos, SimCell>,
-}
-
-impl<'s, 'a, W: World> SimBucketView<'s, 'a, W> {
-    fn new(sim: &'s mut SimWorld<'a, W>) -> Self {
-        Self {
-            sim,
-            pending: HashMap::new(),
-        }
-    }
-}
-
-impl<W: World> BucketWorld for SimBucketView<'_, '_, W> {
+impl<W: World> BucketWorld for Pending<'_, '_, W> {
     fn air_id(&self) -> BlockId {
         BlockId::of("air")
     }
@@ -3290,11 +3106,7 @@ impl<W: World> BucketWorld for SimBucketView<'_, '_, W> {
         BlockId::of("lava")
     }
     fn cell(&self, pos: BlockPos) -> BucketCell {
-        let c = self
-            .pending
-            .get(&pos)
-            .cloned()
-            .unwrap_or_else(|| self.sim.cell(pos));
+        let c = WorldMut::cell(self, pos);
         if c.is_air() {
             return BucketCell::air(c.id);
         }
@@ -3318,7 +3130,7 @@ impl<W: World> BucketWorld for SimBucketView<'_, '_, W> {
             is_air: false,
             is_liquid: false,
             is_fluid_source: false,
-            can_be_replaced_by_fluid: c.props.replaceable_by_fluid,
+            can_be_replaced_by_fluid: c.props().replaceable_by_fluid,
             is_liquid_block_container: false,
             accepts_water_container: false,
             waterlogged: None,

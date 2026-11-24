@@ -33,7 +33,8 @@ impl<W:World> World for MeteredWorld<'_,W> {
     fn hook_block(&self,p:BlockPos)->&Block {self.world.hook_block(p)}
     fn fluid_block(&self,p:BlockPos)->&Block {self.world.fluid_block(p)}
     fn raw_fluid_block(&self,p:BlockPos)->Option<&Block> {self.world.raw_fluid_block(p)}
-    fn model_id(&self,p:BlockPos)->Option<u16> {self.world.model_id(p)}
+    fn state_id(&self,p:BlockPos)->Option<law::basis::cell::StateId> {self.world.state_id(p)}
+    fn uniform(&self,lo:BlockPos,hi:BlockPos)->Option<&Block> {self.world.uniform(lo,hi)}
     fn loaded(&self,p:BlockPos)->bool {self.world.loaded(p)}
     fn difficulty(&self)->u8 {self.world.difficulty()}
     fn natural_regeneration(&self)->bool {self.world.natural_regeneration()}
@@ -107,7 +108,7 @@ impl GeneratorSuperflatSource {
             for z in lo[2]..=hi[2] {for x in lo[0]..=hi[0] {
                 let p=[x,y,z];
                 // A model's id where the world has one, else its address: equal keys, equal blocks.
-                let id=world.model_id(p).map_or(world.block(p) as *const law::Block as usize,usize::from);
+                let id=world.model_id(p).map_or(world.block(p) as *const law::Block as usize,|m| m.0 as usize);
                 let differs=match differences.entry((y,id)) {
                     std::collections::hash_map::Entry::Occupied(e)=>*e.get(),
                     std::collections::hash_map::Entry::Vacant(e)=>{
