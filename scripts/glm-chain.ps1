@@ -1,12 +1,12 @@
 # GLM never idles while it has port work (S241): runs a queue file top to bottom as a rolling worker pool.
 # A finished job leaves the queue and immediately frees its slot; a job that hits Zai's 5-hour limit (1308)
 # pauses new spawns until the reset the error names. Results land in lab\results\local-*.
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\glm-chain.ps1 [-Parallel 7] [-QueueFile jobs\glm-chain.txt] [-Minutes 60]
-param([int]$Parallel = 7, [string]$QueueFile = 'jobs\glm-chain.txt', [int]$Minutes = 60)
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\glm-chain.ps1 [-Parallel 7] [-QueueFile jobs\glm-chain.txt] [-Minutes 60] [-Model zai/glm-5.4] [-LogFile jobs\glm-chain.log]
+param([int]$Parallel = 7, [string]$QueueFile = 'jobs\glm-chain.txt', [int]$Minutes = 60, [string]$Model = 'zai/glm-5.4', [string]$LogFile = 'jobs\glm-chain.log')
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 $list = if ([IO.Path]::IsPathRooted($QueueFile)) { $QueueFile } else { Join-Path $Root $QueueFile }
-$log = Join-Path $Root 'jobs\glm-chain.log'
+$log = if ([IO.Path]::IsPathRooted($LogFile)) { $LogFile } else { Join-Path $Root $LogFile }
 $resultsDir = Join-Path $Root 'lab\results'
 $glmLocal = Join-Path $PSScriptRoot 'glm-local.ps1'
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -38,12 +38,12 @@ while ($true) {
       Where-Object { $_.Name -match $pat -and $_.LastWriteTime -ge $slot.Start.AddSeconds(-5) } |
       Sort-Object LastWriteTime | Select-Object -Last 1
     $authorLog = if ($out) { Get-Content -Raw (Join-Path $out.FullName 'author.log') -ErrorAction SilentlyContinue } else { '' }
-    if ($out -and ($out.Name -like '*-zai-limit' -or $authorLog -match '"code":"1308"|Usage limit reached')) {
+    if ($out -and ($out.Name -like '*-zai-limit' -or $authorLog -match '"code":"1308"|Usage limit reached|rate[_ -]?limit|HTTP 429|status 429|Too Many Requests')) {
       $m = [regex]::Match($authorLog, 'retry-after-ms=(\d+)')
       $wait = if ($m.Success) { [int]([long]$m.Groups[1].Value / 1000) + 60 } else { 1800 }
       $candidate = (Get-Date).AddSeconds($wait)
       if ($candidate -gt $resumeAt) { $resumeAt = $candidate }
-      Write-Log "zai limit: $job -> $($out.Name); cooldown until $($resumeAt.ToString('HH:mm'))"
+      Write-Log "limit ($Model): $job -> $($out.Name); cooldown until $($resumeAt.ToString('HH:mm'))"
       continue
     }
     $dossierPath = if ($out) { Join-Path $out.FullName 'dossier.md' } else { '' }
@@ -79,10 +79,10 @@ while ($true) {
       $start = Get-Date
       try {
         $proc = Start-Process powershell -ArgumentList @(
-          '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\glm-local.ps1', '-Lenses', $job, '-Minutes', "$Minutes"
+          '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\glm-local.ps1', '-Lenses', $job, '-Minutes', "$Minutes", '-Model', $Model
         ) -WorkingDirectory $Root -WindowStyle Hidden -PassThru
         $active += [pscustomobject]@{ Job = $job; Proc = $proc; Start = $start }
-        Write-Log "start: $job (active=$($active.Count)/$Parallel)"
+        Write-Log "start ($Model): $job (active=$($active.Count)/$Parallel)"
       } catch {
         Write-Log "spawn error on ${job}: $_"
         [void]$failed.Add($job)
