@@ -68,7 +68,7 @@ Copy the git-ignored `engine/world/tests/fixtures/world` from `C:\Users\PASCAL\D
    - **new contact:** item 2 of section 2;
    - **step-up:** `before.on_ground && after.on_ground && after.position.y != before.position.y`;
    - **grounded stall:** `after.on_ground && after.movement_this_tick.is_none()` (the law's own `< 1e-7` movement gate, `families.rs:75`, which stops sneak-at-edge holds and wall pushes from an already-colliding state cleanly without burning `max_ticks`);
-   - **ledge takeoff (rising `SupportEnds`):** `after.on_ground && can_fall(after, world) && !(before.on_ground && can_fall(before, world))`, where `can_fall(s, w)` is `law::can_fall(s, w, s.velocity.x, s.velocity.z, s.step_height as f64)` (`words/src/program.rs:67`), called through `world` (`&recording`) so its support probe enters the certificate footprint. Fires zero times on flat ground, once on the exact last grounded tick before stepping off a gap at full momentum, and does not re-fire when a subsequent demand chooses to drop off;
+   - **ledge takeoff (rising overhang):** `after.on_ground && can_fall(after, world) && !(before.on_ground && can_fall(before, world))`, where `can_fall(s, w)` is zero-offset `law::can_fall(s, w, 0.0, 0.0, f64::from(s.step_height))` (`movement.rs:561`), called through `world` (`&recording`) so its support probe enters the certificate footprint. Because `move_player` resolves `Axis::Y` before `Axis::X`, zero horizontal offset aligns the stop with losing vertical support on the next tick (adjust depth to `f64::from(s.gravity)` only if a measured drop onto a sub-step surface needs it; document any law-driven refinement in `report.md` and keep going);
    - **leaving the site:** `after.bounding_box()` no longer intersects the demand's site box (section 4, item 4).
 
    The word budget is `Arguments::max_ticks` (256). When it runs out, the word is `Searched`.
@@ -249,11 +249,11 @@ A rung that cannot be reached is written as its refusal, and you go on to the ne
 
 ## The one stop
 
-Stop only in one of two cases:
-- a rung needs a second mechanism: a branch on terrain kind, block name or track, a tolerance on a predicted tick, or a search in acting;
-- a measurement contradicts a frozen decision. For example: the guard admits a state whose motion differs; a pin with no `actual` decides T; the bisection in section 4 is not monotone.
+Stop (`STATUS: BLOCKED`) **only** for a genuine architectural break:
+- a rung forces a second mechanism (a branch on terrain kind, block name, or track; a tolerance on a predicted tick; or search in acting); or
+- a core architectural invariant breaks (the resource guard admits a state whose motion differs; the monotone backward min-plus wave cannot compose prefix + site + tail).
 
-Then write the case: the inputs and the two values. Anything else you decide against the map, write down with its reason, and keep going.
+**Do NOT stop** on local predicate, witness-harness, or formula edge cases (such as `can_fall` offset/depth, movement-gate holds, or helper signatures) that do not change the architecture: fix them directly from the law, verify against `law::try_tick`, record the exact fix and inputs in `report.md`, and keep going through all of sections 1–10, the offline ladder, and gates 1–8.
 
 ## Output
 
