@@ -1334,9 +1334,6 @@ struct KitCandidate {
     ticks: u32,
     prog_id: u16,
     yaw: u16,
-    d_blocks: i32,
-    d_water: i8,
-    d_snow: i8,
     score: u16,
 }
 
@@ -1387,16 +1384,11 @@ fn expand_kit_ops<S: World>(
             let age = node.arrival.saturating_sub(ob.opened_tick);
             let can_pick = (s.on_ground && s.fall_distance < 0.5) || age >= 1;
             if can_pick && (age <= 4 || cur == powder_snow_state()) {
-                let d_w = if cur == water_source_state() { 1 } else { 0 };
-                let d_sn = if cur == powder_snow_state() { 1 } else { 0 };
                 cands.push(KitCandidate {
                     op: KitOp::BucketPickup { pos: ob.pos, after: ob.original_state },
                     ticks: 1,
                     prog_id: P_FC,
                     yaw: aim_yaw,
-                    d_blocks: 0,
-                    d_water: d_w,
-                    d_snow: d_sn,
                     score: 0,
                 });
             }
@@ -1416,9 +1408,6 @@ fn expand_kit_ops<S: World>(
                     ticks: 1,
                     prog_id: P_FC,
                     yaw: aim_yaw,
-                    d_blocks: 0,
-                    d_water: 0,
-                    d_snow: 0,
                     score: 1,
                 });
             }
@@ -1440,9 +1429,6 @@ fn expand_kit_ops<S: World>(
                         ticks: u32::from(bt.max(1)),
                         prog_id: P_FC,
                         yaw: aim_yaw,
-                        d_blocks: 1,
-                        d_water: 0,
-                        d_snow: 0,
                         score: 2 + bt.min(200),
                     });
                 }
@@ -1453,9 +1439,6 @@ fn expand_kit_ops<S: World>(
                 ticks: 1,
                 prog_id: P_FC,
                 yaw: aim_yaw,
-                d_blocks: 0,
-                d_water: 0,
-                d_snow: 0,
                 score: 2,
             });
         }
@@ -1482,9 +1465,6 @@ fn expand_kit_ops<S: World>(
                     ticks: 4,
                     prog_id: P_F,
                     yaw: aim_yaw,
-                    d_blocks: 0,
-                    d_water: -1,
-                    d_snow: 0,
                     score: 3,
                 });
             } else if kv.verb_effects.iter().any(|v| v.kind == VerbKind::BucketPowderSnow) && node.counts.powder_snow_buckets > 0 {
@@ -1493,9 +1473,6 @@ fn expand_kit_ops<S: World>(
                     ticks: 4,
                     prog_id: P_F,
                     yaw: aim_yaw,
-                    d_blocks: 0,
-                    d_water: 0,
-                    d_snow: -1,
                     score: 3,
                 });
             }
@@ -1534,9 +1511,6 @@ fn expand_kit_ops<S: World>(
                                 ticks: 1,
                                 prog_id: P_FS,
                                 yaw: aim_yaw,
-                                d_blocks: 0,
-                                d_water: 0,
-                                d_snow: 0,
                                 score: 5 + stand_d.min(200),
                             });
                         }
@@ -1559,9 +1533,6 @@ fn expand_kit_ops<S: World>(
                             ticks: u32::from(bt.max(1)),
                             prog_id: P_FC,
                             yaw: aim_yaw,
-                            d_blocks: 0,
-                            d_water: 0,
-                            d_snow: 0,
                             score: 10 + bt + stand_d.min(200),
                         });
                     }
@@ -1619,9 +1590,6 @@ fn expand_kit_ops<S: World>(
                 ticks: 1,
                 prog_id,
                 yaw: pyaw,
-                d_blocks: -1,
-                d_water: 0,
-                d_snow: 0,
                 score: 8 + sc.min(300),
             });
         }
@@ -1639,49 +1607,15 @@ fn expand_kit_ops<S: World>(
         if arr >= best_ub {
             continue;
         }
-        let mut next_edits = node.edits.clone();
-        let mut next_ledger = node.ledger.clone();
-        let mut next_counts = node.counts;
-        next_counts.blocks = (i32::from(next_counts.blocks) + cand.d_blocks).clamp(0, i32::from(u16::MAX)) as u16;
-        next_counts.water_buckets = (i16::from(next_counts.water_buckets) + i16::from(cand.d_water)).clamp(0, 127) as u8;
-        next_counts.powder_snow_buckets = (i16::from(next_counts.powder_snow_buckets) + i16::from(cand.d_snow)).clamp(0, 127) as u8;
-
-        match cand.op {
-            KitOp::Interact { pos, after, partner } => {
-                let before = delta.state_id(pos).unwrap_or_else(air_state);
-                update_edits(&mut next_edits, grid, pos, after);
-                if let Some((pp, pa)) = partner {
-                    update_edits(&mut next_edits, grid, pp, pa);
-                }
-                if kv.spec.restore_required {
-                    next_ledger.record_edit(pos, before, after, node.arrival, 1);
-                }
-            }
-            KitOp::Break { pos, after, .. } => {
-                let before = delta.state_id(pos).unwrap_or_else(air_state);
-                update_edits(&mut next_edits, grid, pos, after);
-                if kv.spec.restore_required {
-                    next_ledger.record_edit(pos, before, after, node.arrival, 1);
-                }
-            }
-            KitOp::Place { pos, after } => {
-                let before = delta.state_id(pos).unwrap_or_else(air_state);
-                update_edits(&mut next_edits, grid, pos, after);
-                if kv.spec.restore_required {
-                    let row = kv.breaking.get(after.block(), after);
-                    next_ledger.record_edit(pos, before, after, node.arrival, row.break_ticks_ground.min(200).max(1));
-                }
-            }
-            KitOp::BucketEmpty { pos, after } | KitOp::BucketPickup { pos, after } => {
-                let before = delta.state_id(pos).unwrap_or_else(air_state);
-                update_edits(&mut next_edits, grid, pos, after);
-                next_ledger.record_edit(pos, before, after, node.arrival, 1);
-            }
-        }
+        let restore = node.ledger.open.iter().any(|o| o.pos == cand.op.pos());
+        let obs = kit_obs(s, &end_s, goal, cand.prog_id, crate::word_store::KitTemplate::of(cand.op, s, goal, cand.yaw, restore), step.ticks);
+        let (mut next_edits, mut next_ledger, mut next_counts) = (node.edits.clone(), node.ledger.clone(), node.counts);
+        let before = delta.state_id(cand.op.pos()).unwrap_or_else(air_state);
+        book(kv, grid, before, cand.op, node.arrival, &mut next_edits, &mut next_ledger, &mut next_counts);
 
         let ledger_clear = !kv.spec.restore_required || next_ledger.open.is_empty();
         if hit_goal && ledger_clear {
-            let (pl, full_s, full_o) = reconstruct(arena, node_idx, vec![step], Vec::new());
+            let (pl, full_s, full_o) = reconstruct(arena, node_idx, vec![step], vec![obs]);
             *best = Some((arr, pl, full_s, full_o));
             incumbent_at.get_or_insert(*raw_learn_ticks);
             return;
@@ -1700,13 +1634,195 @@ fn expand_kit_ops<S: World>(
             prefix_len: node.prefix_len,
             parent: Some(node_idx),
             edge_steps: vec![step],
-            edge_obs: Vec::new(),
+            edge_obs: vec![obs],
             edits: next_edits,
             counts: next_counts,
             ledger: next_ledger,
         });
         heap.push(Reverse((p, arr, nid)));
     }
+}
+
+/// What one kit step leaves behind: the edit journal, the restore ledger and the counts.
+/// A restore (an edit at an open obligation's cell) gives back what its first edit took.
+fn book<S: World>(
+    kv: &KitView,
+    grid: &LocalGrid<'_, S>,
+    before: StateId,
+    op: KitOp,
+    tick: u64,
+    edits: &mut Vec<(BlockPos, StateId)>,
+    ledger: &mut ObligationLedger,
+    counts: &mut KitCounts,
+) {
+    let pos = op.pos();
+    let restore = ledger.open.iter().any(|o| o.pos == pos);
+    let (after, undo) = match op {
+        KitOp::Interact { after, partner, .. } => {
+            if let Some((pp, pa)) = partner {
+                update_edits(edits, grid, pp, pa);
+            }
+            (after, 1)
+        }
+        KitOp::Break { after, .. } => {
+            if restore { counts.blocks = counts.blocks.saturating_add(1); }
+            (after, 1)
+        }
+        KitOp::Place { after, .. } => {
+            if !restore { counts.blocks = counts.blocks.saturating_sub(1); }
+            (after, kv.breaking.get(after.block(), after).break_ticks_ground.min(200).max(1))
+        }
+        KitOp::BucketEmpty { after, .. } => {
+            if after == water_source_state() { counts.water_buckets = counts.water_buckets.saturating_sub(1); }
+            else { counts.powder_snow_buckets = counts.powder_snow_buckets.saturating_sub(1); }
+            (after, 1)
+        }
+        KitOp::BucketPickup { after, .. } => {
+            if before == water_source_state() { counts.water_buckets = counts.water_buckets.saturating_add(1); }
+            else { counts.powder_snow_buckets = counts.powder_snow_buckets.saturating_add(1); }
+            (after, 1)
+        }
+    };
+    update_edits(edits, grid, pos, after);
+    if kv.spec.restore_required || matches!(op, KitOp::BucketEmpty { .. } | KitOp::BucketPickup { .. }) {
+        ledger.record_edit(pos, before, after, tick, undo);
+    }
+}
+
+/// The observation of one kit step, its click kept as a frame-relative template.
+fn kit_obs(start: &PlayerState, end: &PlayerState, goal: Goal, program: u16, t: Option<crate::word_store::KitTemplate>, ticks: u32) -> ObservedStep {
+    let (_, fwd, _) = approach_frame(start, goal);
+    let (dx, dz) = (end.position.x - start.position.x, end.position.z - start.position.z);
+    ObservedStep {
+        program,
+        aim: t.map_or(AimRule::GoalOffset(0), AimRule::Click),
+        ticks,
+        entry: EntryClass::of(start),
+        exit: EntryClass::of(end),
+        defect_fine: 0,
+        defect_coarse: 0,
+        delta_along: (dx * f64::from(fwd[0]) + dz * f64::from(fwd[1])) as f32,
+        delta_y: (end.position.y - start.position.y).round().clamp(-127.0, 127.0) as i8,
+    }
+}
+
+/// A kit template made concrete from `s`: its cell from the approach frame, its after-state from
+/// the verb or the open obligation there, and its ticks; `None` where the live cell refuses it.
+fn instantiate(
+    t: crate::word_store::KitTemplate,
+    world: &impl World,
+    s: &PlayerState,
+    goal: Goal,
+    kv: &KitView,
+    ledger: &ObligationLedger,
+    counts: KitCounts,
+) -> Option<(KitOp, u32)> {
+    use crate::word_store::KitVerb;
+    let pos = t.cell(s, goal);
+    let cur = world.state_id(pos)?;
+    let ob = ledger.open.iter().find(|o| o.pos == pos);
+    if t.restore != ob.is_some() {
+        return None;
+    }
+    let has = |k: VerbKind| kv.verb_effects.iter().any(|v| v.kind == k);
+    let solid = !world.block(pos).never_collides();
+    Some(match t.verb {
+        KitVerb::Interact => {
+            if !has(VerbKind::Interact) || !state_static(cur).interact_kind().is_hand_toggleable() {
+                return None;
+            }
+            let after = toggle_open_state(cur)?;
+            (KitOp::Interact { pos, after, partner: door_partner(world, pos, cur, after.get("open").map(|v| v == "true")) }, 1)
+        }
+        KitVerb::Break => {
+            let row = kv.breaking.get(cur.block(), cur);
+            let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+            let fresh_ok = has(VerbKind::Break) && !(kv.spec.restore_required && row.restore_mode == RestoreMode::Irreversible);
+            if !solid || bt == u16::MAX || bt > 240 || ob.is_none() && !fresh_ok {
+                return None;
+            }
+            let after = ob.map_or_else(|| if state_static(cur).waterlogged() { water_source_state() } else { air_state() }, |o| o.original_state);
+            (KitOp::Break { pos, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)))
+        }
+        KitVerb::Place => {
+            let after = ob.map_or(kv.spec.place_block, |o| o.original_state);
+            if solid || ob.is_none() && (!has(VerbKind::Place) || counts.blocks == 0) || !can_place_at(world, s, pos, after) {
+                return None;
+            }
+            (KitOp::Place { pos, after }, 1)
+        }
+        KitVerb::BucketWater | KitVerb::BucketPowderSnow => {
+            let (kind, n, after) = if t.verb == KitVerb::BucketWater {
+                (VerbKind::BucketWater, counts.water_buckets, water_source_state())
+            } else {
+                (VerbKind::BucketPowderSnow, counts.powder_snow_buckets, powder_snow_state())
+            };
+            if !has(kind) || n == 0 || !state_static(cur).replaceable() {
+                return None;
+            }
+            (KitOp::BucketEmpty { pos, after }, 4)
+        }
+        KitVerb::BucketPickup => {
+            if cur != water_source_state() && cur != powder_snow_state() {
+                return None;
+            }
+            (KitOp::BucketPickup { pos, after: ob?.original_state }, 1)
+        }
+    })
+}
+
+/// One proposed word run on the live delta with a carried kit, appended to `node`: movement
+/// atomics stop on the same kit events Phase B learned them with, click atomics are
+/// instantiated from their template. Edits stay in `delta`; `Some(true)` when the goal is
+/// touched with nothing left to restore.
+fn exec_kit_chain<S: World>(
+    delta: &mut WorldDelta<'_, LocalGrid<'_, S>>,
+    grid: &LocalGrid<'_, S>,
+    ws: &WordStore,
+    programs: &[Program],
+    kv: &KitView,
+    node: &mut ArenaNode,
+    goal: Goal,
+    wid: WordId,
+    bounds: Aabb,
+    label: LabelId,
+    provenance: [u8; 32],
+    raw_ticks: &mut u64,
+) -> Option<bool> {
+    let mut seq = Vec::new();
+    ws.flatten_atomic(wid, &mut seq);
+    let restore_required = kv.spec.restore_required;
+    for (prog, aim, max_t) in seq {
+        let s = node.state.clone();
+        let (end, step, obs, hit) = if let AimRule::Click(t) = aim {
+            let (op, ticks) = instantiate(t, &*delta, &s, goal, kv, &node.ledger, node.counts)?;
+            let yaw = aim.resolve(&s, goal, 0);
+            let (end, step, hit) = step_kit_node(delta, grid, programs, &s, goal, prog, yaw, ticks, op, bounds, label, provenance, raw_ticks)?;
+            let before = delta.state_id(op.pos()).unwrap_or_else(air_state);
+            op.apply(delta);
+            book(kv, grid, before, op, node.arrival, &mut node.edits, &mut node.ledger, &mut node.counts);
+            let obs = kit_obs(&s, &end, goal, prog, Some(t), step.ticks);
+            (end, step, obs, hit)
+        } else {
+            let restore_obs: Vec<BlockPos> = if restore_required { node.ledger.open.iter().map(|o| o.pos).collect() } else { Vec::new() };
+            let place = (kv.writes_mask() & WRITE_SHAPE_SOLID != 0 && node.counts.blocks > 0).then_some(kv.spec.place_block);
+            let clutch = kv.writes_mask() & WRITE_FALL_RESET != 0 && (node.counts.water_buckets > 0 || node.counts.powder_snow_buckets > 0);
+            let sig = defect_sig(grid, &s, goal);
+            match exec_atomic_raw(&*delta, Some(grid), programs, &s, goal, prog, aim, u32::from(max_t), bounds, label, provenance, sig, place, clutch, &restore_obs, true, raw_ticks) {
+                AtomicOutcome::Failed => return None,
+                AtomicOutcome::Stopped { end, step, hit_goal, obs } => (end, step, obs, hit_goal),
+            }
+        };
+        node.arrival = node.arrival.saturating_add(u64::from(step.ticks));
+        node.depth += 1;
+        node.state = end;
+        node.edge_steps.push(step);
+        node.edge_obs.push(obs);
+        if hit && (!restore_required || node.ledger.open.is_empty()) {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 /// Cross the defect: Phase A proposes from generalized `WordStore` in microseconds;
@@ -1770,16 +1886,21 @@ pub(super) fn solve_defect<S: CorridorSource>(
     let mut proposal_hits = 0u64;
     let mut raw_learn_ticks = 0u64;
 
-    // Phase A: Propose from WordStore ONLY (raw try_tick on cached LocalGrid, zero learning bloat).
+    // Phase A: propose from the WordStore only, no learning: raw try_tick on the cached LocalGrid;
+    // with a kit, on its delta, each click instantiated from its frame-relative template.
     let mut best: Option<(u64, usize, Vec<WordStep>, Vec<ObservedStep>)> = None;
     let propose_budget_ticks = 4_000u64;
     let mut prop_ticks = 0u64;
-    let has_words = store.words.borrow().work.words_total > 0 && kit.is_none();
+    let has_words = store.words.borrow().work.words_total > 0;
 
     if has_words {
         let mut heap: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
         let mut arena: Vec<ArenaNode> = Vec::new();
         let mut best_bucket: HashMap<Bucket, u64> = HashMap::new();
+        let mut delta = WorldDelta::new(&grid);
+        let lb = |s: &PlayerState| u64::from(kit.map_or_else(|| goal.lower_bound(s), |kv| kv.cone.lower_bound(s, goal)));
+        let clear = |n: &ArenaNode| !restore_required || n.ledger.open.is_empty();
+        let bucket = |n: &ArenaNode| Bucket::of(&n.state, digest_edits(&n.edits), n.ledger.open.len() as u16, n.counts.blocks > 0);
         for s in &seeds {
             let idx = arena.len();
             let p = s.arrival.saturating_add(euclid_h(&s.state, goal));
@@ -1803,20 +1924,17 @@ pub(super) fn solve_defect<S: CorridorSource>(
                 break;
             }
             let ub = best.as_ref().map_or(u64::MAX, |b| b.0);
-            if arena[idx].arrival.saturating_add(u64::from(goal.lower_bound(&arena[idx].state))) >= ub {
+            if arena[idx].arrival.saturating_add(lb(&arena[idx].state)) >= ub || arena[idx].depth >= MAX_STEPS {
                 continue;
             }
-            if arena[idx].depth >= MAX_STEPS {
-                continue;
-            }
-            let b = Bucket::of(&arena[idx].state, 0, 0, false);
+            let b = bucket(&arena[idx]);
             if best_bucket.get(&b).is_some_and(|&prev| prev <= arena[idx].arrival) {
                 continue;
             }
             best_bucket.insert(b, arena[idx].arrival);
             pops += 1;
 
-            if goal.touched(&arena[idx].state, &arena[idx].state) {
+            if goal.touched(&arena[idx].state, &arena[idx].state) && clear(&arena[idx]) {
                 let (pl, steps, obs) = reconstruct(&arena, idx, Vec::new(), Vec::new());
                 best = Some((arena[idx].arrival, pl, steps, obs));
                 proposal_hits += 1;
@@ -1825,90 +1943,93 @@ pub(super) fn solve_defect<S: CorridorSource>(
 
             let sig = defect_sig(&grid, &arena[idx].state, goal);
             let entry = EntryClass::of(&arena[idx].state);
-            let wids = store.words.borrow().propose(sig, entry);
+            let wids = store.words.borrow().propose(sig, entry, kit.is_some());
             for wid in wids {
                 if prop_ticks >= propose_budget_ticks {
                     break;
                 }
                 proposals_tried += 1;
                 let ws = store.words.borrow();
-                let self_chains = ws.word(wid).self_chains;
-                let mut cur_s = arena[idx].state.clone();
-                let mut cur_steps = Vec::new();
-                let mut cur_obs = Vec::new();
-                let mut cur_arr = arena[idx].arrival;
-                let mut cur_depth = arena[idx].depth;
-                let max_repeats = if self_chains { 16 } else { 1 };
+                let max_repeats = if ws.word(wid).self_chains { 16 } else { 1 };
+                let mut child = ArenaNode {
+                    state: arena[idx].state.clone(),
+                    arrival: arena[idx].arrival,
+                    depth: arena[idx].depth,
+                    prefix_len: arena[idx].prefix_len,
+                    parent: Some(idx),
+                    edge_steps: Vec::new(),
+                    edge_obs: Vec::new(),
+                    edits: arena[idx].edits.clone(),
+                    counts: arena[idx].counts,
+                    ledger: arena[idx].ledger.clone(),
+                };
+                if kit.is_some() {
+                    delta.rollback(0);
+                    for &(ep, es) in &arena[idx].edits {
+                        delta.set(ep, es);
+                    }
+                }
                 for rep in 0..max_repeats {
-                    let prev_h = euclid_h(&cur_s, goal);
-                    let cur_sig = if rep == 0 { sig } else { defect_sig(&grid, &cur_s, goal) };
-                    let Some((ex, st_list, ob_list, hit)) = exec_word_chain(
-                        &grid,
-                        Some(&grid),
-                        &ws,
-                        &programs,
-                        &cur_s,
-                        goal,
-                        wid,
-                        bounds,
-                        label,
-                        provenance,
-                        cur_sig,
-                        None,
-                        false,
-                        &mut prop_ticks,
-                    ) else {
-                        break;
+                    let prev_h = euclid_h(&child.state, goal);
+                    let hit = match kit {
+                        Some(kv) => exec_kit_chain(&mut delta, &grid, &ws, &programs, kv, &mut child, goal, wid, bounds, label, provenance, &mut prop_ticks),
+                        None => {
+                            let cur_sig = if rep == 0 { sig } else { defect_sig(&grid, &child.state, goal) };
+                            exec_word_chain(&grid, Some(&grid), &ws, &programs, &child.state, goal, wid, bounds, label, provenance, cur_sig, None, false, &mut prop_ticks)
+                                .map(|(ex, st_list, ob_list, hit)| {
+                                    child.arrival = child.arrival.saturating_add(st_list.iter().map(|w| u64::from(w.ticks)).sum());
+                                    child.depth += st_list.len();
+                                    child.edge_steps.extend(st_list);
+                                    child.edge_obs.extend(ob_list);
+                                    child.state = ex;
+                                    hit
+                                })
+                        }
                     };
-                    let dt: u64 = st_list.iter().map(|w| u64::from(w.ticks)).sum();
-                    cur_arr = cur_arr.saturating_add(dt);
-                    cur_depth += st_list.len();
-                    cur_steps.extend(st_list);
-                    cur_obs.extend(ob_list);
-                    cur_s = ex;
-                    if cur_depth > MAX_STEPS || cur_arr >= best.as_ref().map_or(u64::MAX, |b| b.0) {
+                    let Some(hit) = hit else { break };
+                    if child.depth > MAX_STEPS || child.arrival >= best.as_ref().map_or(u64::MAX, |b| b.0) {
                         break;
                     }
                     if hit {
-                        let (pl, full_s, full_o) = reconstruct(&arena, idx, cur_steps, cur_obs);
+                        let (pl, full_s, full_o) = reconstruct(&arena, idx, child.edge_steps.clone(), child.edge_obs.clone());
                         proposal_hits += 1;
-                        best = Some((cur_arr, pl, full_s, full_o));
+                        best = Some((child.arrival, pl, full_s, full_o));
                         break;
                     }
-                    if let Some(tail) = try_tail_extend(&cur_s, goal, source, store, codec) {
-                        let tail_t: u64 = tail.iter().map(|w| u64::from(w.ticks)).sum();
-                        let tot = cur_arr.saturating_add(tail_t);
-                        if tot < best.as_ref().map_or(u64::MAX, |b| b.0) {
-                            let mut chain_steps = cur_steps.clone();
-                            chain_steps.extend(tail);
-                            let (pl, full_s, full_o) = reconstruct(&arena, idx, chain_steps, cur_obs.clone());
-                            proposal_hits += 1;
-                            best = Some((tot, pl, full_s, full_o));
+                    if child.edits.is_empty() && clear(&child) {
+                        if let Some(tail) = try_tail_extend(&child.state, goal, source, store, codec) {
+                            let tot = child.arrival.saturating_add(tail.iter().map(|w| u64::from(w.ticks)).sum());
+                            if tot < best.as_ref().map_or(u64::MAX, |b| b.0) {
+                                let mut chain_steps = child.edge_steps.clone();
+                                chain_steps.extend(tail);
+                                let (pl, full_s, full_o) = reconstruct(&arena, idx, chain_steps, child.edge_obs.clone());
+                                proposal_hits += 1;
+                                best = Some((tot, pl, full_s, full_o));
+                            }
+                            break;
                         }
+                    }
+                    if rep >= 1 && euclid_h(&child.state, goal) > prev_h.saturating_add(6) {
                         break;
                     }
-                    if rep >= 1 && euclid_h(&cur_s, goal) > prev_h.saturating_add(6) {
-                        break;
-                    }
-                    let cb = Bucket::of(&cur_s, 0, 0, false);
-                    if best_bucket.get(&cb).is_some_and(|&prev| prev <= cur_arr) {
+                    if best_bucket.get(&bucket(&child)).is_some_and(|&prev| prev <= child.arrival) {
                         continue;
                     }
-                    let p = cur_arr.saturating_add(euclid_h(&cur_s, goal));
+                    let p = child.arrival.saturating_add(euclid_h(&child.state, goal));
                     let nid = arena.len();
                     arena.push(ArenaNode {
-                        state: cur_s.clone(),
-                        arrival: cur_arr,
-                        depth: cur_depth,
-                        prefix_len: arena[idx].prefix_len,
+                        state: child.state.clone(),
+                        arrival: child.arrival,
+                        depth: child.depth,
+                        prefix_len: child.prefix_len,
                         parent: Some(idx),
-                        edge_steps: cur_steps.clone(),
-                        edge_obs: cur_obs.clone(),
-                        edits: Vec::new(),
-                        counts: init_counts,
-                        ledger: ObligationLedger::default(),
+                        edge_steps: child.edge_steps.clone(),
+                        edge_obs: child.edge_obs.clone(),
+                        edits: child.edits.clone(),
+                        counts: child.counts,
+                        ledger: child.ledger.clone(),
                     });
-                    heap.push(Reverse((p, cur_arr, nid)));
+                    heap.push(Reverse((p, child.arrival, nid)));
                 }
             }
             if best.is_some() {

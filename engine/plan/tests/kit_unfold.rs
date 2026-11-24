@@ -4,6 +4,9 @@
 //! - `KT16`: `KitCone::lower_bound` monotonic + admissible over 500 triples + witnessed runs
 //! - `R-lego-1..4`, `E3-nether-bucket`, `E2-last-block` shadow price
 //! - Real `doorcorridor` fixture (`T=98` his best) + diagnostic readout on companion tracks.
+//! - Slice 2 `G-kit`: a door corridor and a wall breach learned once generalize to a site
+//!   translated by (+25, 0, +17) and turned 90° with `learn_ticks == 0`, and `edit()` drops the
+//!   certified route only inside its footprint.
 
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::Instant};
 use law::{
@@ -25,6 +28,7 @@ use plan::{
     store::GeneratorStore,
 };
 
+#[derive(Clone)]
 struct StateWorld {
     cells: HashMap<BlockPos, StateId>,
     air: StateId,
@@ -690,6 +694,102 @@ fn real_track_doorcorridor_unfolded() {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A site in local coordinates (`x` across, `z` along the approach), placed at `origin` and
+/// turned by `rot` quarter turns about the vertical: `(x, z) -> (-z, x)` per turn.
+struct Site {
+    origin: BlockPos,
+    rot: u8,
+}
+
+impl Site {
+    fn at(&self, l: BlockPos) -> BlockPos {
+        let (x, z) = match self.rot & 3 {
+            0 => (l[0], l[2]),
+            1 => (-l[2], l[0]),
+            2 => (-l[0], -l[2]),
+            _ => (l[2], -l[0]),
+        };
+        [self.origin[0] + x, l[1], self.origin[2] + z]
+    }
+
+    fn facing(&self, f: &str) -> &'static str {
+        const TURN: [&str; 4] = ["south", "west", "north", "east"];
+        let i = TURN.iter().position(|t| *t == f).expect("cardinal");
+        TURN[(i + usize::from(self.rot)) % 4]
+    }
+
+    /// A floor across local `x -2..=2`, `z -2..=10` with a full-width wall at `z = 4`: a closed
+    /// oak door in its middle (`door`), or a 2-high stone wall (no door).
+    fn world(&self, door: bool) -> (StateWorld, ([i32; 3], [i32; 3])) {
+        let corners = [self.at([-3, 0, -2]), self.at([3, 0, 12])];
+        let lo = [corners[0][0].min(corners[1][0]), -2, corners[0][2].min(corners[1][2])];
+        let hi = [corners[0][0].max(corners[1][0]), 6, corners[0][2].max(corners[1][2])];
+        let mut w = StateWorld::new(lo, hi);
+        let stone = default_stone_state();
+        for x in -2..=2 {
+            for z in -2..=10 {
+                w.set(self.at([x, 0, z]), stone);
+            }
+            if door && x != 0 {
+                for y in 1..=3 { w.set(self.at([x, y, 4]), stone); }
+            } else if !door {
+                for y in 1..=2 { w.set(self.at([x, y, 4]), stone); }
+            }
+        }
+        if door {
+            w.set(self.at([0, 3, 4]), stone);
+            w.set(self.at([0, 1, 4]), door_sid(self.facing("south"), false, "lower"));
+            w.set(self.at([0, 2, 4]), door_sid(self.facing("south"), false, "upper"));
+        }
+        (w, (lo, hi))
+    }
+}
+
+#[test]
+fn g_kit_translated_rotated_sites_reuse_door_and_breach_words() {
+    let store = GeneratorStore::default();
+    let mut codec = Interner::default();
+    let tool = ToolProfileKey { pickaxe_tier: 4, efficiency: 5, silk_touch: true, ..Default::default() };
+    let breach = KitSpec { can_break: true, tool, restore_required: true, ..KitSpec::empty() };
+    let hits = |store: &GeneratorStore| store.words.borrow().work.proposal_hits;
+    for (name, door, spec) in [("door", true, KitSpec::interact_only()), ("breach", false, breach)] {
+        let mut learned = 0;
+        for (i, site) in [Site { origin: [0, 0, 0], rot: 0 }, Site { origin: [25, 0, 17], rot: 1 }].into_iter().enumerate() {
+            let (w, bounds) = site.world(door);
+            let src = GeneratorSuperflatSource::from_world(&w, bounds, site.at([0, 0, 0])).unwrap();
+            let start = settled_on(&w, site.at([0, 0, 0]));
+            let goal = Goal { cell: site.at([0, 0, 8]) };
+            let before = hits(&store);
+            let (p, learn) = solve_ready(&w, &src, &start, goal, Kit::Carried(spec), &store, &mut codec);
+            let edits = p.words.iter().filter(|s| s.edit.is_some()).count();
+            println!("G_KIT motif={name} site={} T={} learn_ticks={learn} proposal_hits={} edits={edits}", ["A", "B(+25,0,+17) turned 90°"][i], p.ticks, hits(&store) - before);
+            assert!(edits >= 2, "an edit and its restore");
+            if i == 0 {
+                learned = p.ticks;
+                assert!(learn > 0, "site A learns the motif");
+                continue;
+            }
+            assert_eq!(learn, 0, "site B must reuse the {name} word with zero learning");
+            assert!(hits(&store) > before, "site B is crossed by a proposal");
+            assert_eq!(p.ticks, learned, "the same motif, the same T");
+
+            // A certified route is dropped only by an edit inside its footprint.
+            let key = spec.capability_key();
+            let served = |w: &StateWorld| store.words.borrow().route_for_kit_in_world(&start, goal, key, &ObservedWorld::new(w)).is_some();
+            assert!(served(&w), "site B's route is certified and served again");
+            let far = site.at([0, 5, -2]);
+            let mut moved = w.clone();
+            moved.set(far, default_stone_state());
+            assert_eq!(store.words.borrow_mut().edit(&mut codec, far, &moved), 0, "an edit outside the footprint keeps the route");
+            let floor = site.at([0, 0, 6]);
+            let mut holed = w.clone();
+            holed.set(floor, sid("air"));
+            assert!(store.words.borrow_mut().edit(&mut codec, floor, &holed) >= 1, "a hole in the walked floor drops the route");
+            assert!(!served(&w), "and it is no longer served");
         }
     }
 }
