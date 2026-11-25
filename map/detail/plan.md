@@ -21,7 +21,7 @@ The goal, the two extremes and the one mechanism are in [goal.md](../goal.md); t
 | The direct channel (`slice A`) | the bot's mod and the planner in one process (JNI), reading the bot's real state bits |
 | The class codec (`slice B`) | one way to say what a block is to the kit's verbs (legs, break, place) |
 | The stored-opening test (`P1`) | a straight run's opening ticks are computed once, then reused with zero ticks (48–78 µs in debug, floor lookup included) |
-| The exact-integer-maps test (`P2`) | inside one floating-point binade, a gait's position is an exact integer map |
+| The exact-cycle skip (`advance_cycles`) | inside a floating-point binade, a gait's position advances by exact integer mantissa steps with boundary additions (`0` ULP error) |
 | The food-guard test (`P4`) | the law's own food > 6 sprint guard as an event; on Peaceful, food never stops sprinting |
 
 ## Step gates (order and state: [now.md](../now.md))

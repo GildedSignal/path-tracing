@@ -46,5 +46,5 @@ An edge that never fires or never catches anything is deleted. A new failure cha
 - His turns go verbatim to `archive/turns/`; a turn that changes a belief changes this map the same day.
 - When he asks to explain, explain and do not act (S179).
 - After a judge passes: merge to `main`, print net lines, push the same hour.
-- Disk: toolchain, builds and worktrees on D: (`PATH=D:\rust\cargo\bin`, `RUSTUP_HOME=D:\rust\rustup`, `CARGO_HOME=D:\rust\cargo`). PowerShell 5.1 garbles UTF-8: edit text with the Edit tool.
+- Disk: toolchain, builds and worktrees on D: (`PATH=D:\rust\cargo\bin`, `RUSTUP_HOME=D:\rust\rustup`, `CARGO_HOME=D:\rust\cargo`). PowerShell 5.1 garbles UTF-8: edit text with the Edit tool. Codex Windows `workspace-write` mounts `.git/` read-only even inside standalone D: clones, so builders leave verified edits in their clone and the integrator commits and runs `bench-judge.sh`.
 - Component state is derived, never declared: `Sketch` (branch/jar only) -> `Flying` (wired and flown on `main`) -> `Load-bearing` -> `Frozen`. Feature branches open with a `clean:` commit removing dead code in their area.

@@ -24,9 +24,9 @@ How the bots see the world, so that creative travel, cooperation and building co
 
   | Case | Thinking floor | Measured |
   |---|---|---|
-  | one million blocks, plain, bare legs, Peaceful | about 5 µs (one label, one memo, about 20 binade events, a two-yaw count) | straight800: 27–29 ms cold |
-  | his 21 tracks | 10–100 µs warm; 12 ms per new joint pattern, once | 0.69–30.5 s |
-  | `hardtrack` (easy-medium by his ruling, S166) | 0.5–1 ms warm; cold learning fits inside its 260-tick first ladder | no sentence |
+  | one million blocks, plain, bare legs, Peaceful | about 5 µs (one label, one memo, about 20 binade events, a two-yaw count) | 11.25–15.15 µs warm (5.90 µs repeat, 0 B alloc); `straight800` 140 µs first, 6.0 µs repeat |
+  | his 21 tracks | 10–100 µs warm; 12 ms per new joint pattern, once | 782 ms total across 16 bare-legs tracks (3.8–1,422 µs repeat); 1.01 s across 11 shared-store tracks |
+  | `hardtrack` (easy-medium by his ruling, S166) | 0.5–1 ms warm; cold learning fits inside its 260-tick first ladder | T = 583 in 0.23 s |
   | 10⁴ varied blocks | first word about 100 µs; planning outruns the body by about 3×10⁵ | not run |
   | 10⁴ bots | 0.03 core; 240 KB hot | — |
 
@@ -171,7 +171,7 @@ Approved S165. It answers S40 ("we're not really doing x,y,z but something else 
 | Kit classes: a block is its answers to the kit's verbs | "A flower is air." "unless i need to place a block and it bothers me" (S134) | the block alphabet |
 
 - **Momentum's memory is derived.** A sprint-jump cycle on stone shrinks a velocity difference by 0.546 × 0.91¹¹ ≈ 0.19, about 2.4 bits; 53 bits ÷ 2.4 ≈ 22 cycles ≈ 268 ticks, against 263 measured. Closer than that, order matters and the state is carried; farther, a place has a cost per gait.
-- **Words live in velocity space** (S131: "maybe we control in derivative directly?"). There the tick is `v ← d·v + a·u(yaw)`, a contraction onto the gait; position is its running sum, read out by exact integer maps per binade.
+- **Words live in velocity space** (S131: "maybe we control in derivative directly?"). There the tick is `v ← d·v + a·u(yaw)`, a contraction onto the gait; position is its running sum, read out by exact mantissa/parity cycle skipping per binade (`advance_cycles`).
 
 **The objects.**
 - **Zone:** the extent over which one word's certificate holds, found by one corridor query from where the bot is toward where it goes. Never a partition drawn in advance (S132: "they should arise based of needs, some regions are more compressible than others"; X9).

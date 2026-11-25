@@ -77,7 +77,7 @@ Windows: Zai 5 h; Codex 5 h and weekly; the native plan 5 h, weekly, and weekly 
 
 A job is `jobs/<id>/prompt.md` in, `jobs/<id>/last.md` out ([work.md](../work.md)). Every runner prepends the goal and principles verbatim (`scripts/gpt.ps1`).
 
-**Windows traps.** `Start-Process` does not quote arguments and this path has a space; prompts go on stdin, never `-p`; never write a BOM (`[Text.UTF8Encoding]::new($false)`); under PowerShell 5.1 a native command's stderr under `ErrorAction Stop` throws (git, javac), and `git commit -F -` does not read a here-string: use a message file; cite the main checkout by absolute path in any prompt.
+**Windows traps.** `Start-Process` does not quote arguments and this path has a space; prompts go on stdin, never `-p`; never write a BOM (`[Text.UTF8Encoding]::new($false)`); under PowerShell 5.1 a native command's stderr under `ErrorAction Stop` throws (git, javac), and `git commit -F -` does not read a here-string: use a message file; cite the main checkout by absolute path in any prompt; Codex `workspace-write` mounts `.git/` read-only even inside standalone D: clones (denying `index.lock`, so `git commit` and `bench-judge.sh`'s `git stash create` fail inside Codex — the integrator commits verified trees and runs `bench-judge.sh` outside).
 
 ## 5b. How a job is assigned, in practice
 
