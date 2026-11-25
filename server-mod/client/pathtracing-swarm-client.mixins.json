@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "pathtracing.swarmclient.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "AvatarRendererMixin",
+    "LevelRendererAccessor",
+    "LivingEntityRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

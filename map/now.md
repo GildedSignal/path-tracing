@@ -19,6 +19,12 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
   - **Companions:** GLM 5.4 (`jobs/glm-chain.txt`) running `gen-water-swim-climb-rows` and `gen-ground-tags-rewitness`; Mistral Vibe (`jobs/mistral-chain.txt`) finished 5 live jar-truth prompts; Codex Sol (`yarn-cold-fold`) completed Slice 1 on `wt/yarn-cold-fold` (full 26.2 tables + 3 boundary fixes) and runs Slices 2+3 in `D:\path-tracing-wt\yarn-cold-fold-solo`.
   - **ES 1B-bot probe ([es-1b-probe](../jobs/es-1b-probe/report.md)):** passes 5/5 checks and 3/3 mutants offline (`10⁹` bots / `10⁶` scars in `4.28 MB`, `172 µs` edit split, `129.8 µs` max observer frame, `0.418 ms/tick` 500-bot `Battle`).
 
+- **B's clicked face, building, the build preview and the server mind (`Flying` offline, unflown):**
+  - Face touch ([goal.rs](../engine/plan/src/goal.rs), `TrackDetector.java`): `Goal { cell, face }` (`Face` is the law's `Direction`) and the detector share one rule, closed on the face's plane and open on its tangents, no epsilon; `face_touch` checks the 13 vectors of `bot/tests/fixtures/face-touch.txt` on both sides. A track's `bFace` reaches the Rust planner through `RequestGoal`'s fourth goal word. `real_time` holds: standing `13.75 µs`, moving `13.95 µs`, repeat `5.10 µs` medians, `0 B` warm (main the same session: `13.15` / `14.20` / `4.90 µs`).
+  - Building ([engine/build](../engine/build/src/lib.rs)): the pagoda's 797 commands compile to 4,411 DAG nodes (87 scaffold cells, 24 roots, 77 layers, 649 widest) in `539 ms` and replay with 0 residual obligations; `build` `6/6`.
+  - Preview (`tools/preview`, `scripts/preview.ps1`): the fixture passes; the pagoda's 11 views render in `2.20 s`.
+  - Server mind ([engine/mind](../engine/mind/src/main.rs), `server-mod/`): `WorldMirror` holds `StateId` sections; an edit is a model change. `mind` `14/14` offline (10,000 Virtual bots ready, 0 refused; a 10,000-bot frame is `32 + 20 B` per bot); both jars compile. The live stages (`server-mod/verify-stage2.ps1`, `verify-stage3.ps1`) wait for a server flight.
+
 ## Next, in order
 
 1. **Live flight verification** of bare-legs crossings and the Slice 2 kit wire (`doorcorridor`, `ametwoodbox`, door/wall motifs) in Julien's game, plus unclipping `birchparkourmedium` bounds when needed.
@@ -34,9 +40,12 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 | 26.2 law + `16³` `StateId` world spine + `WorldDelta` | `Flying` | `main`, jar witnesses + replays green |
 | Live JNI resident channel (`resident.rs` + `ResidentRunner.java`) | `Load-bearing` (flat) / `Flying` (words) | `main` |
 | Parked `wt/flight-ladder-sets` | `Sketch` (unmerged) | parked unmerged; core recursive `Word` lives on `main` |
+| Face touch (`goal.rs`, `TrackDetector`, `RequestGoal` face word) | `Flying` offline | `face_touch` `2/2`, native `9/9`; awaits a face-track flight |
+| `engine/build`, `tools/preview` | `Flying` offline | `build` `6/6`, preview fixture PASS |
+| `engine/mind` + `server-mod/` | `Sketch` | `mind` `14/14` offline; unflown on this spine |
 | Live kit flights, far map, ES `10⁹` bots | `Sketch` | awaits live game judgment on `KIT_PLAN` and `yarn-cold-fold` |
 
 ## Branches and open notes
 
-- Kept until needed: `wt/yarn-cold-fold` (`D:\path-tracing-wt\yarn-cold-fold-solo`), `wt/port-fold` (`origin/wt/port-fold`), `wt/flat-ground` (`lab/fixtures/flat-ground-replay/`), `wt/server-mind`, `wt/build-4d`, `wt/track-face`, `wt/hard-track-2`, `wt/l0-veto`, `wt/build-preview`, `wt/hearth-small`.
+- Kept until needed: `wt/yarn-cold-fold` (`D:\path-tracing-wt\yarn-cold-fold-solo`), `wt/port-fold` (`origin/wt/port-fold`), `wt/flat-ground` (`lab/fixtures/flat-ground-replay/`), `wt/server-mind` (its `oracles/server-probe/`, the server-boundary probe, is not consolidated), `wt/hard-track-2`, `wt/l0-veto`, `wt/hearth-small`.
 - Untrimmed region files `r.0.0.mca` / `r.0.-1.mca` stay uncommitted on `main` (`*.bak-20261114` backups beside them).

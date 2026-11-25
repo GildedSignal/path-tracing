@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "pathtracing_swarm_client",
+  "version": "0.1.0",
+  "name": "Path tracing swarm renderer",
+  "description": "GPU-instanced OpenGL 3.3 client renderer for up to 10,000 live swarm bots.",
+  "environment": "client",
+  "mixins": ["pathtracing-swarm-client.mixins.json"],
+  "entrypoints": {
+    "client": ["pathtracing.swarmclient.SwarmClientMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "26.2",
+    "fabric-api": "*",
+    "java": ">=25"
+  }
+}

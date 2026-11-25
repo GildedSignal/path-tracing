@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "package": "pathtracing.server.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "ChunkMapMixin",
+    "TrackedEntityMixin",
+    "ServerEntityMixin",
+    "WaypointManagerMixin",
+    "LevelChunkMixin",
+    "FoodDataAccessor",
+    "LivingEntityAccessor",
+    "PlayerListMixin",
+    "PlayerInfoPacketAccessor",
+    "EntityAccessor",
+    "AvatarAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
