@@ -7,6 +7,24 @@
 
 use crate::Vec3;
 
+/// `BubbleColumnBlock.entityInside`: open air uses the above-column cap;
+/// submersion uses the lower cap and clears fall distance.
+#[inline(always)]
+pub fn bubble_column_contact(
+    s: &mut crate::PlayerState, world: &impl crate::World, p: crate::BlockPos,
+    drag: &bool, intersects: bool,
+) {
+    if intersects && !s.flying {
+        let above = world.block([p[0], p[1] + 1, p[2]]);
+        let vy = s.velocity.y;
+        if above.shape.is_empty() && above.fluid.kind == crate::FluidKind::Empty {
+            s.velocity.y = if *drag { (-0.9f64).max(vy - 0.03) } else { 1.8f64.min(vy + 0.1) };
+        } else {
+            s.velocity.y = if *drag { (-0.3f64).max(vy - 0.03) } else { 0.7f64.min(vy + 0.06) };
+            s.fall_distance = 0.0;
+        }
+    }
+}
 /// The order a class composes gravity (G), drag (D) and move (M) in one tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Order {

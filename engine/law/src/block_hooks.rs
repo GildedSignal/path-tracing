@@ -5,7 +5,7 @@
 
 use crate::interact::{BlockId, Direction};
 use crate::neighbor::update_flags;
-use crate::{Aabb, BlockPos, CollisionContext, Vec3, VoxelShape, World};
+use crate::{Aabb, BlockPos, CollisionContext, Vec3, World};
 
 #[inline]
 const fn aabb(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Aabb {
@@ -77,34 +77,6 @@ pub enum BambooLeaves {
     Large,
 }
 
-/// `SpeleothemThickness` property (`SpeleothemBlock.getShape` / `getCollisionShape`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SpeleothemThickness {
-    TipMerge,
-    Tip,
-    Frustum,
-    Middle,
-    Base,
-}
-
-/// `VERTICAL_DIRECTION` (`TIP_DIRECTION`) property for speleothems (`Up` or `Down`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TipDirection {
-    Up,
-    Down,
-}
-
-/// Data-driven offset-collision block descriptor (never keyed by block name).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OffsetCollisionSpec {
-    None,
-    Bamboo,
-    Speleothem {
-        thickness: SpeleothemThickness,
-        tip_direction: TipDirection,
-    },
-}
-
 /// `Block.column(width, minY, maxY)` = `[8 - w/2, minY, 8 - w/2, 8 + w/2, maxY, 8 + w/2] / 16`.
 #[inline]
 const fn block_column(width: f64, min_y: f64, max_y: f64) -> Aabb {
@@ -117,13 +89,6 @@ const fn block_column(width: f64, min_y: f64, max_y: f64) -> Aabb {
         max_y / 16.0,
         (8.0 + half) / 16.0,
     )
-}
-
-/// `BambooStalkBlock.SHAPE_COLLISION`: `Block.column(3.0, 0.0, 16.0)` shifted by XZ offset.
-#[inline]
-pub fn bamboo_collision_aabb(pos: BlockPos) -> Aabb {
-    let base = block_column(3.0, 0.0, 16.0);
-    base.moved(get_xz_offset(pos[0], pos[2], BAMBOO_MAX_HORIZONTAL_OFFSET))
 }
 
 /// `BambooStalkBlock.getShape`: `SHAPE_LARGE` (`width=10`) when `Large`, else `SHAPE_SMALL` (`width=6`).
@@ -139,67 +104,6 @@ pub fn bamboo_outline_aabb(pos: BlockPos, leaves: BambooLeaves) -> Aabb {
         pos[2],
         BAMBOO_MAX_HORIZONTAL_OFFSET,
     ))
-}
-
-/// `SpeleothemBlock.getShape` / `getCollisionShape` local AABB before `getOffset(pos)` shift.
-#[inline]
-pub const fn speleothem_base_aabb(
-    thickness: SpeleothemThickness,
-    tip_direction: TipDirection,
-) -> Aabb {
-    match thickness {
-        SpeleothemThickness::TipMerge => block_column(6.0, 0.0, 16.0),
-        SpeleothemThickness::Tip => match tip_direction {
-            TipDirection::Down => block_column(6.0, 5.0, 16.0),
-            TipDirection::Up => block_column(6.0, 0.0, 11.0),
-        },
-        SpeleothemThickness::Frustum => block_column(8.0, 0.0, 16.0),
-        SpeleothemThickness::Middle => block_column(10.0, 0.0, 16.0),
-        SpeleothemThickness::Base => block_column(12.0, 0.0, 16.0),
-    }
-}
-
-/// `SpeleothemBlock.getShape` / `getCollisionShape` shifted by `getOffset(pos)` (`0.125f`).
-#[inline]
-pub fn speleothem_aabb(
-    pos: BlockPos,
-    thickness: SpeleothemThickness,
-    tip_direction: TipDirection,
-) -> Aabb {
-    speleothem_base_aabb(thickness, tip_direction).moved(get_xz_offset(
-        pos[0],
-        pos[2],
-        SPELEOTHEM_MAX_HORIZONTAL_OFFSET,
-    ))
-}
-
-/// Evaluates the local shifted `VoxelShape` from 4-bit seed nibbles `(kx, kz)`.
-pub fn offset_collision_shape_for_keys(
-    spec: OffsetCollisionSpec,
-    kx: u8,
-    kz: u8,
-) -> Option<VoxelShape> {
-    match spec {
-        OffsetCollisionSpec::None => None,
-        OffsetCollisionSpec::Bamboo => Some(VoxelShape::boxes(&[block_column(3.0, 0.0, 16.0)
-            .moved(xz_offset_from_keys(kx, kz, BAMBOO_MAX_HORIZONTAL_OFFSET))])),
-        OffsetCollisionSpec::Speleothem {
-            thickness,
-            tip_direction,
-        } => Some(VoxelShape::boxes(&[
-            speleothem_base_aabb(thickness, tip_direction).moved(xz_offset_from_keys(
-                kx,
-                kz,
-                SPELEOTHEM_MAX_HORIZONTAL_OFFSET,
-            )),
-        ])),
-    }
-}
-
-/// Evaluates the local shifted `VoxelShape` for an `OffsetCollisionSpec` at `pos`.
-pub fn offset_collision_shape(spec: OffsetCollisionSpec, pos: BlockPos) -> Option<VoxelShape> {
-    let l = get_seed(pos[0], 0, pos[2]);
-    offset_collision_shape_for_keys(spec, (l & 15) as u8, ((l >> 8) & 15) as u8)
 }
 
 // ============================================================================
@@ -886,35 +790,6 @@ pub fn layered_cauldron_content_height(level: u8) -> f64 {
 /// `LavaCauldronBlock.getContentHeight`: constant `0.9375` (`15.0 / 16.0`).
 pub const LAVA_CAULDRON_CONTENT_HEIGHT: f64 = 0.9375;
 
-/// `AbstractCauldronBlock.SHAPE` outer leg pillars (`0.0..1.0` on Y, unaffected by content level).
-const CAULDRON_LEG_AABBS: [Aabb; 8] = [
-    aabb(0.0, 0.0, 0.0, 0.125, 1.0, 0.25),
-    aabb(0.0, 0.0, 0.75, 0.125, 1.0, 1.0),
-    aabb(0.125, 0.0, 0.0, 0.25, 1.0, 0.125),
-    aabb(0.125, 0.0, 0.875, 0.25, 1.0, 1.0),
-    aabb(0.75, 0.0, 0.0, 1.0, 1.0, 0.125),
-    aabb(0.75, 0.0, 0.875, 1.0, 1.0, 1.0),
-    aabb(0.875, 0.0, 0.125, 1.0, 1.0, 0.25),
-    aabb(0.875, 0.0, 0.75, 1.0, 1.0, 0.875),
-];
-
-/// `LayeredCauldronBlock.FILLED_SHAPES[level - 1]` / `LavaCauldronBlock.FILLED_SHAPE` (at `level = 3`).
-pub fn cauldron_filled_inside_shape(level: u8) -> VoxelShape {
-    let top = layered_cauldron_content_height(level.clamp(CAULDRON_MIN_FILL_LEVEL, CAULDRON_MAX_FILL_LEVEL));
-    let mut boxes = Vec::with_capacity(15);
-    boxes.extend_from_slice(&CAULDRON_LEG_AABBS);
-    boxes.extend_from_slice(&[
-        aabb(0.0, 0.1875, 0.25, 1.0, top, 0.75),
-        aabb(0.125, 0.1875, 0.125, 0.875, top, 0.25),
-        aabb(0.125, 0.1875, 0.75, 0.875, top, 0.875),
-        aabb(0.25, 0.1875, 0.0, 0.75, 1.0, 0.125),
-        aabb(0.25, 0.1875, 0.875, 0.75, 1.0, 1.0),
-        aabb(0.0, top, 0.25, 0.125, 1.0, 0.75),
-        aabb(0.875, top, 0.25, 1.0, 1.0, 0.75),
-    ]);
-    VoxelShape::boxes(&boxes)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CauldronKind {
     Water,
@@ -986,16 +861,6 @@ pub const BIG_DRIPLEAF_ENTITY_DETECTION_MIN_Y: f32 = 0.6875;
 #[inline]
 pub fn big_dripleaf_can_entity_tilt(on_ground: bool, feet_y: f64, block_y: i32) -> bool {
     on_ground && feet_y > (block_y as f32 + BIG_DRIPLEAF_ENTITY_DETECTION_MIN_Y) as f64
-}
-
-/// `BigDripleafBlock.SHAPE_LEAF` leaf collision AABB (`FULL` returns `None`, i.e. empty shape).
-#[inline]
-pub const fn big_dripleaf_collision_aabb(tilt: BigDripleafTilt) -> Option<Aabb> {
-    match tilt {
-        BigDripleafTilt::None | BigDripleafTilt::Unstable => Some(block_column(16.0, 11.0, 15.0)),
-        BigDripleafTilt::Partial => Some(block_column(16.0, 11.0, 13.0)),
-        BigDripleafTilt::Full => None,
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

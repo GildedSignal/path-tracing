@@ -3,6 +3,7 @@
 //! Block identity is passed as opaque `BlockId` / table properties; no block name
 //! branches appear in code.
 
+use crate::basis::cell::{CellState, StateId, WorldMut};
 use crate::interact::{nearest_looking_directions, BlockId, Direction, DoorHalf};
 use crate::{BlockPos, Vec3};
 
@@ -357,14 +358,6 @@ pub fn ladder_get_state_for_placement(
 pub const SCAFFOLDING_MAX_DISTANCE: u8 = 7;
 pub const SCAFFOLDING_TICK_DELAY: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ScaffoldingCell {
-    pub is_scaffolding: bool,
-    pub distance: u8,
-    pub sturdy_up: bool,
-    pub replaceable: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScaffoldingState {
     pub distance: u8,
@@ -372,66 +365,41 @@ pub struct ScaffoldingState {
     pub waterlogged: bool,
 }
 
-/// `ScaffoldingBlock.getDistance` (`@0-161`).
-pub fn scaffolding_get_distance(
-    pos: BlockPos,
-    get_cell: impl Fn(BlockPos) -> ScaffoldingCell,
-) -> u8 {
-    let below = get_cell(Direction::Down.relative(pos));
-    if below.is_scaffolding {
-        return below.distance;
-    }
-    if below.sturdy_up {
-        return 0;
-    }
-    let mut dist = SCAFFOLDING_MAX_DISTANCE;
-    for d in [Direction::North, Direction::South, Direction::West, Direction::East] {
-        let neighbor = get_cell(d.relative(pos));
-        if neighbor.is_scaffolding {
-            dist = dist.min(neighbor.distance.saturating_add(1));
-            if dist == 1 {
-                break;
+/// Distance and bottom come from the same support read. Waterlogging belongs
+/// to the state being placed or updated and survives the support rewrite.
+pub fn scaffolding_state(world: &impl WorldMut, pos: BlockPos, state: StateId) -> StateId {
+    let below = world.cell(Direction::Down.relative(pos));
+    let (distance, bottom) = match below.kind() {
+        CellState::Scaffolding(scaffold) => (scaffold.distance, false),
+        _ if below.is_sturdy(Direction::Up) => (0, false),
+        _ => {
+            let mut distance = SCAFFOLDING_MAX_DISTANCE;
+            for side in [Direction::North, Direction::South, Direction::West, Direction::East] {
+                if let CellState::Scaffolding(neighbor) = world.cell(side.relative(pos)).kind() {
+                    distance = distance.min(neighbor.distance + 1);
+                    if distance == 1 {
+                        break;
+                    }
+                }
             }
+            (distance, true)
         }
-    }
-    dist
+    };
+    state.with("distance", &distance.to_string()).with_bool("bottom", bottom)
 }
 
-/// `ScaffoldingBlock.isBottom` (`@0-26`).
-pub fn scaffolding_is_bottom(dist: u8, below_is_scaffolding: bool) -> bool {
-    dist > 0 && !below_is_scaffolding
+pub fn scaffolding_supported(state: StateId) -> bool {
+    state.get("distance") != Some("7")
 }
-
-/// `ScaffoldingBlock.canSurvive` (`@0-15`).
-pub fn scaffolding_can_survive(dist: u8) -> bool {
-    dist < SCAFFOLDING_MAX_DISTANCE
-}
-
-/// `ScaffoldingBlock.getStateForPlacement` (`@0-78`): never returns `None` and schedules no tick.
-pub fn scaffolding_get_state_for_placement(
-    pos: BlockPos,
-    cell_is_water: bool,
-    get_cell: impl Fn(BlockPos) -> ScaffoldingCell,
-) -> ScaffoldingState {
-    let dist = scaffolding_get_distance(pos, &get_cell);
-    let below_is_scaffolding = get_cell(Direction::Down.relative(pos)).is_scaffolding;
-    ScaffoldingState {
-        distance: dist,
-        bottom: scaffolding_is_bottom(dist, below_is_scaffolding),
-        waterlogged: cell_is_water,
-    }
-}
-
 /// `ScaffoldingBlockItem.updatePlacementContext` (`@0-237`).
 pub fn scaffolding_update_placement_context(
     ctx: &PlaceContext,
     in_world_bounds: impl Fn(BlockPos) -> bool,
-    get_cell: impl Fn(BlockPos) -> ScaffoldingCell,
+    world: &impl WorldMut,
 ) -> Option<(BlockPos, Direction)> {
-    let clicked = get_cell(ctx.clicked_pos);
-    if !clicked.is_scaffolding {
-        return (scaffolding_get_distance(ctx.clicked_pos, &get_cell) != SCAFFOLDING_MAX_DISTANCE)
-            .then_some((ctx.clicked_pos, ctx.clicked_face));
+    if !matches!(world.cell(ctx.clicked_pos).kind(), CellState::Scaffolding(_)) {
+        let placed = scaffolding_state(world, ctx.clicked_pos, ctx.held_block_id.default_state());
+        return scaffolding_supported(placed).then_some((ctx.clicked_pos, ctx.clicked_face));
     }
     let dir = if ctx.is_sneaking {
         if ctx.is_inside {
@@ -451,9 +419,9 @@ pub fn scaffolding_update_placement_context(
         if !ctx.is_client_side && !in_world_bounds(cursor) {
             return None;
         }
-        let c = get_cell(cursor);
-        if !c.is_scaffolding {
-            return c.replaceable.then_some((cursor, dir));
+        let cell = world.cell(cursor);
+        if !matches!(cell.kind(), CellState::Scaffolding(_)) {
+            return cell.rules().can_be_replaced.then_some((cursor, dir));
         }
         cursor = dir.relative(cursor);
         if dir.is_horizontal() {
@@ -664,7 +632,6 @@ mod part3_tests {
 
     const OAK_DOOR_ID: BlockId = BlockId(10);
     const LADDER_ID: BlockId = BlockId(11);
-    const SCAFFOLD_ID: BlockId = BlockId(12);
 
     fn door_ctx(pos: BlockPos, dx: f64, dz: f64, yaw: f64) -> PlaceContext {
         PlaceContext {
@@ -761,22 +728,20 @@ mod part3_tests {
         );
 
         // Scaffolding (evidence.txt:52-78, adv-evidence.txt:13-19, walkfix-evidence.txt:2-4)
-        let mut grid: HashMap<BlockPos, ScaffoldingCell> = HashMap::new();
-        let scaf = |d: u8| ScaffoldingCell { is_scaffolding: true, distance: d, sturdy_up: false, replaceable: true };
-        let air = || ScaffoldingCell { is_scaffolding: false, distance: 0, sturdy_up: false, replaceable: true };
-        let stone = || ScaffoldingCell { is_scaffolding: false, distance: 0, sturdy_up: true, replaceable: false };
-
+        let mut grid = HashMap::<BlockPos, StateId>::new();
+        let scaffold = BlockId::of("scaffolding").default_state();
+        let scaf = |d: u8| scaffold.with("distance", &d.to_string());
+        let stone = || BlockId::of("stone").default_state();
         let pos_s = [2, 70, 2];
         grid.insert([2, 69, 2], stone());
-        let s1 = scaffolding_get_state_for_placement(pos_s, false, |p| grid.get(&p).copied().unwrap_or_else(air));
-        assert_eq!(s1, ScaffoldingState { distance: 0, bottom: false, waterlogged: false });
-        assert!(scaffolding_can_survive(s1.distance));
+        let s1 = scaffolding_state(&grid, pos_s, scaffold.with_bool("waterlogged", false));
+        assert_eq!(s1, scaf(0).with_bool("bottom", false).with_bool("waterlogged", false));
+        assert!(scaffolding_supported(s1));
 
         grid.clear();
-        let s2 = scaffolding_get_state_for_placement(pos_s, true, |p| grid.get(&p).copied().unwrap_or_else(air));
-        assert_eq!(s2, ScaffoldingState { distance: 7, bottom: true, waterlogged: true });
-        assert!(!scaffolding_can_survive(s2.distance));
-
+        let s2 = scaffolding_state(&grid, pos_s, scaffold.with_bool("waterlogged", true));
+        assert_eq!(s2, scaf(7).with_bool("bottom", true).with_bool("waterlogged", true));
+        assert!(!scaffolding_supported(s2));
         // C4b2 / C4b3 / WF: 6-run vs 7-run east walk (walkfix-evidence.txt:2-4)
         grid.clear();
         for x in 2..=8 {
@@ -791,31 +756,31 @@ mod part3_tests {
             is_sneaking: sneaking,
             player_look_direction: Some(Direction::from_y_rot(yaw)),
             player_pitch_yaw: (0.0, yaw as f32),
-            held_block_id: SCAFFOLD_ID,
+            held_block_id: scaffold.block(),
             is_client_side: false,
         };
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, &grid),
             Some(([9, 70, 2], Direction::East))
         );
         grid.insert([9, 70, 2], stone());
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, &grid),
             None
         );
         grid.insert([9, 70, 2], scaf(0));
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::Up, false, false, 270.0), |_| true, &grid),
             None
         );
 
         // C4c/C4d sneak & sneak-inside
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, true, false, 180.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, true, false, 180.0), |_| true, &grid),
             Some(([2, 70, 1], Direction::North))
         );
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, true, true, 180.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, true, true, 180.0), |_| true, &grid),
             Some(([2, 70, 3], Direction::South))
         );
 
@@ -825,7 +790,7 @@ mod part3_tests {
             grid.insert([2, y, 2], scaf(0));
         }
         assert_eq!(
-            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, false, false, 180.0), |_| true, |p| grid.get(&p).copied().unwrap_or_else(air)),
+            scaffolding_update_placement_context(&mk_scaf_ctx(Direction::North, false, false, 180.0), |_| true, &grid),
             Some(([2, 80, 2], Direction::Up))
         );
 

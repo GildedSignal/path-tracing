@@ -558,25 +558,6 @@ mod destroy_speed_tests {
     }
 }
 
-/// `Player.isWithinBlockInteractionRange(BlockPos, double)` (`spgm-full` @0-22, `player-full` @4912).
-pub fn unit_cube_distance_to_sqr(pos: [i32; 3], eye: [f64; 3]) -> f64 {
-    let dx = (pos[0] as f64 - eye[0]).max(eye[0] - (pos[0] + 1) as f64).max(0.0);
-    let dy = (pos[1] as f64 - eye[1]).max(eye[1] - (pos[1] + 1) as f64).max(0.0);
-    let dz = (pos[2] as f64 - eye[2]).max(eye[2] - (pos[2] + 1) as f64).max(0.0);
-    dx * dx + dy * dy + dz * dz
-}
-
-/// Server-side block-break reach gate (`tolerance = 1.0` passed at `handleBlockBreakAction` @5).
-pub fn within_block_break_range(
-    pos: [i32; 3],
-    eye: [f64; 3],
-    block_interaction_range: f64,
-    tolerance: f64,
-) -> bool {
-    let d = block_interaction_range + tolerance;
-    unit_cube_distance_to_sqr(pos, eye) < d * d
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameModeKind {
     Survival,
@@ -677,7 +658,11 @@ pub fn handle_block_break_action(
     clock: &mut BreakPacketClock,
     input: BreakGateInput,
 ) -> BreakPacketOutcome {
-    if !within_block_break_range(input.pos, input.eye_pos, input.block_interaction_range, 1.0) {
+    let [x, y, z] = input.eye_pos;
+    if !crate::interact::is_within_block_interaction_range(
+        crate::Vec3::new(x, y, z), input.block_interaction_range, input.pos,
+        crate::interact::SERVER_INTERACTION_RANGE_TOLERANCE,
+    ) {
         return BreakPacketOutcome::RefusedTooFar;
     }
     if input.pos[1] > input.max_y {
@@ -1015,13 +1000,16 @@ mod part4_and_part5_tests {
     fn break_packet_gates_creative_air_and_stop_witnesses() {
         // probe-output.txt:16-105 & check-probe-output.txt:5-50
         let pos = [10, 0, 0];
-        assert!(!within_block_break_range(pos, [16.5, 0.5, 0.5], 4.5, 1.0)); // probe-output.txt:94
-        assert!(within_block_break_range(pos, [f64::from_bits(0x4030_7fff_ffff_ffff), 0.5, 0.5], 4.5, 1.0)); // probe-output.txt:95
-        assert!(!within_block_break_range(pos, [17.0, 0.5, 0.5], 5.0, 1.0)); // probe-output.txt:98
-        assert!(within_block_break_range(pos, [f64::from_bits(0x4030_ffff_ffff_ffff), 0.5, 0.5], 5.0, 1.0)); // probe-output.txt:99
+        let in_range = |[x, y, z]: [f64; 3], reach| crate::interact::is_within_block_interaction_range(
+            crate::Vec3::new(x, y, z), reach, pos, crate::interact::SERVER_INTERACTION_RANGE_TOLERANCE,
+        );
+        assert!(!in_range([16.5, 0.5, 0.5], 4.5)); // probe-output.txt:94
+        assert!(in_range([f64::from_bits(0x4030_7fff_ffff_ffff), 0.5, 0.5], 4.5)); // probe-output.txt:95
+        assert!(!in_range([17.0, 0.5, 0.5], 5.0)); // probe-output.txt:98
+        assert!(in_range([f64::from_bits(0x4030_ffff_ffff_ffff), 0.5, 0.5], 5.0)); // probe-output.txt:99
         // C3 Y axis (check-probe-output.txt:37-39)
-        assert!(!within_block_break_range(pos, [10.5, 6.5, 0.5], 4.5, 1.0));
-        assert!(within_block_break_range(pos, [10.5, f64::from_bits(0x4019_ffff_ffff_ffff), 0.5], 4.5, 1.0));
+        assert!(!in_range([10.5, 6.5, 0.5], 4.5));
+        assert!(in_range([10.5, f64::from_bits(0x4019_ffff_ffff_ffff), 0.5], 4.5));
 
         // C1a/C1b/C1c maxY gate (check-probe-output.txt:5-28)
         let mut clock = BreakPacketClock {

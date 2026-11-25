@@ -21,7 +21,7 @@ use crate::interact::{
     RedstoneEvent,
 };
 use crate::neighbor::{
-    self, CollectingNeighborUpdater, Direction, DrainStats, NeighborQueue, UpdateEvent,
+    self, Direction, DrainStats, NeighborQueue, UpdateEvent,
     UpdateOrDestroyAction, UPDATE_SHAPE_ORDER, update_flags,
 };
 use crate::pearl::{
@@ -31,9 +31,7 @@ use crate::piston::{
     self, BlockKind as PistonBlockKind, MovingPiston, PistonBlock, PistonEntity, PistonWorld,
     Push, PushReaction, Resolver, TriggerAction, set_block_flags, trigger as piston_trigger,
 };
-use crate::place::{
-    self, ScaffoldingCell,
-};
+use crate::place;
 use crate::basis::cell::{DIRECTION, StateId};
 use crate::basis::sweep::shapes as collide_with_shapes;
 use crate::ticks::{
@@ -41,9 +39,8 @@ use crate::ticks::{
 };
 use crate::world::block_pos;
 use crate::world_hooks::{
-    self, BucketContent, BucketEvent, BucketSound, BucketStack, BucketUseResult,
-    ButtonEvent, ButtonState, PlateEvent, PressurePlateState, TriggerEntity,
-    TripwireEvent,
+    self, BucketContent, BucketSound, BucketStack, BucketUseResult, CellEvent,
+    ButtonUseResult, SensorInput, TriggerEntity,
     WATER_TICK_DELAY,
 };
 use crate::{
@@ -475,7 +472,7 @@ pub struct SimWorld<'a, W: World> {
     sub_tick_counter: SubTickCounter,
     pub block_ticks: LevelTicks<BlockTickKind>,
     pub fluid_ticks: LevelTicks<FluidTickKind>,
-    neighbor_updater: CollectingNeighborUpdater<BlockId>,
+    neighbor_updater: NeighborQueue<BlockId>,
     block_events: VecDeque<BlockEvent>,
     block_events_set: HashSet<BlockEvent>,
     moving_pistons: HashMap<BlockPos, MovingPistonEntry>,
@@ -509,7 +506,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             sub_tick_counter: SubTickCounter::default(),
             block_ticks: LevelTicks::new(),
             fluid_ticks: LevelTicks::new(),
-            neighbor_updater: CollectingNeighborUpdater::new(1_000_000),
+            neighbor_updater: NeighborQueue::new(1_000_000),
             block_events: VecDeque::new(),
             block_events_set: HashSet::new(),
             moving_pistons: HashMap::new(),
@@ -666,26 +663,22 @@ impl<'a, W: World> SimWorld<'a, W> {
         flags: i32,
         recursion_limit: i32,
     ) -> DrainStats {
-        let mut updater = std::mem::replace(
-            &mut self.neighbor_updater,
-            CollectingNeighborUpdater::new(0),
-        );
-        let did_enqueue =
-            self.apply_set_cell(Some(updater.queue_mut()), pos, cell, flags, recursion_limit);
-        let stats = updater.drain_with(
-            |_| {},
-            |q, event| {
-                self.handle_neighbor_event(q, event);
-            },
-        );
-        self.neighbor_updater = updater;
-        if !did_enqueue {
-            DrainStats::default()
-        } else {
-            stats
-        }
+        let mut changed = false;
+        let stats = self.with_neighbor_queue(|sim, queue| {
+            changed = sim.apply_set_cell(Some(queue), pos, cell, flags, recursion_limit);
+        });
+        if changed { stats } else { DrainStats::default() }
     }
 
+    fn with_neighbor_queue(
+        &mut self, seed: impl FnOnce(&mut Self, &mut NeighborQueue<BlockId>),
+    ) -> DrainStats {
+        let mut queue = std::mem::take(&mut self.neighbor_updater);
+        seed(self, &mut queue);
+        let stats = queue.drain_with(|_| {}, |queue, event| self.handle_neighbor_event(queue, event));
+        self.neighbor_updater = queue;
+        stats
+    }
     fn apply_set_cell(
         &mut self,
         mut queue: Option<&mut NeighborQueue<BlockId>>,
@@ -771,28 +764,20 @@ impl<'a, W: World> SimWorld<'a, W> {
     ) {
         match old_cell.kind() {
             CellState::Button(btn) => {
-                let mut evs = Vec::new();
-                world_hooks::button_after_removal(btn, pos, moved_by_piston, &mut evs);
-                for ev in evs {
-                    if let ButtonEvent::UpdateNeighborsAt { pos: p, source_id } = ev {
-                        self.enqueue_update_neighbors(queue.as_deref_mut(), p, source_id, None);
-                    }
-                }
+                let mut events = Vec::new();
+                world_hooks::button_after_removal(btn, pos, moved_by_piston, &mut events);
+                self.apply_cell_events(queue, &events);
             }
             CellState::PressurePlate(plate) => {
-                let mut evs = Vec::new();
-                world_hooks::pressure_plate_after_removal(plate, pos, moved_by_piston, &mut evs);
-                for ev in evs {
-                    if let PlateEvent::UpdateNeighborsAt { pos: p, source_id } = ev {
-                        self.enqueue_update_neighbors(queue.as_deref_mut(), p, source_id, None);
-                    }
-                }
+                let mut events = Vec::new();
+                world_hooks::pressure_plate_after_removal(plate, pos, moved_by_piston, &mut events);
+                self.apply_cell_events(queue, &events);
             }
             CellState::TripwireWire(wire) => {
                 let mut tw = Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_after_removal(&mut tw, pos, wire, moved_by_piston, &mut evs);
-                self.apply_tripwire_events(queue.as_deref_mut(), evs);
+                self.apply_cell_events(queue.as_deref_mut(), &evs);
             }
             CellState::TripwireHook(hook) => {
                 let mut tw = Pending::new(self);
@@ -804,7 +789,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     moved_by_piston,
                     &mut evs,
                 );
-                self.apply_tripwire_events(queue.as_deref_mut(), evs);
+                self.apply_cell_events(queue.as_deref_mut(), &evs);
             }
             CellState::Lever(lever) if !moved_by_piston && lever.powered => {
                 self.enqueue_update_neighbors(queue.as_deref_mut(), pos, lever.block_id, None);
@@ -881,19 +866,9 @@ impl<'a, W: World> SimWorld<'a, W> {
         if let Some(q) = queue {
             q.update_neighbors_except(center, source_id, skip);
         } else {
-            let mut updater = std::mem::replace(
-                &mut self.neighbor_updater,
-                CollectingNeighborUpdater::new(0),
-            );
-            updater.drain_with(
-                |q| {
-                    q.update_neighbors_except(center, source_id, skip);
-                },
-                |q, ev| {
-                    self.handle_neighbor_event(q, ev);
-                },
-            );
-            self.neighbor_updater = updater;
+            self.with_neighbor_queue(|_, queue| {
+                queue.update_neighbors_except(center, source_id, skip);
+            });
         }
     }
 
@@ -942,64 +917,10 @@ impl<'a, W: World> SimWorld<'a, W> {
                             self.update_redstone_wire(Some(queue), pos);
                         }
                     }
-                    CellState::Door(door) => {
-                        if source_block == door.block_id {
-                            return;
-                        }
-                        let other_pos = match door.half {
-                            DoorHalf::Lower => Direction::Up.relative_by(pos, 1),
-                            DoorHalf::Upper => Direction::Down.relative_by(pos, 1),
-                        };
-                        let sig = self.has_neighbor_signal(pos) || self.has_neighbor_signal(other_pos);
-                        if let Some((new_powered, flags)) =
-                            neighbor::powered_toggle_on_signal(door.powered, sig)
-                        {
-                            let updated = cell.with_bool("powered", new_powered).with_bool("open", new_powered);
-                            self.apply_set_cell(
-                                Some(queue),
-                                pos,
-                                updated,
-                                flags,
-                                update_flags::DEFAULT_LIMIT,
-                            );
-                        }
-                    }
-                    CellState::TrapDoor { powered, waterlogged, .. } => {
-                        let sig = self.has_neighbor_signal(pos);
-                        if let Some((new_powered, flags)) =
-                            neighbor::powered_toggle_on_signal(powered, sig)
-                        {
-                            let updated = cell.with_bool("powered", new_powered).with_bool("open", new_powered);
-                            self.apply_set_cell(
-                                Some(queue),
-                                pos,
-                                updated,
-                                flags,
-                                update_flags::DEFAULT_LIMIT,
-                            );
-                            if waterlogged {
-                                self.schedule_fluid_tick(
-                                    pos,
-                                    FluidTickKind::Water,
-                                    interact::WATERLOGGED_TRAPDOOR_TICK_DELAY,
-                                );
-                            }
-                        }
-                    }
-                    CellState::FenceGate { powered, .. } => {
-                        let sig = self.has_neighbor_signal(pos);
-                        if let Some((new_powered, flags)) =
-                            neighbor::powered_toggle_on_signal(powered, sig)
-                        {
-                            let updated =
-                                cell.with_bool("powered", new_powered).with_bool("open", new_powered);
-                            self.apply_set_cell(
-                                Some(queue),
-                                pos,
-                                updated,
-                                flags,
-                                update_flags::DEFAULT_LIMIT,
-                            );
+                    CellState::Door(_) | CellState::TrapDoor { .. } | CellState::FenceGate { .. } => {
+                        let events = interact::openable_events(cell, pos, source_block, |p| self.has_neighbor_signal(p));
+                        for event in events.into_iter().flatten() {
+                            self.apply_redstone_event(queue, event);
                         }
                     }
                     CellState::Piston {
@@ -2234,69 +2155,43 @@ impl<'a, W: World> SimWorld<'a, W> {
                     self.set_cell_with_flags(pos, air, update_flags::ALL);
                 }
             }
-            BlockTickKind::Button => {
-                if let CellState::Button(mut btn) = cell.kind() {
-                    let mut evs = Vec::new();
-                    world_hooks::button_tick(&mut btn, pos, &[], &mut evs);
-                    self.apply_button_events(btn, &evs);
-                }
+            BlockTickKind::Button if matches!(cell.kind(), CellState::Button(_)) => {
+                self.sensor_input(pos, SensorInput::Scheduled { bodies: &[], arrows: &[] });
             }
-            BlockTickKind::PressurePlate => {
-                if let CellState::PressurePlate(mut plate) = cell.kind() {
-                    let triggers: Vec<TriggerEntity> = self
-                        .living_entities
-                        .iter()
-                        .filter(|e| e.alive)
-                        .map(SimLivingEntity::as_trigger_entity)
-                        .collect();
-                    let mut evs = Vec::new();
-                    world_hooks::pressure_plate_tick(&mut plate, pos, &triggers, &mut evs);
-                    self.apply_plate_events(plate, &evs);
-                }
+            BlockTickKind::PressurePlate if matches!(cell.kind(), CellState::PressurePlate(_)) => {
+                let bodies = self.trigger_entities();
+                self.sensor_input(pos, SensorInput::Scheduled { bodies: &bodies, arrows: &[] });
             }
+            BlockTickKind::Button | BlockTickKind::PressurePlate => {}
+
             BlockTickKind::TripwireWire => {
-                let triggers: Vec<TriggerEntity> = self
-                    .living_entities
-                    .iter()
-                    .filter(|e| e.alive)
-                    .map(SimLivingEntity::as_trigger_entity)
-                    .collect();
+                let triggers = self.trigger_entities();
                 let mut tw =
                     Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_tick(&mut tw, pos, &triggers, &mut evs);
-                self.apply_tripwire_events(None, evs);
+                self.apply_cell_events(None, &evs);
             }
             BlockTickKind::TripwireHook => {
                 let mut tw =
                     Pending::new(self);
                 let mut evs = Vec::new();
                 world_hooks::tripwire_hook_tick(&mut tw, pos, &mut evs);
-                self.apply_tripwire_events(None, evs);
+                self.apply_cell_events(None, &evs);
             }
             BlockTickKind::Scaffolding => {
-                if let CellState::Scaffolding(mut sc) = cell.kind() {
-                    let dist = place::scaffolding_get_distance(pos, |p| self.scaffolding_cell(p));
-                    let below_scaf = matches!(
-                        self.cell(Direction::Down.relative_by(pos, 1)).kind(),
-                        CellState::Scaffolding(_)
-                    );
-                    let bottom = place::scaffolding_is_bottom(dist, below_scaf);
-                    if !place::scaffolding_can_survive(dist) {
+                if matches!(cell.kind(), CellState::Scaffolding(_)) {
+                    let next = place::scaffolding_state(self, pos, cell);
+                    if !place::scaffolding_supported(next) {
                         self.spawn_falling_block(pos, cell);
-                        let air = StateId::AIR;
-                        self.set_cell_with_flags(pos, air, update_flags::ALL);
-                    } else if sc.distance != dist || sc.bottom != bottom {
-                        sc.distance = dist;
-                        sc.bottom = bottom;
-                        let next = cell.with("distance", &sc.distance.to_string()).with_bool("bottom", sc.bottom);
+                        self.set_cell_with_flags(pos, StateId::AIR, update_flags::ALL);
+                    } else if next != cell {
                         self.set_cell_with_flags(pos, next, update_flags::ALL);
                     }
                 }
             }
         }
     }
-
     fn tick_falling_blocks(&mut self) -> usize {
         let mut ticked = 0usize;
         let len = self.falling_blocks.len();
@@ -2658,144 +2553,76 @@ impl<'a, W: World> SimWorld<'a, W> {
     // ------------------------------------------------------------------------
 
     pub fn pull_lever(&mut self, pos: BlockPos) -> (bool, DrainStats) {
-        let mut rw = Pending::new(self);
+        let CellState::Lever(lever) = self.cell(pos).kind() else {
+            return (false, DrainStats::default());
+        };
+        let stats = self.with_neighbor_queue(|sim, queue| {
+            for event in interact::lever_events(pos, lever) {
+                sim.apply_redstone_event(queue, event);
+            }
+        });
+        (!lever.powered, stats)
+    }
+
+    fn apply_redstone_event(&mut self, queue: &mut NeighborQueue<BlockId>, event: RedstoneEvent) {
+        match event {
+            RedstoneEvent::SetBlock { pos, flags, open, powered, .. } => {
+                let mut next = self.cell(pos).with_bool("powered", powered);
+                if let Some(open) = open {
+                    next = next.with_bool("open", open);
+                }
+                self.apply_set_cell(Some(queue), pos, next, i32::from(flags), update_flags::DEFAULT_LIMIT);
+            }
+            RedstoneEvent::UpdateNeighborsAt { pos, source_id } => {
+                queue.update_neighbors_except(pos, source_id, None);
+            }
+            RedstoneEvent::ScheduleWaterTick { pos, delay } => {
+                self.schedule_fluid_tick(pos, FluidTickKind::Water, delay);
+            }
+            _ => {}
+        }
+    }
+    pub fn sensor_input(
+        &mut self, pos: BlockPos, input: SensorInput<'_>,
+    ) -> (Option<ButtonUseResult>, Vec<CellEvent>) {
         let mut events = Vec::new();
-        let powered = interact::lever_pull(&mut rw, pos, false, &mut events);
-        if events.is_empty() {
-            return (powered, DrainStats::default());
-        }
-        let mut updater = std::mem::replace(
-            &mut self.neighbor_updater,
-            CollectingNeighborUpdater::new(0),
-        );
-        for ev in events {
-            match ev {
-                RedstoneEvent::SetBlock { pos: p, flags, powered: pwr, .. } => {
-                    let lever = self.cell(p);
-                    if matches!(lever.kind(), CellState::Lever(_)) {
-                        self.apply_set_cell(
-                            Some(updater.queue_mut()),
-                            p,
-                            lever.with_bool("powered", pwr),
-                            flags as i32,
-                            update_flags::DEFAULT_LIMIT,
-                        );
-                    }
-                }
-                RedstoneEvent::UpdateNeighborsAt { pos: p, source_id } => {
-                    updater
-                        .queue_mut()
-                        .update_neighbors_except(p, source_id, None);
-                }
-                RedstoneEvent::ScheduleWaterTick { pos, delay } => {
-                    self.schedule_fluid_tick(pos, FluidTickKind::Water, delay);
-                }
-                RedstoneEvent::DoorSoundAndEvent { .. }
-                | RedstoneEvent::TrapDoorSoundAndEvent { .. }
-                | RedstoneEvent::FenceGateSoundAndEvent { .. }
-                | RedstoneEvent::LeverSoundAndEvent { .. } => {}
-            }
-        }
-        let stats = updater.drain_with(
-            |_| {},
-            |q, ev| {
-                self.handle_neighbor_event(q, ev);
-            },
-        );
-        self.neighbor_updater = updater;
-        (powered, stats)
+        let result = world_hooks::sensor_events(self.cell(pos), pos, input, &mut events);
+        self.apply_cell_events(None, &events);
+        (result, events)
     }
-
-    fn apply_button_events(&mut self, btn: ButtonState, evs: &[ButtonEvent]) {
-        for &ev in evs {
-            match ev {
-                ButtonEvent::SetPowered { pos, flags, .. } => {
-                    let next = self.cell(pos).with_bool("powered", btn.powered);
-                    self.set_cell_with_flags(pos, next, flags);
-                }
-                ButtonEvent::UpdateNeighborsAt { pos, source_id } => {
-                    self.enqueue_update_neighbors(None, pos, source_id, None);
-                }
-                ButtonEvent::ScheduleTick { pos, delay, .. } => {
-                    self.schedule_block_tick(pos, BlockTickKind::Button, delay);
-                }
-                ButtonEvent::PlaySound { .. } | ButtonEvent::GameEvent { .. } => {}
-            }
-        }
-    }
-
-    fn apply_plate_events(&mut self, plate: PressurePlateState, evs: &[PlateEvent]) {
-        for &ev in evs {
-            match ev {
-                PlateEvent::SetSignal { pos, flags, .. } => {
-                    let next = match plate.kind {
-                        world_hooks::PressurePlateKind::Binary { .. } => self.cell(pos).with_bool("powered", plate.signal != 0),
-                        world_hooks::PressurePlateKind::Weighted { .. } => self.cell(pos).with("power", &plate.signal.to_string()),
-                    };
-                    self.set_cell_with_flags(pos, next, flags);
-                }
-                PlateEvent::UpdateNeighborsAt { pos, source_id } => {
-                    self.enqueue_update_neighbors(None, pos, source_id, None);
-                }
-                PlateEvent::ScheduleTick { pos, delay, .. } => {
-                    self.schedule_block_tick(pos, BlockTickKind::PressurePlate, delay);
-                }
-                PlateEvent::PlaySound { .. } | PlateEvent::GameEvent { .. } => {}
-            }
-        }
-    }
-
-    fn apply_tripwire_events(
-        &mut self,
-        mut queue: Option<&mut NeighborQueue<BlockId>>,
-        evs: Vec<TripwireEvent>,
+    fn apply_cell_events(
+        &mut self, mut queue: Option<&mut NeighborQueue<BlockId>>, events: &[CellEvent],
     ) {
-        for ev in evs {
-            match ev {
-                TripwireEvent::SetWire { pos, flags, wire } => {
-                    let next = world_hooks::wire_state(self.cell(pos), wire);
-                    if queue.is_some() {
-                        self.apply_set_cell(
-                            queue.as_deref_mut(),
-                            pos,
-                            next,
-                            flags,
-                            update_flags::DEFAULT_LIMIT,
-                        );
+        for &event in events {
+            match event {
+                CellEvent::SetBlock { pos, flags, state } => {
+                    if let Some(queue) = queue.as_deref_mut() {
+                        self.apply_set_cell(Some(queue), pos, state, flags, update_flags::DEFAULT_LIMIT);
                     } else {
-                        self.set_cell_with_flags(pos, next, flags);
+                        self.set_cell_with_flags(pos, state, flags);
                     }
                 }
-                TripwireEvent::SetHook { pos, flags, hook } => {
-                    let next = world_hooks::hook_state(self.cell(pos), hook);
-                    if queue.is_some() {
-                        self.apply_set_cell(
-                            queue.as_deref_mut(),
-                            pos,
-                            next,
-                            flags,
-                            update_flags::DEFAULT_LIMIT,
-                        );
-                    } else {
-                        self.set_cell_with_flags(pos, next, flags);
-                    }
+                CellEvent::DestroyBlock { pos, drop } => {
+                    self.destroy_block(pos, drop);
                 }
-                TripwireEvent::ScheduleTick {
-                    pos,
-                    block_id,
-                    delay,
-                } => {
-                    let kind = if block_id == BlockId::of("tripwire_hook") {
-                        BlockTickKind::TripwireHook
-                    } else {
-                        BlockTickKind::TripwireWire
+                CellEvent::UpdateNeighborsAt { pos, source_id } => {
+                    self.enqueue_update_neighbors(queue.as_deref_mut(), pos, source_id, None);
+                }
+                CellEvent::ScheduleTick { pos, block_id, delay } => {
+                    let kind = match block_id.name() {
+                        "tripwire_hook" => BlockTickKind::TripwireHook,
+                        "tripwire" => BlockTickKind::TripwireWire,
+                        name if name.ends_with("_button") => BlockTickKind::Button,
+                        name if name.ends_with("_pressure_plate") => BlockTickKind::PressurePlate,
+                        other => unreachable!("unsupported scheduled cell event: {other}"),
                     };
                     self.schedule_block_tick(pos, kind, delay);
                 }
-                TripwireEvent::UpdateNeighborsAt { pos, source_id } => {
-                    self.enqueue_update_neighbors(queue.as_deref_mut(), pos, source_id, None);
+                CellEvent::ScheduleFluidTick { pos, fluid, delay } => {
+                    let kind = if fluid == BucketContent::Lava { FluidTickKind::Lava } else { FluidTickKind::Water };
+                    self.schedule_fluid_tick(pos, kind, delay);
                 }
-                TripwireEvent::HookFeedback { .. } | TripwireEvent::GameEventShear { .. } => {}
+                _ => {}
             }
         }
     }
@@ -2813,17 +2640,17 @@ impl<'a, W: World> SimWorld<'a, W> {
     pub fn empty_bucket(
         &mut self, pos: BlockPos, content: BucketContent,
         hit: Option<(BlockPos, Direction)>, is_sneaking: bool,
-    ) -> (bool, Vec<BucketEvent>) {
+    ) -> (bool, Vec<CellEvent>) {
         let mut events = Vec::new();
         let ok = world_hooks::bucket_empty_contents(self, self.water_evaporates, content, pos, hit, is_sneaking, false, &mut events);
-        self.apply_bucket_events(&events);
+        self.apply_cell_events(None, &events);
         (ok, events)
     }
 
-    pub fn pickup_bucket(&mut self, pos: BlockPos) -> (Option<(BucketStack, BucketSound)>, Vec<BucketEvent>) {
+    pub fn pickup_bucket(&mut self, pos: BlockPos) -> (Option<(BucketStack, BucketSound)>, Vec<CellEvent>) {
         let mut events = Vec::new();
         let result = world_hooks::bucket_pickup_block(self, pos, &mut events);
-        self.apply_bucket_events(&events);
+        self.apply_cell_events(None, &events);
         (result, events)
     }
 
@@ -2832,85 +2659,27 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self, held: BucketStack, hit: BlockHitResult, may_interact: bool,
         may_use_item_at_offset: bool, is_sneaking: bool, has_infinite_materials: bool,
         inventory_contains_result: bool, inventory_can_add_result: bool, is_client_side: bool,
-    ) -> (BucketUseResult, Vec<BucketEvent>) {
+    ) -> (BucketUseResult, Vec<CellEvent>) {
         let mut events = Vec::new();
         let result = world_hooks::bucket_use(self, self.water_evaporates, held, hit, may_interact,
             may_use_item_at_offset, is_sneaking, has_infinite_materials, inventory_contains_result,
             inventory_can_add_result, is_client_side, &mut events);
-        self.apply_bucket_events(&events);
+        self.apply_cell_events(None, &events);
         (result, events)
     }
 
-    fn apply_bucket_events(&mut self, events: &[BucketEvent]) {
-        for &ev in events {
-            match ev {
-                BucketEvent::DestroyBlock { pos, drop } => {
-                    self.destroy_block(pos, drop);
-                }
-                BucketEvent::SetBlock { pos, cell, flags } => {
-                    self.set_cell_with_flags(pos, cell, flags);
-                }
-                BucketEvent::ScheduleFluidTick { pos, fluid, delay } => {
-                    let fk = match fluid {
-                        BucketContent::Lava => FluidTickKind::Lava,
-                        BucketContent::Water | BucketContent::Empty => FluidTickKind::Water,
-                    };
-                    self.schedule_fluid_tick(pos, fk, delay);
-                }
-                BucketEvent::PlaySound { .. }
-                | BucketEvent::GameEvent { .. }
-                | BucketEvent::EvaporateSmokeParticles { .. } => {}
-            }
-        }
-    }
 
-    fn scaffolding_cell(&self, pos: BlockPos) -> ScaffoldingCell {
-        let c = self.cell(pos);
-        match c.kind() {
-            CellState::Scaffolding(s) => ScaffoldingCell {
-                is_scaffolding: true,
-                distance: s.distance,
-                sturdy_up: false,
-                replaceable: false,
-            },
-            _ => ScaffoldingCell {
-                is_scaffolding: false,
-                distance: 0,
-                sturdy_up: c.is_sturdy(Direction::Up),
-                replaceable: c.is_air() || c.rules().can_be_replaced,
-            },
-        }
+    fn trigger_entities(&self) -> Vec<TriggerEntity> {
+        self.living_entities.iter().filter(|entity| entity.alive)
+            .map(SimLivingEntity::as_trigger_entity).collect()
     }
 
     fn check_world_hooks(&mut self) {
-        if self.pressure_plate_positions.is_empty() && self.tripwire_positions.is_empty() {
-            return;
-        }
-        let triggers: Vec<TriggerEntity> = self
-            .living_entities
-            .iter()
-            .filter(|e| e.alive)
-            .map(SimLivingEntity::as_trigger_entity)
-            .collect();
-
+        let triggers = self.trigger_entities();
         if !triggers.is_empty() {
             let plates: Vec<BlockPos> = self.pressure_plate_positions.iter().copied().collect();
             for p in plates {
-                if let CellState::PressurePlate(mut plate) = self.cell(p).kind() {
-                    let touch = world_hooks::PRESSURE_PLATE_TOUCH_AABB
-                        .moved(Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64));
-                    if triggers.iter().any(|t| t.bbox.intersects(touch)) {
-                        let mut evs = Vec::new();
-                        world_hooks::pressure_plate_entity_inside(
-                            &mut plate,
-                            p,
-                            false,
-                            &triggers,
-                            &mut evs,
-                        );
-                        self.apply_plate_events(plate, &evs);
-                    }
-                }
+                self.sensor_input(p, SensorInput::Contact { bodies: &triggers, arrows: &[], client: false });
             }
 
             let wires: Vec<BlockPos> = self.tripwire_positions.iter().copied().collect();
@@ -2924,7 +2693,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                             let mut tw = Pending::new(self);
                             let mut evs = Vec::new();
                             world_hooks::tripwire_entity_inside(&mut tw, w, false, tr, &mut evs);
-                            self.apply_tripwire_events(None, evs);
+                            self.apply_cell_events(None, &evs);
                         }
                     }
                 }

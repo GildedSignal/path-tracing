@@ -8,15 +8,13 @@
 //! 4. Tripwire hook & string line scan (`SOUTH`/`WEST`, `i < 42`), `farDist > 1`, gap `astate[i] = null`,
 //!    shears disarm (`flags = 260`), delay-0 echo, and removal phantom-powered trigger
 //!    (`TripWireBlock`, `TripWireHookBlock`).
-//! 5. Bubble column `entityInside` law (`BubbleColumnBlock.entityInside`,
-//!    `Entity.onAboveBubbleColumn`, `Entity.onInsideBubbleColumn`).
 //!
 //! Block identity is strictly data-driven (`BlockId` and properties, never block-name strings).
 
 use crate::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
 use crate::basis::cell::{CellState, StateId, WaterContainer, WorldMut, DIRECTION};
 use crate::neighbor::update_flags;
-use crate::{Aabb, BlockPos, FluidKind, Vec3, World};
+use crate::{Aabb, BlockPos, Vec3};
 
 /// `pos.relative(dir, n)`.
 #[inline]
@@ -168,10 +166,15 @@ pub enum BucketGameEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BucketEvent {
+pub enum CellEvent {
+    SetBlock { pos: BlockPos, state: StateId, flags: i32 },
     DestroyBlock { pos: BlockPos, drop: bool },
-    SetBlock { pos: BlockPos, cell: StateId, flags: i32 },
+    UpdateNeighborsAt { pos: BlockPos, source_id: BlockId },
+    ScheduleTick { pos: BlockPos, block_id: BlockId, delay: u32 },
     ScheduleFluidTick { pos: BlockPos, fluid: BucketContent, delay: u32 },
+    SensorFeedback { pos: BlockPos, activated: bool },
+    HookFeedback { pos: BlockPos, feedback: TripwireHookFeedback },
+    GameEventShear { pos: BlockPos },
     PlaySound { pos: BlockPos, sound: BucketSound },
     GameEvent { pos: BlockPos, event: BucketGameEvent },
     EvaporateSmokeParticles { pos: BlockPos, count: u8 },
@@ -196,7 +199,7 @@ fn bucket_source(content: BucketContent) -> StateId {
 pub(crate) fn bucket_pickup_block(
     world: &impl WorldMut,
     pos: BlockPos,
-    events: &mut Vec<BucketEvent>,
+    events: &mut Vec<CellEvent>,
 ) -> Option<(BucketStack, BucketSound)> {
     let cell = world.cell(pos);
     let (content, sound) = match cell.block().name() {
@@ -204,25 +207,25 @@ pub(crate) fn bucket_pickup_block(
         "lava" if cell.get("level") == Some("0") => (BucketContent::Lava, BucketSound::PickupLava),
         _ if cell.is_waterlogged_container() && cell.get("waterlogged") == Some("true") => {
             let dry = cell.with_bool("waterlogged", false);
-            events.push(BucketEvent::SetBlock { pos, cell: dry, flags: UPDATE_ALL });
+            events.push(CellEvent::SetBlock { pos, state: dry, flags: UPDATE_ALL });
             if !world.can_survive(pos, dry) {
-                events.push(BucketEvent::DestroyBlock { pos, drop: true });
+                events.push(CellEvent::DestroyBlock { pos, drop: true });
             }
             return Some((BucketStack::new(BucketContent::Water, 1), BucketSound::PickupWater));
         }
         _ => return None,
     };
-    events.push(BucketEvent::SetBlock { pos, cell: StateId::AIR, flags: UPDATE_ALL_IMMEDIATE });
+    events.push(CellEvent::SetBlock { pos, state: StateId::AIR, flags: UPDATE_ALL_IMMEDIATE });
     Some((BucketStack::new(content, 1), sound))
 }
 
-fn emit_empty_sound_and_event(pos: BlockPos, content: BucketContent, events: &mut Vec<BucketEvent>) {
+fn emit_empty_sound_and_event(pos: BlockPos, content: BucketContent, events: &mut Vec<CellEvent>) {
     let sound = match content {
         BucketContent::Lava => BucketSound::EmptyLava,
         BucketContent::Water | BucketContent::Empty => BucketSound::EmptyWater,
     };
-    events.push(BucketEvent::PlaySound { pos, sound });
-    events.push(BucketEvent::GameEvent {
+    events.push(CellEvent::PlaySound { pos, sound });
+    events.push(CellEvent::GameEvent {
         pos,
         event: BucketGameEvent::FluidPlace,
     });
@@ -237,7 +240,7 @@ pub(crate) fn bucket_empty_contents(
     hit: Option<(BlockPos, Direction)>,
     is_sneaking: bool,
     is_client_side: bool,
-    events: &mut Vec<BucketEvent>,
+    events: &mut Vec<CellEvent>,
 ) -> bool {
     if !content.is_flowing_fluid() {
         return false;
@@ -255,24 +258,24 @@ pub(crate) fn bucket_empty_contents(
     }
 
     if water && water_evaporates {
-        events.push(BucketEvent::PlaySound { pos, sound: BucketSound::FireExtinguish });
-        events.push(BucketEvent::EvaporateSmokeParticles { pos, count: 8 });
+        events.push(CellEvent::PlaySound { pos, sound: BucketSound::FireExtinguish });
+        events.push(CellEvent::EvaporateSmokeParticles { pos, count: 8 });
         return true;
     }
 
     if water && rules.water_container != WaterContainer::None {
         // BucketItem ignores placeLiquid's return value, including for an already wet block.
         if accepts_water && state.get("waterlogged") == Some("false") && !is_client_side {
-            events.push(BucketEvent::SetBlock { pos, cell: state.with_bool("waterlogged", true), flags: UPDATE_ALL });
-            events.push(BucketEvent::ScheduleFluidTick { pos, fluid: content, delay: WATER_TICK_DELAY });
+            events.push(CellEvent::SetBlock { pos, state: state.with_bool("waterlogged", true), flags: UPDATE_ALL });
+            events.push(CellEvent::ScheduleFluidTick { pos, fluid: content, delay: WATER_TICK_DELAY });
         }
     } else {
         if !is_client_side && can_replace && !rules.is_air && !matches!(state.block().name(), "water" | "lava") {
-            events.push(BucketEvent::DestroyBlock { pos, drop: true });
+            events.push(CellEvent::DestroyBlock { pos, drop: true });
         }
         let source = bucket_source(content);
         if state != source {
-            events.push(BucketEvent::SetBlock { pos, cell: source, flags: UPDATE_ALL_IMMEDIATE });
+            events.push(CellEvent::SetBlock { pos, state: source, flags: UPDATE_ALL_IMMEDIATE });
         }
     }
     emit_empty_sound_and_event(pos, content, events);
@@ -293,7 +296,7 @@ pub(crate) fn bucket_use(
     inventory_contains_result: bool,
     inventory_can_add_result: bool,
     is_client_side: bool,
-    events: &mut Vec<BucketEvent>,
+    events: &mut Vec<CellEvent>,
 ) -> BucketUseResult {
     let BlockHitResult::Hit { pos, face, .. } = hit else {
         return BucketUseResult::Pass;
@@ -333,8 +336,8 @@ pub(crate) fn bucket_use(
 
     if matches!(held.content, BucketContent::Empty) {
         if let Some((picked, sound)) = bucket_pickup_block(world, pos, events) {
-            events.push(BucketEvent::PlaySound { pos, sound });
-            events.push(BucketEvent::GameEvent {
+            events.push(CellEvent::PlaySound { pos, sound });
+            events.push(CellEvent::GameEvent {
                 pos,
                 event: BucketGameEvent::FluidPickup,
             });
@@ -427,13 +430,46 @@ pub struct TriggerEntity {
     pub is_ignoring_block_triggers: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlateEvent {
-    SetSignal { pos: BlockPos, flags: i32, signal: u8 },
-    UpdateNeighborsAt { pos: BlockPos, source_id: BlockId },
-    PlaySound { pos: BlockPos, activated: bool },
-    GameEvent { pos: BlockPos, activated: bool },
-    ScheduleTick { pos: BlockPos, block_id: BlockId, delay: u32 },
+
+fn notify_attached(pos: BlockPos, support: Direction, source_id: BlockId, events: &mut Vec<CellEvent>) {
+    events.extend([pos, support.relative(pos)].map(|pos| CellEvent::UpdateNeighborsAt { pos, source_id }));
+}
+
+struct SensorPulse {
+    pos: BlockPos,
+    support: Direction,
+    state: StateId,
+    signal: u8,
+    delay: u32,
+    flags: i32,
+}
+
+impl SensorPulse {
+    fn emit(self, previous: u8, hand_press: bool, events: &mut Vec<CellEvent>) {
+        let Self { pos, support, state, signal, delay, flags } = self;
+        let block_id = state.block();
+        if signal != previous || hand_press {
+            let next = if state.get("power").is_some() {
+                state.with("power", &signal.to_string())
+            } else {
+                state.with_bool("powered", signal != 0)
+            };
+            events.push(CellEvent::SetBlock { pos, flags, state: next });
+            notify_attached(pos, support, block_id, events);
+        }
+        let activated = signal > 0;
+        let feedback = CellEvent::SensorFeedback { pos, activated };
+        let edge = activated != (previous > 0);
+        if edge && !hand_press {
+            events.push(feedback);
+        }
+        if activated {
+            events.push(CellEvent::ScheduleTick { pos, block_id, delay });
+        }
+        if hand_press {
+            events.push(feedback);
+        }
+    }
 }
 
 impl PressurePlateState {
@@ -499,105 +535,33 @@ pub fn weighted_or_binary_signal(kind: PressurePlateKind, count: i32) -> u8 {
     }
 }
 
-fn push_plate_neighbor_updates(block_id: BlockId, pos: BlockPos, events: &mut Vec<PlateEvent>) {
-    events.push(PlateEvent::UpdateNeighborsAt {
+/// `BasePressurePlateBlock.checkPressed`.
+fn pressure_plate_check_pressed(
+    state: StateId, plate: PressurePlateState, pos: BlockPos, entities: &[TriggerEntity],
+    events: &mut Vec<CellEvent>,
+) {
+    let pulse = SensorPulse {
         pos,
-        source_id: block_id,
-    });
-    events.push(PlateEvent::UpdateNeighborsAt {
-        pos: Direction::Down.relative(pos),
-        source_id: block_id,
-    });
+        support: Direction::Down,
+        state,
+        signal: plate.compute_signal_strength(pos, entities),
+        delay: plate.pressed_time(),
+        flags: UPDATE_CLIENTS,
+    };
+    pulse.emit(plate.signal, false, events);
 }
 
-/// `BasePressurePlateBlock.checkPressed` (`@0-168`).
-pub fn pressure_plate_check_pressed(
-    plate: &mut PressurePlateState,
-    pos: BlockPos,
-    entities: &[TriggerEntity],
-    events: &mut Vec<PlateEvent>,
-) {
-    let old_signal = plate.signal;
-    let new_signal = plate.compute_signal_strength(pos, entities);
-    let was_pressed = old_signal > 0;
-    let is_pressed = new_signal > 0;
 
-    if old_signal != new_signal {
-        plate.signal = new_signal;
-        events.push(PlateEvent::SetSignal {
-            pos,
-            flags: UPDATE_CLIENTS,
-            signal: new_signal,
-        });
-        push_plate_neighbor_updates(plate.block_id, pos, events);
-    }
-
-    if !is_pressed && was_pressed {
-        events.push(PlateEvent::PlaySound {
-            pos,
-            activated: false,
-        });
-        events.push(PlateEvent::GameEvent {
-            pos,
-            activated: false,
-        });
-    } else if is_pressed && !was_pressed {
-        events.push(PlateEvent::PlaySound {
-            pos,
-            activated: true,
-        });
-        events.push(PlateEvent::GameEvent {
-            pos,
-            activated: true,
-        });
-    }
-
-    if is_pressed {
-        events.push(PlateEvent::ScheduleTick {
-            pos,
-            block_id: plate.block_id,
-            delay: plate.pressed_time(),
-        });
-    }
-}
-
-/// `BasePressurePlateBlock.entityInside` (`@0-31`).
-pub fn pressure_plate_entity_inside(
-    plate: &mut PressurePlateState,
-    pos: BlockPos,
-    is_client_side: bool,
-    entities: &[TriggerEntity],
-    events: &mut Vec<PlateEvent>,
-) {
-    if is_client_side {
-        return;
-    }
-    if plate.signal == 0 {
-        pressure_plate_check_pressed(plate, pos, entities, events);
-    }
-}
-
-/// `BasePressurePlateBlock.tick` (`@0-22`).
-pub fn pressure_plate_tick(
-    plate: &mut PressurePlateState,
-    pos: BlockPos,
-    entities: &[TriggerEntity],
-    events: &mut Vec<PlateEvent>,
-) {
-    if plate.signal > 0 {
-        pressure_plate_check_pressed(plate, pos, entities, events);
-    }
-}
 
 /// `BasePressurePlateBlock.affectNeighborsAfterRemoval` (`@0-19`).
 pub fn pressure_plate_after_removal(
     plate: PressurePlateState,
     pos: BlockPos,
     moved_by_piston: bool,
-    events: &mut Vec<PlateEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if !moved_by_piston && plate.signal > 0 {
-        push_plate_neighbor_updates(plate.block_id, pos, events);
+        notify_attached(pos, Direction::Down, plate.block_id, events);
     }
 }
 
@@ -626,14 +590,7 @@ pub enum ButtonUseResult {
     Success,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ButtonEvent {
-    SetPowered { pos: BlockPos, flags: i32, powered: bool },
-    UpdateNeighborsAt { pos: BlockPos, source_id: BlockId },
-    ScheduleTick { pos: BlockPos, block_id: BlockId, delay: u32 },
-    PlaySound { pos: BlockPos, activated: bool },
-    GameEvent { pos: BlockPos, activated: bool },
-}
+
 
 impl ButtonState {
     /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection` (`CEILING->DOWN, FLOOR->UP, WALL->FACING`).
@@ -702,120 +659,59 @@ impl ButtonState {
     }
 }
 
-fn push_button_neighbor_updates(btn: ButtonState, pos: BlockPos, events: &mut Vec<ButtonEvent>) {
-    events.push(ButtonEvent::UpdateNeighborsAt {
+fn update_button(
+    state: StateId, button: ButtonState, pos: BlockPos, pressed: bool, hand_press: bool,
+    events: &mut Vec<CellEvent>,
+) {
+    let pulse = SensorPulse {
         pos,
-        source_id: btn.block_id,
-    });
-    events.push(ButtonEvent::UpdateNeighborsAt {
-        pos: btn.support_pos(pos),
-        source_id: btn.block_id,
-    });
-}
-
-/// `ButtonBlock.press` (`@0-57`).
-pub fn button_press(btn: &mut ButtonState, pos: BlockPos, events: &mut Vec<ButtonEvent>) {
-    btn.powered = true;
-    events.push(ButtonEvent::SetPowered {
-        pos,
+        support: button.connected_direction().opposite(),
+        state,
+        signal: if pressed { 15 } else { 0 },
+        delay: button.ticks_to_stay_pressed,
         flags: UPDATE_ALL,
-        powered: true,
-    });
-    push_button_neighbor_updates(*btn, pos, events);
-    events.push(ButtonEvent::ScheduleTick {
-        pos,
-        block_id: btn.block_id,
-        delay: btn.ticks_to_stay_pressed,
-    });
-    events.push(ButtonEvent::PlaySound {
-        pos,
-        activated: true,
-    });
-    events.push(ButtonEvent::GameEvent {
-        pos,
-        activated: true,
-    });
-}
-
-/// `ButtonBlock.useWithoutItem` (`@0-32`).
-pub fn button_use_without_item(
-    btn: &mut ButtonState,
-    pos: BlockPos,
-    events: &mut Vec<ButtonEvent>,
-) -> ButtonUseResult {
-    if btn.powered {
-        ButtonUseResult::Consume
-    } else {
-        button_press(btn, pos, events);
-        ButtonUseResult::Success
-    }
-}
-
-/// `ButtonBlock.checkPressed` (`@0-167`).
-pub fn button_check_pressed(
-    btn: &mut ButtonState,
-    pos: BlockPos,
-    arrow_boxes: &[Aabb],
-    events: &mut Vec<ButtonEvent>,
-) {
-    let arrow_present = if btn.arrow_activatable {
-        let world_shape = btn
-            .shape()
-            .moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
-        arrow_boxes.iter().any(|b| b.intersects(world_shape))
-    } else {
-        false
     };
-    let was_powered = btn.powered;
-    if arrow_present != was_powered {
-        btn.powered = arrow_present;
-        events.push(ButtonEvent::SetPowered {
-            pos,
-            flags: UPDATE_ALL,
-            powered: arrow_present,
-        });
-        push_button_neighbor_updates(*btn, pos, events);
-        events.push(ButtonEvent::PlaySound {
-            pos,
-            activated: arrow_present,
-        });
-        events.push(ButtonEvent::GameEvent {
-            pos,
-            activated: arrow_present,
-        });
-    }
-    if arrow_present {
-        events.push(ButtonEvent::ScheduleTick {
-            pos,
-            block_id: btn.block_id,
-            delay: btn.ticks_to_stay_pressed,
-        });
-    }
+    pulse.emit(button.own_signal(), hand_press, events);
 }
 
-/// `ButtonBlock.tick` (`@0-24`).
-pub fn button_tick(
-    btn: &mut ButtonState,
-    pos: BlockPos,
-    arrow_boxes: &[Aabb],
-    events: &mut Vec<ButtonEvent>,
-) {
-    if btn.powered {
-        button_check_pressed(btn, pos, arrow_boxes, events);
-    }
+pub enum SensorInput<'a> {
+    Use,
+    Contact { bodies: &'a [TriggerEntity], arrows: &'a [Aabb], client: bool },
+    Scheduled { bodies: &'a [TriggerEntity], arrows: &'a [Aabb] },
 }
 
-/// `ButtonBlock.entityInside` (`@0-41`).
-pub fn button_entity_inside(
-    btn: &mut ButtonState,
-    pos: BlockPos,
-    is_client_side: bool,
-    arrow_boxes: &[Aabb],
-    events: &mut Vec<ButtonEvent>,
-) {
-    if !is_client_side && btn.arrow_activatable && !btn.powered {
-        button_check_pressed(btn, pos, arrow_boxes, events);
+pub(crate) fn sensor_events(
+    state: StateId, pos: BlockPos, input: SensorInput<'_>, events: &mut Vec<CellEvent>,
+) -> Option<ButtonUseResult> {
+    let sensor = state.kind();
+    let active = match sensor {
+        CellState::Button(button) => button.powered,
+        CellState::PressurePlate(plate) => plate.signal > 0,
+        _ => return None,
+    };
+    let (bodies, arrows) = match input {
+        SensorInput::Use => {
+            let CellState::Button(button) = sensor else { return None };
+            if active {
+                return Some(ButtonUseResult::Consume);
+            }
+            update_button(state, button, pos, true, true, events);
+            return Some(ButtonUseResult::Success);
+        }
+        SensorInput::Contact { bodies, arrows, client: false } if !active => (bodies, arrows),
+        SensorInput::Scheduled { bodies, arrows } if active => (bodies, arrows),
+        _ => return None,
+    };
+    match sensor {
+        CellState::PressurePlate(plate) => pressure_plate_check_pressed(state, plate, pos, bodies, events),
+        CellState::Button(button) => {
+            let bounds = button.shape().moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
+            let pressed = button.arrow_activatable && arrows.iter().any(|arrow| arrow.intersects(bounds));
+            update_button(state, button, pos, pressed, false, events);
+        }
+        _ => unreachable!(),
     }
+    None
 }
 
 /// `ButtonBlock.affectNeighborsAfterRemoval` (`@0-28`).
@@ -823,10 +719,10 @@ pub fn button_after_removal(
     btn: ButtonState,
     pos: BlockPos,
     moved_by_piston: bool,
-    events: &mut Vec<ButtonEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if !moved_by_piston && btn.powered {
-        push_button_neighbor_updates(btn, pos, events);
+        notify_attached(pos, btn.connected_direction().opposite(), btn.block_id, events);
     }
 }
 
@@ -913,12 +809,7 @@ impl TripwireHookState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TripwireCell {
-    Empty,
-    Wire(TripwireWireState),
-    Hook(TripwireHookState),
-}
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TripwireHookFeedback {
@@ -928,60 +819,19 @@ pub enum TripwireHookFeedback {
     Detach,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TripwireEvent {
-    SetWire { pos: BlockPos, flags: i32, wire: TripwireWireState },
-    SetHook { pos: BlockPos, flags: i32, hook: TripwireHookState },
-    ScheduleTick { pos: BlockPos, block_id: BlockId, delay: u32 },
-    UpdateNeighborsAt { pos: BlockPos, source_id: BlockId },
-    HookFeedback { pos: BlockPos, feedback: TripwireHookFeedback },
-    GameEventShear { pos: BlockPos },
-}
 
-/// The tripwire rules' view of a cell: a wire, a hook, or neither.
-pub fn tripwire_cell(world: &impl WorldMut, pos: BlockPos) -> TripwireCell {
-    match world.cell(pos).kind() {
-        CellState::TripwireWire(w) => TripwireCell::Wire(w),
-        CellState::TripwireHook(h) => TripwireCell::Hook(h),
-        _ => TripwireCell::Empty,
-    }
-}
-
-pub(crate) fn wire_state(state: StateId, wire: TripwireWireState) -> StateId {
+fn wire_state(state: StateId, wire: TripwireWireState) -> StateId {
     let base = if state.block() == wire.block_id { state } else { wire.block_id.default_state() };
     base.with_bool("powered", wire.powered).with_bool("attached", wire.attached).with_bool("disarmed", wire.disarmed)
 }
 
-pub(crate) fn hook_state(state: StateId, hook: TripwireHookState) -> StateId {
+fn hook_state(state: StateId, hook: TripwireHookState) -> StateId {
     let base = if state.block() == hook.block_id { state } else { hook.block_id.default_state() };
     base.with("facing", DIRECTION[hook.facing as usize]).with_bool("powered", hook.powered).with_bool("attached", hook.attached)
 }
 
-fn set_tripwire(world: &mut impl WorldMut, pos: BlockPos, cell: TripwireCell) {
-    let state = match cell {
-        TripwireCell::Empty => StateId::AIR,
-        TripwireCell::Wire(wire) => wire_state(world.cell(pos), wire),
-        TripwireCell::Hook(hook) => hook_state(world.cell(pos), hook),
-    };
-    world.set(pos, state);
-}
 
-fn push_hook_neighbor_updates(
-    hook_id: BlockId,
-    pos: BlockPos,
-    facing: Direction,
-    events: &mut Vec<TripwireEvent>,
-) {
-    let opp = facing.opposite();
-    events.push(TripwireEvent::UpdateNeighborsAt {
-        pos,
-        source_id: hook_id,
-    });
-    events.push(TripwireEvent::UpdateNeighborsAt {
-        pos: opp.relative(pos),
-        source_id: hook_id,
-    });
-}
+
 
 fn emit_hook_state(
     pos: BlockPos,
@@ -989,7 +839,7 @@ fn emit_hook_state(
     powered_new: bool,
     attached_old: bool,
     powered_old: bool,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     let feedback = if powered_new && !powered_old {
         Some(TripwireHookFeedback::ClickOn)
@@ -1003,54 +853,43 @@ fn emit_hook_state(
         None
     };
     if let Some(fb) = feedback {
-        events.push(TripwireEvent::HookFeedback { pos, feedback: fb });
+        events.push(CellEvent::HookFeedback { pos, feedback: fb });
     }
 }
 
-fn set_hook_if_changed(
-    world: &mut impl WorldMut,
-    pos: BlockPos,
-    next: TripwireHookState,
-    events: &mut Vec<TripwireEvent>,
+fn set_tripwire_state(
+    world: &mut impl WorldMut, pos: BlockPos, next: StateId, flags: i32, events: &mut Vec<CellEvent>,
 ) {
-    if tripwire_cell(world, pos) != TripwireCell::Hook(next) {
-        set_tripwire(world, pos, TripwireCell::Hook(next));
-        events.push(TripwireEvent::SetHook {
-            pos,
-            flags: UPDATE_ALL,
-            hook: next,
-        });
+    if world.cell(pos) != next {
+        world.set(pos, next);
+        events.push(CellEvent::SetBlock { pos, flags, state: next });
     }
 }
 
-fn set_wire_if_changed(
-    world: &mut impl WorldMut,
-    pos: BlockPos,
-    next: TripwireWireState,
-    flags: i32,
-    events: &mut Vec<TripwireEvent>,
+fn set_wire(
+    world: &mut impl WorldMut, pos: BlockPos, wire: TripwireWireState, flags: i32,
+    events: &mut Vec<CellEvent>,
 ) {
-    if tripwire_cell(world, pos) != TripwireCell::Wire(next) {
-        set_tripwire(world, pos, TripwireCell::Wire(next));
-        events.push(TripwireEvent::SetWire {
-            pos,
-            flags,
-            wire: next,
-        });
-    }
+    set_tripwire_state(world, pos, wire_state(world.cell(pos), wire), flags, events);
+}
+
+fn set_hook(
+    world: &mut impl WorldMut, pos: BlockPos, hook: TripwireHookState, events: &mut Vec<CellEvent>,
+) {
+    set_tripwire_state(world, pos, hook_state(world.cell(pos), hook), UPDATE_ALL, events);
 }
 
 fn hook_on_removed(
     hook_state: TripwireHookState,
     world: &mut impl WorldMut,
     pos: BlockPos,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if hook_state.attached || hook_state.powered {
         tripwire_hook_calculate_state(world, pos, hook_state, true, false, -1, None, events);
     }
     if hook_state.powered {
-        push_hook_neighbor_updates(hook_state.block_id, pos, hook_state.facing, events);
+        notify_attached(pos, hook_state.facing.opposite(), hook_state.block_id, events);
     }
 }
 
@@ -1064,7 +903,7 @@ pub fn tripwire_hook_calculate_state(
     notify_neighbors: bool,
     changed_dist: i32,
     changed_wire_state: Option<TripwireWireState>,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     let dir = state.facing;
     if !dir.is_horizontal() {
@@ -1078,51 +917,28 @@ pub fn tripwire_hook_calculate_state(
     let mut astate: [Option<TripwireWireState>; 42] = [None; 42];
 
     for i in 1..TRIPWIRE_DIST_MAX {
-        let p = step_n(dir, pos, i);
-        let cell = tripwire_cell(world, p);
-        match cell {
-            TripwireCell::Hook(far_hook) => {
-                if far_hook.facing == dir.opposite() {
-                    far_dist = i;
-                }
-                break;
+        let cell = world.cell(step_n(dir, pos, i)).kind();
+        if let CellState::TripwireHook(hook) = cell {
+            if hook.facing == dir.opposite() {
+                far_dist = i;
             }
-            TripwireCell::Wire(mut wire_st) => {
-                if i == changed_dist {
-                    if let Some(override_w) = changed_wire_state {
-                        wire_st = override_w;
-                    }
-                }
-                let not_disarmed = !wire_st.disarmed;
-                powered_new |= not_disarmed && wire_st.powered;
-                astate[i as usize] = Some(wire_st);
-                if i == changed_dist {
-                    events.push(TripwireEvent::ScheduleTick {
-                        pos,
-                        block_id: state.block_id,
-                        delay: TRIPWIRE_RECHECK_PERIOD,
-                    });
-                    attached_new &= not_disarmed;
-                }
+            break;
+        }
+        let wire = match cell {
+            CellState::TripwireWire(wire) => Some(wire),
+            _ => None,
+        };
+        let wire = if i == changed_dist { changed_wire_state.or(wire) } else { wire };
+        if let Some(wire) = wire {
+            let armed = !wire.disarmed;
+            powered_new |= armed && wire.powered;
+            astate[i as usize] = Some(wire);
+            if i == changed_dist {
+                events.push(CellEvent::ScheduleTick { pos, block_id: state.block_id, delay: TRIPWIRE_RECHECK_PERIOD });
+                attached_new &= armed;
             }
-            TripwireCell::Empty => {
-                if i == changed_dist {
-                    if let Some(wire_st) = changed_wire_state {
-                        let not_disarmed = !wire_st.disarmed;
-                        powered_new |= not_disarmed && wire_st.powered;
-                        astate[i as usize] = Some(wire_st);
-                        events.push(TripwireEvent::ScheduleTick {
-                            pos,
-                            block_id: state.block_id,
-                            delay: TRIPWIRE_RECHECK_PERIOD,
-                        });
-                        attached_new &= not_disarmed;
-                        continue;
-                    }
-                }
-                astate[i as usize] = None;
-                attached_new = false;
-            }
+        } else {
+            attached_new = false;
         }
     }
 
@@ -1143,9 +959,9 @@ pub fn tripwire_hook_calculate_state(
             facing: opp,
             ..hook_new
         };
-        set_hook_if_changed(world, far_pos, far_new, events);
-        push_hook_neighbor_updates(state.block_id, far_pos, opp, events);
-        if !matches!(tripwire_cell(world, pos), TripwireCell::Hook(_)) {
+        set_hook(world, far_pos, far_new, events);
+        notify_attached(far_pos, opp.opposite(), state.block_id, events);
+        if !matches!(world.cell(pos).kind(), CellState::TripwireHook(_)) {
             hook_on_removed(hook_new, world, pos, events);
             return;
         }
@@ -1154,9 +970,9 @@ pub fn tripwire_hook_calculate_state(
 
     emit_hook_state(pos, attached_new, powered_new, attached_old, powered_old, events);
     if !is_being_destroyed {
-        set_hook_if_changed(world, pos, hook_new, events);
+        set_hook(world, pos, hook_new, events);
         if notify_neighbors {
-            push_hook_neighbor_updates(state.block_id, pos, dir, events);
+            notify_attached(pos, dir.opposite(), state.block_id, events);
         }
     }
 
@@ -1164,9 +980,9 @@ pub fn tripwire_hook_calculate_state(
         for j in 1..far_dist {
             if let Some(mut wire_st) = astate[j as usize] {
                 let wire_pos = step_n(dir, pos, j);
-                if matches!(tripwire_cell(world, wire_pos), TripwireCell::Wire(_) | TripwireCell::Hook(_)) {
+                if matches!(world.cell(wire_pos).kind(), CellState::TripwireWire(_) | CellState::TripwireHook(_)) {
                     wire_st.attached = attached_new;
-                    set_wire_if_changed(world, wire_pos, wire_st, UPDATE_ALL, events);
+                    set_wire(world, wire_pos, wire_st, UPDATE_ALL, events);
                 }
             }
         }
@@ -1178,13 +994,13 @@ pub fn tripwire_update_source(
     world: &mut impl WorldMut,
     pos: BlockPos,
     changed_wire_state: TripwireWireState,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     for dir in [Direction::South, Direction::West] {
         for i in 1..TRIPWIRE_DIST_MAX {
             let p = step_n(dir, pos, i);
-            match tripwire_cell(world, p) {
-                TripwireCell::Hook(hook_st) => {
+            match world.cell(p).kind() {
+                CellState::TripwireHook(hook_st) => {
                     if hook_st.facing == dir.opposite() {
                         tripwire_hook_calculate_state(
                             world,
@@ -1199,45 +1015,27 @@ pub fn tripwire_update_source(
                     }
                     break;
                 }
-                TripwireCell::Wire(_) => {}
-                TripwireCell::Empty => break,
+                CellState::TripwireWire(_) => {}
+                _ => break,
             }
         }
     }
 }
 
-/// `TripWireBlock.checkPressed(Level, BlockPos, List)` (`@0-166`).
-pub fn tripwire_check_pressed_with_entities(
-    world: &mut impl WorldMut,
-    pos: BlockPos,
-    entities: &[TriggerEntity],
-    events: &mut Vec<TripwireEvent>,
+/// `TripWireBlock.checkPressed`: release leaves a delay-0 echo pending.
+fn update_tripwire(
+    world: &mut impl WorldMut, pos: BlockPos, mut wire: TripwireWireState, occupied: bool,
+    events: &mut Vec<CellEvent>,
 ) {
-    let TripwireCell::Wire(mut wire_st) = tripwire_cell(world, pos) else {
+    if occupied != wire.powered {
+        wire.powered = occupied;
+        set_wire(world, pos, wire, UPDATE_ALL, events);
+        tripwire_update_source(world, pos, wire, events);
+    } else if !occupied {
         return;
-    };
-    let flag = wire_st.powered;
-    // Notice TripWireBlock does NOT filter out spectators (`isIgnoringBlockTriggers` only).
-    let occupied = entities.iter().any(|e| !e.is_ignoring_block_triggers);
-    if occupied != flag {
-        wire_st.powered = occupied;
-        set_wire_if_changed(world, pos, wire_st, UPDATE_ALL, events);
-        tripwire_update_source(world, pos, wire_st, events);
     }
-    if occupied {
-        events.push(TripwireEvent::ScheduleTick {
-            pos,
-            block_id: wire_st.block_id,
-            delay: TRIPWIRE_RECHECK_PERIOD,
-        });
-    } else if flag {
-        // Delay-0 echo holding `hasScheduledTick` gate for one tick.
-        events.push(TripwireEvent::ScheduleTick {
-            pos,
-            block_id: wire_st.block_id,
-            delay: 0,
-        });
-    }
+    let delay = if occupied { TRIPWIRE_RECHECK_PERIOD } else { 0 };
+    events.push(CellEvent::ScheduleTick { pos, block_id: wire.block_id, delay });
 }
 
 /// `TripWireBlock.entityInside` (`@0-50`).
@@ -1246,18 +1044,18 @@ pub fn tripwire_entity_inside(
     pos: BlockPos,
     is_client_side: bool,
     entity: TriggerEntity,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if is_client_side {
         return;
     }
-    let TripwireCell::Wire(wire_st) = tripwire_cell(world, pos) else {
+    let CellState::TripwireWire(wire_st) = world.cell(pos).kind() else {
         return;
     };
     if wire_st.powered || world.has_scheduled_tick(pos, wire_st.block_id) {
         return;
     }
-    tripwire_check_pressed_with_entities(world, pos, &[entity], events);
+    update_tripwire(world, pos, wire_st, !entity.is_ignoring_block_triggers, events);
 }
 
 /// `TripWireBlock.tick` (`@0-27`) + `TripWireBlock.checkPressed(Level, BlockPos)` (`@0-34`).
@@ -1265,9 +1063,9 @@ pub fn tripwire_tick(
     world: &mut impl WorldMut,
     pos: BlockPos,
     entities: &[TriggerEntity],
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
-    let TripwireCell::Wire(wire_st) = tripwire_cell(world, pos) else {
+    let CellState::TripwireWire(wire_st) = world.cell(pos).kind() else {
         return;
     };
     if !wire_st.powered {
@@ -1276,21 +1074,18 @@ pub fn tripwire_tick(
     let shape = wire_st
         .shape()
         .moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
-    let overlapping: Vec<TriggerEntity> = entities
-        .iter()
-        .copied()
-        .filter(|e| e.bbox.intersects(shape))
-        .collect();
-    tripwire_check_pressed_with_entities(world, pos, &overlapping, events);
+    // Spectators count unless they ignore block triggers.
+    let occupied = entities.iter().any(|entity| !entity.is_ignoring_block_triggers && entity.bbox.intersects(shape));
+    update_tripwire(world, pos, wire_st, occupied, events);
 }
 
 /// `TripWireHookBlock.tick` (`@0-10`).
 pub fn tripwire_hook_tick(
     world: &mut impl WorldMut,
     pos: BlockPos,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
-    let TripwireCell::Hook(hook_st) = tripwire_cell(world, pos) else {
+    let CellState::TripwireHook(hook_st) = world.cell(pos).kind() else {
         return;
     };
     tripwire_hook_calculate_state(world, pos, hook_st, false, true, -1, None, events);
@@ -1302,17 +1097,17 @@ pub fn tripwire_player_will_destroy(
     pos: BlockPos,
     is_client_side: bool,
     main_hand_is_shears: bool,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if is_client_side || !main_hand_is_shears {
         return;
     }
-    let TripwireCell::Wire(mut wire_st) = tripwire_cell(world, pos) else {
+    let CellState::TripwireWire(mut wire_st) = world.cell(pos).kind() else {
         return;
     };
     wire_st.disarmed = true;
-    set_wire_if_changed(world, pos, wire_st, UPDATE_NONE, events);
-    events.push(TripwireEvent::GameEventShear { pos });
+    set_wire(world, pos, wire_st, UPDATE_NONE, events);
+    events.push(CellEvent::GameEventShear { pos });
 }
 
 /// `TripWireBlock.affectNeighborsAfterRemoval` (`@0-25`): phantom `POWERED = true` copy.
@@ -1321,7 +1116,7 @@ pub fn tripwire_after_removal(
     pos: BlockPos,
     old_wire: TripwireWireState,
     moved_by_piston: bool,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if !moved_by_piston {
         let phantom = TripwireWireState {
@@ -1338,99 +1133,9 @@ pub fn tripwire_hook_after_removal(
     pos: BlockPos,
     old_hook: TripwireHookState,
     moved_by_piston: bool,
-    events: &mut Vec<TripwireEvent>,
+    events: &mut Vec<CellEvent>,
 ) {
     if !moved_by_piston {
         hook_on_removed(old_hook, world, pos, events);
     }
-}
-
-// ============================================================================
-// 5. Bubble column `entityInside` law
-// ============================================================================
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BubbleColumnStep {
-    pub vy: f64,
-    pub reset_fall_distance: bool,
-    pub applied: bool,
-}
-
-/// `BubbleColumnBlock.entityInside` above-cell probe (`@15-44`):
-/// `aboveState.getCollisionShape(level, pos).isEmpty() && aboveState.getFluidState().isEmpty()`.
-#[inline]
-pub const fn bubble_column_open_top(above_collision_empty: bool, above_fluid_empty: bool) -> bool {
-    above_collision_empty && above_fluid_empty
-}
-
-/// `Entity.handleOnAboveBubbleColumn` (`@0-66`): no fall-distance reset.
-#[inline]
-pub fn on_above_bubble_column(vy: f64, drag_down: bool) -> f64 {
-    if drag_down {
-        (-0.9f64).max(vy - 0.03f64)
-    } else {
-        (1.8f64).min(vy + 0.1f64)
-    }
-}
-
-/// `Entity.handleOnInsideBubbleColumn` (`@0-59`): resets `fallDistance = 0.0`.
-#[inline]
-pub fn on_inside_bubble_column(vy: f64, drag_down: bool) -> (f64, bool) {
-    let next_vy = if drag_down {
-        (-0.3f64).max(vy - 0.03f64)
-    } else {
-        (0.7f64).min(vy + 0.06f64)
-    };
-    (next_vy, true)
-}
-
-/// `BubbleColumnBlock.entityInside` (`@0-91`): pure velocity + fall-reset transition.
-#[inline]
-pub fn bubble_column_entity_inside(
-    vy: f64,
-    drag_down: bool,
-    open_top: bool,
-    intersects: bool,
-) -> BubbleColumnStep {
-    if !intersects {
-        return BubbleColumnStep {
-            vy,
-            reset_fall_distance: false,
-            applied: false,
-        };
-    }
-    if open_top {
-        BubbleColumnStep {
-            vy: on_above_bubble_column(vy, drag_down),
-            reset_fall_distance: false,
-            applied: true,
-        }
-    } else {
-        let (next_vy, reset) = on_inside_bubble_column(vy, drag_down);
-        BubbleColumnStep {
-            vy: next_vy,
-            reset_fall_distance: reset,
-            applied: true,
-        }
-    }
-}
-
-/// Convenience probe reading `world.hook_block([pos[0], pos[1] + 1, pos[2]])`.
-pub fn bubble_column_world_step(
-    world: &impl World,
-    pos: BlockPos,
-    vy: f64,
-    drag_down: bool,
-    intersects: bool,
-) -> BubbleColumnStep {
-    if !intersects {
-        return BubbleColumnStep {
-            vy,
-            reset_fall_distance: false,
-            applied: false,
-        };
-    }
-    let above = world.hook_block([pos[0], pos[1] + 1, pos[2]]);
-    let open_top = bubble_column_open_top(above.shape.is_empty(), above.fluid.kind == FluidKind::Empty);
-    bubble_column_entity_inside(vy, drag_down, open_top, true)
 }

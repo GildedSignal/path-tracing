@@ -5,9 +5,9 @@
 //! distinct model: boxes, friction, speed and jump factors, the inside and step hooks; `census.tsv`
 //! names the blocks refused. `rules.tsv` holds the generated state-local answers used by edits;
 //! `cell_rule_index.tsv` maps the canonical states to those rows.
-use crate::block_hooks::{OffsetCollisionSpec, SpeleothemThickness, TipDirection, offset_collision_shape_for_keys};
+use crate::block_hooks::xz_offset_from_keys;
 use crate::piston::{BlockKind as PistonKind, PushReaction};
-use crate::{Aabb, Block, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape};
+use crate::{Aabb, Block, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, Vec3, VoxelShape};
 use std::{collections::BTreeMap, sync::OnceLock};
 
 /// A block's row in `states.tsv`: its 26.2 registry id.
@@ -83,10 +83,12 @@ pub fn models() -> &'static Models {
         for line in include_str!("../../../world/data/models.tsv").lines() {
             let (block, offset) = parse_model(line);
             let (variants, r) = match offset {
-                OffsetCollisionSpec::None => (None, if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND }),
-                spec => {
+                None => (None, if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND }),
+                Some(cap) => {
                     let list = (0..256).map(|k| {
-                        let shifted = offset_collision_shape_for_keys(spec, (k >> 4) as u8, (k & 15) as u8).expect("non-none offset spec");
+                        // The jar row is measured at the origin, with seed keys (0, 0).
+                        let offset = xz_offset_from_keys((k >> 4) as u8, (k & 15) as u8, cap);
+                        let shifted = block.shape.moved(Vec3::new(offset.x + f64::from(cap), 0.0, offset.z + f64::from(cap)));
                         let mut v = block.clone();
                         v.shape = shifted.clone();
                         v.above_shape = Some(shifted.clone());
@@ -327,23 +329,7 @@ fn shape(raw: &str) -> VoxelShape {
     VoxelShape::boxes(&boxes)
 }
 
-fn parse_offset(raw: &str) -> OffsetCollisionSpec {
-    match raw.split(':').collect::<Vec<_>>()[..] {
-        ["none"] => OffsetCollisionSpec::None,
-        ["bamboo"] => OffsetCollisionSpec::Bamboo,
-        ["speleothem", thickness, tip] => OffsetCollisionSpec::Speleothem {
-            thickness: match thickness {
-                "tip_merge" => SpeleothemThickness::TipMerge, "tip" => SpeleothemThickness::Tip,
-                "frustum" => SpeleothemThickness::Frustum, "middle" => SpeleothemThickness::Middle,
-                "base" => SpeleothemThickness::Base, other => panic!("generated speleothem thickness {other}"),
-            },
-            tip_direction: match tip { "up" => TipDirection::Up, "down" => TipDirection::Down, other => panic!("generated tip direction {other}") },
-        },
-        _ => panic!("generated offset spec {raw}"),
-    }
-}
-
-fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
+fn parse_model(line: &str) -> (Block, Option<f32>) {
     let f: Vec<_> = line.split('\t').collect();
     assert_eq!(f.len(), 22, "generated model schema");
     let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i], 16).expect("generated float bits"));
@@ -380,7 +366,13 @@ fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
         grounded_contact: match f[14] { "none" => GroundedContact::None, "hotFloor" => GroundedContact::DamageUnlessCareful(ContactDamage::HotFloor), _ => panic!("generated step hook") },
         ..Block::default()
     };
-    (block, parse_offset(f[21]))
+    let offset = match f[21].split(':').next().unwrap() {
+        "none" => None,
+        "bamboo" => Some(crate::block_hooks::BAMBOO_MAX_HORIZONTAL_OFFSET),
+        "speleothem" => Some(crate::block_hooks::SPELEOTHEM_MAX_HORIZONTAL_OFFSET),
+        other => panic!("generated offset spec {other}"),
+    };
+    (block, offset)
 }
 
 

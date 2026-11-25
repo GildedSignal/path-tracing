@@ -351,10 +351,10 @@ fn server_unloaded_chunk_applies_gravity_not_minus_0_1() {
 
 #[test]
 fn jar_world_hooks() {
-    use law::basis::cell::{StateId, WorldMut, DIRECTION};
+    use law::basis::cell::{CellState, StateId, WorldMut, DIRECTION, FACE};
     use law::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
-    use law::world_hooks::*;
-    use law::{Block, BlockPos, BoxWorld, Fluid, FluidKind};
+    use law::{sim::SimWorld, world_hooks::*};
+    use law::{BlockPos, BoxWorld, FluidKind, PlayerState};
     use std::collections::HashMap;
 
     let h64 = |s: &str| u64::from_str_radix(s, 16).unwrap();
@@ -386,12 +386,12 @@ fn jar_world_hooks() {
         _ => panic!("bad dir: {s}"),
     };
 
-    const OAK_PLATE_ID: BlockId = BlockId(10);
-    const STONE_PLATE_ID: BlockId = BlockId(11);
-    const GOLD_PLATE_ID: BlockId = BlockId(12);
-    const IRON_PLATE_ID: BlockId = BlockId(13);
-    const STONE_BTN_ID: BlockId = BlockId(20);
-    const OAK_BTN_ID: BlockId = BlockId(21);
+    const OAK_PLATE_ID: BlockId = BlockId(261);
+    const STONE_PLATE_ID: BlockId = BlockId(259);
+    const GOLD_PLATE_ID: BlockId = BlockId(471);
+    const IRON_PLATE_ID: BlockId = BlockId(472);
+    const STONE_BTN_ID: BlockId = BlockId(275);
+    const OAK_BTN_ID: BlockId = BlockId(443);
     const WIRE_ID: BlockId = BlockId(402); // registry rows: the tripwire rules build cells of these blocks
     const HOOK_ID: BlockId = BlockId(401);
     assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
@@ -418,14 +418,14 @@ fn jar_world_hooks() {
         Direction::East => "east",
     };
 
-    let fmt_bucket_events = |evs: &[BucketEvent]| -> String {
+    let fmt_bucket_events = |evs: &[CellEvent]| -> String {
         let mut parts = Vec::new();
         for ev in evs {
             match *ev {
-                BucketEvent::DestroyBlock { pos: [x, y, z], drop } => {
+                CellEvent::DestroyBlock { pos: [x, y, z], drop } => {
                     parts.push(format!("DESTROY({x},{y},{z},{drop})"));
                 }
-                BucketEvent::SetBlock { pos: [x, y, z], cell, flags } => {
+                CellEvent::SetBlock { pos: [x, y, z], state: cell, flags } => {
                     let name = cell.block().name();
                     let tag = if let Some(wl) = cell.get("waterlogged") {
                         let facing = if name == "ladder" { format!(",fac={}", cell.get("facing").unwrap()) } else { String::new() };
@@ -437,11 +437,11 @@ fn jar_world_hooks() {
                     };
                     parts.push(format!("SET({x},{y},{z},{name},{flags},{tag})"));
                 }
-                BucketEvent::ScheduleFluidTick { pos: [x, y, z], fluid, delay } => {
+                CellEvent::ScheduleFluidTick { pos: [x, y, z], fluid, delay } => {
                     let fnm = match fluid { BucketContent::Water => "water", BucketContent::Lava => "lava", BucketContent::Empty => "empty" };
                     parts.push(format!("SCHED_FLUID({x},{y},{z},{fnm},{delay})"));
                 }
-                BucketEvent::PlaySound { pos: [x, y, z], sound } => {
+                CellEvent::PlaySound { pos: [x, y, z], sound } => {
                     let sn = match sound {
                         BucketSound::EmptyWater => "item.bucket.empty",
                         BucketSound::EmptyLava => "item.bucket.empty_lava",
@@ -451,25 +451,30 @@ fn jar_world_hooks() {
                     };
                     parts.push(format!("SOUND({x},{y},{z},{sn})"));
                 }
-                BucketEvent::GameEvent { pos: [x, y, z], event } => {
+                CellEvent::GameEvent { pos: [x, y, z], event } => {
                     let en = match event {
                         BucketGameEvent::FluidPlace => "minecraft:fluid_place",
                         BucketGameEvent::FluidPickup => "minecraft:fluid_pickup",
                     };
                     parts.push(format!("GAME_EVENT({x},{y},{z},{en})"));
                 }
-                BucketEvent::EvaporateSmokeParticles { count, .. } => {
+                CellEvent::EvaporateSmokeParticles { count, .. } => {
                     for _ in 0..count { parts.push("PARTICLE".to_string()); }
                 }
+                other => panic!("unexpected bucket event: {other:?}"),
             }
         }
         parts.join(";")
     };
 
-    let fmt_plate_events_id = |id: BlockId, evs: &[PlateEvent]| -> String {
+    let fmt_plate_events_id = |id: BlockId, evs: &[CellEvent]| -> String {
         let bname = block_name(id);
         evs.iter().map(|ev| match *ev {
-            PlateEvent::SetSignal { pos: [x, y, z], flags, signal } => {
+            CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                let signal = state.get("power").map_or_else(
+                    || if state.get("powered") == Some("true") { 15 } else { 0 },
+                    |power| power.parse::<u8>().unwrap(),
+                );
                 let tag = if id == GOLD_PLATE_ID || id == IRON_PLATE_ID {
                     format!("sig={signal}")
                 } else {
@@ -477,10 +482,10 @@ fn jar_world_hooks() {
                 };
                 format!("SET({x},{y},{z},{bname},{flags},{tag})")
             }
-            PlateEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+            CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                 format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id))
             }
-            PlateEvent::PlaySound { pos: [x, y, z], activated } => {
+            CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
                 let snd = match (id, activated) {
                     (OAK_PLATE_ID, true) => "block.wooden_pressure_plate.click_on",
                     (OAK_PLATE_ID, false) => "block.wooden_pressure_plate.click_off",
@@ -489,64 +494,64 @@ fn jar_world_hooks() {
                     (_, true) => "block.metal_pressure_plate.click_on",
                     (_, false) => "block.metal_pressure_plate.click_off",
                 };
-                format!("SOUND({x},{y},{z},{snd})")
+                format!("SOUND({x},{y},{z},{snd});GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
             }
-            PlateEvent::GameEvent { pos: [x, y, z], activated } => {
-                format!("GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
-            }
-            PlateEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+            CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                 format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id))
             }
+            other => panic!("unexpected sensor event: {other:?}"),
         }).collect::<Vec<_>>().join(";")
     };
 
-    let fmt_button_events = |id: BlockId, facing: Direction, evs: &[ButtonEvent]| -> String {
+    let fmt_button_events = |id: BlockId, facing: Direction, evs: &[CellEvent]| -> String {
         let bname = block_name(id);
         let fstr = dir_lower(facing);
         evs.iter().map(|ev| match *ev {
-            ButtonEvent::SetPowered { pos: [x, y, z], flags, powered } => {
-                format!("SET({x},{y},{z},{bname},{flags},pow={powered},fac={fstr})")
+            CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                format!("SET({x},{y},{z},{bname},{flags},pow={},fac={fstr})", state.get("powered").unwrap())
             }
-            ButtonEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+            CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                 format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id))
             }
-            ButtonEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+            CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                 format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id))
             }
-            ButtonEvent::PlaySound { pos: [x, y, z], activated } => {
+            CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
                 let snd = match (id == OAK_BTN_ID, activated) {
                     (true, true) => "block.wooden_button.click_on",
                     (true, false) => "block.wooden_button.click_off",
                     (false, true) => "block.stone_button.click_on",
                     (false, false) => "block.stone_button.click_off",
                 };
-                format!("SOUND({x},{y},{z},{snd})")
+                format!("SOUND({x},{y},{z},{snd});GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
             }
-            ButtonEvent::GameEvent { pos: [x, y, z], activated } => {
-                format!("GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
-            }
+            other => panic!("unexpected sensor event: {other:?}"),
         }).collect::<Vec<_>>().join(";")
     };
 
-    let fmt_tripwire_events = |evs: &[TripwireEvent]| -> String {
+    let fmt_tripwire_events = |evs: &[CellEvent]| -> String {
         let mut parts = Vec::new();
         for ev in evs {
             match *ev {
-                TripwireEvent::SetWire { pos: [x, y, z], flags, wire } => {
-                    parts.push(format!("SET({x},{y},{z},tripwire,{flags},pow={},att={},dis={})",
-                        wire.powered, wire.attached, wire.disarmed));
+                CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                    let name = state.block().name();
+                    let powered = state.get("powered").unwrap();
+                    let attached = state.get("attached").unwrap();
+                    let extra = if name == "tripwire" {
+                        format!("dis={}", state.get("disarmed").unwrap())
+                    } else {
+                        format!("fac={}", state.get("facing").unwrap())
+                    };
+                    parts.push(format!("SET({x},{y},{z},{name},{flags},pow={powered},att={attached},{extra})"));
                 }
-                TripwireEvent::SetHook { pos: [x, y, z], flags, hook } => {
-                    parts.push(format!("SET({x},{y},{z},tripwire_hook,{flags},pow={},att={},fac={})",
-                        hook.powered, hook.attached, dir_lower(hook.facing)));
-                }
-                TripwireEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+
+                CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                     parts.push(format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id)));
                 }
-                TripwireEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+                CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                     parts.push(format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id)));
                 }
-                TripwireEvent::HookFeedback { pos: [x, y, z], feedback } => {
+                CellEvent::HookFeedback { pos: [x, y, z], feedback } => {
                     let (snd, ge) = match feedback {
                         TripwireHookFeedback::ClickOn => ("block.tripwire.click_on", "block_activate"),
                         TripwireHookFeedback::ClickOff => ("block.tripwire.click_off", "block_deactivate"),
@@ -556,9 +561,10 @@ fn jar_world_hooks() {
                     parts.push(format!("SOUND({x},{y},{z},{snd})"));
                     parts.push(format!("GAME_EVENT({x},{y},{z},{ge})"));
                 }
-                TripwireEvent::GameEventShear { pos: [x, y, z] } => {
+                CellEvent::GameEventShear { pos: [x, y, z] } => {
                     parts.push(format!("GAME_EVENT({x},{y},{z},shear)"));
                 }
+                other => panic!("unexpected tripwire event: {other:?}"),
             }
         }
         if parts.is_empty() { "NONE".to_string() } else { parts.join(";") }
@@ -576,7 +582,7 @@ fn jar_world_hooks() {
         fn put_hook(&mut self, pos: BlockPos, facing: Direction, powered: bool, attached: bool) {
             self.cells.insert(pos, HOOK_ID.default_state().with("facing", DIRECTION[facing as usize]).with_bool("powered", powered).with_bool("attached", attached));
         }
-        fn cell(&self, pos: BlockPos) -> TripwireCell { tripwire_cell(self, pos) }
+        fn cell(&self, pos: BlockPos) -> CellState { WorldMut::cell(self, pos).kind() }
     }
     impl WorldMut for MapTripwireWorld {
         fn cell(&self, pos: BlockPos) -> StateId {
@@ -604,10 +610,12 @@ fn jar_world_hooks() {
     };
 
     // Mutable states tracked across sequential plate/button/tripwire trace lines:
-    let mut seq_plate = PressurePlateState {
-        block_id: OAK_PLATE_ID,
-        kind: PressurePlateKind::Binary { mobs_only: false },
-        signal: 0,
+    let base = BoxWorld::default();
+    let mut plates = SimWorld::new(&base);
+    let pos = [0, 64, 0];
+    let button_state = |block, face: AttachFace, facing: Direction, powered| {
+        StateId::of(block, &[("face", FACE[face as usize]), ("facing", DIRECTION[facing as usize])])
+            .with_bool("powered", powered)
     };
     let mut seq_tw = MapTripwireWorld::new();
     let mut seq_tw_player = TriggerEntity {
@@ -789,112 +797,66 @@ fn jar_world_hooks() {
                 assert_box_bits(actual, exp, f[1]);
             }
             "PLATE_WEIGHTED" => {
-                let max_w: i32 = f[1].parse().unwrap();
-                let cnt: i32 = f[2].parse().unwrap();
-                let exp_sig: u8 = f[3].parse().unwrap();
-                let exp_time: u32 = f[4].parse().unwrap();
-                let plate = PressurePlateState {
-                    block_id: if max_w == 15 { GOLD_PLATE_ID } else { IRON_PLATE_ID },
-                    kind: PressurePlateKind::Weighted { max_weight: max_w },
-                    signal: 0,
-                };
-                assert_eq!(weighted_or_binary_signal(plate.kind, cnt), exp_sig, "weighted max={max_w} cnt={cnt}");
-                assert_eq!(plate.pressed_time(), exp_time);
+                let id = if f[1] == "15" { GOLD_PLATE_ID } else { IRON_PLATE_ID };
+                let state = id.default_state();
+                let CellState::PressurePlate(plate) = state.kind() else { unreachable!() };
+                assert_eq!(plate.pressed_time(), f[4].parse::<u32>().unwrap());
+                let count: usize = f[2].parse().unwrap();
+                let bodies = vec![TriggerEntity {
+                    bbox: Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8),
+                    is_living: false, is_spectator: false, is_ignoring_block_triggers: false,
+                }; count];
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, state);
+                world.sensor_input(pos, SensorInput::Contact { bodies: &bodies, arrows: &[], client: false });
+                assert_eq!(world.get_signal(pos, Direction::Up, true), f[3].parse::<u8>().unwrap(), "{raw}");
             }
             "PLATE_TRACE" => {
-                let pos = [0, 64, 0];
-                let mut ev = Vec::new();
-                let std_box = Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8);
-                let ent = |is_living, is_spectator, is_ignoring_block_triggers, bbox| TriggerEntity {
+                let body = |is_living, is_spectator, is_ignoring_block_triggers, bbox| TriggerEntity {
                     bbox, is_living, is_spectator, is_ignoring_block_triggers,
                 };
-                match f[1] {
-                    "wood_press" => {
-                        seq_plate = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_entity_inside(&mut seq_plate, pos, false, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[4]);
+                let standard = Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8);
+                let player = || body(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
+                let (id, reset, scheduled, bodies, signal, trace) = match f[1] {
+                    "wood_press" => (OAK_PLATE_ID, true, false, vec![player()], f[2].parse().unwrap(), f[4]),
+                    "wood_reentry" => (OAK_PLATE_ID, false, false, vec![player()], f[2].parse().unwrap(), ""),
+                    "wood_held_tick" => (OAK_PLATE_ID, false, true, vec![player()], f[2].parse().unwrap(), f[3]),
+                    "wood_release_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), f[3]),
+                    "wood_unpowered_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), ""),
+                    "wood_spectator" => (OAK_PLATE_ID, true, false, vec![body(false, true, false, standard)], 0, ""),
+                    "wood_ignoring" => (OAK_PLATE_ID, true, false, vec![body(false, false, true, standard)], 0, ""),
+                    "wood_hover_exact_025" | "wood_hover_0249" => {
+                        let inside = f[1] == "wood_hover_0249";
+                        let y = if inside { 64.249 } else { 64.25 };
+                        (OAK_PLATE_ID, true, false,
+                            vec![body(false, false, false, Aabb::new(0.2, y, 0.2, 0.8, 64.8, 0.8))],
+                            if inside { 15 } else { 0 }, if inside { f[3] } else { "" })
                     }
-                    "wood_reentry" => {
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_entity_inside(&mut seq_plate, pos, false, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert!(ev.is_empty());
-                    }
-                    "wood_held_tick" => {
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_tick(&mut seq_plate, pos, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[3]);
-                    }
-                    "wood_release_tick" => {
-                        pressure_plate_tick(&mut seq_plate, pos, &[], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[3]);
-                    }
-                    "wood_unpowered_tick" => {
-                        pressure_plate_tick(&mut seq_plate, pos, &[], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert!(ev.is_empty());
-                    }
-                    "wood_spectator" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, true, false, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_ignoring" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, true, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_hover_exact_025" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, Aabb::new(0.2, 64.25, 0.2, 0.8, 64.8, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_hover_0249" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, Aabb::new(0.2, 64.249, 0.2, 0.8, 64.8, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 15);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "stone_item" => {
-                        let mut p = PressurePlateState { block_id: STONE_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: true }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_mob" => {
-                        let mut p = PressurePlateState { block_id: STONE_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: true }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(true, false, false, Aabb::new(0.2, 64.0, 0.2, 0.8, 65.5, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 15);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "gold_3" => {
-                        let mut p = PressurePlateState { block_id: GOLD_PLATE_ID, kind: PressurePlateKind::Weighted { max_weight: 15 }, signal: 0 };
-                        let list = vec![ent(false, false, false, std_box); 3];
-                        pressure_plate_entity_inside(&mut p, pos, false, &list, &mut ev);
-                        assert_eq!(p.signal, 3);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "iron_11" => {
-                        let mut p = PressurePlateState { block_id: IRON_PLATE_ID, kind: PressurePlateKind::Weighted { max_weight: 150 }, signal: 0 };
-                        let list = vec![ent(false, false, false, std_box); 11];
-                        pressure_plate_entity_inside(&mut p, pos, false, &list, &mut ev);
-                        assert_eq!(p.signal, 2);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
+                    "stone_item" => (STONE_PLATE_ID, true, false, vec![body(false, false, false, standard)], 0, ""),
+                    "stone_mob" => (STONE_PLATE_ID, true, false,
+                        vec![body(true, false, false, Aabb::new(0.2, 64.0, 0.2, 0.8, 65.5, 0.8))], 15, f[3]),
+                    "gold_3" => (GOLD_PLATE_ID, true, false, vec![body(false, false, false, standard); 3], 3, f[3]),
+                    "iron_11" => (IRON_PLATE_ID, true, false, vec![body(false, false, false, standard); 11], 2, f[3]),
                     other => panic!("unexpected plate trace {other}"),
+                };
+                if reset {
+                    plates.set_cell_raw(pos, id.default_state());
                 }
+                let input = if scheduled {
+                    SensorInput::Scheduled { bodies: &bodies, arrows: &[] }
+                } else {
+                    SensorInput::Contact { bodies: &bodies, arrows: &[], client: false }
+                };
+                let (_, events) = plates.sensor_input(pos, input);
+                assert_eq!(plates.get_signal(pos, Direction::Up, true), signal, "{raw}");
+                assert_eq!(fmt_plate_events_id(id, &events), trace, "{raw}");
             }
             "PLATE_SIGNALS" => {
-                let p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 15 };
-                assert_eq!(p.own_signal(), 15);
-                let got: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", p.direct_signal(*d)).to_ascii_uppercase()).collect();
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, OAK_PLATE_ID.default_state().with_bool("powered", true));
+                assert_eq!(world.get_signal(pos, Direction::Up, true), 15);
+                let got: Vec<String> = Direction::ALL.iter().map(|d|
+                    format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[2]);
             }
             "BUTTON_META" => {
@@ -907,98 +869,52 @@ fn jar_world_hooks() {
                 let face = parse_face(f[1]);
                 let facing = parse_dir(f[2]);
                 let powered = f[3] == "true";
-                let btn = ButtonState {
-                    block_id: OAK_BTN_ID,
-                    face,
-                    facing,
-                    powered,
-                    ticks_to_stay_pressed: BUTTON_STAY_WOOD,
-                    arrow_activatable: true,
-                };
-                assert_box_bits(btn.shape(), parse_box(&f[4..10]), &format!("BUTTON_SHAPE {face:?} {facing:?} {powered}"));
+                let CellState::Button(button) = button_state(OAK_BTN_ID, face, facing, powered).kind() else { unreachable!() };
+                assert_box_bits(button.shape(), parse_box(&f[4..10]), &format!("BUTTON_SHAPE {face:?} {facing:?} {powered}"));
             }
             "BUTTON_TRACE" => {
-                let pos = [0, 64, 0];
-                let mut ev = Vec::new();
-                let mut stone = ButtonState {
-                    block_id: STONE_BTN_ID, face: AttachFace::Wall, facing: Direction::North, powered: false, ticks_to_stay_pressed: BUTTON_STAY_STONE, arrow_activatable: false,
-                };
-                let mut oak = ButtonState {
-                    block_id: OAK_BTN_ID, face: AttachFace::Wall, facing: Direction::North, powered: false, ticks_to_stay_pressed: BUTTON_STAY_WOOD, arrow_activatable: true,
-                };
-                match f[1] {
-                    "stone_use_unpowered" => {
-                        let res = button_use_without_item(&mut stone, pos, &mut ev);
-                        assert_eq!(res, ButtonUseResult::Success);
-                        assert_eq!(fmt_button_events(STONE_BTN_ID, Direction::North, &ev), f[3]);
-                    }
-                    "stone_use_powered" => {
-                        stone.powered = true;
-                        let res = button_use_without_item(&mut stone, pos, &mut ev);
-                        assert_eq!(res, ButtonUseResult::Consume);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_tick_unpowered" => {
-                        button_tick(&mut stone, pos, &[], &mut ev);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_tick_release" => {
-                        stone.powered = true;
-                        button_tick(&mut stone, pos, &[], &mut ev);
-                        assert!(!stone.powered);
-                        assert_eq!(fmt_button_events(STONE_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_press" => {
-                        let arr = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut oak, pos, false, &[arr], &mut ev);
-                        assert!(oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_hold" => {
-                        oak.powered = true;
-                        let arr = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
-                        button_check_pressed(&mut oak, pos, &[arr], &mut ev);
-                        assert!(oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_tip_release" => {
-                        oak.powered = true;
-                        let tip = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.93);
-                        button_check_pressed(&mut oak, pos, &[tip], &mut ev);
-                        assert!(!oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_gone_release" => {
-                        oak.powered = true;
-                        button_check_pressed(&mut oak, pos, &[], &mut ev);
-                        assert!(!oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_entity_inside_powered" => {
-                        oak.powered = true;
-                        let arr = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut oak, pos, false, &[arr], &mut ev);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_entity_inside_arrow" => {
-                        let arr = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut stone, pos, false, &[arr], &mut ev);
-                        assert!(ev.is_empty());
-                    }
+                let stone = STONE_BTN_ID;
+                let oak = OAK_BTN_ID;
+                let normal = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
+                let tip = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.93);
+                let back = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
+                let (id, powered, active, result, arrows, trace) = match f[1] {
+                    "stone_use_unpowered" => (stone, false, true, Some(ButtonUseResult::Success), None, f[3]),
+                    "stone_use_powered" => (stone, true, true, Some(ButtonUseResult::Consume), None, ""),
+                    "stone_tick_unpowered" => (stone, false, false, None, None, ""),
+                    "stone_tick_release" => (stone, true, false, None, None, f[2]),
+                    "oak_arrow_press" => (oak, false, true, None, Some(normal), f[2]),
+                    "oak_arrow_hold" => (oak, true, true, None, Some(normal), f[2]),
+                    "oak_arrow_tip_release" => (oak, true, false, None, Some(tip), f[2]),
+                    "oak_arrow_gone_release" => (oak, true, false, None, None, f[2]),
+                    "oak_entity_inside_powered" => (oak, true, true, None, Some(back), ""),
+                    "stone_entity_inside_arrow" => (stone, false, false, None, Some(back), ""),
                     other => panic!("unexpected button trace {other}"),
-                }
+                };
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, button_state(id, AttachFace::Wall, Direction::North, powered));
+                let arrows = arrows.as_slice();
+                let input = if result.is_some() {
+                    SensorInput::Use
+                } else if matches!(f[1], "oak_arrow_press" | "oak_entity_inside_powered" | "stone_entity_inside_arrow") {
+                    SensorInput::Contact { bodies: &[], arrows, client: false }
+                } else {
+                    SensorInput::Scheduled { bodies: &[], arrows }
+                };
+                let (used, events) = world.sensor_input(pos, input);
+                assert_eq!(used, result, "{raw}");
+                assert_eq!(world.cell(pos).get("powered"), Some(if active { "true" } else { "false" }), "{raw}");
+                assert_eq!(fmt_button_events(id, Direction::North, &events), trace, "{raw}");
             }
             "BUTTON_GEOM" => {
-                let face = parse_face(f[1]);
                 let facing = parse_dir(f[2]);
-                let mut btn = ButtonState {
-                    block_id: STONE_BTN_ID, face, facing, powered: false, ticks_to_stay_pressed: BUTTON_STAY_STONE, arrow_activatable: false,
-                };
-                let mut ev = Vec::new();
-                button_press(&mut btn, [0, 64, 0], &mut ev);
-                let got_dirs: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", btn.direct_signal(*d)).to_ascii_uppercase()).collect();
-                assert_eq!(got_dirs.join(","), f[3]);
-                assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &ev), f[4]);
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, button_state(STONE_BTN_ID, parse_face(f[1]), facing, false));
+                let (_, events) = world.sensor_input(pos, SensorInput::Use);
+                let got: Vec<String> = Direction::ALL.iter().map(|d|
+                    format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
+                assert_eq!(got.join(","), f[3]);
+                assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &events), f[4]);
             }
             "TRIPWIRE_SHAPE" => {
                 let exp = parse_box(&f[2..8]);
@@ -1104,17 +1020,17 @@ fn jar_world_hooks() {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook([0, 64, 0], Direction::East, true, true);
                         w.put_hook([1, 64, 0], Direction::West, true, true);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([1, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: false }));
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: false }));
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     "adj_fardist_1_from_unatt" => {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook([0, 64, 0], Direction::East, false, false);
                         w.put_hook([1, 64, 0], Direction::West, false, false);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
@@ -1124,9 +1040,9 @@ fn jar_world_hooks() {
                         for i in 1..=40 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([41, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [40, 64, 0], false, ent(40.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true }));
-                        assert_eq!(w.cell([41, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: true, attached: true }));
-                        let set_sched: Vec<_> = ev.iter().copied().filter(|e| matches!(e, TripwireEvent::SetWire { .. } | TripwireEvent::SetHook { .. } | TripwireEvent::ScheduleTick { .. })).collect();
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true }));
+                        assert_eq!(w.cell([41, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: true, attached: true }));
+                        let set_sched: Vec<_> = ev.iter().copied().filter(|e| matches!(e, CellEvent::SetBlock { .. } | CellEvent::ScheduleTick { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&set_sched), f[3]);
                     }
                     "span41_wire41_enter" => {
@@ -1135,10 +1051,10 @@ fn jar_world_hooks() {
                         for i in 1..=41 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([42, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [41, 64, 0], false, ent(41.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([42, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: true }));
-                        assert_eq!(w.cell([1, 64, 0]), TripwireCell::Wire(TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false }));
-                        let non_nbr: Vec<_> = ev.iter().copied().filter(|e| !matches!(e, TripwireEvent::UpdateNeighborsAt { .. })).collect();
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([42, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: true }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireWire(TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false }));
+                        let non_nbr: Vec<_> = ev.iter().copied().filter(|e| !matches!(e, CellEvent::UpdateNeighborsAt { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&non_nbr), f[3]);
                     }
                     "span42_wire42_enter" => {
@@ -1166,7 +1082,7 @@ fn jar_world_hooks() {
                         w.put_wire([0, 64, 3], false, true, false);
                         w.put_hook([0, 64, 4], Direction::North, false, true);
                         tripwire_entity_inside(&mut w, [0, 64, 3], false, ent(0.5, 3.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 2]), TripwireCell::Empty);
+                        assert_eq!(w.cell([0, 64, 2]), CellState::Empty);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     "ns_gap_north_enter" => {
@@ -1184,9 +1100,9 @@ fn jar_world_hooks() {
                         w.put_wire([0, 64, 1], true, true, false);
                         w.put_wire([0, 64, 3], false, true, false);
                         w.put_hook([0, 64, 4], Direction::North, true, true);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
-                        assert_eq!(w.cell([0, 64, 2]), TripwireCell::Empty);
+                        assert_eq!(w.cell([0, 64, 2]), CellState::Empty);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     other => panic!("unexpected tripwire boundary {other}"),
@@ -1199,45 +1115,31 @@ fn jar_world_hooks() {
                 assert_eq!(got.join(","), f[1]);
             }
             "BUBBLE" => {
-                let above_kind = f[1];
+                use law::basis::body::bubble_column_contact;
+                let block = BlockId::of(&f[1].to_ascii_lowercase()).default_state().model_block();
                 let open_top = f[2] == "true";
-                let drag_down = f[3] == "true";
-                let intersects = f[4] == "true";
-                let vy_in = d64(f[5]);
-                let exp_vy_out = h64(f[6]);
-                let fall_in = d64(f[7]);
-                let exp_fall_out = h64(f[8]);
-
-                let step = bubble_column_entity_inside(vy_in, drag_down, open_top, intersects);
-                assert_eq!(step.vy.to_bits(), exp_vy_out, "bubble vy line {line_idx}: {raw}");
-                let actual_fall = if step.reset_fall_distance { 0.0 } else { fall_in };
-                assert_eq!(actual_fall.to_bits(), exp_fall_out, "bubble fall line {line_idx}: {raw}");
-
-                // Also verify World-backed above probe matches AIR / TORCH / STONE / WATER / BUBBLE_COLUMN:
-                let mut bw = BoxWorld::default();
-                let above_block = match above_kind {
-                    "AIR" => Block::default(),
-                    "TORCH" => Block { air: false, ..Block::default() },
-                    "STONE" => Block::full(),
-                    "WATER" | "BUBBLE_COLUMN" => Block {
-                        air: false,
-                        fluid: Fluid { kind: FluidKind::Water, raw_amount: Some(8), raw_falling: Some(false), ..Fluid::default() },
-                        ..Block::default()
-                    },
-                    other => panic!("unknown above kind {other}"),
+                assert_eq!(block.shape.is_empty() && block.fluid.kind == FluidKind::Empty, open_top);
+                let mut world = BoxWorld::default();
+                world.set([0, 65, 0], block.clone());
+                let mut state = PlayerState {
+                    velocity: Vec3::new(0.0, d64(f[5]), 0.0),
+                    fall_distance: d64(f[7]),
+                    ..PlayerState::default()
                 };
-                bw.set([0, 65, 0], above_block);
-                let wstep = bubble_column_world_step(&bw, [0, 64, 0], vy_in, drag_down, intersects);
-                assert_eq!(wstep.vy.to_bits(), exp_vy_out, "bubble world vy line {line_idx}");
-                assert_eq!(wstep.reset_fall_distance, step.reset_fall_distance);
+                bubble_column_contact(&mut state, &world, [0, 64, 0], &(f[3] == "true"), f[4] == "true");
+                assert_eq!(state.velocity.y.to_bits(), h64(f[6]), "bubble vy line {line_idx}: {raw}");
+                assert_eq!(state.fall_distance.to_bits(), h64(f[8]), "bubble fall line {line_idx}: {raw}");
             }
             "BUBBLE_CLIMB" => {
-                let mut vy = 0.0;
+                use law::basis::body::bubble_column_contact;
+                let mut world = BoxWorld::default();
+                world.set([0, 65, 0], BlockId::of("water").default_state().model_block().clone());
+                let mut state = PlayerState::default();
                 for (t, hex) in f[1..].iter().enumerate() {
-                    let step = bubble_column_entity_inside(vy, false, false, true);
-                    vy = step.vy;
-                    assert!(step.reset_fall_distance);
-                    assert_eq!(vy.to_bits(), h64(hex), "climb step {t}");
+                    state.fall_distance = 1.0;
+                    bubble_column_contact(&mut state, &world, [0, 64, 0], &false, true);
+                    assert_eq!(state.fall_distance.to_bits(), 0.0f64.to_bits());
+                    assert_eq!(state.velocity.y.to_bits(), h64(hex), "climb step {t}");
                 }
             }
             other => panic!("unexpected world_hooks row kind: {other}"),
@@ -2076,14 +1978,15 @@ fn jar_movement_wired() {
 fn jar_world_items_vehicles() {
     use law::block_hooks::{
         BambooLeaves, HookContext, HookEntityKind, NonPlayerHookBlock, ShulkerAnimationStatus,
-        ShulkerBoxEntityState, ShulkerBreakOutcome, SpeleothemThickness, TipDirection,
-        WorldHookAction, aabb_contract, bamboo_collision_aabb, bamboo_outline_aabb,
+        ShulkerBoxEntityState, ShulkerBreakOutcome,
+        WorldHookAction, aabb_contract, bamboo_outline_aabb,
         detector_rail_search_bb, evaluate_entity_inside, evaluate_step_on, get_seed,
-        get_xz_offset, hopper_suck_aabb, offset_collision_shape, shulker_break_outcome,
+        get_xz_offset, hopper_suck_aabb, shulker_break_outcome,
         shulker_can_open, shulker_can_open_box, shulker_collision_aabb,
         shulker_entity_push_vector, shulker_open_support_aabb, shulker_placement_facing,
-        speleothem_aabb, turtle_egg_can_destroy, OffsetCollisionSpec,
+        turtle_egg_can_destroy,
     };
+    use law::basis::cell::StateId;
     use law::interact::{BlockId, Direction};
     use law::items::{
         can_consume, consume_ticks, eat, eat_food, eat_with_modifier, push, riptide_push,
@@ -2585,41 +2488,13 @@ fn jar_world_items_vehicles() {
                 assert_eq!(off.y.to_bits(), h64(c[8]).to_bits(), "row {idx} oy: {row}");
                 assert_eq!(off.z.to_bits(), h64(c[9]).to_bits(), "row {idx} oz: {row}");
                 let expected = parse_box(&c[10..16]);
-                let actual = match c[1] {
-                    "bamboo" => bamboo_collision_aabb([x, 0, z]),
-                    "sulfur_spike" | "pointed_dripstone" => {
-                        let th = match c[2] {
-                            "TIP_MERGE" => SpeleothemThickness::TipMerge,
-                            "TIP" => SpeleothemThickness::Tip,
-                            "FRUSTUM" => SpeleothemThickness::Frustum,
-                            "MIDDLE" => SpeleothemThickness::Middle,
-                            "BASE" => SpeleothemThickness::Base,
-                            other => panic!("unknown thickness {other}"),
-                        };
-                        let td = match c[3] {
-                            "UP" => TipDirection::Up,
-                            "DOWN" => TipDirection::Down,
-                            other => panic!("unknown tip dir {other}"),
-                        };
-                        let shape = offset_collision_shape(
-                            OffsetCollisionSpec::Speleothem { thickness: th, tip_direction: td },
-                            [x, 0, z],
-                        )
-                        .unwrap();
-                        let v = shape.view();
-                        let s_box = Aabb::new(
-                            v.coord(0, 0),
-                            v.coord(1, 0),
-                            v.coord(2, 0),
-                            v.coord(0, 1),
-                            v.coord(1, 1),
-                            v.coord(2, 1),
-                        );
-                        assert_box(s_box, expected, &format!("row {idx} shape"));
-                        speleothem_aabb([x, 0, z], th, td)
-                    }
-                    other => panic!("unknown offset block {other}"),
-                };
+                let state = StateId::of(BlockId::of(c[1]), &[
+                    ("thickness", &c[2].to_ascii_lowercase()),
+                    ("vertical_direction", &c[3].to_ascii_lowercase()),
+                ]);
+                let v = state.block_at([x, 0, z]).shape.view();
+                let actual = Aabb::new(v.coord(0, 0), v.coord(1, 0), v.coord(2, 0),
+                    v.coord(0, 1), v.coord(1, 1), v.coord(2, 1));
                 assert_box(actual, expected, &format!("row {idx}"));
             }
             "OFFSET_BAMBOO_OUTLINE" => {
@@ -3338,6 +3213,7 @@ fn jar_player_elytra_damage() {
 
 #[test]
 fn jar_cauldron_and_redstone() {
+    use law::basis::cell::{BlockId, StateId};
     use law::{block_hooks::*, player, redstone::*, tick, try_tick, BoxWorld, Block, Input, Inside, PlayerState, Vec3, VoxelShape};
 
     let h64 = |s: &str| -> f64 { f64::from_bits(u64::from_str_radix(s, 16).unwrap()) };
@@ -3419,10 +3295,9 @@ fn jar_cauldron_and_redstone() {
                 assert_eq!(got.to_bits(), exp.to_bits(), "row {idx}: {row}");
             }
             "CAULDRON_SHAPE" => {
-                let lvl: u8 = c[2].parse().unwrap();
                 let expected = parse_shape(c[3]);
-                let actual = cauldron_filled_inside_shape(lvl);
-                assert_shape_eq(&actual, &expected, row);
+                let state = StateId::of(BlockId::of(c[1]), &[("level", c[2])]);
+                assert_shape_eq(state.model_block().inside_shape.as_ref().unwrap(), &expected, row);
             }
             "CAULDRON_INSIDE" => {
                 let kind = if c[1] == "powder_snow_cauldron" {
@@ -3451,12 +3326,7 @@ fn jar_cauldron_and_redstone() {
                 let mut w = BoxWorld::default();
                 w.set(
                     [0, 64, 0],
-                    Block {
-                        air: false,
-                        inside: Inside::Extinguish,
-                        inside_shape: Some(cauldron_filled_inside_shape(lvl)),
-                        ..Block::default()
-                    },
+                    StateId::of(BlockId::of(c[1]), &[("level", c[2])]).model_block().clone(),
                 );
                 let mut s = PlayerState {
                     position: Vec3::new(0.5, 64.25, 0.5),
@@ -3474,12 +3344,7 @@ fn jar_cauldron_and_redstone() {
                 let mut w = BoxWorld::default();
                 w.set(
                     [0, 64, 0],
-                    Block {
-                        air: false,
-                        inside: Inside::Lava,
-                        inside_shape: Some(cauldron_filled_inside_shape(3)),
-                        ..Block::default()
-                    },
+                    BlockId::of("lava_cauldron").default_state().model_block().clone(),
                 );
                 let mut s = PlayerState {
                     position: Vec3::new(0.5, 64.25, 0.5),
@@ -3508,11 +3373,8 @@ fn jar_cauldron_and_redstone() {
                 let expected_shape = parse_shape(c[4]);
                 assert_eq!(tilt.delay_until_next_state(), exp_delay, "row {idx}: {row}");
                 assert_eq!(tilt.causes_vibration(), exp_vib, "row {idx}: {row}");
-                let actual_shape = match big_dripleaf_collision_aabb(tilt) {
-                    Some(a) => VoxelShape::boxes(&[a]),
-                    None => VoxelShape::default(),
-                };
-                assert_shape_eq(&actual_shape, &expected_shape, row);
+                let state = StateId::of(BlockId::of("big_dripleaf"), &[("tilt", c[1])]);
+                assert_shape_eq(&state.model_block().shape, &expected_shape, row);
             }
             "BIG_DRIPLEAF_INSIDE" => {
                 let by: i32 = c[1].parse().unwrap();
@@ -3706,31 +3568,17 @@ fn jar_cauldron_and_redstone() {
                 let x: i32 = c[1].parse().unwrap();
                 let z: i32 = c[2].parse().unwrap();
                 let expected = parse_shape(c[3]);
-                let actual = offset_collision_shape(OffsetCollisionSpec::Bamboo, [x, 64, z]).unwrap();
-                assert_shape_eq(&actual, &expected, row);
+                let state = BlockId::of("bamboo").default_state();
+                assert_shape_eq(&state.block_at([x, 64, z]).shape, &expected, row);
             }
             "OFFSET_SPELEOTHEM" => {
                 let x: i32 = c[1].parse().unwrap();
                 let z: i32 = c[2].parse().unwrap();
-                let thickness = match c[3] {
-                    "tip_merge" => SpeleothemThickness::TipMerge,
-                    "tip" => SpeleothemThickness::Tip,
-                    "frustum" => SpeleothemThickness::Frustum,
-                    "middle" => SpeleothemThickness::Middle,
-                    "base" => SpeleothemThickness::Base,
-                    other => panic!("unexpected thickness {other}"),
-                };
-                let tip_direction = match c[4] {
-                    "up" => TipDirection::Up,
-                    "down" => TipDirection::Down,
-                    other => panic!("unexpected tip direction {other}"),
-                };
                 let expected = parse_shape(c[5]);
-                let actual = offset_collision_shape(
-                    OffsetCollisionSpec::Speleothem { thickness, tip_direction },
-                    [x, 64, z],
-                ).unwrap();
-                assert_shape_eq(&actual, &expected, row);
+                let state = StateId::of(BlockId::of("pointed_dripstone"), &[
+                    ("thickness", c[3]), ("vertical_direction", c[4]),
+                ]);
+                assert_shape_eq(&state.block_at([x, 64, z]).shape, &expected, row);
             }
             other => panic!("unknown tag {other}"),
         }
