@@ -458,9 +458,9 @@ pub fn solve<S: CorridorSource>(
                         let mut ws = store.words.borrow_mut();
                         ws.work.certify_ticks += cert_ticks;
                         ws.work.law_ticks += cert_ticks;
-                        if kit_view.is_none() || raw_steps.iter().all(|s| s.edit.is_none()) {
-                            ws.promote_route(&obs);
-                        }
+                        // Kit routes too: their clicks are frame-relative templates, so the word
+                        // generalizes to translated and rotated sites.
+                        ws.promote_route(&obs);
                         ws.file_route_for_kit(from, to, kit_key, cached);
                     }
                     stages.push(Stage::Compose);

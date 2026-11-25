@@ -3,7 +3,11 @@
 //! - `E2-combo` & `E2-swap`: 10,000 kits fit in `< 1 MB` factored tables, stack decrements share `Arc`s
 //! - `KT16`: `KitCone::lower_bound` monotonic + admissible over 500 triples + witnessed runs
 //! - `R-lego-1..4`, `E3-nether-bucket`, `E2-last-block` shadow price
-//! - Real `doorcorridor` fixture (`T=98` his best) + diagnostic readout on companion tracks.
+//! - Real `doorcorridor` fixture (`T=98` his best) and the survival tracks `amertystcoral`,
+//!   `ametwoodbox` (restored) and `mud` (unrestored), replayed and beating his best.
+//! - Slice 2 `G-kit`: a door corridor and a wall breach learned once generalize to a site
+//!   translated by (+25, 0, +17) and turned 90° with `learn_ticks == 0`, and `edit()` drops the
+//!   certified route only inside its footprint.
 
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::Instant};
 use law::{
@@ -25,6 +29,7 @@ use plan::{
     store::GeneratorStore,
 };
 
+#[derive(Clone)]
 struct StateWorld {
     cells: HashMap<BlockPos, StateId>,
     air: StateId,
@@ -178,21 +183,6 @@ fn settled_on(world: &impl World, cell: BlockPos) -> PlayerState {
     s
 }
 
-fn apply_op<W: World>(delta: &mut WorldDelta<'_, W>, op: KitOp) {
-    match op {
-        KitOp::Interact { pos, after, partner } => {
-            delta.set(pos, after);
-            if let Some((pp, pa)) = partner {
-                delta.set(pp, pa);
-            }
-        }
-        KitOp::Break { pos, after, .. }
-        | KitOp::Place { pos, after }
-        | KitOp::BucketEmpty { pos, after }
-        | KitOp::BucketPickup { pos, after } => delta.set(pos, after),
-    }
-}
-
 fn replay_and_verify(
     world: &impl World,
     start: &PlayerState,
@@ -209,30 +199,21 @@ fn replay_and_verify(
     let mut ops_log: Vec<(BlockPos, u64, KitOp)> = Vec::new();
 
     for (idx, step) in plan_res.words.iter().enumerate() {
-        let is_break = matches!(step.edit, Some(KitOp::Break { .. }));
+        let still = step.edit.is_some_and(KitOp::holds_still);
         if let Some(op) = step.edit {
-            let p = match op {
-                KitOp::Interact { pos, partner, .. } => {
-                    if let Some((pp, _)) = partner {
-                        edited.insert(pp);
-                    }
-                    pos
-                }
-                KitOp::Break { pos, .. }
-                | KitOp::Place { pos, .. }
-                | KitOp::BucketEmpty { pos, .. }
-                | KitOp::BucketPickup { pos, .. } => pos,
-            };
-            edited.insert(p);
-            ops_log.push((p, s.t - start.t, op));
-            if !is_break {
-                apply_op(&mut delta, op);
+            if let KitOp::Interact { partner: Some((pp, _)), .. } = op {
+                edited.insert(pp);
             }
+            edited.insert(op.pos());
+            ops_log.push((op.pos(), s.t - start.t, op));
         }
         let is_last = idx + 1 == plan_res.words.len();
         for elapsed in 0..step.ticks {
+            if let Some(op) = step.edit.filter(|op| op.lands_at(step.ticks) == elapsed) {
+                op.apply(&mut delta);
+            }
             let before = s.bounding_box();
-            let inp = if is_break {
+            let inp = if still {
                 Default::default()
             } else {
                 programs[step.program as usize]
@@ -247,13 +228,8 @@ fn replay_and_verify(
                 touched = true;
             }
         }
-        if is_break {
-            if let Some(op) = step.edit {
-                apply_op(&mut delta, op);
-                if is_last && goal.touched(&s, &s) {
-                    touched = true;
-                }
-            }
+        if still && is_last && goal.touched(&s, &s) {
+            touched = true;
         }
     }
 
@@ -305,7 +281,7 @@ fn solve_ready(
 fn full_survival_kit() -> KitSpec {
     KitSpec {
         body: BodyMovementKey { boots_depth_strider: 3, soul_speed: 3, leather_boots: true },
-        tool: ToolProfileKey::silk_diamond(),
+        tool: ToolProfileKey { pickaxe_tier: 4, axe_tier: 4, shovel_tier: 4, efficiency: 5, silk_touch: true, haste: 0 },
         blocks: 64,
         place_block: default_stone_state(),
         interact: true,
@@ -700,25 +676,120 @@ fn real_track_doorcorridor_unfolded() {
         p_restore.ticks,
     );
 
-    // Diagnostic check on survival companion tracks (`ametwoodbox`, `mud`, `amertystcoral`).
-    let diag_kit = Kit::Carried(full_survival_kit());
-    for name in ["ametwoodbox", "mud", "amertystcoral"] {
-        if let Some(line) = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)) {
-            if let Ok(t) = track(line) {
-                if let Ok(src) = GeneratorSuperflatSource::snapshot(&t.world, t.a) {
-                    let obs0 = ObservedWorld::new(&t.world);
-                    if let Some(top) = obs0.block(t.a).shape.coords[1].last().copied() {
-                        if let Ok(mut s) = plan::settle(&plan::Still(&t.world), [f64::from(t.a[0]) + 0.5, top + f64::from(t.a[1]), f64::from(t.a[2]) + 0.5], 0) {
-                            s.saturation = 20.0;
-                            let res = solve(&s, Goal { cell: t.b }, diag_kit, &src, &store, &mut codec, u64::MAX);
-                            match res.outcome {
-                                PlanOutcome::Ready(p) => println!("DIAG track={name} READY T={} his={:?} (replay skipped in diag)", p.ticks, t.his.iter().min()),
-                                other => println!("DIAG track={name} outcome={other:?} his={:?}", t.his.iter().min()),
-                            }
-                        }
-                    }
-                }
+    // Survival companion tracks, each replayed through WorldDelta + law::try_tick. The kit is
+    // the full survival kit (silk diamond pickaxe, axe and shovel, 64 cobblestone, buckets).
+    let full = full_survival_kit();
+    let mud_open = KitSpec { restore_required: false, ..full };
+    for (name, spec) in [("amertystcoral", full), ("ametwoodbox", full), ("mud", mud_open)] {
+        let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)).expect("track in tracks.txt");
+        let t = track(line).expect("load track");
+        let (src, s) = load_start(&t);
+        let (p, learn) = solve_ready(&t.world, &src, &s, Goal { cell: t.b }, Kit::Carried(spec), &store, &mut codec);
+        let edits = p.words.iter().filter(|w| w.edit.is_some()).count();
+        println!("SURVIVAL track={name} restore={} T={} his_best={:?} learn_ticks={learn} edits={edits}", spec.restore_required, p.ticks, t.his.iter().min());
+        assert!(t.his.iter().min().is_some_and(|&his| p.ticks < u64::from(his)), "{name}: T={} must beat his best", p.ticks);
+    }
+    // mud restored: the pillar's base under the walkway is out of reach from it, and the
+    // restoring plan (breach the mud box, rebuild it, pillar outside) is not found in budget.
+    let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some("mud")).expect("mud");
+    let t = track(line).expect("load mud");
+    let (src, s) = load_start(&t);
+    let r = solve(&s, Goal { cell: t.b }, Kit::Carried(full), &src, &store, &mut codec, u64::MAX);
+    println!("DIAG track=mud restore=true outcome={:?} why={:?}", r.outcome, r.explanation);
+}
+
+/// A site in local coordinates (`x` across, `z` along the approach), placed at `origin` and
+/// turned by `rot` quarter turns about the vertical: `(x, z) -> (-z, x)` per turn.
+struct Site {
+    origin: BlockPos,
+    rot: u8,
+}
+
+impl Site {
+    fn at(&self, l: BlockPos) -> BlockPos {
+        let (x, z) = match self.rot & 3 {
+            0 => (l[0], l[2]),
+            1 => (-l[2], l[0]),
+            2 => (-l[0], -l[2]),
+            _ => (l[2], -l[0]),
+        };
+        [self.origin[0] + x, l[1], self.origin[2] + z]
+    }
+
+    fn facing(&self, f: &str) -> &'static str {
+        const TURN: [&str; 4] = ["south", "west", "north", "east"];
+        let i = TURN.iter().position(|t| *t == f).expect("cardinal");
+        TURN[(i + usize::from(self.rot)) % 4]
+    }
+
+    /// A floor across local `x -2..=2`, `z -2..=10` with a full-width wall at `z = 4`: a closed
+    /// oak door in its middle (`door`), or a 2-high stone wall (no door).
+    fn world(&self, door: bool) -> (StateWorld, ([i32; 3], [i32; 3])) {
+        let corners = [self.at([-3, 0, -2]), self.at([3, 0, 12])];
+        let lo = [corners[0][0].min(corners[1][0]), -2, corners[0][2].min(corners[1][2])];
+        let hi = [corners[0][0].max(corners[1][0]), 6, corners[0][2].max(corners[1][2])];
+        let mut w = StateWorld::new(lo, hi);
+        let stone = default_stone_state();
+        for x in -2..=2 {
+            for z in -2..=10 {
+                w.set(self.at([x, 0, z]), stone);
             }
+            if door && x != 0 {
+                for y in 1..=3 { w.set(self.at([x, y, 4]), stone); }
+            } else if !door {
+                for y in 1..=2 { w.set(self.at([x, y, 4]), stone); }
+            }
+        }
+        if door {
+            w.set(self.at([0, 3, 4]), stone);
+            w.set(self.at([0, 1, 4]), door_sid(self.facing("south"), false, "lower"));
+            w.set(self.at([0, 2, 4]), door_sid(self.facing("south"), false, "upper"));
+        }
+        (w, (lo, hi))
+    }
+}
+
+#[test]
+fn g_kit_translated_rotated_sites_reuse_door_and_breach_words() {
+    let store = GeneratorStore::default();
+    let mut codec = Interner::default();
+    let tool = ToolProfileKey { pickaxe_tier: 4, efficiency: 5, silk_touch: true, ..Default::default() };
+    let breach = KitSpec { can_break: true, tool, restore_required: true, ..KitSpec::empty() };
+    let hits = |store: &GeneratorStore| store.words.borrow().work.proposal_hits;
+    for (name, door, spec) in [("door", true, KitSpec::interact_only()), ("breach", false, breach)] {
+        let mut learned = 0;
+        for (i, site) in [Site { origin: [0, 0, 0], rot: 0 }, Site { origin: [25, 0, 17], rot: 1 }].into_iter().enumerate() {
+            let (w, bounds) = site.world(door);
+            let src = GeneratorSuperflatSource::from_world(&w, bounds, site.at([0, 0, 0])).unwrap();
+            let start = settled_on(&w, site.at([0, 0, 0]));
+            let goal = Goal { cell: site.at([0, 0, 8]) };
+            let before = hits(&store);
+            let (p, learn) = solve_ready(&w, &src, &start, goal, Kit::Carried(spec), &store, &mut codec);
+            let edits = p.words.iter().filter(|s| s.edit.is_some()).count();
+            println!("G_KIT motif={name} site={} T={} learn_ticks={learn} proposal_hits={} edits={edits}", ["A", "B(+25,0,+17) turned 90°"][i], p.ticks, hits(&store) - before);
+            assert!(edits >= 2, "an edit and its restore");
+            if i == 0 {
+                learned = p.ticks;
+                assert!(learn > 0, "site A learns the motif");
+                continue;
+            }
+            assert_eq!(learn, 0, "site B must reuse the {name} word with zero learning");
+            assert!(hits(&store) > before, "site B is crossed by a proposal");
+            assert_eq!(p.ticks, learned, "the same motif, the same T");
+
+            // A certified route is dropped only by an edit inside its footprint.
+            let key = spec.capability_key();
+            let served = |w: &StateWorld| store.words.borrow().route_for_kit_in_world(&start, goal, key, &ObservedWorld::new(w)).is_some();
+            assert!(served(&w), "site B's route is certified and served again");
+            let far = site.at([0, 5, -2]);
+            let mut moved = w.clone();
+            moved.set(far, default_stone_state());
+            assert_eq!(store.words.borrow_mut().edit(&mut codec, far, &moved), 0, "an edit outside the footprint keeps the route");
+            let floor = site.at([0, 0, 6]);
+            let mut holed = w.clone();
+            holed.set(floor, sid("air"));
+            assert!(store.words.borrow_mut().edit(&mut codec, floor, &holed) >= 1, "a hole in the walked floor drops the route");
+            assert!(!served(&w), "and it is no longer served");
         }
     }
 }

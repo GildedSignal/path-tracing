@@ -953,6 +953,62 @@ pub enum KitOp {
     BucketPickup { pos: BlockPos, after: StateId },
 }
 
+impl KitOp {
+    /// The edited cell (a door's partner half moves with it).
+    pub fn pos(self) -> BlockPos {
+        match self {
+            Self::Interact { pos, .. } | Self::Break { pos, .. } | Self::Place { pos, .. }
+            | Self::BucketEmpty { pos, .. } | Self::BucketPickup { pos, .. } => pos,
+        }
+    }
+
+    /// A break holds still while it mines: no movement input on its ticks.
+    pub fn holds_still(self) -> bool {
+        matches!(self, Self::Break { .. })
+    }
+
+    /// The tick of a `ticks`-long step before whose physics the edit lands. A click lands
+    /// before the first tick; a break lands before the last, because the client's
+    /// `startDestroyBlock` + `continueDestroyBlock` on the first tick adds the first progress
+    /// and the `n`-th call destroys the block before that tick's movement.
+    pub fn lands_at(self, ticks: u32) -> u32 {
+        if self.holds_still() { ticks.saturating_sub(1) } else { 0 }
+    }
+
+    pub fn apply<W: World>(self, delta: &mut WorldDelta<'_, W>) {
+        match self {
+            Self::Interact { pos, after, partner } => {
+                delta.set(pos, after);
+                if let Some((pp, pa)) = partner {
+                    delta.set(pp, pa);
+                }
+            }
+            Self::Break { pos, after, .. } | Self::Place { pos, after }
+            | Self::BucketEmpty { pos, after } | Self::BucketPickup { pos, after } => delta.set(pos, after),
+        }
+    }
+}
+
+/// The tool a block is mined with fastest: what the bot holds while it breaks the block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolKind {
+    Hand,
+    Pickaxe,
+    Axe,
+    Shovel,
+}
+
+pub fn tool_for(sid: StateId) -> ToolKind {
+    let classes = block_break_classes();
+    let cid = classes.by_block.get(sid.block().0 as usize).copied().unwrap_or(0) as usize;
+    match classes.classes.get(cid).map(|c| c.pref) {
+        Some(PrefTool::Pickaxe(_)) => ToolKind::Pickaxe,
+        Some(PrefTool::Axe) => ToolKind::Axe,
+        Some(PrefTool::Shovel) => ToolKind::Shovel,
+        _ => ToolKind::Hand,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Obligation {
     pub pos: BlockPos,
@@ -1051,27 +1107,26 @@ pub fn can_place_at(
     if s.bounding_box().intersects(placed_box) {
         return false;
     }
-    // Needs at least one non-air / sturdy neighbor face (supporting face opposite offset).
-    // Faces: [D=0, U=1, N=2, S=3, W=4, E=5]; neighbor at offset holds opposite face sturdy!
-    const NEIGHBORS: [([i32; 3], usize); 6] = [
-        ([0, -1, 0], 1), // below has Up sturdy
-        ([0, 1, 0], 0),  // above has Down sturdy
-        ([0, 0, -1], 3), // north has South sturdy
-        ([0, 0, 1], 2),  // south has North sturdy
-        ([-1, 0, 0], 5), // west has East sturdy
-        ([1, 0, 0], 4),  // east has West sturdy
-    ];
     let _ = place_block;
-    for (d, opp_face) in NEIGHBORS {
-        let np = [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]];
-        if let Some(nsid) = world.state_id(np) {
-            let nst = state_static(nsid);
-            if nst.is_sturdy(opp_face) {
-                return true;
-            }
-        }
-    }
-    false
+    place_faces(world, pos).next().is_some()
+}
+
+/// Unit normals of the faces `[D, U, N, S, W, E]` (Minecraft's 3D data values).
+pub const FACE_NORMALS: [[i32; 3]; 6] = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+
+/// The faces a block placed at `pos` can be clicked against: face `f` of the neighbour at
+/// `pos - FACE_NORMALS[f]`. Vanilla places against any face of a block that has a shape and is
+/// neither replaceable (a click there replaces it) nor used by the hand (a door or a switch
+/// would toggle); the face need not be full or sturdy.
+pub fn place_faces(world: &impl World, pos: BlockPos) -> impl Iterator<Item = usize> + '_ {
+    (0..6).filter(move |&f| {
+        let n = FACE_NORMALS[f];
+        let np = [pos[0] - n[0], pos[1] - n[1], pos[2] - n[2]];
+        world.state_id(np).is_some_and(|sid| {
+            let st = state_static(sid);
+            !st.replaceable() && st.interact_kind() == InteractKind::None && !world.block(np).never_collides()
+        })
+    })
 }
 
 /// Checks exact `RecordingWorld` digest check consistency on `kit` hash helper.

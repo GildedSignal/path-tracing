@@ -42,6 +42,17 @@ public final class NativeChannelTests {
         long[] r=NativeChannel.RequestGoal(o.bits(),o.known(),o.provenance(),new long[]{1,1,0,0,0,1},new long[]{0,-61,0},1,1);
         check(r[0]==3,"missing data must refuse synchronously");
     }
+    /** KIT_PLAN action records decode word for word; only an issued action's own cell (or its door half) is tolerated. */
+    private static void kitActions() {
+        KitAction place=new KitAction(5,1,KitAction.PLACE,8,1,12,1,10.5f,60f,1), door=new KitAction(2,3,KitAction.INTERACT,3,1,4,2,-90f,12f,1);
+        long[] wire=new long[1+2*KitAction.WORDS]; int o=1;
+        for(KitAction a:List.of(place,door)) for(long v:new long[]{a.tick(),a.slot(),a.opcode(),a.x(),a.y(),a.z(),a.face(),Float.floatToRawIntBits(a.yaw()),Float.floatToRawIntBits(a.pitch()),a.hold()}) wire[o++]=v;
+        check(KitAction.read(wire,1,2).equals(List.of(place,door)),"action records decode");
+        List<KitAction> plan=List.of(place,door);
+        check(!KitAction.ours(plan,4,8,1,12) && KitAction.ours(plan,5,8,1,12),"an edit is ours once its click is issued");
+        check(!KitAction.ours(plan,9,8,2,12) && !KitAction.ours(plan,9,9,1,12),"a neighbouring edit stops the flight");
+        check(KitAction.ours(plan,2,3,2,4) && KitAction.ours(plan,2,3,0,4) && !KitAction.ours(plan,2,3,3,4),"a door moves both halves");
+    }
     public static void main(String[] args) throws Exception {
         check(NativeChannel.loadFailure()==null,"native load: "+NativeChannel.loadFailure());
         StateBits.Observation all=exhaustive();
@@ -69,6 +80,7 @@ public final class NativeChannelTests {
             for(long v:values) encoded.append(Long.toUnsignedString(v,16)).append(' '); encoded.append('\n');
         }
         if(args.length>1) Files.writeString(Path.of(args[1]),encoded);
+        kitActions();
         NativeClockTests.main(new String[0]);
         System.out.println("PASS: every field/mask Java -> Rust -> Java; every unknown refused; pinned recording preserved");
     }

@@ -1,11 +1,15 @@
 //! R0 worker. Existing F search only; no zone/store/search implementation here.
 use std::{collections::BTreeMap, sync::{Arc, Mutex, OnceLock, atomic::{AtomicU64, Ordering}, mpsc}};
-use law::{Block, BlockPos, PlayerState, World};
+use law::{Block, BlockPos, PlayerState, World, basis::cell::StateId, sim::WorldDelta};
 use plan::Goal;
+use crate::kit_wire;
 
 pub const READY: u64 = 0;
 pub const WORD_PLAN: u64 = 1;
 pub const REFUSAL: u64 = 3;
+/// A plan with world edits: `WORD_PLAN`'s layout with `[a, a × kit_wire::ACTION_WORDS]` between the
+/// inputs and the hull. A plan without edits stays `WORD_PLAN`, word for word.
+pub const KIT_PLAN: u64 = 4;
 pub fn refusal(version: u64, reason: impl AsRef<str>) -> Vec<u64> {
     let at = crate::qpc().0 as u64;
     let mut out = vec![REFUSAL, version, at, at];
@@ -22,9 +26,9 @@ struct Source {
     sections: BTreeMap<BlockPos, Section>,
     error: Option<String>,
 }
-struct Section { palette: Vec<(String, Result<&'static Block, String>)>, indices: Vec<usize> }
+struct Section { palette: Vec<(String, Result<StateId, String>)>, indices: Vec<usize> }
 impl Source {
-    fn cell(&self, p: BlockPos) -> Option<&Result<&'static Block, String>> {
+    fn cell(&self, p: BlockPos) -> Option<&Result<StateId, String>> {
         let s = self.sections.get(&p.map(|v| v.div_euclid(16)))?;
         let i = ((p[1].rem_euclid(16) * 16 + p[2].rem_euclid(16)) * 16 + p[0].rem_euclid(16)) as usize;
         Some(&s.palette[s.indices[i]].1)
@@ -37,15 +41,16 @@ impl Source {
 }
 impl World for Source {
     fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
-        self.cell(p).ok_or("section not received")?.as_deref().map_err(String::as_str)
+        match self.cell(p).ok_or("section not received")? { Ok(sid) => Ok(sid.block_at(p)), Err(why) => Err(why) }
     }
     fn block(&self, p: BlockPos) -> &Block {
         match self.cell(p) {
-            Some(Ok(block)) => block,
+            Some(Ok(sid)) => sid.block_at(p),
             Some(Err(why)) => panic!("source refuses {p:?}: {why}"),
             None => panic!("unknown source cell {p:?}"),
         }
     }
+    fn state_id(&self, p: BlockPos) -> Option<StateId> { self.cell(p)?.as_ref().ok().copied() }
     fn loaded(&self, p: BlockPos) -> bool { self.sections.contains_key(&p.map(|v| v.div_euclid(16))) }
     fn difficulty(&self) -> u8 { self.difficulty }
     // The rule is not sent to a remote client: projected as vanilla's default; it changes health, never a walk, and the server corrects it.
@@ -67,14 +72,14 @@ impl Cursor<'_> {
         String::from_utf8(bytes).map_err(|_| "string utf8".into())
     }
 }
-fn model(text: &str) -> Result<&'static Block,String> {
+fn model(text: &str) -> Result<StateId,String> {
     let (name, tail) = text.split_once('[').unwrap_or((text,""));
     let mut properties = Vec::new();
     for pair in tail.trim_end_matches(']').split(',').filter(|p| !p.is_empty()) {
         let (k,v) = pair.split_once('=').ok_or("block property")?;
         properties.push((k.to_owned(),v.to_owned()));
     }
-    world::model(&world::BlockState { name: name.to_owned(), properties })
+    world::state_id(&world::BlockState { name: name.to_owned(), properties })
 }
 fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
     let mut c = Cursor { data, at: 0 };
@@ -203,6 +208,7 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return refusal(requested,"observation/source session or revision mismatch"); }
     if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return refusal(requested,"missing/invalid body-kit context"); }
     if meta[2] != 0 { return refusal(requested,"unsupported input phase"); }
+    let carried = kit_wire::read(&meta[7..]);
     let Some((lo,hi)) = source.bounds() else { return refusal(requested,"no received sections"); };
     // The corridor between the bot and the goal, from the bottom of the world to a little above both.
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
@@ -219,7 +225,7 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     let mut found = None;
     for _ in 0..8 {
         let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
-        let result = plan::solve(&state, Goal { cell: goal }, plan::Kit::BareLegs, &corridor, store, codec, u64::MAX);
+        let result = plan::solve(&state, Goal { cell: goal }, carried.kit, &corridor, store, codec, u64::MAX);
         if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
         match result.outcome {
             plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
@@ -238,10 +244,12 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     }
     let Some(found) = found else { return refusal(requested,"corridor growth exceeded pass cap"); };
     let programs = words::tiny_programs();
-    match inputs(source, &programs, &state, found.words.iter().map(|w| (w.program,w.args,w.ticks)), Goal { cell: goal }, found.ticks) {
-        Ok(inputs) => {
-            let mut out = vec![WORD_PLAN,requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
+    match inputs(source, &programs, &state, &found.words, Goal { cell: goal }, found.ticks, &carried) {
+        Ok((inputs, actions)) => {
+            let edits = !actions.is_empty();
+            let mut out = vec![if edits { KIT_PLAN } else { WORD_PLAN },requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
             let bits = state.bits(); out.push(bits.len() as u64); out.extend(bits); out.extend(inputs);
+            if edits { out.push((actions.len() / kit_wire::ACTION_WORDS) as u64); out.extend(actions); }
             let mut hx0 = i32::MAX; let mut hz0 = i32::MAX; let mut hx1 = i32::MIN; let mut hz1 = i32::MIN;
             for w in &found.words {
                 hx0 = hx0.min(w.certificate.min[0]); hz0 = hz0.min(w.certificate.min[2]);
@@ -254,22 +262,47 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
         Err(why) => refusal(requested,why),
     }
 }
-/// The plan's words × counts as tick inputs, each tick's input from the word's program, run through the law.
-fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, words: impl Iterator<Item=(u16,words::Arguments,u32)>, goal: Goal, predicted_ticks: u64) -> Result<Vec<u64>,String> {
-    let mut state = start.clone(); let mut inputs = Vec::new();
-    let mut first_touch = goal.touched(start, start).then_some(0u64);
-    for (program,args,ticks) in words { for elapsed in 0..ticks {
-        let (_,input) = programs[program as usize].select(source,&state,elapsed,args).ok_or("a word's program has no row here")?;
+/// The plan's words × counts as tick inputs, each tick's input from the word's program, run through
+/// the law with each edit landing where `KitOp::lands_at` puts it; and one action record per edit.
+/// A break's ticks hold still and look at the block. With edits, only the last word may touch
+/// the goal: the mission ends when its cleanup ends.
+fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, words: &[plan::WordStep], goal: Goal, predicted_ticks: u64, carried: &kit_wire::Carried) -> Result<(Vec<u64>,Vec<u64>),String> {
+    fn tick<W: World>(world: &W, program: &words::Program, state: &mut PlayerState, elapsed: u32, args: words::Arguments, still: Option<(f32,f32)>) -> Result<[u64;3],String> {
+        let (input, look) = match still {
+            Some(look) => (Default::default(), look),
+            None => { let (_,i) = program.select(world,state,elapsed,args).ok_or("a word's program has no row here")?; (i, (i.yaw, i.pitch)) }
+        };
         let keys = [input.forward,input.back,input.left,input.right,input.jump,input.sneak,input.sprint].iter().enumerate().fold(0,|n,(i,b)| n | ((*b as u64)<<i));
-        inputs.extend([keys,input.yaw.to_bits() as u64,input.pitch.to_bits() as u64]);
-        let before = state.bounding_box();
-        law::try_tick(&mut state,source,&input).map_err(|e| e.0)?;
-        if goal.touched_boxes(before, state.bounding_box()) { first_touch.get_or_insert(state.t - start.t); }
-    } }
+        law::try_tick(state,world,&input).map_err(|e| e.0)?;
+        Ok([keys,look.0.to_bits() as u64,look.1.to_bits() as u64])
+    }
+    let edits = words.iter().any(|w| w.edit.is_some());
+    let mut delta = WorldDelta::new(source);
+    let (mut state, mut inputs, mut actions, mut emptied) = (start.clone(), Vec::new(), Vec::new(), None);
+    let mut first_touch = (!edits && goal.touched(start, start)).then_some(0u64);
+    for (i, w) in words.iter().enumerate() {
+        let counts = !edits || i + 1 == words.len();
+        let mut still = None;
+        if let Some(op) = w.edit {
+            let a = carried.action(&delta, &state, op, state.t - start.t, w.ticks, &mut emptied)?;
+            if op.holds_still() { still = Some((f32::from_bits(a[7] as u32), f32::from_bits(a[8] as u32))); }
+            actions.extend(a);
+        }
+        let mut touched = false;
+        for elapsed in 0..w.ticks {
+            if let Some(op) = w.edit.filter(|op| op.lands_at(w.ticks) == elapsed) { op.apply(&mut delta); }
+            let before = state.bounding_box();
+            let program = &programs[w.program as usize];
+            inputs.extend(if edits { tick(&delta,program,&mut state,elapsed,w.args,still)? } else { tick(source,program,&mut state,elapsed,w.args,None)? });
+            touched |= goal.touched_boxes(before, state.bounding_box());
+            if touched && counts && still.is_none() { first_touch.get_or_insert(state.t - start.t); }
+        }
+        if counts && still.is_some() && (touched || goal.touched(&state, &state)) { first_touch.get_or_insert(state.t - start.t); }
+    }
     if predicted_ticks > 0 && first_touch != Some(predicted_ticks) {
         return Err(format!("replay deviates: first touch {:?} predicted {}", first_touch, predicted_ticks));
     }
-    Ok(inputs)
+    Ok((inputs, actions))
 }
 
 #[cfg(test)]
@@ -302,5 +335,76 @@ mod tests {
         let answer = plan(&source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),request,&AtomicU64::new(3),&AtomicU64::new(1));
         assert_eq!(answer[0],WORD_PLAN,"{answer:?}"); assert_eq!(answer[2],123);
         let n = answer[8] as usize; assert_eq!(answer[9..9+n],bits); assert!(answer[7]>0); assert_eq!(answer.len(),9+n+answer[7] as usize*3+4);
+    }
+    /// A stone floor (top at y = 1) over nine 16³ sections, and a 2-high stone wall at z = `wall`
+    /// across every received x when given.
+    fn field(wall: Option<i32>) -> Source {
+        let mut source = Source { session:7,revision:1,difficulty:0,regeneration:Some(false),..Source::default() };
+        let palette = vec![("minecraft:air".into(),model("minecraft:air")),("minecraft:stone".into(),model("minecraft:stone"))];
+        for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
+            let indices = (0..4096).map(|i| { let (ly, lz) = (i/256, i/16%16); usize::from(y<0 || y==0 && (ly==0 || z==0 && Some(lz as i32)==wall && ly<=2)) }).collect();
+            source.sections.insert([x,y,z],Section { palette:palette.clone(),indices });
+        } } }
+        source
+    }
+    fn ask(source: &Source, body: Vec<u64>, goal: BlockPos) -> (Vec<u64>, usize) {
+        let state = PlayerState { t:77,position:law::Vec3::new(8.5,1.0,8.5),on_ground:true,main_supporting_block:Some([8,0,8]),food_level:20,saturation:5.0,health:20.0,..PlayerState::default() };
+        let mut meta = vec![7,1,0,0,0,1,body.len() as u64]; meta.extend(body);
+        let answer = plan(source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),Request { state,meta,goal,issue:5,version:3 },&AtomicU64::new(3),&AtomicU64::new(1));
+        let n = answer.get(8).copied().unwrap_or(0) as usize;
+        (answer, n)
+    }
+    #[test]
+    fn source_keeps_the_canonical_state_of_palettes_and_edits() {
+        let mut source = Source::default(); delta(&mut source,&[0,7,1,0,2]).unwrap();
+        let mut section = vec![1,7,2,0,0,0,3]; text(&mut section,"minecraft:air"); text(&mut section,"minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]"); text(&mut section,"minecraft:stone");
+        section.extend((0..4096).map(|i| [1,2].get(i).copied().unwrap_or(0)));
+        delta(&mut source,&section).unwrap();
+        let door = StateId::parse("minecraft:oak_door",|p| match p { "facing"=>Some("north"),"half"=>Some("lower"),"hinge"=>Some("left"),"open"=>Some("false"),"powered"=>Some("false"),_=>None }).unwrap();
+        assert_eq!(source.state_id([0,0,0]),Some(door)); assert_eq!(source.state_id([2,0,0]),StateId::parse("minecraft:air",|_| None).ok());
+        let mut edit = vec![2,7,3,0,0,0]; text(&mut edit,"minecraft:oak_door[facing=north,half=lower,hinge=left,open=true,powered=false]");
+        delta(&mut source,&edit).unwrap();
+        assert_eq!(source.state_id([0,0,0]),plan::kit::toggle_open_state(door)); assert!(source.state_id([0,0,16]).is_none());
+        let gs = plan::source::GeneratorSuperflatSource::from_world(&source,([0,0,0],[15,15,15]),[1,0,0]);
+        assert_eq!(gs.unwrap().state_id([0,0,0]),plan::kit::toggle_open_state(door),"the corridor sees the live state");
+    }
+    #[test]
+    fn carried_kit_on_flat_ground_sends_the_bare_word_plan() {
+        let source = field(None);
+        let (bare, n) = ask(&source, vec![123,125], [8,0,24]);
+        let hotbar = [crate::kit_wire::tests::PICK, "{count:64,id:\"minecraft:stone\"}", "{}", "{}", "{}", "{}", "{}", "{}", "{}"];
+        let (kit, _) = ask(&source, crate::kit_wire::tests::body("minecraft:overworld","survival",hotbar,"{}",0), [8,0,24]);
+        assert_eq!(bare[0],WORD_PLAN,"{bare:?}"); assert_eq!(kit[0],WORD_PLAN,"{kit:?}");
+        assert_eq!(bare[5..],kit[5..],"identical words, inputs and hull"); assert_eq!(bare.len(),9+n+bare[7] as usize*3+4);
+    }
+    #[test]
+    fn walled_field_sends_kit_plan_with_one_click_or_hold_per_edit() {
+        let source = field(Some(12));
+        let hotbar = [crate::kit_wire::tests::PICK, "{count:64,id:\"minecraft:stone\"}", "{}", "{}", "{}", "{}", "{}", "{}", "{}"];
+        let (bare, _) = ask(&source, vec![123,125], [8,0,14]);
+        assert_eq!(bare[0],REFUSAL,"bare legs cannot cross a 2-high wall");
+        let (a, n) = ask(&source, crate::kit_wire::tests::body("minecraft:overworld","survival",hotbar,"{}",0), [8,0,14]);
+        assert_eq!(a[0],KIT_PLAN,"{}",String::from_utf8_lossy(&a[4..].iter().map(|&b| b as u8).collect::<Vec<_>>()));
+        let count = a[7] as usize; let at = 9+n+count*3; let k = a[at] as usize;
+        assert_eq!(a.len(),at+1+k*crate::kit_wire::ACTION_WORDS+4,"layout: header, bits, inputs, actions, hull");
+        assert!(k >= 2,"an edit and its restore");
+        println!("NATIVE_KIT_PLAN wall=2-high T={count} actions={k} words={}",a.len());
+        let mut world = std::collections::HashMap::new();
+        for r in a[at+1..at+1+k*crate::kit_wire::ACTION_WORDS].chunks(crate::kit_wire::ACTION_WORDS) {
+            let (tick, slot, op, face) = (r[0] as usize, r[1], r[2], r[6] as usize);
+            let pos = [r[3] as i64 as i32, r[4] as i64 as i32, r[5] as i64 as i32];
+            assert!(tick < count && face < 6, "{r:?}");
+            let input = &a[9+n+tick*3..9+n+tick*3+3];
+            match op {
+                crate::kit_wire::OP_BREAK_HOLD => {
+                    assert_eq!(slot,0,"stone breaks with the pickaxe"); assert!(r[9] >= 1);
+                    for t in tick..tick+r[9] as usize { assert_eq!(a[9+n+t*3],0,"a break holds still"); assert_eq!(a[9+n+t*3+1],r[7],"and looks at its block"); }
+                    *world.entry(pos).or_insert(0) -= 1;
+                }
+                crate::kit_wire::OP_PLACE => { assert_eq!((slot, r[9]),(1,1),"stone places from its slot in one click"); let _ = input; *world.entry(pos).or_insert(0) += 1; }
+                other => panic!("unexpected opcode {other}"),
+            }
+        }
+        assert!(world.values().all(|&v| v == 0),"every edited cell is restored: {world:?}");
     }
 }

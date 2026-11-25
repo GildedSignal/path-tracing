@@ -5,7 +5,7 @@ use law::{
     Block, BlockPos, CollisionContext, FluidKind, Inside, PlayerState, VoxelShape, World,
     codec,
 };
-use crate::{Goal, inline::List, lattice, solve::WordStep, state_view::StateAt};
+use crate::{Goal, KitOp, inline::List, kit::water_source_state, lattice, solve::WordStep, state_view::StateAt};
 
 /// Peaceful-only resource guard with an exact-bits fallback when survival
 /// depends on `food_tick_timer`-gated regeneration.
@@ -119,6 +119,69 @@ pub enum AimRule {
     GoalOffset(i16),
     /// Cardinal multiple of 90° relative to approach frame `rot` (`0=fwd, 1=right, 2=back, 3=left`).
     RelativeCardinal(u8),
+    /// A carried-kit click or hold at a frame-relative cell, moving along a goal-offset yaw.
+    Click(KitTemplate),
+}
+
+/// The verb of a kit word: what the click does, never which block or where in the world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KitVerb {
+    Interact,
+    Break,
+    Place,
+    BucketWater,
+    BucketPowderSnow,
+    BucketPickup,
+}
+
+/// A coordinate-free, rotation-invariant kit action: its cell is `(fwd, up, right)` from the
+/// body's cell in `approach_frame`, its after-state comes from the verb (or, for a `restore`,
+/// from the open obligation at that cell), and the body moves along `GoalOffset(yaw)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct KitTemplate {
+    pub verb: KitVerb,
+    pub fwd: i8,
+    pub up: i8,
+    pub right: i8,
+    pub restore: bool,
+    pub yaw: i16,
+}
+
+impl KitTemplate {
+    /// The template of `op` clicked from `s`, moving along `yaw`.
+    pub fn of(op: KitOp, s: &PlayerState, goal: Goal, yaw: u16, restore: bool) -> Option<Self> {
+        let (_, fwd, right) = approach_frame(s, goal);
+        let p = op.pos();
+        let d = [p[0] - s.position.x.floor() as i32, p[1] - s.position.y.floor() as i32, p[2] - s.position.z.floor() as i32];
+        let verb = match op {
+            KitOp::Interact { .. } => KitVerb::Interact,
+            KitOp::Break { .. } => KitVerb::Break,
+            KitOp::Place { .. } => KitVerb::Place,
+            KitOp::BucketEmpty { after, .. } if after == water_source_state() => KitVerb::BucketWater,
+            KitOp::BucketEmpty { .. } => KitVerb::BucketPowderSnow,
+            KitOp::BucketPickup { .. } => KitVerb::BucketPickup,
+        };
+        let base = AimRule::GoalOffset(0).resolve(s, goal, 0);
+        Some(Self {
+            verb,
+            fwd: i8::try_from(d[0] * fwd[0] + d[2] * fwd[1]).ok()?,
+            up: i8::try_from(d[1]).ok()?,
+            right: i8::try_from(d[0] * right[0] + d[2] * right[1]).ok()?,
+            restore,
+            yaw: yaw.wrapping_sub(base) as i16,
+        })
+    }
+
+    /// The world cell this template clicks from `s`.
+    pub fn cell(self, s: &PlayerState, goal: Goal) -> BlockPos {
+        let (_, fwd, right) = approach_frame(s, goal);
+        let (f, r) = (i32::from(self.fwd), i32::from(self.right));
+        [
+            s.position.x.floor() as i32 + f * fwd[0] + r * right[0],
+            s.position.y.floor() as i32 + i32::from(self.up),
+            s.position.z.floor() as i32 + f * fwd[1] + r * right[1],
+        ]
+    }
 }
 
 impl AimRule {
@@ -130,6 +193,7 @@ impl AimRule {
                 base.wrapping_add(delta as u16)
             }
             Self::RelativeCardinal(k) => u16::from((rot.wrapping_add(k)) & 3) * 16384,
+            Self::Click(t) => Self::GoalOffset(t.yaw).resolve(s, goal, rot),
         }
     }
 
@@ -367,6 +431,8 @@ pub struct Word {
     pub ticks_max: u32,
     /// Universal self-chaining rule: valid whenever exit regime feeds entry regime and makes progress.
     pub self_chains: bool,
+    /// Holds a kit click somewhere inside: only a carried kit runs it.
+    pub clicks: bool,
     pub hits: u64,
     pub ticks_served: u64,
 }
@@ -623,14 +689,18 @@ impl WordStore {
     }
 
     /// Top Zipf-ranked matching words (fine defect -> coarse defect -> general regime head),
-    /// capped at 14 words total.
-    pub fn propose(&self, sig: DefectSig, entry: EntryClass) -> Vec<WordId> {
-        self.collect_matching(sig, entry, 8, 4, 4, 14)
+    /// capped at 14 words total; words with kit clicks only when a kit is carried.
+    pub fn propose(&self, sig: DefectSig, entry: EntryClass, kit: bool) -> Vec<WordId> {
+        let mut out = self.collect_matching(sig, entry, 8, 4, 4, 14);
+        out.retain(|&w| kit || !self.words[w.0].clicks);
+        out
     }
 
-    /// Tight defect-local words for Phase B guidance (fine + coarse only, max 4, no general head).
+    /// Tight defect-local movement words for Phase B guidance (fine + coarse only, max 4, no general head).
     pub fn propose_local(&self, sig: DefectSig, entry: EntryClass) -> Vec<WordId> {
-        self.collect_matching(sig, entry, 4, 4, 0, 4)
+        let mut out = self.collect_matching(sig, entry, 4, 4, 0, 4);
+        out.retain(|&w| !self.words[w.0].clicks);
+        out
     }
 
     /// Record a winning sequence, emerging compounds by frequency and pruning dominated / tail noise.
@@ -665,6 +735,7 @@ impl WordStore {
                     ticks_min: s.ticks,
                     ticks_max: s.ticks,
                     self_chains,
+                    clicks: matches!(s.aim, AimRule::Click(_)),
                     hits: 1,
                     ticks_served: u64::from(s.ticks),
                 });
@@ -672,6 +743,17 @@ impl WordStore {
                 id
             };
             seq.push(id);
+        }
+
+        // A crossing with kit clicks is one motif (an edit means something only with its
+        // restore): it is kept whole, indexed alone at its first step's defect, and offered
+        // only to a carried kit, so movement-only proposals stay as they were.
+        if seq.iter().any(|w| self.words[w.0].clicks) {
+            let cid = self.intern(&seq);
+            self.rebuild_indexes(&[], &[cid]);
+            self.work.words_total = self.words.len() as u64;
+            self.work.compounds_total = self.words.iter().filter(|w| matches!(w.body, WordBody::Compound(_))).count() as u64;
+            return;
         }
 
         // Emerge compounds naturally when adjacent pairs recur (across or within routes).
@@ -697,7 +779,7 @@ impl WordStore {
             if g < 2 && l < 2 {
                 break;
             }
-            let cid = self.intern_compound(pair.0, pair.1);
+            let cid = self.intern(&[pair.0, pair.1]);
             created.push(cid);
             let mut folded = Vec::with_capacity(seq.len());
             let mut i = 0;
@@ -719,11 +801,13 @@ impl WordStore {
         self.work.compounds_total = self.words.iter().filter(|w| matches!(w.body, WordBody::Compound(_))).count() as u64;
     }
 
-    fn intern_compound(&mut self, a: WordId, b: WordId) -> WordId {
+    /// The compound of `parts` in order, flattened to atomics; its regime runs from the first
+    /// part's entry to the last part's exit.
+    fn intern(&mut self, parts: &[WordId]) -> WordId {
         let mut flat = Vec::new();
-        for &id in &[a, b] {
+        for &id in parts {
             match &self.words[id.0].body {
-                WordBody::Compound(parts) => flat.extend_from_slice(parts),
+                WordBody::Compound(atoms) => flat.extend_from_slice(atoms),
                 WordBody::Atomic { .. } => flat.push(id),
             }
         }
@@ -733,26 +817,27 @@ impl WordStore {
             w.ticks_served += u64::from(w.ticks_min.max(1));
             return cid;
         }
-        let wa = self.words[a.0].clone();
-        let wb = self.words[b.0].clone();
+        let (first, last) = (self.words[parts[0].0].clone(), self.words[parts[parts.len() - 1].0].clone());
+        let ps = || parts.iter().map(|p| &self.words[p.0]);
+        let ticks_min = ps().fold(0u32, |a, w| a.saturating_add(w.ticks_min));
+        let ticks_max = ps().fold(0u32, |a, w| a.saturating_add(w.ticks_max));
+        let delta_along = ps().map(|w| w.delta_along).sum::<f32>();
+        let delta_y = ps().fold(0i8, |a, w| a.saturating_add(w.delta_y));
+        let clicks = ps().any(|w| w.clicks);
         let cid = WordId(self.words.len());
-        let ticks_min = wa.ticks_min.saturating_add(wb.ticks_min);
-        let ticks_max = wa.ticks_max.saturating_add(wb.ticks_max);
-        let delta_along = wa.delta_along + wb.delta_along;
-        let delta_y = wa.delta_y.saturating_add(wb.delta_y);
-        let self_chains = wa.entry.compatible(wb.exit) && (delta_along > 0.25 || delta_y != 0);
         self.words.push(Word {
             id: cid,
-            entry: wa.entry,
-            exit: wb.exit,
-            defect_fine: wa.defect_fine,
-            defect_coarse: wa.defect_coarse,
+            entry: first.entry,
+            exit: last.exit,
+            defect_fine: first.defect_fine,
+            defect_coarse: first.defect_coarse,
             body: WordBody::Compound(flat.clone()),
             delta_along,
             delta_y,
             ticks_min,
             ticks_max,
-            self_chains,
+            self_chains: first.entry.compatible(last.exit) && (delta_along > 0.25 || delta_y != 0),
+            clicks,
             hits: 2,
             ticks_served: u64::from(ticks_min.max(1)) * 2,
         });

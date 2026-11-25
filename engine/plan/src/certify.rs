@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use law::{
     BlockPos, PlayerState, World,
     codec::{self, LabelId, proof::Refusal},
-    footprint::RecordingWorld,
+    footprint::{Footprint, RecordingWorld},
     sim::WorldDelta,
 };
 use words::Program;
@@ -19,21 +19,11 @@ use crate::{
     word_store::{CachedRoute, Guard, NoRegen, Route, motion_key},
 };
 
-fn apply_op<W: World>(delta: &mut WorldDelta<'_, W>, op: KitOp) {
-    match op {
-        KitOp::Interact { pos, after, partner } => {
-            delta.set(pos, after);
-            if let Some((pp, pa)) = partner {
-                delta.set(pp, pa);
-            }
-        }
-        KitOp::Break { pos, after, .. }
-        | KitOp::Place { pos, after }
-        | KitOp::BucketEmpty { pos, after }
-        | KitOp::BucketPickup { pos, after } => {
-            delta.set(pos, after);
-        }
+fn merge(into: &mut Footprint, from: Footprint) {
+    for (p, m) in from.reads {
+        *into.reads.entry(p).or_default() |= m;
     }
+    into.swept.extend(from.swept);
 }
 
 pub(crate) fn certify_route<W: World>(
@@ -52,7 +42,7 @@ pub(crate) fn certify_route<W: World>(
     let has_edits = raw_steps.iter().any(|s| s.edit.is_some());
     let mut delta = has_edits.then(|| WorldDelta::new(&obs));
     let mut edited_positions: Vec<BlockPos> = Vec::new();
-    let mut applied_ops: Vec<(usize, KitOp, bool)> = Vec::new();
+    let mut applied_ops: Vec<(usize, KitOp)> = Vec::new();
     let mut state = from.clone();
     let mut certified_steps: List<WordStep, 12> = List::new();
     let mut touch: Option<u64> = (!has_edits && goal.touched(from, from)).then_some(0);
@@ -65,58 +55,64 @@ pub(crate) fn certify_route<W: World>(
         let step_start = state.clone();
         let program = &programs[step.program as usize];
         let held = program.held_input(step.args);
-        let is_break = matches!(step.edit, Some(KitOp::Break { .. }));
-        if let (Some(op), Some(d)) = (step.edit, delta.as_mut()) {
-            match op {
-                KitOp::Interact { pos, partner, .. } => {
-                    edited_positions.push(pos);
-                    if let Some((pp, _)) = partner { edited_positions.push(pp); }
-                }
-                KitOp::Break { pos, .. }
-                | KitOp::Place { pos, .. }
-                | KitOp::BucketEmpty { pos, .. }
-                | KitOp::BucketPickup { pos, .. } => edited_positions.push(pos),
-            }
-            if !is_break {
-                apply_op(d, op);
-                applied_ops.push((idx, op, true));
-            }
+        let is_break = step.edit.is_some_and(KitOp::holds_still);
+        if let Some(op) = step.edit {
+            edited_positions.push(op.pos());
+            if let KitOp::Interact { partner: Some((pp, _)), .. } = op { edited_positions.push(pp); }
         }
         let is_last_step = idx + 1 == raw_steps.len();
         let mut actual_ticks = 0u32;
         let mut touched_during_step = false;
-        let fp = if let Some(d) = delta.as_ref() {
-            let rec = RecordingWorld::new(d);
-            for elapsed in 0..step.ticks {
-                let before_box = state.bounding_box();
-                let input = if is_break {
-                    Default::default()
-                } else {
-                    match held {
-                        Some(inp) => inp,
-                        None => program
-                            .select(&rec, &state, elapsed, step.args)
-                            .ok_or((Refusal::StateOrContext, "select-delta"))?
-                            .1,
-                    }
-                };
-                if law::try_tick(&mut state, &rec, &input).is_err() || obs.check().is_err() {
-                    return Err((Refusal::Coverage, "tick-delta"));
+        let fp = if let Some(d) = delta.as_mut() {
+            // The edit lands before one tick's physics (`KitOp::lands_at`): record the ticks
+            // before it and the ticks from it in two passes over the delta.
+            let land = step.edit.map(|op| (op, op.lands_at(step.ticks)));
+            let mut fp = Footprint::default();
+            let mut elapsed = 0u32;
+            'segments: loop {
+                if let Some((op, _)) = land.filter(|&(_, at)| at == elapsed) {
+                    op.apply(d);
+                    applied_ops.push((idx, op));
                 }
-                *work_certify_ticks += 1;
-                actual_ticks += 1;
-                if state.health <= 0.0 {
-                    return Err((Refusal::StateOrContext, "dead-delta"));
-                }
-                if goal.touched_boxes(before_box, state.bounding_box()) {
-                    touched_during_step = true;
-                    if is_last_step && !is_break {
-                        touch.get_or_insert(state.t - from.t);
-                        break;
+                let seg_end = match land { Some((_, at)) if at > elapsed => at, _ => step.ticks };
+                let rec = RecordingWorld::new(&*d);
+                while elapsed < seg_end {
+                    let before_box = state.bounding_box();
+                    let input = if is_break {
+                        Default::default()
+                    } else {
+                        match held {
+                            Some(inp) => inp,
+                            None => program
+                                .select(&rec, &state, elapsed, step.args)
+                                .ok_or((Refusal::StateOrContext, "select-delta"))?
+                                .1,
+                        }
+                    };
+                    if law::try_tick(&mut state, &rec, &input).is_err() || obs.check().is_err() {
+                        return Err((Refusal::Coverage, "tick-delta"));
                     }
+                    *work_certify_ticks += 1;
+                    actual_ticks += 1;
+                    elapsed += 1;
+                    if state.health <= 0.0 {
+                        return Err((Refusal::StateOrContext, "dead-delta"));
+                    }
+                    if goal.touched_boxes(before_box, state.bounding_box()) {
+                        touched_during_step = true;
+                        if is_last_step && !is_break {
+                            touch.get_or_insert(state.t - from.t);
+                            merge(&mut fp, rec.take());
+                            break 'segments;
+                        }
+                    }
+                }
+                merge(&mut fp, rec.take());
+                if elapsed >= step.ticks {
+                    break;
                 }
             }
-            rec.take()
+            fp
         } else {
             let rec = RecordingWorld::new(&obs);
             for elapsed in 0..step.ticks {
@@ -143,14 +139,8 @@ pub(crate) fn certify_route<W: World>(
             }
             rec.take()
         };
-        if is_break {
-            if let (Some(op), Some(d)) = (step.edit, delta.as_mut()) {
-                apply_op(d, op);
-                applied_ops.push((idx, op, false));
-                if is_last_step && (touched_during_step || goal.touched(&state, &state)) {
-                    touch.get_or_insert(state.t - from.t);
-                }
-            }
+        if is_break && is_last_step && (touched_during_step || goal.touched(&state, &state)) {
+            touch.get_or_insert(state.t - from.t);
         }
 
         let mut step_lo = [i32::MAX; 3];
@@ -183,12 +173,15 @@ pub(crate) fn certify_route<W: World>(
             probe.health = start_h;
             if has_edits {
                 let mut nr_delta = WorldDelta::new(&nr);
-                for &(prev_idx, prev_op, _) in &applied_ops {
-                    if prev_idx < idx || (prev_idx == idx && !is_break) {
-                        apply_op(&mut nr_delta, prev_op);
+                for &(prev_idx, prev_op) in &applied_ops {
+                    if prev_idx < idx {
+                        prev_op.apply(&mut nr_delta);
                     }
                 }
                 for elapsed in 0..actual_ticks {
+                    if let Some(op) = step.edit.filter(|op| op.lands_at(step.ticks) == elapsed) {
+                        op.apply(&mut nr_delta);
+                    }
                     let input = if is_break {
                         Default::default()
                     } else {
