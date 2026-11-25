@@ -281,15 +281,9 @@ pub fn arrow_free_tick(
         return arrow.life < ARROW_DESPAWN_TICKS;
     }
     arrow.in_ground_time = 0;
-    let d = arrow.vel;
-    if in_water_before {
-        crate::basis::body::ARROW.drag(&mut arrow.vel, true);
-    }
-    arrow.pos = arrow.pos.plus(d);
-    if !in_water_after {
-        crate::basis::body::ARROW.drag(&mut arrow.vel, false);
-    }
-    crate::basis::body::ARROW.gravity(&mut arrow.vel, false);
+    use crate::basis::body::{Medium, ARROW};
+    let medium = Medium::Crossing { water_before: in_water_before, water_after: in_water_after };
+    arrow.pos = ARROW.advance(&mut arrow.vel, medium, |delta| arrow.pos.plus(delta));
     true
 }
 

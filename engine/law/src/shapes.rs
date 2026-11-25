@@ -16,6 +16,14 @@ impl Vec3 {
         }
     }
 
+    pub(crate) fn block_corner([x, y, z]: crate::BlockPos) -> Self {
+        Self::new(x as f64, y as f64, z as f64)
+    }
+
+    pub(crate) fn block_bottom_center([x, y, z]: crate::BlockPos) -> Self {
+        Self::new(x as f64 + 0.5, y as f64, z as f64 + 0.5)
+    }
+
     // Vec3.lengthSqr
     pub fn length_sqr(self) -> f64 {
         self.x * self.x + self.y * self.y + self.z * self.z
@@ -66,7 +74,7 @@ impl Vec3 {
     }
 
     // Vec3.with
-    pub fn with(mut self, axis: Axis, value: f64) -> Self {
+    pub const fn with(mut self, axis: Axis, value: f64) -> Self {
         match axis {
             Axis::X => self.x = value,
             Axis::Y => self.y = value,
@@ -98,7 +106,67 @@ pub struct Aabb {
     pub min: Vec3,
     pub max: Vec3
 }
+pub(crate) const ENTITY_PUSH_PADDING: f64 = 0.01;
+
 impl Aabb {
+    pub const UNIT: Self = Self::ordered(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+
+    /// Bounds already ordered, as in the constant voxel dimensions from the jar.
+    pub const fn ordered(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Self {
+        Self { min: Vec3::new(x0, y0, z0), max: Vec3::new(x1, y1, z1) }
+    }
+
+    pub const fn unit_face(face: crate::neighbor::Direction, thickness: f64) -> Self {
+        Self::UNIT.on_unit_face(face, thickness)
+    }
+
+    pub(crate) const fn on_unit_face(self, face: crate::neighbor::Direction, thickness: f64) -> Self {
+        let (lo, hi) = if face.axis_step() > 0 { (1.0 - thickness, 1.0) } else { (0.0, thickness) };
+        Self { min: self.min.with(face.axis(), lo), max: self.max.with(face.axis(), hi) }
+    }
+
+    pub(crate) const fn block_column(width: f64, bottom: f64, top: f64) -> Self {
+        let half = width / 2.0;
+        let lo = (8.0 - half) / 16.0;
+        let hi = (8.0 + half) / 16.0;
+        Self::ordered(lo, bottom / 16.0, lo, hi, top / 16.0, hi)
+    }
+
+    pub(crate) fn expand_axis(self, axis: Axis, distance: f64) -> Self {
+        Self {
+            min: self.min.with(axis, self.min.get(axis) + distance.min(0.0)),
+            max: self.max.with(axis, self.max.get(axis) + distance.max(0.0)),
+        }
+    }
+
+    /// Shrinks one side per axis. As in the Java constructor, crossed ends are sorted.
+    pub fn contract(self, delta: Vec3) -> Self {
+        let (mut min, mut max) = (self.min, self.max);
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let d = delta.get(axis);
+            if d < 0.0 {
+                min = min.with(axis, min.get(axis) - d);
+            } else if d > 0.0 {
+                max = max.with(axis, max.get(axis) - d);
+            }
+        }
+        Self::new(min.x, min.y, min.z, max.x, max.y, max.z)
+    }
+
+    pub(crate) fn hull(self, other: Self) -> Self {
+        Self::new(
+            self.min.x.min(other.min.x), self.min.y.min(other.min.y), self.min.z.min(other.min.z),
+            self.max.x.max(other.max.x), self.max.y.max(other.max.y), self.max.z.max(other.max.z),
+        )
+    }
+
+    pub(crate) fn overlap(self, other: Self) -> Self {
+        Self {
+            min: Vec3::new(self.min.x.max(other.min.x), self.min.y.max(other.min.y), self.min.z.max(other.min.z)),
+            max: Vec3::new(self.max.x.min(other.max.x), self.max.y.min(other.max.y), self.max.z.min(other.max.z)),
+        }
+    }
+
     // AABB.<init>
     pub fn new(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Self {
         Self {
@@ -110,6 +178,11 @@ impl Aabb {
     // EntityDimensions.makeBoundingBox
     pub fn player(p: Vec3, height: f32) -> Self {
         let r = (0.6f32 / 2.0f32) as f64;
+        Self::new(p.x - r, p.y, p.z - r, p.x + r, p.y + height as f64, p.z + r)
+    }
+
+    pub(crate) fn from_bottom(p: Vec3, width: f32, height: f32) -> Self {
+        let r = (width / 2.0f32) as f64;
         Self::new(p.x - r, p.y, p.z - r, p.x + r, p.y + height as f64, p.z + r)
     }
 
@@ -143,6 +216,10 @@ impl Aabb {
     pub fn clip(self, from: Vec3, to: Vec3) -> Option<Vec3> {
         let mut t = 1.0;
         crate::basis::ray::clip_face(self, from, to, &mut t, None).map(|_| from.plus(to.minus(from).scale(t)))
+    }
+
+    pub(crate) fn clip_or_inside(self, from: Vec3, to: Vec3) -> Option<Vec3> {
+        if self.contains(from) { Some(from) } else { self.clip(from, to) }
     }
 
     // AABB.collidedAlongVector
@@ -315,7 +392,7 @@ impl SharedCollider {
     pub fn view(&self)->ShapeView<'_> { ShapeView {shape:&self.shape,offset:self.offset} }
 }
 
-impl ShapeView<'_> {
+impl<'a> ShapeView<'a> {
     pub(crate) fn owned(self) -> VoxelShape {
         match self.offset {
             Some(offset) => self.shape.moved(offset),
@@ -323,19 +400,24 @@ impl ShapeView<'_> {
         }
     }
 
-    pub(crate) fn grid_cells(self) -> Vec<(Aabb, bool)> {
-        let mut cells = Vec::new();
-        let [nx, ny, nz] = self.sizes();
-        for x in 0..nx {
-            for y in 0..ny {
-                for z in 0..nz {
-                    let bounds = Aabb::new(self.coord(0, x), self.coord(1, y), self.coord(2, z),
-                        self.coord(0, x+1), self.coord(1, y+1), self.coord(2, z+1));
-                    cells.push((bounds, self.is_full([x, y, z])));
-                }
-            }
-        }
-        cells
+    pub(crate) fn grid_cells(self) -> impl Iterator<Item = (Aabb, bool)> + 'a {
+        self.indices().map(move |([x, y, z], full)| {
+            let bounds = Aabb::new(self.coord(0, x), self.coord(1, y), self.coord(2, z),
+                self.coord(0, x + 1), self.coord(1, y + 1), self.coord(2, z + 1));
+            (bounds, full)
+        })
+    }
+
+    fn indices(self) -> impl Iterator<Item = ([usize; 3], bool)> + 'a {
+        let [_, ny, nz] = self.sizes();
+        self.shape.full.iter().copied().enumerate().map(move |(i, full)| {
+            ([i / nz / ny, i / nz % ny, i % nz], full)
+        })
+    }
+
+    pub(crate) fn max_y(self) -> f64 {
+        self.indices().filter(|&(_, full)| full)
+            .map(|(p, _)| self.coord(1, p[1] + 1)).fold(f64::NEG_INFINITY, f64::max)
     }
 
     pub(crate) fn shared(self)->SharedCollider { SharedCollider { shape:self.shape.clone(),offset:self.offset } }

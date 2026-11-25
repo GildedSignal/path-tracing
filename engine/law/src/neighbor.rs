@@ -69,6 +69,11 @@ impl Direction {
         }
     }
 
+    pub(crate) fn vector(self, length: f64) -> crate::Vec3 {
+        let [x, y, z] = self.step();
+        crate::Vec3::new(x as f64 * length, y as f64 * length, z as f64 * length)
+    }
+
     #[inline]
     pub const fn opposite(self) -> Direction {
         match self {

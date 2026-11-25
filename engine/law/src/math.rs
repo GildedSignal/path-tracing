@@ -78,6 +78,11 @@ pub fn wrap_degrees(value: f32) -> f32 {
     f
 }
 
+pub(crate) fn sin_cos_degrees(angle: f32) -> (f32, f32) {
+    let rad = (angle * 0.017453292f32) as f64;
+    (sin(rad), cos(rad))
+}
+
 // Entity.calculateViewVector(FF), argument order (yaw, pitch)
 pub fn calculate_view_vector(yaw: f32, pitch: f32) -> crate::Vec3 {
     let f = pitch * 0.017453292f32;

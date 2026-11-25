@@ -333,6 +333,10 @@ pub struct CollisionContext {
     pub leather_boots: bool
 }
 impl CollisionContext {
+    pub const fn empty(feet_y: f64) -> Self {
+        Self { feet_y, descending: false, fall_distance: 0.0, leather_boots: false }
+    }
+
     // EntityCollisionContext.<init>
     pub fn of(state: &PlayerState) -> Self {
         Self {

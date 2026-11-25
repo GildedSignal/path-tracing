@@ -173,10 +173,14 @@ pub struct MiningWork {
     pub start_tick: i32,
 }
 
+fn progress_at(per_tick: f32, start: i32, now: i32) -> f32 {
+    per_tick * now.wrapping_sub(start).wrapping_add(1) as f32
+}
+
+#[cfg(test)]
 impl MiningWork {
     fn progress(self, game_ticks: i32, sample: MiningSample) -> f32 {
-        let ticks = game_ticks.wrapping_sub(self.start_tick).wrapping_add(1);
-        sample.progress() * ticks as f32
+        progress_at(sample.progress(), self.start_tick, game_ticks)
     }
 }
 
@@ -716,8 +720,7 @@ pub fn handle_block_break_action(
             let f = if input.target_is_air {
                 0.0f32
             } else {
-                let ticks = clock.game_ticks.wrapping_sub(clock.destroy_progress_start).wrapping_add(1);
-                input.destroy_progress * (ticks as f32)
+                progress_at(input.destroy_progress, clock.destroy_progress_start, clock.game_ticks)
             };
             if !input.target_is_air && f >= 0.7f32 {
                 clock.is_destroying_block = false;

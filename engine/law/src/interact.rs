@@ -215,6 +215,16 @@ pub enum AttachFace {
     Ceiling,
 }
 
+impl AttachFace {
+    pub(crate) const fn connected_direction(self, facing: Direction) -> Direction {
+        match self {
+            Self::Ceiling => Direction::Down,
+            Self::Floor => Direction::Up,
+            Self::Wall => facing,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DoorHalf {
     Lower,
@@ -232,11 +242,7 @@ pub struct LeverState {
 impl LeverState {
     /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection` (`@132-154`).
     pub const fn connected_direction(self) -> Direction {
-        match self.face {
-            AttachFace::Ceiling => Direction::Down,
-            AttachFace::Floor => Direction::Up,
-            AttachFace::Wall => self.facing,
-        }
+        self.face.connected_direction(self.facing)
     }
 
     /// `LeverBlock.updateNeighbours`: support cell is `pos.relative(getConnectedDirection(state).opposite())`.
@@ -246,16 +252,12 @@ impl LeverState {
 
     /// `LeverBlock.getSignal` (`@0-22`): `15` to all sides when powered.
     pub const fn signal(self) -> u8 {
-        if self.powered { 15 } else { 0 }
+        crate::redstone::binary_signal(self.powered)
     }
 
     /// `LeverBlock.getDirectSignal` (`@0-29`): `15` only toward `getConnectedDirection`.
     pub const fn direct_signal(self, dir: Direction) -> u8 {
-        if self.powered && self.connected_direction() as u8 == dir as u8 {
-            15
-        } else {
-            0
-        }
+        crate::redstone::signal_on_face(self.signal(), self.connected_direction(), dir)
     }
 }
 

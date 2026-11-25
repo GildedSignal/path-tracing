@@ -409,6 +409,18 @@ impl SimLivingEntity {
         )
     }
 
+    fn piston_body(&self, piston: BlockPos) -> PistonEntity {
+        PistonEntity {
+            aabb: self.aabb(),
+            position: self.position,
+            delta_movement: self.velocity,
+            push_reaction: self.push_reaction,
+            on_ground: self.on_ground,
+            server_player: self.is_server_player,
+            supported_by_block: self.supported_by_block == Some(piston),
+        }
+    }
+
     pub fn as_contact_entity(&self) -> ContactEntity {
         ContactEntity {
             position: self.position,
@@ -763,42 +775,22 @@ impl<'a, W: World> SimWorld<'a, W> {
         moved_by_piston: bool,
     ) {
         match old_cell.kind() {
-            CellState::Button(btn) => {
-                let mut events = Vec::new();
-                world_hooks::button_after_removal(btn, pos, moved_by_piston, &mut events);
-                self.apply_cell_events(queue, &events);
-            }
-            CellState::PressurePlate(plate) => {
-                let mut events = Vec::new();
-                world_hooks::pressure_plate_after_removal(plate, pos, moved_by_piston, &mut events);
-                self.apply_cell_events(queue, &events);
-            }
-            CellState::TripwireWire(wire) => {
-                let mut tw = Pending::new(self);
-                let mut evs = Vec::new();
-                world_hooks::tripwire_after_removal(&mut tw, pos, wire, moved_by_piston, &mut evs);
-                self.apply_cell_events(queue.as_deref_mut(), &evs);
-            }
-            CellState::TripwireHook(hook) => {
-                let mut tw = Pending::new(self);
-                let mut evs = Vec::new();
-                world_hooks::tripwire_hook_after_removal(
-                    &mut tw,
-                    pos,
-                    hook,
-                    moved_by_piston,
-                    &mut evs,
-                );
-                self.apply_cell_events(queue.as_deref_mut(), &evs);
-            }
             CellState::Lever(lever) if !moved_by_piston && lever.powered => {
-                self.enqueue_update_neighbors(queue.as_deref_mut(), pos, lever.block_id, None);
-                self.enqueue_update_neighbors(
-                    queue,
-                    lever.support_pos(pos),
-                    lever.block_id,
-                    None,
-                );
+                for target in [pos, lever.support_pos(pos)] {
+                    self.enqueue_update_neighbors(queue.as_deref_mut(), target, lever.block_id, None);
+                }
+            }
+            sensor @ (CellState::Button(_) | CellState::PressurePlate(_) |
+            CellState::TripwireWire(_) | CellState::TripwireHook(_)) => {
+                let mut events = Vec::new();
+                match sensor {
+                    CellState::Button(button) => world_hooks::button_after_removal(button, pos, moved_by_piston, &mut events),
+                    CellState::PressurePlate(plate) => world_hooks::pressure_plate_after_removal(plate, pos, moved_by_piston, &mut events),
+                    CellState::TripwireWire(wire) => world_hooks::tripwire_after_removal(&mut Pending::new(self), pos, wire, moved_by_piston, &mut events),
+                    CellState::TripwireHook(hook) => world_hooks::tripwire_hook_after_removal(&mut Pending::new(self), pos, hook, moved_by_piston, &mut events),
+                    _ => unreachable!(),
+                }
+                self.apply_cell_events(queue, &events);
             }
             CellState::RedstoneWire { .. } if !moved_by_piston => {
                 for dir in Direction::ALL {
@@ -1160,59 +1152,41 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
     }
 
-    pub fn get_direct_signal_to(&self, pos: BlockPos, wire_should_signal: bool) -> u8 {
-        let mut best = 0u8;
+    fn neighbor_signal(
+        pos: BlockPos,
+        except: Option<Direction>,
+        limit: u8,
+        mut signal: impl FnMut(BlockPos, Direction) -> u8,
+    ) -> u8 {
+        let mut best = 0;
         for dir in Direction::ALL {
-            let sig = self.get_direct_signal(dir.relative_by(pos, 1), dir, wire_should_signal);
-            if sig >= 15 {
-                return 15;
-            }
-            if sig > best {
-                best = sig;
+            if Some(dir) != except {
+                best = best.max(signal(dir.relative(pos), dir));
+                if best >= limit {
+                    return limit;
+                }
             }
         }
         best
+    }
+
+    pub fn get_direct_signal_to(&self, pos: BlockPos, wire_should_signal: bool) -> u8 {
+        Self::neighbor_signal(pos, None, 15, |p, d| self.get_direct_signal(p, d, wire_should_signal))
     }
 
     pub fn get_best_neighbor_signal(&self, pos: BlockPos, wire_should_signal: bool) -> u8 {
-        let mut best = 0u8;
-        for dir in Direction::ALL {
-            let sig = self.get_signal(dir.relative_by(pos, 1), dir, wire_should_signal);
-            if sig >= 15 {
-                return 15;
-            }
-            if sig > best {
-                best = sig;
-            }
-        }
-        best
+        Self::neighbor_signal(pos, None, 15, |p, d| self.get_signal(p, d, wire_should_signal))
     }
 
     pub fn has_neighbor_signal(&self, pos: BlockPos) -> bool {
-        for dir in Direction::ALL {
-            if self.get_signal(dir.relative_by(pos, 1), dir, true) > 0 {
-                return true;
-            }
-        }
-        false
+        Self::neighbor_signal(pos, None, 1, |p, d| self.get_signal(p, d, true)) != 0
     }
 
     fn piston_has_neighbor_signal(&self, pos: BlockPos, facing: Direction) -> bool {
-        for dir in Direction::ALL {
-            if dir != facing && self.get_signal(dir.relative_by(pos, 1), dir, true) > 0 {
-                return true;
-            }
-        }
-        if self.get_signal(pos, Direction::Down, true) > 0 {
-            return true;
-        }
-        let above = Direction::Up.relative_by(pos, 1);
-        for dir in Direction::ALL {
-            if dir != Direction::Down && self.get_signal(dir.relative_by(above, 1), dir, true) > 0 {
-                return true;
-            }
-        }
-        false
+        let signal = |p, d| self.get_signal(p, d, true);
+        Self::neighbor_signal(pos, Some(facing), 1, signal) != 0
+            || signal(pos, Direction::Down) != 0
+            || Self::neighbor_signal(Direction::Up.relative(pos), Some(Direction::Down), 1, signal) != 0
     }
 
     fn update_redstone_wire(
@@ -1709,15 +1683,8 @@ impl<'a, W: World> SimWorld<'a, W> {
                             TriggerAction::SetBlock { flags } => {
                                 let new_extended = ev.event_id == piston_trigger::EXTEND;
                                 if flags == set_block_flags::RETRACT_BODY_TO_MOVING {
-                                    let carried =
-                                        cell.with_bool("extended", false);
-                                    let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[dir as usize])]);
-                                    self.set_cell_with_flags(ev.pos, mp, flags);
-                                    self.insert_moving_piston(
-                                        ev.pos,
-                                        MovingPiston::new(dir, false, true),
-                                        carried,
-                                    );
+                                    self.install_moving_piston(ev.pos, MovingPiston::new(dir, false, true),
+                                        cell.with_bool("extended", false), sticky, flags);
                                 } else {
                                     let next =
                                         cell.with_bool("extended", new_extended);
@@ -1749,7 +1716,9 @@ impl<'a, W: World> SimWorld<'a, W> {
         ran
     }
 
-    fn insert_moving_piston(&mut self, pos: BlockPos, moving: MovingPiston, carried: StateId) {
+    fn install_moving_piston(&mut self, pos: BlockPos, moving: MovingPiston, carried: StateId, sticky: bool, flags: i32) {
+        let state = Self::piston_part("moving_piston", moving.direction, sticky);
+        self.set_cell_with_flags(pos, state, flags);
         if !self.moving_pistons.contains_key(&pos) {
             self.moving_piston_order.push(pos);
         }
@@ -1762,6 +1731,11 @@ impl<'a, W: World> SimWorld<'a, W> {
                 last_ticked: self.game_time,
             },
         );
+    }
+
+    fn piston_part(name: &str, facing: Direction, sticky: bool) -> StateId {
+        let material = if sticky { "sticky" } else { "normal" };
+        StateId::of(BlockId::of(name), &[("type", material), ("facing", DIRECTION[facing as usize])])
     }
 
     fn execute_piston_move(
@@ -1782,28 +1756,26 @@ impl<'a, W: World> SimWorld<'a, W> {
         if !resolver.resolve(&*self) {
             return false;
         }
-        let to_push: Vec<BlockPos> = resolver.to_push().to_vec();
-        let to_destroy: Vec<BlockPos> = resolver.to_destroy().to_vec();
+        let to_push = resolver.to_push();
+        let to_destroy = resolver.to_destroy();
         let push_dir = resolver.push_direction();
 
         let mut map: HashMap<BlockPos, StateId> = HashMap::with_capacity(to_push.len());
         let mut orig_push_cells = Vec::with_capacity(to_push.len());
-        for &p in &to_push {
+        for &p in to_push {
             let c = self.cell(p);
             orig_push_cells.push(c.clone());
             map.insert(p, c);
         }
 
-        let mut update_positions = Vec::with_capacity(to_push.len() + to_destroy.len());
-        let mut update_old_cells = Vec::with_capacity(to_push.len() + to_destroy.len());
+        let mut notifications = Vec::with_capacity(to_push.len() + to_destroy.len());
 
         // Destroy frontier blocks first (reverse order)
         for &dpos in to_destroy.iter().rev() {
             let old = self.cell(dpos);
             let air = StateId::AIR;
             self.set_cell_with_flags(dpos, air, set_block_flags::DESTROYED_TO_AIR);
-            update_positions.push(dpos);
-            update_old_cells.push(old);
+            notifications.push((dpos, old.block()));
         }
 
         // Move pushed blocks in reverse order into MovingPiston destinations
@@ -1811,27 +1783,16 @@ impl<'a, W: World> SimWorld<'a, W> {
             let old_state = orig_push_cells[idx].clone();
             let dst_pos = push_dir.relative_by(src_pos, 1);
             map.remove(&dst_pos);
-            let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
-            self.set_cell_with_flags(dst_pos, mp, set_block_flags::PUSHED_TO_MOVING);
-            self.insert_moving_piston(
-                dst_pos,
-                MovingPiston::new(facing, extending, false),
-                old_state.clone(),
-            );
-            update_positions.push(dst_pos);
-            update_old_cells.push(old_state);
+            self.install_moving_piston(dst_pos, MovingPiston::new(facing, extending, false),
+                old_state, sticky, set_block_flags::PUSHED_TO_MOVING);
+            notifications.push((dst_pos, old_state.block()));
         }
 
         if extending {
             map.remove(&head_pos);
-            let head_carried = StateId::of(BlockId::of("piston_head"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
-            let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
-            self.set_cell_with_flags(head_pos, mp, set_block_flags::PUSHED_TO_MOVING);
-            self.insert_moving_piston(
-                head_pos,
-                MovingPiston::new(facing, true, true),
-                head_carried,
-            );
+            let carried = Self::piston_part("piston_head", facing, sticky);
+            self.install_moving_piston(head_pos, MovingPiston::new(facing, true, true),
+                carried, sticky, set_block_flags::PUSHED_TO_MOVING);
         }
 
         // Leftover source positions become Air
@@ -1840,8 +1801,8 @@ impl<'a, W: World> SimWorld<'a, W> {
             self.set_cell_with_flags(leftover, air.clone(), set_block_flags::LEFTOVER_TO_AIR);
         }
 
-        for (p, old) in update_positions.iter().zip(update_old_cells.iter()) {
-            self.enqueue_update_neighbors(None, *p, old.block(), None);
+        for (pos, block) in notifications {
+            self.enqueue_update_neighbors(None, pos, block, None);
         }
         if extending {
             self.enqueue_update_neighbors(
@@ -1899,38 +1860,18 @@ impl<'a, W: World> SimWorld<'a, W> {
         ticked
     }
 
-    fn extract_shape_boxes(shape: &VoxelShape) -> ([Aabb; 2], usize) {
-        let mut boxes = [Aabb::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); 2];
-        let mut nboxes = 0usize;
-        let nx = shape.coords[0].len().saturating_sub(1);
-        let ny = shape.coords[1].len().saturating_sub(1);
-        let nz = shape.coords[2].len().saturating_sub(1);
-        for x in 0..nx {
-            for y in 0..ny {
-                for z in 0..nz {
-                    if shape.is_full([x, y, z]) && nboxes < boxes.len() {
-                        boxes[nboxes] = Aabb::new(
-                            shape.coords[0][x],
-                            shape.coords[1][y],
-                            shape.coords[2][z],
-                            shape.coords[0][x + 1],
-                            shape.coords[1][y + 1],
-                            shape.coords[2][z + 1],
-                        );
-                        nboxes += 1;
-                    }
-                }
-            }
-        }
-        (boxes, nboxes)
-    }
-
     fn moving_piston_boxes(entry: &MovingPistonEntry) -> ([Aabb; 2], usize) {
         if entry.moving.is_source_piston {
-            (piston_head_boxes(entry.moving.direction), 2)
-        } else {
-            Self::extract_shape_boxes(&entry.carried.model_block().shape)
+            return (piston_head_boxes(entry.moving.direction), 2);
         }
+        let mut boxes = [Aabb::default(); 2];
+        let shape = &entry.carried.model_block().shape;
+        let mut count = 0;
+        for (slot, bounds) in boxes.iter_mut().zip(shape.view().grid_cells().filter_map(|(b, full)| full.then_some(b))) {
+            *slot = bounds;
+            count += 1;
+        }
+        (boxes, count)
     }
 
     fn collect_world_collisions(&self, bounds: Aabb, ctx: CollisionContext) -> Vec<VoxelShape> {
@@ -1980,132 +1921,51 @@ impl<'a, W: World> SimWorld<'a, W> {
         if nboxes == 0 {
             return;
         }
-        let slime_moved = entry.carried.piston_kind() == PistonBlockKind::SlimeBlock;
-        let honey_moved = entry.carried.piston_kind() == PistonBlockKind::HoneyBlock;
-        let move_dir = piston::movement_direction(entry.moving.extending, entry.moving.direction);
-        let delta = (new_progress - entry.moving.progress) as f64;
-
-        let mut query_opt: Option<Aabb> = None;
-        for &b in &boxes[..nboxes] {
-            let moved_bounds = piston::box_at(
-                entry.pos,
-                b,
-                entry.moving.extending,
-                entry.moving.direction,
-                entry.moving.progress,
-            );
-            let area = piston::movement_area(moved_bounds, move_dir, delta);
-            let combined = Aabb::new(
-                moved_bounds.min.x.min(area.min.x),
-                moved_bounds.min.y.min(area.min.y),
-                moved_bounds.min.z.min(area.min.z),
-                moved_bounds.max.x.max(area.max.x),
-                moved_bounds.max.y.max(area.max.y),
-                moved_bounds.max.z.max(area.max.z),
-            );
-            query_opt = Some(match query_opt {
-                None => combined,
-                Some(q) => Aabb::new(
-                    q.min.x.min(combined.min.x),
-                    q.min.y.min(combined.min.y),
-                    q.min.z.min(combined.min.z),
-                    q.max.x.max(combined.max.x),
-                    q.max.y.max(combined.max.y),
-                    q.max.z.max(combined.max.z),
-                ),
-            });
-        }
-        let Some(query_box) = query_opt else {
-            return;
+        let stroke = piston::Stroke {
+            position: entry.pos,
+            direction: entry.moving.direction,
+            extending: entry.moving.extending,
+            progress: entry.moving.progress,
+            distance: (new_progress - entry.moving.progress) as f64,
         };
-
-        let mut filtered_indices = Vec::new();
-        let mut p_ents = Vec::new();
-        for (idx, e) in self.living_entities.iter().enumerate() {
-            let bb = e.aabb();
-            if bb.intersects(query_box) {
-                filtered_indices.push(idx);
-                p_ents.push(PistonEntity {
-                    aabb: bb,
-                    position: e.position,
-                    delta_movement: e.velocity,
-                    push_reaction: e.push_reaction,
-                    on_ground: e.on_ground,
-                    server_player: e.is_server_player,
-                    supported_by_block: e.supported_by_block == Some(entry.pos),
-                });
+        let moved = boxes.map(|b| stroke.bounds(b));
+        let swept = moved.map(|b| stroke.swept(b));
+        let query = moved[..nboxes].iter().zip(&swept).map(|(&b, &area)| b.hull(area))
+            .reduce(Aabb::hull).unwrap();
+        let slime = entry.carried.piston_kind() == PistonBlockKind::SlimeBlock;
+        let pushes = &mut self.piston_push_scratch;
+        pushes.clear();
+        for (index, entity) in self.living_entities.iter().enumerate() {
+            let mut body = entity.piston_body(entry.pos);
+            if body.aabb.intersects(query) {
+                stroke.push(index, &mut body, swept[..nboxes].iter().copied(), slime, entry.moving.is_source_piston, pushes);
             }
         }
-        if !p_ents.is_empty() {
-            let mut pushes = std::mem::take(&mut self.piston_push_scratch);
-            piston::move_collided_entities_into(
-                entry.pos,
-                &boxes[..nboxes],
-                &mut p_ents,
-                entry.moving.extending,
-                entry.moving.direction,
-                entry.moving.is_source_piston,
-                entry.moving.progress,
-                new_progress,
-                slime_moved,
-                &mut pushes,
-            );
-            for push in &pushes {
-                let real_idx = filtered_indices[push.entity];
-                let e = &mut self.living_entities[real_idx];
-                if let Some(vel) = push.velocity_snap {
-                    e.velocity = vel;
-                }
-                if push.distance > 0.0 {
-                    let s = push.direction.step();
-                    e.position = e.position.plus(Vec3::new(
-                        s[0] as f64 * push.distance,
-                        s[1] as f64 * push.distance,
-                        s[2] as f64 * push.distance,
-                    ));
-                }
+        for push in pushes {
+            let body = &mut self.living_entities[push.entity];
+            if let Some(vel) = push.velocity_snap {
+                body.velocity = vel;
             }
-            self.piston_push_scratch = pushes;
+            if push.distance > 0.0 {
+                body.position = body.position.plus(push.direction.vector(push.distance));
+            }
         }
 
         // Honey block sticky drag (`moveStuckEntities`)
-        if honey_moved && move_dir.is_horizontal() {
+        let move_dir = stroke.movement();
+        if entry.carried.piston_kind() == PistonBlockKind::HoneyBlock && move_dir.is_horizontal() {
             let max_y = boxes[..nboxes]
                 .iter()
                 .map(|b| b.max.y)
                 .fold(0.0f64, f64::max);
-            let stuck_box = piston::box_at(
-                entry.pos,
-                Aabb::new(0.0, max_y, 0.0, 1.0, piston::STUCK_BOX_HEIGHT, 1.0),
-                entry.moving.extending,
-                entry.moving.direction,
-                entry.moving.progress,
-            );
-            let s = move_dir.step();
-            for e in &mut self.living_entities {
-                let pe = PistonEntity {
-                    aabb: e.aabb(),
-                    position: e.position,
-                    delta_movement: e.velocity,
-                    push_reaction: e.push_reaction,
-                    on_ground: e.on_ground,
-                    server_player: e.is_server_player,
-                    supported_by_block: e.supported_by_block == Some(entry.pos),
-                };
-                if piston::stuck_entity(true, true, stuck_box, &pe) {
-                    e.position = e.position.plus(Vec3::new(
-                        s[0] as f64 * delta,
-                        s[1] as f64 * delta,
-                        s[2] as f64 * delta,
-                    ));
+            let stuck_box = stroke.bounds(Aabb::new(0.0, max_y, 0.0, 1.0, piston::STUCK_BOX_HEIGHT, 1.0));
+            for entity in &mut self.living_entities {
+                if piston::stuck_entity(true, true, stuck_box, &entity.piston_body(entry.pos)) {
+                    entity.position = entity.position.plus(move_dir.vector(stroke.distance));
                 }
             }
         }
     }
-
-    // ------------------------------------------------------------------------
-    // Falling blocks (reusing falling.rs)
-    // ------------------------------------------------------------------------
 
     pub fn spawn_falling_block(&mut self, pos: BlockPos, cell: StateId) -> usize {
         let (x, y, z) = falling::spawn(pos[0], pos[1], pos[2]);
@@ -2687,7 +2547,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 if let CellState::TripwireWire(wire_st) = self.cell(w).kind() {
                     let box_w = wire_st
                         .shape()
-                        .moved(Vec3::new(w[0] as f64, w[1] as f64, w[2] as f64));
+                        .moved(Vec3::block_corner(w));
                     for &tr in &triggers {
                         if tr.bbox.intersects(box_w) {
                             let mut tw = Pending::new(self);
@@ -2827,15 +2687,7 @@ impl<W: World> WorldMut for Pending<'_, '_, W> {
 }
 
 fn piston_head_boxes(facing: Direction) -> [Aabb; 2] {
-    let t = 0.25;
-    let plate = match facing {
-        Direction::Down => Aabb::new(0.0, 0.0, 0.0, 1.0, t, 1.0),
-        Direction::Up => Aabb::new(0.0, 1.0 - t, 0.0, 1.0, 1.0, 1.0),
-        Direction::North => Aabb::new(0.0, 0.0, 0.0, 1.0, 1.0, t),
-        Direction::South => Aabb::new(0.0, 0.0, 1.0 - t, 1.0, 1.0, 1.0),
-        Direction::West => Aabb::new(0.0, 0.0, 0.0, t, 1.0, 1.0),
-        Direction::East => Aabb::new(1.0 - t, 0.0, 0.0, 1.0, 1.0, 1.0),
-    };
+    let plate = Aabb::unit_face(facing, 0.25);
     let arm = match facing {
         Direction::Down => Aabb::new(0.375, 0.25, 0.375, 0.625, 1.25, 0.625),
         Direction::Up => Aabb::new(0.375, -0.25, 0.375, 0.625, 0.75, 0.625),

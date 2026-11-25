@@ -23,14 +23,6 @@ pub const fn step_n(dir: Direction, [x, y, z]: BlockPos, n: i32) -> BlockPos {
     [x + dx * n, y + dy * n, z + dz * n]
 }
 
-#[inline]
-const fn aabb(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Aabb {
-    Aabb {
-        min: Vec3 { x: x0, y: y0, z: z0 },
-        max: Vec3 { x: x1, y: y1, z: z1 },
-    }
-}
-
 // ============================================================================
 // 1. Bucket place / waterlog / evaporation / pickup
 // ============================================================================
@@ -365,46 +357,13 @@ pub const PRESSURE_PLATE_PRESSED_TIME_STANDARD: u32 = 20;
 pub const PRESSURE_PLATE_PRESSED_TIME_WEIGHTED: u32 = 10;
 
 /// `BasePressurePlateBlock.TOUCH_AABB`: `Block.column(14.0, 0.0, 4.0)`.
-pub const PRESSURE_PLATE_TOUCH_AABB: Aabb = Aabb {
-    min: Vec3 {
-        x: 1.0 / 16.0,
-        y: 0.0,
-        z: 1.0 / 16.0,
-    },
-    max: Vec3 {
-        x: 15.0 / 16.0,
-        y: 4.0 / 16.0,
-        z: 15.0 / 16.0,
-    },
-};
+pub const PRESSURE_PLATE_TOUCH_AABB: Aabb = Aabb::block_column(14.0, 0.0, 4.0);
 
 /// `BasePressurePlateBlock.SHAPE` (unpressed).
-pub const PRESSURE_PLATE_SHAPE: Aabb = Aabb {
-    min: Vec3 {
-        x: 1.0 / 16.0,
-        y: 0.0,
-        z: 1.0 / 16.0,
-    },
-    max: Vec3 {
-        x: 15.0 / 16.0,
-        y: 1.0 / 16.0,
-        z: 15.0 / 16.0,
-    },
-};
+pub const PRESSURE_PLATE_SHAPE: Aabb = Aabb::block_column(14.0, 0.0, 1.0);
 
 /// `BasePressurePlateBlock.SHAPE_PRESSED` (signal > 0).
-pub const PRESSURE_PLATE_SHAPE_PRESSED: Aabb = Aabb {
-    min: Vec3 {
-        x: 1.0 / 16.0,
-        y: 0.0,
-        z: 1.0 / 16.0,
-    },
-    max: Vec3 {
-        x: 15.0 / 16.0,
-        y: 0.5 / 16.0,
-        z: 15.0 / 16.0,
-    },
-};
+pub const PRESSURE_PLATE_SHAPE_PRESSED: Aabb = Aabb::block_column(14.0, 0.0, 0.5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PressurePlateKind {
@@ -491,16 +450,12 @@ impl PressurePlateState {
     /// `BasePressurePlateBlock.getDirectSignal` (`@0-15`): `signal` only for `Direction::Up`.
     #[inline]
     pub const fn direct_signal(self, dir: Direction) -> u8 {
-        if matches!(dir, Direction::Up) {
-            self.signal
-        } else {
-            0
-        }
+        crate::redstone::signal_on_face(self.signal, Direction::Up, dir)
     }
 
     /// `BasePressurePlateBlock.getEntityCount` (`@0-24`) + `PressurePlateBlock`/`WeightedPressurePlateBlock.getSignalStrength`.
     pub fn compute_signal_strength(self, pos: BlockPos, entities: &[TriggerEntity]) -> u8 {
-        let touch = PRESSURE_PLATE_TOUCH_AABB.moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
+        let touch = PRESSURE_PLATE_TOUCH_AABB.moved(Vec3::block_corner(pos));
         let mobs_only = matches!(self.kind, PressurePlateKind::Binary { mobs_only: true });
         let count = entities
             .iter()
@@ -560,7 +515,7 @@ pub fn pressure_plate_after_removal(
     moved_by_piston: bool,
     events: &mut Vec<CellEvent>,
 ) {
-    if !moved_by_piston && plate.signal > 0 {
+    if !moved_by_piston && plate.own_signal() > 0 {
         notify_attached(pos, Direction::Down, plate.block_id, events);
     }
 }
@@ -596,11 +551,7 @@ impl ButtonState {
     /// `FaceAttachedHorizontalDirectionalBlock.getConnectedDirection` (`CEILING->DOWN, FLOOR->UP, WALL->FACING`).
     #[inline]
     pub const fn connected_direction(self) -> Direction {
-        match self.face {
-            AttachFace::Ceiling => Direction::Down,
-            AttachFace::Floor => Direction::Up,
-            AttachFace::Wall => self.facing,
-        }
+        self.face.connected_direction(self.facing)
     }
 
     /// `ButtonBlock.updateNeighbours` secondary cell (`pos.relative(getConnectedDirection(state).opposite())`).
@@ -612,17 +563,13 @@ impl ButtonState {
     /// `ButtonBlock.ownSignal` (`@0-22`).
     #[inline]
     pub const fn own_signal(self) -> u8 {
-        if self.powered { 15 } else { 0 }
+        crate::redstone::binary_signal(self.powered)
     }
 
     /// `ButtonBlock.getDirectSignal` (`@0-29`): 15 toward `getConnectedDirection(state)`.
     #[inline]
     pub const fn direct_signal(self, dir: Direction) -> u8 {
-        if self.powered && (self.connected_direction() as u8 == dir as u8) {
-            15
-        } else {
-            0
-        }
+        crate::redstone::signal_on_face(self.own_signal(), self.connected_direction(), dir)
     }
 
     /// `ButtonBlock.getShape` (`@0-13`, `makeShapes` `@0-45`).
@@ -632,31 +579,23 @@ impl ButtonState {
         let w_hi = 11.0 / 16.0;
         let h_lo = 6.0 / 16.0;
         let h_hi = 10.0 / 16.0;
-        let ns_axis = matches!(self.facing, Direction::North | Direction::South);
-        match self.face {
-            AttachFace::Floor => {
-                if ns_axis {
-                    aabb(w_lo, 0.0, h_lo, w_hi, depth, h_hi)
-                } else {
-                    aabb(h_lo, 0.0, w_lo, h_hi, depth, w_hi)
-                }
-            }
-            AttachFace::Ceiling => {
-                if ns_axis {
-                    aabb(w_lo, 1.0 - depth, h_lo, w_hi, 1.0, h_hi)
-                } else {
-                    aabb(h_lo, 1.0 - depth, w_lo, h_hi, 1.0, w_hi)
-                }
-            }
-            AttachFace::Wall => match self.facing {
-                Direction::North => aabb(w_lo, h_lo, 1.0 - depth, w_hi, h_hi, 1.0),
-                Direction::South => aabb(w_lo, h_lo, 0.0, w_hi, h_hi, depth),
-                Direction::West => aabb(1.0 - depth, h_lo, w_lo, 1.0, h_hi, w_hi),
-                Direction::East => aabb(0.0, h_lo, w_lo, depth, h_hi, w_hi),
-                Direction::Down | Direction::Up => aabb(w_lo, h_lo, 1.0 - depth, w_hi, h_hi, 1.0),
-            },
+        if matches!(self.face, AttachFace::Wall) {
+            return wall_sensor_shape(self.facing, h_lo, h_hi, depth);
         }
+        let (x0, x1, z0, z1) = if matches!(self.facing, Direction::North | Direction::South) {
+            (w_lo, w_hi, h_lo, h_hi)
+        } else {
+            (h_lo, h_hi, w_lo, w_hi)
+        };
+        Aabb::ordered(x0, 0.0, z0, x1, 1.0, z1)
+            .on_unit_face(self.connected_direction().opposite(), depth)
     }
+}
+
+const fn wall_sensor_shape(facing: Direction, bottom: f64, top: f64, depth: f64) -> Aabb {
+    let support = if facing.is_horizontal() { facing.opposite() } else { Direction::South };
+    Aabb::ordered(5.0 / 16.0, bottom, 5.0 / 16.0, 11.0 / 16.0, top, 11.0 / 16.0)
+        .on_unit_face(support, depth)
 }
 
 fn update_button(
@@ -667,7 +606,7 @@ fn update_button(
         pos,
         support: button.connected_direction().opposite(),
         state,
-        signal: if pressed { 15 } else { 0 },
+        signal: crate::redstone::binary_signal(pressed),
         delay: button.ticks_to_stay_pressed,
         flags: UPDATE_ALL,
     };
@@ -705,7 +644,7 @@ pub(crate) fn sensor_events(
     match sensor {
         CellState::PressurePlate(plate) => pressure_plate_check_pressed(state, plate, pos, bodies, events),
         CellState::Button(button) => {
-            let bounds = button.shape().moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
+            let bounds = button.shape().moved(Vec3::block_corner(pos));
             let pressed = button.arrow_activatable && arrows.iter().any(|arrow| arrow.intersects(bounds));
             update_button(state, button, pos, pressed, false, events);
         }
@@ -721,7 +660,7 @@ pub fn button_after_removal(
     moved_by_piston: bool,
     events: &mut Vec<CellEvent>,
 ) {
-    if !moved_by_piston && btn.powered {
+    if !moved_by_piston && btn.own_signal() > 0 {
         notify_attached(pos, btn.connected_direction().opposite(), btn.block_id, events);
     }
 }
@@ -738,30 +677,14 @@ pub const TRIPWIRE_DIST_MAX: i32 = 42;
 pub const TRIPWIRE_RECHECK_PERIOD: u32 = 10;
 
 /// `TripWireBlock.SHAPE_ATTACHED` (`Block.column(16, 1, 2.5)`).
-pub const TRIPWIRE_SHAPE_ATTACHED: Aabb = Aabb {
-    min: Vec3 { x: 0.0, y: 1.0 / 16.0, z: 0.0 },
-    max: Vec3 { x: 1.0, y: 2.5 / 16.0, z: 1.0 },
-};
+pub const TRIPWIRE_SHAPE_ATTACHED: Aabb = Aabb::block_column(16.0, 1.0, 2.5);
 
 /// `TripWireBlock.SHAPE_NOT_ATTACHED` (`Block.column(16, 0, 8)`).
-pub const TRIPWIRE_SHAPE_UNATTACHED: Aabb = Aabb {
-    min: Vec3 { x: 0.0, y: 0.0, z: 0.0 },
-    max: Vec3 { x: 1.0, y: 8.0 / 16.0, z: 1.0 },
-};
+pub const TRIPWIRE_SHAPE_UNATTACHED: Aabb = Aabb::block_column(16.0, 0.0, 8.0);
 
 /// `TripWireHookBlock.getShape` (`boxZ(6, 0, 10, 10, 16)` rotated horizontally).
 pub const fn tripwire_hook_shape(facing: Direction) -> Aabb {
-    let w_lo = 5.0 / 16.0;
-    let w_hi = 11.0 / 16.0;
-    let h_hi = 10.0 / 16.0;
-    let depth = 6.0 / 16.0;
-    match facing {
-        Direction::North => aabb(w_lo, 0.0, 1.0 - depth, w_hi, h_hi, 1.0),
-        Direction::South => aabb(w_lo, 0.0, 0.0, w_hi, h_hi, depth),
-        Direction::West => aabb(1.0 - depth, 0.0, w_lo, 1.0, h_hi, w_hi),
-        Direction::East => aabb(0.0, 0.0, w_lo, depth, h_hi, w_hi),
-        Direction::Down | Direction::Up => aabb(w_lo, 0.0, 1.0 - depth, w_hi, h_hi, 1.0),
-    }
+    wall_sensor_shape(facing, 0.0, 10.0 / 16.0, 6.0 / 16.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -795,21 +718,15 @@ impl TripwireHookState {
     /// `TripWireHookBlock.ownSignal` (`@0-22`).
     #[inline]
     pub const fn own_signal(self) -> u8 {
-        if self.powered { 15 } else { 0 }
+        crate::redstone::binary_signal(self.powered)
     }
 
     /// `TripWireHookBlock.getDirectSignal` (`@0-34`): 15 only toward `FACING` when `POWERED`.
     #[inline]
     pub const fn direct_signal(self, dir: Direction) -> u8 {
-        if self.powered && (self.facing as u8 == dir as u8) {
-            15
-        } else {
-            0
-        }
+        crate::redstone::signal_on_face(self.own_signal(), self.facing, dir)
     }
 }
-
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TripwireHookFeedback {
@@ -1073,7 +990,7 @@ pub fn tripwire_tick(
     }
     let shape = wire_st
         .shape()
-        .moved(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64));
+        .moved(Vec3::block_corner(pos));
     // Spectators count unless they ignore block triggers.
     let occupied = entities.iter().any(|entity| !entity.is_ignoring_block_triggers && entity.bbox.intersects(shape));
     update_tripwire(world, pos, wire_st, occupied, events);

@@ -9,6 +9,14 @@
 
 pub use crate::ticks::TickPriority;
 
+pub(crate) const fn binary_signal(active: bool) -> u8 {
+    if active { 15 } else { 0 }
+}
+
+pub(crate) const fn signal_on_face(signal: u8, face: crate::neighbor::Direction, query: crate::neighbor::Direction) -> u8 {
+    if face as u8 == query as u8 { signal } else { 0 }
+}
+
 /// `TickPriority.getValue` (`TickPriority` static init `-3..=3`).
 #[inline]
 pub const fn tick_priority_value(priority: TickPriority) -> i32 {

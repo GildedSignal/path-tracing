@@ -11,6 +11,15 @@
 
 use crate::{math, Aabb, Vec3};
 
+pub(crate) fn clearance(
+    world: &(impl crate::World + ?Sized),
+    bounds: Aabb,
+    context: crate::CollisionContext,
+    mut bodies: impl Iterator<Item = Aabb>,
+) -> bool {
+    world.no_collision(bounds, context) && !bodies.any(|body| body.intersects(bounds))
+}
+
 /// `GameRules.MAX_ENTITY_CRAMMING` default (`GameRules.<clinit> @376-388`).
 pub const CRAMMING_DEFAULT_MAX: i32 = 24;
 
@@ -104,18 +113,10 @@ impl ContactEntity {
 
     /// Constructs a standard `AbstractBoat` (`1.375 x 0.5625 x 1.375` AABB).
     pub fn boat(position: Vec3, velocity: Vec3) -> Self {
-        let half = (1.375f32 * 0.5f32) as f64;
         Self {
             position,
             velocity,
-            aabb: Aabb::new(
-                position.x - half,
-                position.y,
-                position.z - half,
-                position.x + half,
-                position.y + 0.5625f32 as f64,
-                position.z + half,
-            ),
+            aabb: crate::boat::boat_aabb(position),
             kind: ContactKind::Boat,
             ..Self::default()
         }
@@ -125,14 +126,7 @@ impl ContactEntity {
     pub fn shulker(position: Vec3) -> Self {
         Self {
             position,
-            aabb: Aabb::new(
-                position.x - 0.5,
-                position.y,
-                position.z - 0.5,
-                position.x + 0.5,
-                position.y + 1.0,
-                position.z + 0.5,
-            ),
+            aabb: Aabb::from_bottom(position, 1.0, 1.0),
             kind: ContactKind::Shulker,
             ..Self::default()
         }

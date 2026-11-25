@@ -69,6 +69,12 @@ pub const MINECART: AffineBody = AffineBody { gravity: 0.04, water_gravity: 0.00
 /// friction, vertical 0.98f, both after the move (`AIR_DRAG_MODIFIER` scales the two drags).
 pub const LIVING: AffineBody = AffineBody { gravity: 0.08, water_gravity: 0.08, air_drag: 0.91, drag_y: 0.98, water_drag: 0.8, order: Order::MoveGravityDrag };
 
+pub(crate) enum Medium {
+    Steady(bool),
+    /// Move with the entry velocity and apply drag based on both fluid samples.
+    Crossing { water_before: bool, water_after: bool },
+}
+
 impl AffineBody {
     /// `Entity.applyGravity`: `setDeltaMovement(getDeltaMovement().add(0.0, -g, 0.0))`.
     #[inline(always)]
@@ -89,14 +95,50 @@ impl AffineBody {
         Vec3::new(v.x * h, vy * self.drag_y as f64, v.z * h)
     }
 
+    /// Advance a body, handing the contact rule the velocity at the move boundary.
+    #[inline]
+    pub(crate) fn advance<R>(
+        &self,
+        velocity: &mut Vec3,
+        medium: Medium,
+        move_body: impl FnOnce(Vec3) -> R,
+    ) -> R {
+        match medium {
+            Medium::Steady(water) => {
+                if self.order != Order::MoveGravityDrag {
+                    self.gravity(velocity, water);
+                }
+                if self.order == Order::GravityDragMove {
+                    self.drag(velocity, water);
+                }
+                let moved = move_body(*velocity);
+                if self.order == Order::MoveGravityDrag {
+                    self.gravity(velocity, water);
+                }
+                if self.order != Order::GravityDragMove {
+                    self.drag(velocity, water);
+                }
+                moved
+            }
+            Medium::Crossing { water_before, water_after } => {
+                let entry = *velocity;
+                if water_before {
+                    self.drag(velocity, true);
+                }
+                let moved = move_body(entry);
+                if !water_after {
+                    self.drag(velocity, false);
+                }
+                self.gravity(velocity, false);
+                moved
+            }
+        }
+    }
+
     /// One free tick (`k = 1`).
     #[inline(always)]
     pub fn tick(&self, p: &mut Vec3, v: &mut Vec3, in_water: bool) {
-        match self.order {
-            Order::GravityMoveDrag => { self.gravity(v, in_water); *p = p.plus(*v); self.drag(v, in_water); }
-            Order::GravityDragMove => { self.gravity(v, in_water); self.drag(v, in_water); *p = p.plus(*v); }
-            Order::MoveGravityDrag => { *p = p.plus(*v); self.gravity(v, in_water); self.drag(v, in_water); }
-        }
+        *p = self.advance(v, Medium::Steady(in_water), |delta| p.plus(delta));
     }
 
     /// `k` free ticks; the caller certifies no contact inside them.

@@ -30,3 +30,10 @@ pub const FOOD_FED: Clock = Clock { step: 1, at: 80, reset: 0 };
 /// `LivingEntity.decreaseAirSupply` / `shouldTakeDrowningDamage`: -1 a tick, at -20 a drown
 /// hit and the air back to 0 (`baseTick @306`).
 pub const AIR: Clock = Clock { step: -1, at: -20, reset: 0 };
+
+/// Advance a floating clock to an inclusive endpoint.
+pub(crate) fn advance_progress(progress: f32, step: f32, end: f32) -> (f32, bool) {
+    let next = progress + step;
+    let reached = if step > 0.0 { next >= end } else { next <= end };
+    (if reached { end } else { next }, reached)
+}

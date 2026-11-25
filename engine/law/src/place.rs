@@ -27,6 +27,11 @@ impl PlaceContext {
         self.player_look_direction.unwrap_or(Direction::North)
     }
 
+    fn click_top_half(&self) -> bool {
+        self.clicked_face == Direction::Down
+            || (self.clicked_face != Direction::Up && self.click_y_offset() > 0.5)
+    }
+
     fn click_y_offset(&self) -> f64 {
         self.click_location.y - self.clicked_pos[1] as f64
     }
@@ -66,8 +71,7 @@ pub fn slab_get_state_for_placement(
             waterlogged: false,
         };
     }
-    let is_top = ctx.clicked_face == Direction::Down
-        || (ctx.clicked_face != Direction::Up && ctx.click_y_offset() > 0.5);
+    let is_top = ctx.click_top_half();
     SlabState {
         block_id: ctx.held_block_id,
         slab_type: if is_top { SlabType::Top } else { SlabType::Bottom },
@@ -124,28 +128,18 @@ pub fn get_stairs_shape(
     pos: BlockPos,
     get_stair: impl Fn(BlockPos) -> Option<StairState>,
 ) -> StairShape {
-    if let Some(outer) = get_stair(facing.relative(pos)) {
-        if outer.half == half
-            && outer.facing.axis() != facing.axis()
-            && stair_can_take_shape(get_stair(outer.facing.opposite().relative(pos)), facing, half)
-        {
-            return if outer.facing == facing.counter_clock_wise() {
-                StairShape::OuterLeft
-            } else {
-                StairShape::OuterRight
-            };
-        }
-    }
-    if let Some(inner) = get_stair(facing.opposite().relative(pos)) {
-        if inner.half == half
-            && inner.facing.axis() != facing.axis()
-            && stair_can_take_shape(get_stair(inner.facing.relative(pos)), facing, half)
-        {
-            return if inner.facing == facing.counter_clock_wise() {
-                StairShape::InnerLeft
-            } else {
-                StairShape::InnerRight
-            };
+    for (side, [left, right]) in [
+        (facing, [StairShape::OuterLeft, StairShape::OuterRight]),
+        (facing.opposite(), [StairShape::InnerLeft, StairShape::InnerRight]),
+    ] {
+        if let Some(neighbor) = get_stair(side.relative(pos)) {
+            let guard = if side == facing { neighbor.facing.opposite() } else { neighbor.facing };
+            if neighbor.half == half
+                && neighbor.facing.axis() != facing.axis()
+                && stair_can_take_shape(get_stair(guard.relative(pos)), facing, half)
+            {
+                return if neighbor.facing == facing.counter_clock_wise() { left } else { right };
+            }
         }
     }
     StairShape::Straight
@@ -158,9 +152,7 @@ pub fn stair_get_state_for_placement(
     get_stair: impl Fn(BlockPos) -> Option<StairState>,
 ) -> StairState {
     let facing = ctx.horizontal_direction();
-    let half = if ctx.clicked_face == Direction::Down
-        || (ctx.clicked_face != Direction::Up && ctx.click_y_offset() > 0.5)
-    {
+    let half = if ctx.click_top_half() {
         Half::Top
     } else {
         Half::Bottom

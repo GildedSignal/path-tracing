@@ -490,7 +490,7 @@ impl PistonWorld for TriggerWorld<'_> {
 }
 
 pub const TICKS_TO_EXTEND: i32 = 2;
-pub const PUSH_OFFSET: f64 = 0.01;
+pub const PUSH_OFFSET: f64 = crate::shapes::ENTITY_PUSH_PADDING;
 pub const TICK_MOVEMENT: f64 = 0.51;
 pub const PROGRESS_STEP: f32 = 0.5;
 pub const STUCK_BOX_HEIGHT: f64 = 1.500001;
@@ -515,24 +515,16 @@ pub const fn movement_direction(extending: bool, direction: Direction) -> Direct
 
 #[inline]
 pub fn movement_area(box_: Aabb, direction: Direction, distance: f64) -> Aabb {
-    let axis = direction.axis();
-    let signed = distance * direction.axis_step() as f64;
-    let (lo, hi) = (signed.min(0.0), signed.max(0.0));
-    Aabb {
-        min: box_.min.with(axis, box_.min.get(axis) + lo),
-        max: box_.max.with(axis, box_.max.get(axis) + hi),
-    }
+    box_.expand_axis(direction.axis(), distance * direction.axis_step() as f64)
 }
 
 #[inline]
 pub fn get_movement(area: Aabb, direction: Direction, entity: Aabb) -> f64 {
-    match direction {
-        Direction::East => area.max.x - entity.min.x,
-        Direction::West => entity.max.x - area.min.x,
-        Direction::Up => area.max.y - entity.min.y,
-        Direction::Down => entity.max.y - area.min.y,
-        Direction::South => area.max.z - entity.min.z,
-        Direction::North => entity.max.z - area.min.z,
+    let axis = direction.axis();
+    if direction.axis_step() > 0 {
+        area.max.get(axis) - entity.min.get(axis)
+    } else {
+        entity.max.get(axis) - area.min.get(axis)
     }
 }
 
@@ -545,12 +537,7 @@ pub fn box_at(
     progress: f32,
 ) -> Aabb {
     let offset = extended_progress(extending, progress) as f64;
-    let step = direction.step();
-    box_.moved(Vec3::new(
-        position[0] as f64 + step[0] as f64 * offset,
-        position[1] as f64 + step[1] as f64 * offset,
-        position[2] as f64 + step[2] as f64 * offset,
-    ))
+    box_.moved(Vec3::block_corner(position).plus(direction.vector(offset)))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -572,6 +559,66 @@ pub struct Push {
     pub velocity_snap: Option<Vec3>,
 }
 
+pub(crate) struct Stroke {
+    pub position: BlockPos,
+    pub direction: Direction,
+    pub extending: bool,
+    pub progress: f32,
+    pub distance: f64,
+}
+
+impl Stroke {
+    pub fn movement(&self) -> Direction {
+        movement_direction(self.extending, self.direction)
+    }
+
+    pub fn bounds(&self, local: Aabb) -> Aabb {
+        box_at(self.position, local, self.extending, self.direction, self.progress)
+    }
+
+    pub fn swept(&self, bounds: Aabb) -> Aabb {
+        movement_area(bounds, self.movement(), self.distance)
+    }
+
+    pub fn push(
+        &self,
+        index: usize,
+        entity: &mut PistonEntity,
+        areas: impl IntoIterator<Item = Aabb>,
+        slime: bool,
+        source: bool,
+        out: &mut Vec<Push>,
+    ) {
+        if entity.push_reaction == PushReaction::Ignore || (slime && entity.server_player) {
+            return;
+        }
+        let movement = self.movement();
+        let velocity_snap = slime.then(|| {
+            entity.delta_movement = entity.delta_movement.with(movement.axis(), movement.axis_step() as f64);
+            entity.delta_movement
+        });
+        let mut overlap: f64 = 0.0;
+        for area in areas {
+            if entity.aabb.intersects(area) {
+                overlap = overlap.max(get_movement(area, movement, entity.aabb));
+                if overlap >= self.distance {
+                    break;
+                }
+            }
+        }
+        if overlap <= 0.0 && velocity_snap.is_none() {
+            return;
+        }
+        let distance = if overlap <= 0.0 { 0.0 } else { overlap.min(self.distance) + PUSH_OFFSET };
+        out.push(Push { entity: index, direction: movement, distance, velocity_snap });
+        if overlap > 0.0 && !self.extending && source {
+            if let Some(distance) = fix_entity_within_piston_base(self.position, &entity.aabb, movement, self.distance) {
+                out.push(Push { entity: index, direction: movement.opposite(), distance, velocity_snap: None });
+            }
+        }
+    }
+}
+
 /// Zero-alloc variant writing into caller's reusable buffer `out`.
 pub fn move_collided_entities_into(
     position: BlockPos,
@@ -589,66 +636,10 @@ pub fn move_collided_entities_into(
     if boxes.is_empty() {
         return;
     }
-    let movement = movement_direction(extending, direction);
-    let delta = (new_progress - old_progress) as f64;
-    let axis = movement.axis();
-    let step = movement.axis_step() as f64;
+    let stroke = Stroke { position, direction, extending, progress: old_progress, distance: (new_progress - old_progress) as f64 };
     for (index, entity) in entities.iter_mut().enumerate() {
-        if entity.push_reaction == PushReaction::Ignore {
-            continue;
-        }
-        let mut velocity_snap = None;
-        if slime_moved_state {
-            if entity.server_player {
-                continue;
-            }
-            entity.delta_movement = entity.delta_movement.with(axis, step);
-            velocity_snap = Some(entity.delta_movement);
-        }
-        let mut overlap: f64 = 0.0;
-        for box_ in boxes {
-            let area = movement_area(
-                box_at(position, *box_, extending, direction, old_progress),
-                movement,
-                delta,
-            );
-            if entity.aabb.intersects(area) {
-                overlap = overlap.max(get_movement(area, movement, entity.aabb));
-                if overlap >= delta {
-                    break;
-                }
-            }
-        }
-        if overlap <= 0.0 {
-            if velocity_snap.is_some() {
-                out.push(Push {
-                    entity: index,
-                    direction: movement,
-                    distance: 0.0,
-                    velocity_snap,
-                });
-            }
-            continue;
-        }
-        overlap = overlap.min(delta) + PUSH_OFFSET;
-        out.push(Push {
-            entity: index,
-            direction: movement,
-            distance: overlap,
-            velocity_snap,
-        });
-        if !extending && is_source_piston {
-            if let Some(extra) =
-                fix_entity_within_piston_base(position, &entity.aabb, movement, delta)
-            {
-                out.push(Push {
-                    entity: index,
-                    direction: movement.opposite(),
-                    distance: extra,
-                    velocity_snap: None,
-                });
-            }
-        }
+        let areas = boxes.iter().map(|&local| stroke.swept(stroke.bounds(local)));
+        stroke.push(index, entity, areas, slime_moved_state, is_source_piston, out);
     }
 }
 
@@ -685,30 +676,12 @@ pub fn fix_entity_within_piston_base(
     movement: Direction,
     delta: f64,
 ) -> Option<f64> {
-    let base = Aabb {
-        min: Vec3::new(position[0] as f64, position[1] as f64, position[2] as f64),
-        max: Vec3::new(
-            position[0] as f64 + 1.0,
-            position[1] as f64 + 1.0,
-            position[2] as f64 + 1.0,
-        ),
-    };
+    let base = Aabb::UNIT.moved(Vec3::block_corner(position));
     if !entity_aabb.intersects(base) {
         return None;
     }
     let back = movement.opposite();
-    let intersection = Aabb {
-        min: Vec3::new(
-            entity_aabb.min.x.max(base.min.x),
-            entity_aabb.min.y.max(base.min.y),
-            entity_aabb.min.z.max(base.min.z),
-        ),
-        max: Vec3::new(
-            entity_aabb.max.x.min(base.max.x),
-            entity_aabb.max.y.min(base.max.y),
-            entity_aabb.max.z.min(base.max.z),
-        ),
-    };
+    let intersection = entity_aabb.overlap(base);
     let to_face = get_movement(base, back, *entity_aabb) + PUSH_OFFSET;
     let through = get_movement(base, back, intersection) + PUSH_OFFSET;
     if (to_face - through).abs() < PUSH_OFFSET {
@@ -761,7 +734,7 @@ impl MovingPiston {
 
     #[inline]
     pub fn next_progress(&self) -> f32 {
-        (self.progress + PROGRESS_STEP).min(1.0)
+        crate::basis::clock::advance_progress(self.progress, PROGRESS_STEP, 1.0).0.min(1.0)
     }
 
     pub fn advance(&mut self, client_side: bool) -> bool {
@@ -774,9 +747,6 @@ impl MovingPiston {
             return true;
         }
         self.progress = self.next_progress();
-        if self.progress >= 1.0 {
-            self.progress = 1.0;
-        }
         false
     }
 }

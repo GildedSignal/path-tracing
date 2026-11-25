@@ -7,14 +7,6 @@ use crate::interact::{BlockId, Direction};
 use crate::neighbor::update_flags;
 use crate::{Aabb, BlockPos, CollisionContext, Vec3, World};
 
-#[inline]
-const fn aabb(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Aabb {
-    Aabb {
-        min: Vec3::new(x0, y0, z0),
-        max: Vec3::new(x1, y1, z1),
-    }
-}
-
 // ============================================================================
 // 1. Position-offset XZ collision (Mth.getSeed, Bamboo, Speleothem / SulfurSpike)
 // ============================================================================
@@ -77,20 +69,6 @@ pub enum BambooLeaves {
     Large,
 }
 
-/// `Block.column(width, minY, maxY)` = `[8 - w/2, minY, 8 - w/2, 8 + w/2, maxY, 8 + w/2] / 16`.
-#[inline]
-const fn block_column(width: f64, min_y: f64, max_y: f64) -> Aabb {
-    let half = width / 2.0;
-    aabb(
-        (8.0 - half) / 16.0,
-        min_y / 16.0,
-        (8.0 - half) / 16.0,
-        (8.0 + half) / 16.0,
-        max_y / 16.0,
-        (8.0 + half) / 16.0,
-    )
-}
-
 /// `BambooStalkBlock.getShape`: `SHAPE_LARGE` (`width=10`) when `Large`, else `SHAPE_SMALL` (`width=6`).
 #[inline]
 pub fn bamboo_outline_aabb(pos: BlockPos, leaves: BambooLeaves) -> Aabb {
@@ -99,7 +77,7 @@ pub fn bamboo_outline_aabb(pos: BlockPos, leaves: BambooLeaves) -> Aabb {
     } else {
         6.0
     };
-    block_column(width, 0.0, 16.0).moved(get_xz_offset(
+    Aabb::block_column(width, 0.0, 16.0).moved(get_xz_offset(
         pos[0],
         pos[2],
         BAMBOO_MAX_HORIZONTAL_OFFSET,
@@ -112,8 +90,8 @@ pub fn bamboo_outline_aabb(pos: BlockPos, leaves: BambooLeaves) -> Aabb {
 
 pub const SHULKER_ANIMATION_STEP: f32 = 0.1;
 pub const SHULKER_CAN_OPEN_DEFLATE: f64 = 1.0e-6;
-pub const SHULKER_ENTITY_PUSH_PADDING: f64 = 0.01;
-const FULL_CUBE: Aabb = aabb(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+pub const SHULKER_ENTITY_PUSH_PADDING: f64 = crate::shapes::ENTITY_PUSH_PADDING;
+const FULL_CUBE: Aabb = Aabb::UNIT;
 
 /// `ShulkerBoxBlockEntity$AnimationStatus` ordinals (`0..=3`).
 #[repr(u8)]
@@ -144,29 +122,7 @@ pub struct ShulkerAnimationTickResult {
 /// `AABB.contract(double, double, double)` in 26.2 (`AABB.txt:496-576`):
 /// per-side shrink (`d < 0 -> min -= d`, `d > 0 -> max -= d`), NOT symmetric.
 pub fn aabb_contract(box_: Aabb, x: f64, y: f64, z: f64) -> Aabb {
-    let mut min_x = box_.min.x;
-    let mut min_y = box_.min.y;
-    let mut min_z = box_.min.z;
-    let mut max_x = box_.max.x;
-    let mut max_y = box_.max.y;
-    let mut max_z = box_.max.z;
-
-    if x < 0.0 {
-        min_x -= x;
-    } else if x > 0.0 {
-        max_x -= x;
-    }
-    if y < 0.0 {
-        min_y -= y;
-    } else if y > 0.0 {
-        max_y -= y;
-    }
-    if z < 0.0 {
-        min_z -= z;
-    } else if z > 0.0 {
-        max_z -= z;
-    }
-    Aabb::new(min_x, min_y, min_z, max_x, max_y, max_z)
+    box_.contract(Vec3::new(x, y, z))
 }
 
 /// `Shulker.getProgressDeltaAabb(float width, Direction dir, float from, float to, Vec3 pivot)`
@@ -231,51 +187,30 @@ impl ShulkerBoxEntityState {
         facing: Direction,
     ) -> ShulkerAnimationTickResult {
         self.progress_old = self.progress;
-        let mut do_neighbor_updates = false;
-        let mut move_collided_sweep = None;
-
-        match self.status {
-            ShulkerAnimationStatus::Closed => {
-                self.progress = 0.0;
+        use ShulkerAnimationStatus::*;
+        let (step, start, end, settled) = match self.status {
+            Closed | Opened => {
+                self.progress = if self.status == Closed { 0.0 } else { 1.0 };
+                return ShulkerAnimationTickResult {
+                    do_neighbor_updates: false,
+                    move_collided_sweep: None,
+                };
             }
-            ShulkerAnimationStatus::Opening => {
-                self.progress += SHULKER_ANIMATION_STEP;
-                if self.progress_old == 0.0 {
-                    do_neighbor_updates = true;
-                }
-                if self.progress >= 1.0 {
-                    self.status = ShulkerAnimationStatus::Opened;
-                    self.progress = 1.0;
-                    do_neighbor_updates = true;
-                }
-                let pivot = Vec3::new(pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5);
-                move_collided_sweep = Some(shulker_progress_delta_aabb(
-                    1.0,
-                    facing,
-                    self.progress_old,
-                    self.progress,
-                    pivot,
-                ));
-            }
-            ShulkerAnimationStatus::Opened => {
-                self.progress = 1.0;
-            }
-            ShulkerAnimationStatus::Closing => {
-                self.progress -= SHULKER_ANIMATION_STEP;
-                if self.progress_old == 1.0 {
-                    do_neighbor_updates = true;
-                }
-                if self.progress <= 0.0 {
-                    self.status = ShulkerAnimationStatus::Closed;
-                    self.progress = 0.0;
-                    do_neighbor_updates = true;
-                }
-            }
+            Opening => (SHULKER_ANIMATION_STEP, 0.0, 1.0, Opened),
+            Closing => (-SHULKER_ANIMATION_STEP, 1.0, 0.0, Closed),
+        };
+        let (next, reached) = crate::basis::clock::advance_progress(self.progress, step, end);
+        self.progress = next;
+        if reached {
+            self.status = settled;
         }
-
         ShulkerAnimationTickResult {
-            do_neighbor_updates,
-            move_collided_sweep,
+            do_neighbor_updates: self.progress_old == start || reached,
+            move_collided_sweep: (step > 0.0).then(|| {
+                shulker_progress_delta_aabb(
+                    1.0, facing, self.progress_old, next, Vec3::block_bottom_center(pos),
+                )
+            }),
         }
     }
 }
@@ -297,20 +232,13 @@ pub const fn shulker_open_support_aabb(facing: Direction, closed: bool) -> Aabb 
     if closed {
         return FULL_CUBE;
     }
-    match facing.opposite() {
-        Direction::Down => aabb(0.0, 0.0, 0.0, 1.0, 0.0625, 1.0),
-        Direction::Up => aabb(0.0, 0.9375, 0.0, 1.0, 1.0, 1.0),
-        Direction::North => aabb(0.0, 0.0, 0.0, 1.0, 1.0, 0.0625),
-        Direction::South => aabb(0.0, 0.0, 0.9375, 1.0, 1.0, 1.0),
-        Direction::West => aabb(0.0, 0.0, 0.0, 0.0625, 1.0, 1.0),
-        Direction::East => aabb(0.9375, 0.0, 0.0, 1.0, 1.0, 1.0),
-    }
+    Aabb::unit_face(facing.opposite(), 1.0 / 16.0)
 }
 
 /// `ShulkerBoxBlock.canOpen` (`@12-39`): `getProgressDeltaAabb(1.0, facing, 0.0, 0.5, bottomCenter).deflate(1.0e-6)`.
 #[inline]
 pub fn shulker_can_open_box(pos: BlockPos, facing: Direction) -> Aabb {
-    let pivot = Vec3::new(pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5);
+    let pivot = Vec3::block_bottom_center(pos);
     shulker_progress_delta_aabb(1.0, facing, 0.0, 0.5, pivot).deflate(SHULKER_CAN_OPEN_DEFLATE)
 }
 
@@ -328,16 +256,9 @@ pub fn shulker_can_open(
         return true;
     }
     let probe = shulker_can_open_box(pos, facing);
-    let ctx = CollisionContext {
-        feet_y: f64::NEG_INFINITY,
-        descending: false,
-        fall_distance: 0.0,
-        leather_boots: false,
-    };
-    if !world.no_collision(probe, ctx) {
-        return false;
-    }
-    !entity_aabbs.iter().any(|e| e.intersects(probe))
+    crate::entity_contact::clearance(
+        world, probe, CollisionContext::empty(f64::NEG_INFINITY), entity_aabbs.iter().copied(),
+    )
 }
 
 /// `ShulkerBoxBlockEntity.moveCollidedEntities` (`@263-290`): push vector applied with
@@ -473,11 +394,7 @@ pub const SCULK_SHRIEKER_DELAY: u32 = 90;
 /// `[x, y + 0.6875, z, x + 1.0, y + 2.0, z + 1.0]`.
 #[inline]
 pub fn hopper_suck_aabb(pos: BlockPos) -> Aabb {
-    aabb(0.0, 11.0 / 16.0, 0.0, 1.0, 2.0, 1.0).moved(Vec3::new(
-        pos[0] as f64,
-        pos[1] as f64,
-        pos[2] as f64,
-    ))
+    Aabb::block_column(16.0, 11.0, 32.0).moved(Vec3::block_corner(pos))
 }
 
 /// `DetectorRailBlock.getSearchBB(BlockPos)` (`@356-398`):
@@ -485,7 +402,7 @@ pub fn hopper_suck_aabb(pos: BlockPos) -> Aabb {
 #[inline]
 pub fn detector_rail_search_bb(pos: BlockPos) -> Aabb {
     const D: f64 = 0.2;
-    aabb(
+    Aabb::ordered(
         pos[0] as f64 + D,
         pos[1] as f64,
         pos[2] as f64 + D,
@@ -922,7 +839,7 @@ pub fn big_dripleaf_tick(tilt: BigDripleafTilt, has_neighbor_signal: bool) -> Bi
 /// `EndPortalBlock.SHAPE` / `getEntityInsideCollisionShape` (`Block.column(16.0, 6.0, 12.0)`).
 #[inline]
 pub const fn end_portal_inside_aabb() -> Aabb {
-    block_column(16.0, 6.0, 12.0)
+    Aabb::block_column(16.0, 6.0, 12.0)
 }
 
 /// `Portal.getPortalTransitionTime()` default (`0` ticks for `EndPortalBlock` and `EndGatewayBlock`).

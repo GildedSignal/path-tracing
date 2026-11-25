@@ -420,8 +420,8 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
         || h2 > REST_HORIZ_SPEED_SQR
         || (body.tick_count + body.id) % REST_MOVE_MODULUS == 0;
     if move_runs {
+        body.position = body.position.plus(body.velocity);
         if let Some(g) = ground {
-            body.position = body.position.plus(body.velocity);
             if body.position.y <= g && body.velocity.y <= 0.0 {
                 body.position.y = g;
                 let bounciness = if bounce_restitution <= 0.0 { 0.0 } else { (bounce_restitution * 0.8) as f64 };
@@ -431,7 +431,6 @@ pub fn tick(body: &mut ItemBody, fluid: Fluid, ground: Option<f64>, friction: f3
                 body.on_ground = false;
             }
         } else {
-            body.position = body.position.plus(body.velocity);
             body.on_ground = false;
         }
         body.velocity = crate::basis::body::ITEM.friction_drag(body.velocity, body.velocity.y, if body.on_ground { friction } else { 1.0 });
