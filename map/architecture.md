@@ -21,8 +21,8 @@ Four folds remove the raw problem's dimensions:
 | events: one small rule between contacts ("ticks are just an execution layer", S118) | ticks |
 | kit classes: a block is its answers to the kit's verbs ("A flower is air", S134) | the block alphabet |
 
-- **Words live in velocity space:** on ground each horizontal axis is `v ← (v + input(yaw)) × friction × drag`, a contraction onto the gait; position is its running sum, read by exact integer maps per binade.
-- **The objects:** a **zone** is where one word's certificate holds, found by one corridor query; a **word** (`Word` = `Atomic` or recursive `Compound(Vec<WordId>)` with `AimRule`, universal `self_chains`, Zipf rank, and rotation-invariant `DefectSig`) is a coordinate-free local program learned raw on `(LocalGrid, TopoField)` and merged across tracks; a **route certificate** (`CachedRoute` + `NoRegen` resource guard) is recorded once for the winning path only (`RecordingWorld`) and invalidated locally by block edits inside its footprint; a **site** (`WordStore.routes` keyed by `goal.cell`) hands instant cached segments back; a **label** is T to and from hubs; a **field** is T-to-go for one goal.
+- **Words live in velocity space:** on ground each horizontal axis is `v ← (v + input(yaw)) × friction × drag`, a contraction onto the gait; position is its running sum, read by the exact mantissa/parity cycle skip in `advance_cycles`.
+- **The objects:** a **zone** is where one word's certificate holds, found by one corridor query; a **word** (`Word` = `Atomic` or recursive `Compound(Vec<WordId>)` with `AimRule`, universal `self_chains`, Zipf rank, and rotation-invariant `DefectSig`) is a coordinate-free local program learned raw on section-backed terrain with `TopoField` and merged across tracks; a **route certificate** (`CachedRoute` + `NoRegen` resource guard) is recorded once for the winning path only (`RecordingWorld`) and invalidated locally by block edits inside its footprint; a **site** (`WordStore.routes` keyed by `goal.cell`) hands instant cached segments back; a **label** is T to and from hubs; a **field** is T-to-go for one goal.
 - **A tool is a law input you carry** (bucket = water block, block = floor, pearl = teleporter, boat = a surface that ignores falls). An edit is a toll with a debt (its undo); a portal or a pearl is a wormhole. No tool gets search code.
 - **Two-regime singularity boundary (other players):** outside contact, the crystal stays pure (`(word, count)`, `(min, +)`, `(max, +)`) and chooses where and when contact happens; inside melee reach, an autonomous rival acts as a branching singularity handed off to a short-horizon dense solver on the same `k = 1` generator kernel, leaving `Word` certificates strictly pure (`found / forbidden / searched / refused`; reference [pvp-strategy-2026-11-22.txt](../archive/research/pvp-strategy-2026-11-22.txt)).
 
@@ -36,7 +36,7 @@ solve(from, to, kit, deadline):
                worldtube gives its count and the first exception.
   4. cut       Bisects the straight extend to the last clear prefix before the defect.
   5. propose   Phase A queries WordStore (fine -> coarse -> Zipf head) in raw law::try_tick.
-     -> learn  Phase B explores raw only on miss via LocalGrid + TopoField Dial BFS.
+     -> learn  Phase B explores raw only on miss on the sections with a TopoField Dial BFS.
   6. certify   Single RecordingWorld pass on the winning route + NoRegen damage guard,
                promoting recursive compounds before returning.
 ```
@@ -74,7 +74,7 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 | Crate | Holds |
 |---|---|
 | `engine/law` | `basis/` (the generators), `core.rs`, `face.rs`, `sim.rs` (`WorldDelta`), `shapes.rs`, `state.rs`, fluids/mining/place/interact/boats/portals/pistons/combat |
-| `engine/plan` | `solve`, `cut`, `defect` (`LocalGrid`, `TopoField`), `word_store` (`Word`, `NoRegen`), `certify`, `store`, `lattice`, `events`; `bin/plan-track`, `tests/generalize` |
+| `engine/plan` | `solve`, `cut`, `defect` (`TopoField` and the missing-cell guard), `word_store` (`Word`, `NoRegen`), `certify`, `store`, `lattice`, `events`; `bin/plan-track`, `tests/generalize` |
 | `engine/world` | region files; the 26.2 state table (`StateId`, `STATE_TO_MODEL`, `STATE_TO_BLOCK` in `law::basis::cell`); `16³` paletted sections with `4³` summary masks (`World::uniform`) |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI) |

@@ -1,12 +1,11 @@
 //! Propose-first raw defect crossing + raw learning on miss/entropy.
-//! Never calls `RecordingWorld`; runs purely on raw `law::try_tick` via `LocalGrid` + `TopoField`.
+//! Never calls `RecordingWorld`; runs purely on raw `law::try_tick` against the corridor source and `TopoField`.
 use std::{
-    cell::Cell,
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
 };
 use law::{
-    Aabb, Block, BlockPos, CollisionContext, FluidKind, PlayerState, Vec3, World,
+    Aabb, BlockPos, CollisionContext, FluidKind, PlayerState, Vec3, World,
     basis::cell::StateId,
     codec::{Interner, LabelId},
     sim::WorldDelta,
@@ -25,7 +24,7 @@ use crate::{
         toggle_open_state, water_source_state,
     },
     solve::{Stage, ThinkingCosts, WordEvents, WordStep, extend_corridor},
-    source::{CorridorProof, CorridorSource},
+    source::{CorridorProof, CorridorSource, ObservedWorld},
     state_view::StateAt,
     store::{GeneratorStore, sprint_allowed},
     word_store::{
@@ -34,32 +33,7 @@ use crate::{
     },
 };
 
-trait DefectWorld: World {
-    fn fast_can_fall(&self, s: &PlayerState) -> bool;
-}
-
-impl<S: World> DefectWorld for LocalGrid<'_, S> {
-    #[inline]
-    fn fast_can_fall(&self, s: &PlayerState) -> bool {
-        fast_can_fall(self, s)
-    }
-}
-
-impl<W: DefectWorld> DefectWorld for WorldDelta<'_, W> {
-    #[inline]
-    fn fast_can_fall(&self, s: &PlayerState) -> bool {
-        if !s.on_ground {
-            return false;
-        }
-        if self.edited_since(0).next().is_none() {
-            return self.base().fast_can_fall(s);
-        }
-        law::can_fall(s, self, 0.0, 0.0, f64::from(s.profile.step_height))
-    }
-}
-
 const MAX_STEPS: usize = 128;
-const MAX_GRID_CELLS: usize = 196_608;
 const MAX_TOPO_CELLS: usize = 48_000;
 
 const P_FSJ: u16 = tiny_program_id(0, true, Always, Never);
@@ -78,269 +52,6 @@ const SECONDARY_STRAFE: &[u16] = &[
     tiny_program_id(1, false, Never, Never),
 ];
 
-#[derive(Clone, Copy)]
-enum CachedCell<'a> {
-    Unseen,
-    Unknown,
-    Unloaded(&'a Block),
-    Known(&'a Block),
-}
-
-/// Lazy cached window over `S: World` eliminating repeated BTreeMap lookups during defect search.
-struct LocalGrid<'a, S: World> {
-    source: &'a S,
-    min: BlockPos,
-    max: BlockPos,
-    dx: usize,
-    dy: usize,
-    cells: Box<[Cell<CachedCell<'a>>]>,
-    missing: Cell<Option<BlockPos>>,
-    empty: Block,
-    difficulty: u8,
-    natural_regeneration: bool,
-    min_y: i32,
-    fast_lava: bool,
-    has_fluid: bool,
-    has_inside: bool,
-}
-
-impl<'a, S: World> LocalGrid<'a, S> {
-    fn new(source: &'a S, bounds: Aabb) -> Self {
-        let min = [
-            bounds.min.x.floor() as i32 - 2,
-            bounds.min.y.floor() as i32 - 2,
-            bounds.min.z.floor() as i32 - 2,
-        ];
-        let max = [
-            bounds.max.x.ceil() as i32 + 2,
-            bounds.max.y.ceil() as i32 + 2,
-            bounds.max.z.ceil() as i32 + 2,
-        ];
-        let dx = (max[0] - min[0] + 1).max(1) as usize;
-        let dy = (max[1] - min[1] + 1).max(1) as usize;
-        let dz = (max[2] - min[2] + 1).max(1) as usize;
-        let vol = dx.saturating_mul(dy).saturating_mul(dz);
-        let cells = if vol <= MAX_GRID_CELLS {
-            vec![Cell::new(CachedCell::Unseen); vol].into_boxed_slice()
-        } else {
-            Box::new([])
-        };
-        Self {
-            source,
-            min,
-            max,
-            dx,
-            dy,
-            cells,
-            missing: Cell::new(None),
-            empty: Block::default(),
-            difficulty: source.difficulty(),
-            natural_regeneration: source.natural_regeneration(),
-            min_y: source.min_y(),
-            fast_lava: source.fast_lava(),
-            has_fluid: source.has_fluid(),
-            has_inside: source.has_inside_effects(),
-        }
-    }
-
-    #[inline]
-    fn reset_missing(&self) {
-        self.missing.set(None);
-    }
-
-    #[inline]
-    fn check(&self) -> Result<(), String> {
-        match self.missing.get() {
-            Some(p) => Err(format!("cell {p:?}: unavailable")),
-            None => Ok(()),
-        }
-    }
-
-    #[inline]
-    fn slot(&self, p: BlockPos) -> Option<&Cell<CachedCell<'a>>> {
-        if self.cells.is_empty()
-            || p[0] < self.min[0] || p[0] > self.max[0]
-            || p[1] < self.min[1] || p[1] > self.max[1]
-            || p[2] < self.min[2] || p[2] > self.max[2]
-        {
-            return None;
-        }
-        let ix = (p[0] - self.min[0]) as usize;
-        let iy = (p[1] - self.min[1]) as usize;
-        let iz = (p[2] - self.min[2]) as usize;
-        Some(&self.cells[(iz * self.dy + iy) * self.dx + ix])
-    }
-
-    #[inline]
-    fn lookup(&self, p: BlockPos) -> Option<(&Block, bool)> {
-        if let Some(cell) = self.slot(p) {
-            match cell.get() {
-                CachedCell::Known(b) => return Some((b, true)),
-                CachedCell::Unloaded(b) => return Some((b, false)),
-                CachedCell::Unknown => {
-                    if self.missing.get().is_none() {
-                        self.missing.set(Some(p));
-                    }
-                    return None;
-                }
-                CachedCell::Unseen => {
-                    let entry = match self.source.known_block(p) {
-                        Ok(b) => {
-                            if self.source.loaded(p) {
-                                CachedCell::Known(b)
-                            } else {
-                                CachedCell::Unloaded(b)
-                            }
-                        }
-                        Err(_) => CachedCell::Unknown,
-                    };
-                    cell.set(entry);
-                    return match entry {
-                        CachedCell::Known(b) => Some((b, true)),
-                        CachedCell::Unloaded(b) => Some((b, false)),
-                        CachedCell::Unknown => {
-                            if self.missing.get().is_none() {
-                                self.missing.set(Some(p));
-                            }
-                            None
-                        }
-                        CachedCell::Unseen => unreachable!(),
-                    };
-                }
-            }
-        }
-        match self.source.known_block(p) {
-            Ok(b) => Some((b, self.source.loaded(p))),
-            Err(_) => {
-                if self.missing.get().is_none() {
-                    self.missing.set(Some(p));
-                }
-                None
-            }
-        }
-    }
-}
-
-impl<S: World> World for LocalGrid<'_, S> {
-    #[inline]
-    fn observe_axis_contact(&self, c: law::basis::sweep::AxisContact) {
-        self.source.observe_axis_contact(c);
-    }
-
-    #[inline]
-    fn observe_tick(&self) {
-        self.source.observe_tick();
-    }
-
-    #[inline]
-    fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
-        match self.lookup(p) {
-            Some((b, _)) => Ok(b),
-            None => Err("unavailable"),
-        }
-    }
-
-    #[inline]
-    fn block(&self, p: BlockPos) -> &Block {
-        match self.lookup(p) {
-            Some((b, _)) => b,
-            None => &self.empty,
-        }
-    }
-
-    #[inline]
-    fn state_id(&self, p: BlockPos) -> Option<law::basis::cell::StateId> {
-        self.source.state_id(p)
-    }
-
-    #[inline]
-    fn loaded(&self, p: BlockPos) -> bool {
-        matches!(self.lookup(p), Some((_, true)))
-    }
-
-    #[inline]
-    fn min_y(&self) -> i32 {
-        self.min_y
-    }
-
-    #[inline]
-    fn fast_lava(&self) -> bool {
-        self.fast_lava
-    }
-
-    #[inline]
-    fn difficulty(&self) -> u8 {
-        self.difficulty
-    }
-
-    #[inline]
-    fn natural_regeneration(&self) -> bool {
-        self.natural_regeneration
-    }
-
-    #[inline]
-    fn has_fluid(&self) -> bool {
-        self.has_fluid
-    }
-
-    #[inline]
-    fn has_inside_effects(&self) -> bool {
-        self.has_inside
-    }
-
-    #[inline]
-    fn visit_collision_cells(&self, _bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
-        if !self.cells.is_empty()
-            && lo[0] >= self.min[0] && hi[0] <= self.max[0]
-            && lo[1] >= self.min[1] && hi[1] <= self.max[1]
-            && lo[2] >= self.min[2] && hi[2] <= self.max[2]
-        {
-            let base_x = (lo[0] - self.min[0]) as usize;
-            for z in lo[2]..=hi[2] {
-                let iz = (z - self.min[2]) as usize * self.dy;
-                for y in lo[1]..=hi[1] {
-                    let row = (iz + (y - self.min[1]) as usize) * self.dx + base_x;
-                    for x in lo[0]..=hi[0] {
-                        let cell = &self.cells[row + (x - lo[0]) as usize];
-                        let entry = match cell.get() {
-                            CachedCell::Known(b) => Some((b, true)),
-                            CachedCell::Unloaded(_) => continue,
-                            CachedCell::Unknown => {
-                                if self.missing.get().is_none() {
-                                    self.missing.set(Some([x, y, z]));
-                                }
-                                return false;
-                            }
-                            CachedCell::Unseen => self.lookup([x, y, z]),
-                        };
-                        let Some((b, loaded)) = entry else {
-                            return false;
-                        };
-                        if loaded && !b.never_collides() && !visit([x, y, z]) {
-                            return false;
-                        }
-                    }
-                }
-            }
-            return true;
-        }
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    let p = [x, y, z];
-                    let Some((b, loaded)) = self.lookup(p) else {
-                        return false;
-                    };
-                    if loaded && !b.never_collides() && !visit(p) {
-                        return false;
-                    }
-                }
-            }
-        }
-        true
-    }
-}
-
 /// Backward unfolded shortest-path field from goal over passable cells; zero block names, never prunes.
 struct TopoField {
     min: BlockPos,
@@ -351,7 +62,7 @@ struct TopoField {
 }
 
 #[inline]
-fn cell_passable<S: World>(grid: &LocalGrid<'_, S>, p: BlockPos) -> bool {
+fn cell_passable<S: World>(grid: &ObservedWorld<'_, S>, p: BlockPos) -> bool {
     let probe = Aabb::new(
         f64::from(p[0]) + 0.25,
         f64::from(p[1]) + 0.05,
@@ -367,19 +78,20 @@ fn cell_passable<S: World>(grid: &LocalGrid<'_, S>, p: BlockPos) -> bool {
 }
 
 #[inline]
-fn has_step_support<S: World>(grid: &LocalGrid<'_, S>, p: BlockPos) -> bool {
+fn has_step_support<S: World>(grid: &ObservedWorld<'_, S>, p: BlockPos) -> bool {
     let b = grid.block(p);
     if !b.never_collides() || b.climbable || b.fluid.kind != FluidKind::Empty {
         return true;
     }
     let below = [p[0], p[1] - 1, p[2]];
-    let ok = !grid.block(below).never_collides() || grid.block(below).climbable;
+    let b = grid.block(below);
+    let ok = !b.never_collides() || b.climbable;
     grid.reset_missing();
     ok
 }
 
 #[inline]
-fn kit_step_cost<S: World>(grid: &LocalGrid<'_, S>, kv: &KitView, cur: BlockPos, n: BlockPos) -> Option<u16> {
+fn kit_step_cost<S: World>(grid: &ObservedWorld<'_, S>, kv: &KitView, cur: BlockPos, n: BlockPos) -> Option<u16> {
     let writes = kv.writes_mask();
     let passable = cell_passable(grid, n);
     if passable {
@@ -443,19 +155,21 @@ fn kit_step_cost<S: World>(grid: &LocalGrid<'_, S>, kv: &KitView, cur: BlockPos,
 }
 
 impl TopoField {
-    fn build<S: World>(grid: &LocalGrid<'_, S>, from: &PlayerState, goal: Goal, kit: Option<&KitView>) -> Self {
+    fn build<S: World>(grid: &ObservedWorld<'_, S>, bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>) -> Self {
+        let min = [bounds.min.x, bounds.min.y, bounds.min.z].map(|v| v.floor() as i32 - 2);
+        let max = [bounds.max.x, bounds.max.y, bounds.max.z].map(|v| v.ceil() as i32 + 2);
         let fx = from.position.x.floor() as i32;
         let fy = from.position.y.floor() as i32;
         let fz = from.position.z.floor() as i32;
         let min = [
-            fx.min(goal.cell[0]).saturating_sub(20).max(grid.min[0]),
-            fy.min(goal.cell[1]).saturating_sub(if kit.is_some() { 32 } else { 4 }).max(grid.min[1]),
-            fz.min(goal.cell[2]).saturating_sub(20).max(grid.min[2]),
+            fx.min(goal.cell[0]).saturating_sub(20).max(min[0]),
+            fy.min(goal.cell[1]).saturating_sub(if kit.is_some() { 32 } else { 4 }).max(min[1]),
+            fz.min(goal.cell[2]).saturating_sub(20).max(min[2]),
         ];
         let max = [
-            fx.max(goal.cell[0]).saturating_add(20).min(grid.max[0]),
-            fy.max(goal.cell[1]).saturating_add(14).min(grid.max[1]),
-            fz.max(goal.cell[2]).saturating_add(20).min(grid.max[2]),
+            fx.max(goal.cell[0]).saturating_add(20).min(max[0]),
+            fy.max(goal.cell[1]).saturating_add(14).min(max[1]),
+            fz.max(goal.cell[2]).saturating_add(20).min(max[2]),
         ];
         let dx = (max[0] - min[0] + 1).max(1) as usize;
         let dy = (max[1] - min[1] + 1).max(1) as usize;
@@ -736,43 +450,27 @@ fn dir_to_goal(s: &PlayerState, goal: Goal) -> (f64, f64) {
 }
 
 #[inline]
-fn fast_can_fall<S: World>(grid: &LocalGrid<'_, S>, s: &PlayerState) -> bool {
+fn fast_can_fall(grid: &impl World, s: &PlayerState) -> bool {
     if !s.on_ground {
         return false;
     }
     let y = (s.position.y - 0.01).floor() as i32;
     if s.position.y <= f64::from(y) + 1.0 + 1e-5 {
         let b = s.bounding_box();
-        let x0 = b.min.x.floor() as i32;
-        let x1 = b.max.x.floor() as i32;
-        let z0 = b.min.z.floor() as i32;
-        let z1 = b.max.z.floor() as i32;
-        let mut all_full = true;
-        'outer: for cz in z0..=z1 {
-            for cx in x0..=x1 {
-                if let Some(cell) = grid.slot([cx, y, cz]) {
-                    if let CachedCell::Known(blk) = cell.get() {
-                        if blk.shape.is_block()
-                            && blk.above_shape.is_none()
-                            && blk.below_shape.is_none()
-                            && blk.sneak_shape.is_none()
-                            && blk.inside_cell_shape.is_none()
-                        {
-                            continue;
-                        }
-                    }
-                }
-                all_full = false;
-                break 'outer;
-            }
-        }
-        if all_full {
+        let lo = [b.min.x.floor() as i32, y, b.min.z.floor() as i32];
+        let hi = [b.max.x.floor() as i32, y, b.max.z.floor() as i32];
+        if grid.uniform(lo, hi).is_some_and(|block| {
+            block.shape.is_block()
+                && block.above_shape.is_none()
+                && block.below_shape.is_none()
+                && block.sneak_shape.is_none()
+                && block.inside_cell_shape.is_none()
+        }) {
             return false;
         }
     }
     law::can_fall(s, grid, 0.0, 0.0, f64::from(s.profile.step_height))
 }
-
 #[inline]
 fn can_clear_probe<W: World>(w: &W, s: &PlayerState, ux: f64, uz: f64, reach: f64) -> bool {
     let b = s.bounding_box();
@@ -801,9 +499,9 @@ enum AtomicOutcome {
     Failed,
 }
 
-fn exec_atomic_raw<W: DefectWorld>(
+fn exec_atomic_raw<W: World>(
     world: &W,
-    grid_missing: Option<&LocalGrid<'_, impl World>>,
+    grid_missing: Option<&ObservedWorld<'_, impl World>>,
     programs: &[Program],
     start: &PlayerState,
     goal: Goal,
@@ -826,7 +524,7 @@ fn exec_atomic_raw<W: DefectWorld>(
     let held = program.held_input(args);
     let mut s = start.clone();
     let start_entry = EntryClass::of(start);
-    let mut prev_can_fall = world.fast_can_fall(&s);
+    let mut prev_can_fall = fast_can_fall(world, &s);
     let non_jump_prog = matches!(program_id, P_FS | P_F);
     let mut prev_edge_next_fall = kit_edge_stop && non_jump_prog && s.on_ground
         && law::can_fall(&s, world, s.velocity.x * 1.15, s.velocity.z * 1.15, f64::from(s.profile.step_height));
@@ -888,7 +586,7 @@ fn exec_atomic_raw<W: DefectWorld>(
             && (s.position.y - prev_pos.y).abs() < 1e-6
             && s.position.minus(prev_pos).horizontal_sqr() < 1e-6
             && tick >= 2;
-        let cur_can_fall = world.fast_can_fall(&s);
+        let cur_can_fall = fast_can_fall(world, &s);
         let support_ends = cur_can_fall && !prev_can_fall;
         prev_can_fall = cur_can_fall;
         let medium_changed = s.on_climbable != prev_climbable || s.in_water != prev_in_water;
@@ -1050,9 +748,9 @@ fn try_tail_extend<S: CorridorSource>(
     Some(words.into_iter().collect())
 }
 
-fn exec_word_chain<S: CorridorSource, W: DefectWorld>(
+fn exec_word_chain<S: CorridorSource, W: World>(
     world: &W,
-    grid_missing: Option<&LocalGrid<'_, S>>,
+    grid_missing: Option<&ObservedWorld<'_, S>>,
     word_store: &WordStore,
     programs: &[Program],
     start: &PlayerState,
@@ -1174,7 +872,7 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool) ->
     out
 }
 
-fn programs_for<W: DefectWorld>(world: &W, s: &PlayerState) -> List<u16, 8> {
+fn programs_for<W: World>(world: &W, s: &PlayerState) -> List<u16, 8> {
     let mut out = List::new();
     if s.in_water || s.in_lava || s.on_climbable {
         for &p in &[P_FSJ, P_FJ, P_FS, P_F] {
@@ -1186,7 +884,7 @@ fn programs_for<W: DefectWorld>(world: &W, s: &PlayerState) -> List<u16, 8> {
         out.push(p);
     }
     let low_headroom = !can_clear_shift_y(world, s, 0.35);
-    let on_ledge = s.on_ground && world.fast_can_fall(s);
+    let on_ledge = s.on_ground && fast_can_fall(world, s);
     if s.crouching || low_headroom || on_ledge {
         out.push(P_FC);
     }
@@ -1244,8 +942,8 @@ fn door_partner(world: &impl World, pos: BlockPos, sid: StateId, open_to_same: O
 }
 
 fn step_kit_node<S: World>(
-    delta: &mut WorldDelta<'_, LocalGrid<'_, S>>,
-    grid: &LocalGrid<'_, S>,
+    delta: &mut WorldDelta<'_, ObservedWorld<'_, S>>,
+    grid: &ObservedWorld<'_, S>,
     programs: &[Program],
     start: &PlayerState,
     goal: Goal,
@@ -1355,8 +1053,8 @@ struct KitCandidate {
 }
 
 fn expand_kit_ops<S: World>(
-    delta: &mut WorldDelta<'_, LocalGrid<'_, S>>,
-    grid: &LocalGrid<'_, S>,
+    delta: &mut WorldDelta<'_, ObservedWorld<'_, S>>,
+    grid: &ObservedWorld<'_, S>,
     programs: &[Program],
     kv: &KitView,
     node: &ArenaNode,
@@ -1749,7 +1447,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     let clock = std::time::Instant::now();
     let programs = words::tiny_programs();
     let bounds = bounds_aabb(source, from, goal, &win);
-    let grid = LocalGrid::new(source, bounds);
+    let grid = ObservedWorld::defect(source);
     let provenance = source.provenance();
     let init_counts = kit.map_or(KitCounts { blocks: 0, water_buckets: 0, powder_snow_buckets: 0, boats: 0, pearls: 0 }, |k| k.spec.counts());
     let restore_required = kit.is_some_and(|k| k.spec.restore_required);
@@ -1793,7 +1491,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     let mut proposal_hits = 0u64;
     let mut raw_learn_ticks = 0u64;
 
-    // Phase A: Propose from WordStore ONLY (raw try_tick on cached LocalGrid, zero learning bloat).
+    // Phase A: Propose from WordStore ONLY (raw try_tick on the observed world, zero learning bloat).
     let mut best: Option<(u64, usize, Vec<WordStep>, Vec<ObservedStep>)> = None;
     let propose_budget_ticks = 4_000u64;
     let mut prop_ticks = 0u64;
@@ -1942,7 +1640,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
 
     // Phase B: Raw best-first learning search guided by unfolded TopoField (ONLY when Phase A missed).
     if best.is_none() {
-        let topo = TopoField::build(&grid, from, goal, kit);
+        let topo = TopoField::build(&grid, bounds, from, goal, kit);
         let mut heap: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
         let mut arena: Vec<ArenaNode> = Vec::with_capacity(2048);
         let mut best_bucket: HashMap<Bucket, u64> = HashMap::with_capacity(2048);

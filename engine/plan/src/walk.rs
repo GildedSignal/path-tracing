@@ -58,13 +58,13 @@ pub fn certify<T: Timeline>(timeline: &T, programs: &[Program], start: &PlayerSt
         let program = &programs[step.program as usize];
         for elapsed in 0..step.ticks {
             let world = timeline.at(state.t);
-            let before = state.clone();
+            let (before, at) = (state.bounding_box(), state.t);
             if tube {
                 let recording = RecordingWorld::new(world);
                 let (_, input) = program.select(&recording, &state, elapsed, step.args).ok_or("no row matches")?;
                 law::try_tick(&mut state, &recording, &input).map_err(|refusal| format!("the law refused: {}", refusal.0))?;
                 let footprint = recording.take();
-                out.tube.extend(footprint.swept.iter().map(|&cell| (before.t, cell)));
+                out.tube.extend(footprint.swept.iter().map(|&cell| (at, cell)));
                 reads.extend(footprint.reads.keys().copied());
             } else {
                 let (_, input) = program.select(world, &state, elapsed, step.args).ok_or("no row matches")?;
@@ -73,7 +73,7 @@ pub fn certify<T: Timeline>(timeline: &T, programs: &[Program], start: &PlayerSt
             total += 1;
             if state.health <= 0.0 { return Err(format!("dead at tick {total}")); }
             if on_a(&state) { origin = total; }
-            if goal.touched(&before, &state) {
+            if goal.touched_boxes(before, state.bounding_box()) {
                 out.steps.push(Step { ticks: elapsed + 1, ..*step });
                 out.ends.push(state.bits());
                 (out.ticks, out.clock, out.reads, out.end) = (total, (!on_a(&state)).then_some(total - origin), reads.len(), state);

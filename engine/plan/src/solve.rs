@@ -41,7 +41,6 @@ pub struct WordStep {
 pub struct WordEvents {
     pub(crate) marks: List<Event, 3>,
     pub(crate) span: Option<Span>,
-    trace: std::cell::OnceCell<(Vec<Event>, usize)>,
 }
 impl WordEvents {
     pub(crate) fn push_mark_unique(&mut self, ev: Event) {
@@ -49,36 +48,6 @@ impl WordEvents {
             self.marks.push(ev);
         }
     }
-    fn trace(&self) -> &(Vec<Event>, usize) {
-        self.trace.get_or_init(|| {
-            let mut events = self.marks.to_vec();
-            let mut segments = 0;
-            if let Some(s) = &self.span {
-                let mut m = s.start;
-                let dir = direction(s.yaw);
-                let rows = if s.held { std::slice::from_ref(&s.gait.grounded) } else { &s.gait.phases };
-                let mut ds = [Vec::new(), Vec::new()];
-                let n = if s.count > 1 { rows.len() } else { s.ticks as usize };
-                for _ in 0..n {
-                    let phase = m.phase;
-                    let d = m.tick(&rows[phase], dir, (phase + 1) % rows.len(), s.top);
-                    for a in 0..2 { ds[a].push(d[a]); }
-                }
-                for (axis, (ds, p)) in ds.into_iter().zip([s.start.p.x, s.start.p.z]).enumerate() {
-                    segments += events::Map::axis(axis, ds).trace_boundaries(p, s.ticks.into(), |t|
-                        events.push(Event { tick: s.start.t + t, kind: EventKind::BinadeCrossing })).1;
-                }
-            }
-            events.sort_by_key(|e| e.tick);
-            events.dedup();
-            (events, segments)
-        })
-    }
-    pub fn map_segments(&self) -> usize { self.trace().1 }
-}
-impl std::ops::Deref for WordEvents {
-    type Target = [Event];
-    fn deref(&self) -> &[Event] { &self.trace().0 }
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Span {
