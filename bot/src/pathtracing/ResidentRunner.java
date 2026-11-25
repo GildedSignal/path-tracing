@@ -11,6 +11,8 @@ final class ResidentRunner {
     private static final long[] EMPTY = new long[0];
     private static long version, issue;
     private static BlockPos pending;
+    // B's face as Direction.get3DDataValue(), or -1 for any face.
+    private static int pendingFace = -1;
     private static boolean waiting;
     private static boolean executing;
     static void playbackEnded() { executing=false; actions=List.of(); }
@@ -54,8 +56,9 @@ final class ResidentRunner {
             Bot.reply(mc,"Native legacy playback stopped on observed "+kind+"; event comparison belongs to F.");
         }
     }
-    static void request(Minecraft mc, BlockPos goal, long issuance) {
+    static void request(Minecraft mc, BlockPos goal, String face, long issuance) {
         cancel(mc); issue = issuance; pending = goal.immutable();
+        pendingFace = face == null ? -1 : List.of("down","up","north","south","west","east").indexOf(face);
         if (NativeChannel.loadFailure() != null) {
             pending = null; Bot.reply(mc,"Native channel refused: " + NativeChannel.loadFailure());
         }
@@ -80,7 +83,7 @@ final class ResidentRunner {
             BlockPos at = mc.player.blockPosition();
             corridor = new int[]{Math.min(at.getX(),goal.getX())-2,Math.min(at.getZ(),goal.getZ())-2,Math.max(at.getX(),goal.getX())+2,Math.max(at.getZ(),goal.getZ())+2};
             long[] answer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,
-                new long[]{goal.getX(),goal.getY()-1,goal.getZ()},issue,version);
+                pendingFace < 0 ? new long[]{goal.getX(),goal.getY()-1,goal.getZ()} : new long[]{goal.getX(),goal.getY()-1,goal.getZ(),pendingFace},issue,version);
             HopCapture.hop("mod-request",version,issue,received,answer);
             waiting = answer[0] == 0;
             if (!waiting) refuse(mc,answer);

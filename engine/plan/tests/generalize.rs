@@ -100,7 +100,7 @@ fn ulp_shift_translate_rotate_zero_learn() {
     let (w0, a0, b0, box0) = build_obstacle_world([0, 0, 0], 0);
     let src0 = GeneratorSuperflatSource::from_world(&w0, box0, a0).unwrap();
     let s0 = settled_on(&src0, a0);
-    let g0 = Goal { cell: b0 };
+    let g0 = Goal::of(b0);
 
     let r_cold = solve(&s0, g0, Kit::BareLegs, &src0, &store, &mut codec, u64::MAX);
     let PlanOutcome::Ready(p_cold) = &r_cold.outcome else { panic!("cold solve failed: {:?}", r_cold.outcome); };
@@ -140,7 +140,7 @@ fn ulp_shift_translate_rotate_zero_learn() {
     let (wt, at, bt, boxt) = build_obstacle_world([25, 0, 25], 0);
     let srct = GeneratorSuperflatSource::from_world(&wt, boxt, at).unwrap();
     let st = settled_on(&srct, at);
-    let gt = Goal { cell: bt };
+    let gt = Goal::of(bt);
     let learn_before = store.words.borrow().work.learn_ticks;
     let r_tr = solve(&st, gt, Kit::BareLegs, &srct, &store, &mut codec, u64::MAX);
     let PlanOutcome::Ready(p_tr) = &r_tr.outcome else { panic!("translation failed: {:?}", r_tr.outcome); };
@@ -152,7 +152,7 @@ fn ulp_shift_translate_rotate_zero_learn() {
     let (wr, ar, br, boxr) = build_obstacle_world([0, 0, 0], 1);
     let srcr = GeneratorSuperflatSource::from_world(&wr, boxr, ar).unwrap();
     let sr = settled_on(&srcr, ar);
-    let gr = Goal { cell: br };
+    let gr = Goal::of(br);
     let learn_before = store.words.borrow().work.learn_ticks;
     let r_rot = solve(&sr, gr, Kit::BareLegs, &srcr, &store, &mut codec, u64::MAX);
     let PlanOutcome::Ready(p_rot) = &r_rot.outcome else { panic!("90° rotation failed: {:?}", r_rot.outcome); };
@@ -207,7 +207,7 @@ fn staircase_compound_emergence_and_self_chain() {
     let (w8, a8, b8, box8) = build_staircase_world([0, 0, 0], 0, 8);
     let src8 = GeneratorSuperflatSource::from_world(&w8, box8, a8).unwrap();
     let s8 = settled_on(&src8, a8);
-    let g8 = Goal { cell: b8 };
+    let g8 = Goal::of(b8);
     let r8 = solve(&s8, g8, Kit::BareLegs, &src8, &store, &mut codec, u64::MAX);
     let PlanOutcome::Ready(p8) = &r8.outcome else { panic!("8-step staircase failed: {:?}", r8.outcome); };
     replay_plan(&w8, &s8, p8, g8);
@@ -217,7 +217,7 @@ fn staircase_compound_emergence_and_self_chain() {
     let (w12, a12, b12, box12) = build_staircase_world([20, 3, 30], 3, 12);
     let src12 = GeneratorSuperflatSource::from_world(&w12, box12, a12).unwrap();
     let s12 = settled_on(&src12, a12);
-    let g12 = Goal { cell: b12 };
+    let g12 = Goal::of(b12);
     let learn_before = store.words.borrow().work.learn_ticks;
     let r12 = solve(&s12, g12, Kit::BareLegs, &src12, &store, &mut codec, u64::MAX);
     let PlanOutcome::Ready(p12) = &r12.outcome else { panic!("12-step rotated staircase failed: {:?}", r12.outcome); };
@@ -253,7 +253,7 @@ fn no_regen_guard_and_single_winner_edit_invalidation() {
     let mut source = GeneratorSuperflatSource::from_world(&world, ([-4, -4, -2], [4, 16, 12]), [0, 0, 0]).unwrap();
     let mut codec = Interner::default();
     let store = GeneratorStore::default();
-    let goal = Goal { cell: [0, 0, 3] };
+    let goal = Goal::of([0, 0, 3]);
 
     // Wait: settled start on [0, 8, 0] with health=5.0 and food_tick_timer=9 survives via tick-1 regen,
     // while damage_no_regen >= 5.0 refuses health=5.0, food_tick_timer=0.
@@ -349,7 +349,7 @@ fn sequential_cross_track_transfer() {
         let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)).expect("track in tracks.txt");
         let t = track(line).expect("load track");
         let source = GeneratorSuperflatSource::snapshot(&t.world, t.a).unwrap();
-        let goal = Goal { cell: t.b };
+        let goal = t.goal();
         let obs0 = ObservedWorld::new(&t.world);
         let top = obs0.block(t.a).shape.coords[1].last().copied().unwrap() + f64::from(t.a[1]);
         let mut start = plan::settle(&plan::Still(&t.world), [f64::from(t.a[0]) + 0.5, top, f64::from(t.a[2]) + 0.5], 0).unwrap();
@@ -392,7 +392,7 @@ fn post_site_flat_ground_stays_fast() {
         let top = source.block(t.a).shape.coords[1].last().copied().unwrap() + f64::from(t.a[1]);
         let mut start = plan::settle(&plan::Still(&t.world), [f64::from(t.a[0]) + 0.5, top, f64::from(t.a[2]) + 0.5], 0).unwrap();
         start.saturation = 20.0;
-        let _ = solve(&start, Goal { cell: t.b }, Kit::BareLegs, &source, &store, &mut codec, u64::MAX);
+        let _ = solve(&start, t.goal(), Kit::BareLegs, &source, &store, &mut codec, u64::MAX);
     }
 
     let flat = GeneratorSuperflatSource::new(0, Block::full(), [-1000, -4, -1000], [1000, 12, 1000]);
@@ -400,12 +400,12 @@ fn post_site_flat_ground_stays_fast() {
     let mut start = plan::settle(&plan::Still(&flat), [0.5, 1.0, 0.5], 0).unwrap();
     start.saturation = 20.0;
     // Warm up flat gait once.
-    let _ = solve(&start, Goal { cell: [0, 0, 50] }, Kit::BareLegs, &metered, &store, &mut codec, u64::MAX);
+    let _ = solve(&start, Goal::of([0, 0, 50]), Kit::BareLegs, &metered, &store, &mut codec, u64::MAX);
     let _ = metered.take_ticks();
 
     let mut times = Vec::with_capacity(20);
     for i in 1i32..=20 {
-        let goal = Goal { cell: [i * 17, 0, 40 + i * 11] };
+        let goal = Goal::of([i * 17, 0, 40 + i * 11]);
         let clock = Instant::now();
         let res = solve(&start, goal, Kit::BareLegs, &metered, &store, &mut codec, u64::MAX);
         times.push(clock.elapsed().as_nanos());

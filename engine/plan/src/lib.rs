@@ -5,7 +5,7 @@ pub mod goal;
 pub mod flight;
 pub mod time;
 pub mod walk;
-pub use goal::Goal;
+pub use goal::{Face, Goal};
 pub use time::{Still, Timeline};
 pub use walk::{Certificate, Lane, Step, certify, settle};
 pub mod deviation;

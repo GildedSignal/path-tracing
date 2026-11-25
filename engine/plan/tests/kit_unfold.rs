@@ -310,7 +310,7 @@ fn e2_zero_tax_flat_and_mixed_ground() {
     assert!(source.scars.is_empty(), "mixed full blocks must produce 0 legs scars");
 
     let start = settled_on(&w, [0, 0, 0]);
-    let goal = Goal { cell: [0, 0, 20] };
+    let goal = Goal::of([0, 0, 20]);
     let store = GeneratorStore::default();
     let mut codec = Interner::default();
 
@@ -325,7 +325,7 @@ fn e2_zero_tax_flat_and_mixed_ground() {
 
     let mut samples_ns = Vec::with_capacity(30);
     for i in 0i32..30 {
-        let g = Goal { cell: [(i % 3) - 1, 0, 14 + i] };
+        let g = Goal::of([(i % 3) - 1, 0, 14 + i]);
         let t0 = Instant::now();
         let r = solve(&start, g, kit, &source, &store, &mut codec, u64::MAX);
         let dt = t0.elapsed().as_nanos();
@@ -427,7 +427,7 @@ fn kill_test_16_cone_admissible() {
             health: 20.0,
             ..Default::default()
         };
-        let goal = Goal { cell: [gx, gy, gz] };
+        let goal = Goal::of([gx, gy, gz]);
         let lb_small = cone_base.lower_bound(&from, goal);
         let lb_big = cone_super.lower_bound(&from, goal);
         if lb_big > lb_small {
@@ -441,7 +441,7 @@ fn kill_test_16_cone_admissible() {
     w.fill([-3, 0, -2], [3, 0, 24], default_stone_state());
     let src = GeneratorSuperflatSource::from_world(&w, ([-4, -4, -4], [4, 30, 28]), [0, 0, 0]).unwrap();
     let start = settled_on(&w, [0, 0, 0]);
-    let goal = Goal { cell: [0, 0, 20] };
+    let goal = Goal::of([0, 0, 20]);
     let store = GeneratorStore::default();
     let mut codec = Interner::default();
     let k = Kit::Carried(superset_kit);
@@ -466,7 +466,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.fill([-2, 0, gap_end + 1], [2, 0, gap_end + 8], stone);
         let src = GeneratorSuperflatSource::from_world(&w, ([-4, -6, -4], [4, 10, gap_end + 10]), [0, 0, 0]).unwrap();
         let start = settled_on(&w, [0, 0, 0]);
-        let goal = Goal { cell: [0, 0, gap_end + 5] };
+        let goal = Goal::of([0, 0, gap_end + 5]);
         let k = Kit::Carried(KitSpec { blocks: 4, can_break: true, tool, restore_required: true, ..KitSpec::empty() });
         let (p, learn_ticks) = solve_ready(&w, &src, &start, goal, k, &store, &mut codec);
         let verifs = p.words.iter().filter(|s| s.edit.is_some()).count();
@@ -481,7 +481,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.fill([-2, 1, 9], [2, 1, 18], stone);
         let src = GeneratorSuperflatSource::from_world(&w, ([-4, -6, -4], [4, 10, 22]), [0, 0, 0]).unwrap();
         let start = settled_on(&w, [0, 0, 0]);
-        let goal = Goal { cell: [0, 1, 15] };
+        let goal = Goal::of([0, 1, 15]);
         let k = Kit::Carried(KitSpec { blocks: 4, can_break: true, tool, restore_required: true, ..KitSpec::empty() });
         let (p, learn_ticks) = solve_ready(&w, &src, &start, goal, k, &store, &mut codec);
         println!("R_LEGO_2 step_up_gap=5 T={} learn_ticks={learn_ticks}", p.ticks);
@@ -494,7 +494,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.fill([-2, 0, 10], [2, 0, 18], stone);
         let src = GeneratorSuperflatSource::from_world(&w, ([-4, -6, -4], [4, 10, 22]), [0, 0, 0]).unwrap();
         let start = settled_on(&w, [0, 0, 0]);
-        let goal = Goal { cell: [0, 0, 15] };
+        let goal = Goal::of([0, 0, 15]);
         let k = Kit::Carried(KitSpec { blocks: 4, can_break: true, tool, restore_required: true, ..KitSpec::empty() });
         let (p_midair, _) = solve_ready(&w, &src, &start, goal, k, &store, &mut codec);
 
@@ -539,7 +539,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.fill([-2, 1, 4], [2, 2, 4], stone);
         let src = GeneratorSuperflatSource::from_world(&w, ([-3, -2, -2], [3, 6, 12]), [0, 0, 0]).unwrap();
         let start = settled_on(&w, [0, 0, 0]);
-        let goal = Goal { cell: [0, 0, 8] };
+        let goal = Goal::of([0, 0, 8]);
         let k = Kit::Carried(KitSpec { can_break: true, tool, restore_required: true, ..KitSpec::empty() });
         let (p, _) = solve_ready(&w, &src, &start, goal, k, &store, &mut codec);
         assert!(p.words.iter().any(|s| matches!(s.edit, Some(KitOp::Break { .. }))));
@@ -559,7 +559,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.set([0, 2, 4], door_sid("south", false, "upper"));
         let src = GeneratorSuperflatSource::from_world(&w, ([-3, -2, -2], [3, 6, 12]), [0, 0, 0]).unwrap();
         let start = settled_on(&w, [0, 0, 0]);
-        let goal = Goal { cell: [0, 0, 8] };
+        let goal = Goal::of([0, 0, 8]);
         let k = Kit::Carried(KitSpec::interact_only());
         let (p, _) = solve_ready(&w, &src, &start, goal, k, &store, &mut codec);
         let interacts = p.words.iter().filter(|s| matches!(s.edit, Some(KitOp::Interact { .. }))).count();
@@ -574,7 +574,7 @@ fn r_lego_1_2_3_4_and_nether_bucket() {
         w.set([0, 25, 0], stone);
         let src = GeneratorSuperflatSource::from_world(&w, ([-4, -2, -4], [4, 32, 10]), [0, 25, 0]).unwrap();
         let start = settled_on(&w, [0, 25, 0]);
-        let goal = Goal { cell: [0, 0, 4] };
+        let goal = Goal::of([0, 0, 4]);
 
         let water_kit = Kit::Carried(KitSpec { water_buckets: 1, restore_required: true, ..KitSpec::empty() });
         let (pw, _) = solve_ready(&w, &src, &start, goal, water_kit, &store, &mut codec);
@@ -663,7 +663,7 @@ fn real_track_doorcorridor_unfolded() {
     }
     println!("DOORCORRIDOR_BLOCKS {dc_blocks:?}");
     let (dc_src, dc_start) = load_start(&dc);
-    let dc_goal = Goal { cell: dc.b };
+    let dc_goal = dc.goal();
 
     let spec_open = KitSpec { restore_required: false, ..KitSpec::interact_only() };
     let (p_open, l_open) = solve_ready(&dc.world, &dc_src, &dc_start, dc_goal, Kit::Carried(spec_open), &store, &mut codec);
@@ -684,7 +684,7 @@ fn real_track_doorcorridor_unfolded() {
         let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some(name)).expect("track in tracks.txt");
         let t = track(line).expect("load track");
         let (src, s) = load_start(&t);
-        let (p, learn) = solve_ready(&t.world, &src, &s, Goal { cell: t.b }, Kit::Carried(spec), &store, &mut codec);
+        let (p, learn) = solve_ready(&t.world, &src, &s, t.goal(), Kit::Carried(spec), &store, &mut codec);
         let edits = p.words.iter().filter(|w| w.edit.is_some()).count();
         println!("SURVIVAL track={name} restore={} T={} his_best={:?} learn_ticks={learn} edits={edits}", spec.restore_required, p.ticks, t.his.iter().min());
         assert!(t.his.iter().min().is_some_and(|&his| p.ticks < u64::from(his)), "{name}: T={} must beat his best", p.ticks);
@@ -694,7 +694,7 @@ fn real_track_doorcorridor_unfolded() {
     let line = tracks_txt.lines().find(|l| l.split_whitespace().next() == Some("mud")).expect("mud");
     let t = track(line).expect("load mud");
     let (src, s) = load_start(&t);
-    let r = solve(&s, Goal { cell: t.b }, Kit::Carried(full), &src, &store, &mut codec, u64::MAX);
+    let r = solve(&s, t.goal(), Kit::Carried(full), &src, &store, &mut codec, u64::MAX);
     println!("DIAG track=mud restore=true outcome={:?} why={:?}", r.outcome, r.explanation);
 }
 
@@ -762,7 +762,7 @@ fn g_kit_translated_rotated_sites_reuse_door_and_breach_words() {
             let (w, bounds) = site.world(door);
             let src = GeneratorSuperflatSource::from_world(&w, bounds, site.at([0, 0, 0])).unwrap();
             let start = settled_on(&w, site.at([0, 0, 0]));
-            let goal = Goal { cell: site.at([0, 0, 8]) };
+            let goal = Goal::of(site.at([0, 0, 8]));
             let before = hits(&store);
             let (p, learn) = solve_ready(&w, &src, &start, goal, Kit::Carried(spec), &store, &mut codec);
             let edits = p.words.iter().filter(|s| s.edit.is_some()).count();

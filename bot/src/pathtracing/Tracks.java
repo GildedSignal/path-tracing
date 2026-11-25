@@ -150,7 +150,7 @@ public final class Tracks {
             } else if (words.length == 1 && words[0].equals("list")) {
                 reload();
                 say(mc, tracks.isEmpty() ? "No tracks. Use /track new <name>." : "Tracks: "
-                    + String.join(", ", tracks.stream().map(TrackStore.Track::name).toList()));
+                    + String.join(", ", tracks.stream().map(t -> t.name() + " (" + faceLabel(t) + ")").toList()));
             } else if (words.length == 2) {
                 TrackStore.validateName(words[1]);
                 switch (words[0]) {
@@ -202,7 +202,7 @@ public final class Tracks {
         if (packet.effect().is(net.minecraft.world.effect.MobEffects.SATURATION)) human.refillEffectRemoved(false);
     }
 
-    static void click(Minecraft mc, BlockPos block, boolean cancel) {
+    static void click(Minecraft mc, BlockPos block, net.minecraft.core.Direction face, boolean cancel) {
         if (cancel) {
             command(mc, "cancel");
             return;
@@ -213,13 +213,14 @@ public final class Tracks {
         }
         TrackStore.Cell cell = new TrackStore.Cell(block.getX(), block.getY(), block.getZ());
         if (first == null) {
+            if (face != net.minecraft.core.Direction.UP) { say(mc, "A is where you stand: click its top face."); return; }
             first = cell;
             say(mc, "Track " + creating + " A set at " + block.toShortString() + ". Right-click B.");
             return;
         }
         try {
-            STORE.create(new TrackStore.Track(creating, first, cell, creationDimension, Instant.now().toString(), mc.player.getName().getString()));
-            say(mc, "Track " + creating + " B set at " + block.toShortString() + ". Stand on A to arm.");
+            STORE.create(new TrackStore.Track(creating, first, cell, creationDimension, Instant.now().toString(), mc.player.getName().getString(), face.getName()));
+            say(mc, "B: " + BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(block).getBlock()) + " at " + block.getX() + " " + block.getY() + " " + block.getZ() + ", " + face.getName() + " face. Only touching this face finishes.");
             creating = null;
             first = null;
             reload();
@@ -253,6 +254,14 @@ public final class Tracks {
     private static void tickBody(Minecraft mc) throws IOException {
         clock++;
         if (mc.player == null || mc.level == null) return;
+        if (!isBot() && clock % 10 == 0 && selected != null && selected.bFace() != null && selected.dimension().equals(dimension(mc))) faceMarker(mc, selected);
+        if (!isBot() && clock % 10 == 0 && creating != null && first != null && creationDimension.equals(dimension(mc))) {
+            var hit = mc.player.pick(256, 1f, false);
+            if (hit instanceof net.minecraft.world.phys.BlockHitResult block && hit.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+                var pos = block.getBlockPos();
+                faceMarker(mc, new TrackStore.Track(creating, first, new TrackStore.Cell(pos.getX(), pos.getY(), pos.getZ()), creationDimension, "", "", block.getDirection().getName()));
+            }
+        }
         if (resetting) {
             if (selected != null && selected.dimension().equals(dimension(mc)) && onA(mc, selected)) resetting = false;
             else if (clock - resetTick < 200) return;
@@ -287,7 +296,7 @@ public final class Tracks {
         if (selected != null && onA(mc, selected)) startNanos = sampleNanos;
         previousBox = mc.player.getBoundingBox();
         switch (event) {
-            case ARMED -> say(mc, selected.name() + " armed. Leave A to start.");
+            case ARMED -> say(mc, selected.name() + " armed; B: " + faceLabel(selected) + ". Leave A to start.");
             case START -> begin(mc);
             case REARM -> {
                 discardRecording(mc);
@@ -342,7 +351,7 @@ public final class Tracks {
     }
 
     private static boolean touchesB(Minecraft mc, TrackStore.Track track) {
-        return TrackDetector.touchesB(previousBox, mc.player.getBoundingBox(), track.b());
+        return TrackDetector.touchesB(previousBox, mc.player.getBoundingBox(), track.b(), track.bFace());
     }
 
     private static void begin(Minecraft mc) {
@@ -371,6 +380,7 @@ public final class Tracks {
         long ticks = DETECTOR.ticks();
         long gameTicks = DETECTOR.gameTicks();
         run.addProperty("clockOrigin", "lastOnA");
+        say(mc, "Touched B's " + (selected.bFace() == null ? "any" : selected.bFace()) + " face at tick " + ticks + ".");
         run.addProperty("T", ticks);
         run.addProperty("gameTimeDifference", gameTicks);
         run.addProperty("wallStartNanos", startNanos);
@@ -520,11 +530,10 @@ public final class Tracks {
             startNanos = sampleNanos;
             DETECTOR.sample(true, false, false, clock, mc.level.getGameTime());
             previousBox = mc.player.getBoundingBox();
-            if (playAttempt) say(mc, "Armed " + selected.name() + "; waiting for a plan.");
+            if (playAttempt) say(mc, "Armed " + selected.name() + "; waiting for a plan. B: " + faceLabel(selected) + ".");
             else {
-                say(mc, selected.name() + " armed. Toolkit " + TrackStore.items(toolkit) + ".");
-                var b = selected.b();
-                Bot.goTo(mc, new BlockPos(b.x(), b.y() + 1, b.z()));
+                say(mc, selected.name() + " armed; B: " + faceLabel(selected) + ". Toolkit " + TrackStore.items(toolkit) + ".");
+                Bot.goToTrack(mc, selected);
             }
         } else if (clock - preparationTick >= 200) {
             say(mc, "Track preparation failed: teleport, supporting block or exact toolkit did not settle within 200 ticks.");
@@ -600,6 +609,20 @@ public final class Tracks {
             || Math.abs((cell.z() >> 4) - (mc.player.blockPosition().getZ() >> 4)) > range) return;
         mc.level.addParticle(new DustParticleOptions(color, 1.5f), true, true,
             cell.x() + 0.5, cell.y() + 1.15, cell.z() + 0.5, 0, 0.01, 0);
+    }
+
+    private static String faceLabel(TrackStore.Track track) { return track.bFace() == null ? "any face (set before S170)" : track.bFace() + " face"; }
+
+    private static void faceMarker(Minecraft mc, TrackStore.Track track) {
+        var b = track.b();
+        String face = track.bFace();
+        for (int i = 0; i <= 10; i++) for (int edge = 0; edge < 4; edge++) {
+            double u = edge < 2 ? i / 10.0 : edge - 2, v = edge < 2 ? edge : i / 10.0;
+            double x = b.x() + (face.equals("west") ? 0 : face.equals("east") ? 1 : u);
+            double y = b.y() + (face.equals("down") ? 0 : face.equals("up") ? 1 : face.equals("west") || face.equals("east") ? u : v);
+            double z = b.z() + (face.equals("north") ? 0 : face.equals("south") ? 1 : v);
+            mc.level.addParticle(net.minecraft.core.particles.ParticleTypes.END_ROD, true, true, x, y, z, 0, 0, 0);
+        }
     }
 
     private static String dimension(Minecraft mc) { return mc.level.dimension().identifier().toString(); }

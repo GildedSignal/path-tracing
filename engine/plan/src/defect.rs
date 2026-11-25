@@ -1271,7 +1271,7 @@ fn expand_kit_ops<S: World>(
                         P_FS
                     };
                     let step_center = Vec3::new(f64::from(p[0]) + 0.5, f64::from(p[1]) + 1.0, f64::from(p[2]) + 0.5);
-                    let to_p = Goal { cell: [p[0], p[1] + 1, p[2]] };
+                    let to_p = Goal::of([p[0], p[1] + 1, p[2]]);
                     let dir_yaw = if s.position.minus(step_center).horizontal_sqr() > 0.04 {
                         AimRule::GoalOffset(0).resolve(s, to_p, 0)
                     } else {

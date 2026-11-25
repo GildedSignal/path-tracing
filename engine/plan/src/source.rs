@@ -551,7 +551,7 @@ mod tests {
         let source_one = GeneratorSuperflatSource::from_world(&world_one, ([-8, -4, -8], [8, 12, 60]), [0, 0, 0]).unwrap();
         let mut start = crate::settle(&crate::Still(&source_one), [0.5, 1.0, 0.5], 0).unwrap();
         start.saturation = 20.0;
-        let goal = crate::Goal { cell: [0, 0, 40] };
+        let goal = crate::Goal::of([0, 0, 40]);
         let result = crate::solve(&start, goal, crate::Kit::BareLegs, &source_one, &crate::store::GeneratorStore::default(), &mut Interner::default(), u64::MAX);
         match &result.outcome {
             crate::PlanOutcome::NeedsJoints { exception: [0, 1, 15], .. } => {}

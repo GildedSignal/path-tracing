@@ -3,7 +3,7 @@ use law::{BlockPos, CollisionContext, World};
 use crate::*;
 use words::Program;
 
-pub struct Track { pub name: String, pub world: world::WorldSnapshot, pub read: (BlockPos, BlockPos), pub body: (BlockPos, BlockPos), pub a: BlockPos, pub b: BlockPos, pub his: Vec<u32>, pub items: String, pub pad: i32 }
+pub struct Track { pub name: String, pub world: world::WorldSnapshot, pub read: (BlockPos, BlockPos), pub body: (BlockPos, BlockPos), pub a: BlockPos, pub b: BlockPos, pub b_face: Option<Face>, pub his: Vec<u32>, pub items: String, pub pad: i32 }
 fn point_of(json: &str, key: &str) -> [i32; 3] {
     let tail = &json[json.find(&format!("\"{key}\":[")).unwrap() + key.len() + 4..];
     let v: Vec<i32> = tail[..tail.find(']').unwrap()].split(',').map(|s| s.parse().unwrap()).collect();
@@ -19,10 +19,16 @@ pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -
     let mut fields = line.split_whitespace();
     let name = fields.next().ok_or("missing track name")?.to_owned();
     if name.is_empty() || !name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-') { return Err("track names use [a-z0-9_-]+".into()); }
-    let n = fields.map(str::parse::<i32>).collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    let n = fields.by_ref().take(6).map(str::parse::<i32>).collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     if n.len() != 6 { return Err("track bounds need six coordinates".into()); }
+    // B's face: the definition's `bFace` (tracks set before S170 have none), or a seventh bounds field.
+    let bounds_face = fields.next().map(goal::face_named).transpose()?;
+    if fields.next().is_some() { return Err("unexpected track bounds field".into()); }
     let json = std::fs::read_to_string(tracks.join(format!("{name}.json"))).map_err(|e| e.to_string())?;
     let (a, b) = (point_of(&json, "A"), point_of(&json, "B"));
+    let json_face = json.split_once("\"bFace\"").map(|(_, tail)| tail.split('"').nth(1).ok_or("invalid bFace".to_owned()).and_then(goal::face_named)).transpose()?;
+    if json_face.zip(bounds_face).is_some_and(|(j, f)| j != f) { return Err("B face in track bounds differs from track JSON".into()); }
+    let b_face = json_face.or(bounds_face);
     // Julien's times: every finished run of his on this track, and what the best one used.
     let runs = std::fs::read_to_string(tracks.join(format!("runs/{name}.jsonl"))).unwrap_or_default();
     let mut his = Vec::new();
@@ -40,13 +46,15 @@ pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -
         // Three cells inside what was loaded: the law's collision scan reads that far past the body.
         let margin = 3;
         match world::WorldSnapshot::load_for_plan(world, min, max) {
-            Ok(world) => return Ok(Track { name, world, read: (min, max), body: ([min[0] + margin, min[1] + 1, min[2] + margin], [max[0] - margin, max[1] - 3, max[2] - margin]), a, b, his, items, pad }),
+            Ok(world) => return Ok(Track { name, world, read: (min, max), body: ([min[0] + margin, min[1] + 1, min[2] + margin], [max[0] - margin, max[1] - 3, max[2] - margin]), a, b, b_face, his, items, pad }),
             Err(error) => last = format!("{error:?}"),
         }
     }
     Err(last)
 }
 impl Track {
+    /// B with the face its definition selects.
+    pub fn goal(&self) -> Goal { Goal { cell: self.b, face: self.b_face } }
     fn settled_start(&self) -> Result<law::PlayerState,String> {
         let context = CollisionContext { feet_y: self.a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
         let world=source::ObservedWorld::new(&self.world);
@@ -99,7 +107,7 @@ fn write_script(path: &std::path::Path, track:&Track, programs: &[Program], star
 }
 pub fn solve_track(track:&Track,path:&std::path::Path)->Result<(u32,u128),String> {
     let start=track.settled_start()?;
-    let goal=Goal {cell:track.b};
+    let goal=track.goal();
     let source=source::GeneratorSuperflatSource::snapshot(&track.world,track.a)?;
     let store=store::GeneratorStore::default();
     let mut codec=law::codec::Interner::default();

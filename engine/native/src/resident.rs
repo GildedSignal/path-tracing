@@ -127,7 +127,7 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
     if c.at != data.len() { return Err("trailing delta words".into()); } Ok(())
 }
 
-pub struct Request { pub state: PlayerState, pub meta: Vec<u64>, pub goal: BlockPos, pub issue: u64, pub version: u64 }
+pub struct Request { pub state: PlayerState, pub meta: Vec<u64>, pub goal: Goal, pub issue: u64, pub version: u64 }
 enum Work { Delta(Vec<u64>), Goal(Request) }
 struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, source_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>> }
 fn resident() -> &'static Resident {
@@ -202,7 +202,8 @@ pub fn observe(event: &[u64],bits: Vec<u64>,known: Vec<u64>,provenance: Vec<u64>
 pub fn observation() -> Vec<u64> { resident().observation.lock().unwrap().clone() }
 
 fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> Vec<u64> {
-    let Request { state, meta, goal, issue, version: requested } = request;
+    let Request { state, meta, goal: target, issue, version: requested } = request;
+    let goal = target.cell;
     let entered = crate::qpc().0 as u64;
     if let Some(why) = &source.error { return refusal(requested,format!("source publication failed: {why}")); }
     if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return refusal(requested,"observation/source session or revision mismatch"); }
@@ -225,7 +226,7 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     let mut found = None;
     for _ in 0..8 {
         let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
-        let result = plan::solve(&state, Goal { cell: goal }, carried.kit, &corridor, store, codec, u64::MAX);
+        let result = plan::solve(&state, target, carried.kit, &corridor, store, codec, u64::MAX);
         if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
         match result.outcome {
             plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
@@ -244,7 +245,7 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     }
     let Some(found) = found else { return refusal(requested,"corridor growth exceeded pass cap"); };
     let programs = words::tiny_programs();
-    match inputs(source, &programs, &state, &found.words, Goal { cell: goal }, found.ticks, &carried) {
+    match inputs(source, &programs, &state, &found.words, target, found.ticks, &carried) {
         Ok((inputs, actions)) => {
             let edits = !actions.is_empty();
             let mut out = vec![if edits { KIT_PLAN } else { WORD_PLAN },requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
@@ -331,7 +332,7 @@ mod tests {
         } } }
         let state = PlayerState { t:77,position:law::Vec3::new(8.5,1.0,8.5),on_ground:true,main_supporting_block:Some([8,0,8]),food_level:11,saturation:2.5,exhaustion:1.25,..PlayerState::default() };
         let bits = state.bits();
-        let request = Request { state,meta:vec![7,1,0,0,0,1,2,123,125],goal:[8,0,12],issue:123,version:3 };
+        let request = Request { state,meta:vec![7,1,0,0,0,1,2,123,125],goal:Goal::of([8,0,12]),issue:123,version:3 };
         let answer = plan(&source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),request,&AtomicU64::new(3),&AtomicU64::new(1));
         assert_eq!(answer[0],WORD_PLAN,"{answer:?}"); assert_eq!(answer[2],123);
         let n = answer[8] as usize; assert_eq!(answer[9..9+n],bits); assert!(answer[7]>0); assert_eq!(answer.len(),9+n+answer[7] as usize*3+4);
@@ -350,7 +351,7 @@ mod tests {
     fn ask(source: &Source, body: Vec<u64>, goal: BlockPos) -> (Vec<u64>, usize) {
         let state = PlayerState { t:77,position:law::Vec3::new(8.5,1.0,8.5),on_ground:true,main_supporting_block:Some([8,0,8]),food_level:20,saturation:5.0,health:20.0,..PlayerState::default() };
         let mut meta = vec![7,1,0,0,0,1,body.len() as u64]; meta.extend(body);
-        let answer = plan(source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),Request { state,meta,goal,issue:5,version:3 },&AtomicU64::new(3),&AtomicU64::new(1));
+        let answer = plan(source,&plan::store::GeneratorStore::default(),&mut law::codec::Interner::default(),Request { state,meta,goal:Goal::of(goal),issue:5,version:3 },&AtomicU64::new(3),&AtomicU64::new(1));
         let n = answer.get(8).copied().unwrap_or(0) as usize;
         (answer, n)
     }

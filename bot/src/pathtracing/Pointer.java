@@ -33,7 +33,7 @@ final class Pointer {
             if (Tracks.stickInHumanMode(mc, player.isShiftKeyDown())) continue;
             if (player.isShiftKeyDown()) {
                 if (Tracks.selecting()) {
-                    Tracks.click(mc, BlockPos.ZERO, true);
+                    Tracks.click(mc, BlockPos.ZERO, null, true);
                     continue;
                 }
                 send(mc, "stop");
@@ -46,7 +46,7 @@ final class Pointer {
             }
             BlockHitResult block = (BlockHitResult) hit;
             if (Tracks.selecting()) {
-                Tracks.click(mc, block.getBlockPos(), false);
+                Tracks.click(mc, block.getBlockPos(), block.getDirection(), false);
                 continue;
             }
             if (Tracks.startAtClickedA(mc, block.getBlockPos())) continue;

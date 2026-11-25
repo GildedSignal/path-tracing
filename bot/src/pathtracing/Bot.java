@@ -102,7 +102,13 @@ final class Bot {
     }
 
     static void goTo(Minecraft mc, BlockPos goal) {
-        ResidentRunner.request(mc,goal,commandIssue);
+        ResidentRunner.request(mc,goal,null,commandIssue);
+    }
+
+    /** B with the face its definition selects: the planner's goal is the detector's rule. */
+    static void goToTrack(Minecraft mc, TrackStore.Track track) {
+        var b = track.b();
+        ResidentRunner.request(mc,new BlockPos(b.x(), b.y() + 1, b.z()),track.bFace(),commandIssue);
     }
 
     private static void tick(Minecraft mc) {

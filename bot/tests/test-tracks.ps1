@@ -19,7 +19,7 @@ if ($LASTEXITCODE) { throw 'Track test compilation failed' }
 $testRig = Join-Path $testBuild ([Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $testRig | Out-Null
 & "$Jdk\java.exe" "-Dpathtracing.beforeCommit=$beforeCommit" "-Dpathtracing.uxEvidence=$Root\jobs\track-ux\arming.json" -cp "$testBuild;$classpath" pathtracing.TrackTests $testRig `
-  "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar" | Tee-Object -FilePath (Join-Path $testRig 'stdout.txt')
+  "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar" "$PSScriptRoot\fixtures\face-touch.txt" | Tee-Object -FilePath (Join-Path $testRig 'stdout.txt')
 $testExit = $LASTEXITCODE
 @{command='bot/tests/test-tracks.ps1'; baselineCommit=$beforeCommit; testRig=$testRig; exitCode=$testExit;
   result=$(if ($testExit) {'FAIL'} else {'PASS'});

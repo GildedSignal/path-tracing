@@ -65,13 +65,13 @@ fn sentence(world: &BoxWorld, parts: &[Part], trace: bool) -> Vec<PlayerState> {
 const A:[i32;3]=[-107,-60,-107];
 const B:[i32;3]=[-84,-25,-88];
 fn touch(states:&[PlayerState])->Option<usize> {
-    states.windows(2).position(|s|plan::Goal {cell:B}.touched(&s[0],&s[1])).map(|i|i+1)
+    states.windows(2).position(|s|plan::Goal::of(B).touched(&s[0],&s[1])).map(|i|i+1)
 }
 #[test]
 fn post_ladder_shortcut() {
     let world=build();
     let mut state=settle(&Still(&world),[-105.47,-28.0,-105.56],0).unwrap();
-    let goal=plan::Goal {cell:B};
+    let goal=plan::Goal::of(B);
     let mut first=None;
     // The five words from the independent post-ladder search (KT10).
     for (sprint,jump,yaw,ticks) in [(true,false,298.125,29),(true,true,270.0,23),
@@ -106,7 +106,7 @@ fn hard_track_witness() {
         program:match part.keys.as_str() {"F"=>18,"FJ"=>21,"FS"=>27,"FSJ"=>30,"FSG"=>33,keys=>panic!("no existing program for {keys}")},
         args:words::Arguments {refined_yaw:Some(part.yaw),..Default::default()},ticks:part.ticks,lane:plan::Lane::Replay,
     }).collect::<Vec<_>>();
-    let certificate=plan::certify(&Still(&world),&words::tiny_programs(),&states[0],&steps,&plan::Goal {cell:B},Some(A),false).unwrap();
+    let certificate=plan::certify(&Still(&world),&words::tiny_programs(),&states[0],&steps,&plan::Goal::of(B),Some(A),false).unwrap();
     assert_eq!((certificate.ticks,certificate.clock),(583,Some(580)));
     assert_eq!(certificate.end.bits(),states[583].bits());
     let origin=states.iter().rposition(|s| s.on_ground && s.main_supporting_block==Some(A)).unwrap();

@@ -84,10 +84,10 @@ fn real_time_per_command() {
     let goal=|s:&mut u64|{
         let angle=(lcg(s) as f64/(1u64<<31) as f64)*std::f64::consts::TAU;
         let d=10f64.powf(2.0+4.0*(lcg(s) as f64/(1u64<<31) as f64));
-        Goal {cell:[(d*angle.cos()).round() as i32,-61,(d*angle.sin()).round() as i32]}
+        Goal::of([(d*angle.cos()).round() as i32,-61,(d*angle.sin()).round() as i32])
     };
     let mut warmup=Vec::new();
-    command(&start,"first",Goal {cell:[0,-61,100]},&source,&store,&mut codec,&mut warmup).unwrap();
+    command(&start,"first",Goal::of([0,-61,100]),&source,&store,&mut codec,&mut warmup).unwrap();
     // 1. New goals from standing, one after another, on the same living store.
     let mut times=Vec::new();let mut refused=0;let mut moving_starts=Vec::new();
     for _ in 0..n {
@@ -110,9 +110,9 @@ fn real_time_per_command() {
     let mut retained=start.clone();
     let input=law::Input {forward:true,jump:true,sprint:true,yaw:f32::from_bits(1135073362),..Default::default()};
     for _ in 0..265 {law::try_tick(&mut retained,&source,&input).unwrap();}
-    let p=command(&retained,"retained",Goal {cell:[-388,-61,-317]},&source,&store,&mut codec,&mut Vec::new()).unwrap();
+    let p=command(&retained,"retained",Goal::of([-388,-61,-317]),&source,&store,&mut codec,&mut Vec::new()).unwrap();
     assert!(p.ticks<=1666,"retained moving command T={}",p.ticks);
     let mut times=Vec::new();
-    for _ in 0..n {command(&start,"repeat",Goal {cell:[0,-61,100]},&source,&store,&mut codec,&mut times).unwrap();}
+    for _ in 0..n {command(&start,"repeat",Goal::of([0,-61,100]),&source,&store,&mut codec,&mut times).unwrap();}
     stats("same goal again (repeat)",&mut times,0,1_000.0);
 }

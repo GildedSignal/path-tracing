@@ -31,6 +31,8 @@ public final class TrackTests {
         var suggestions = NameSuggestions.suggest(new com.mojang.brigadier.suggestion.SuggestionsBuilder("ha", 0), List.of("hard", "hat", "track")).join();
         check(suggestions.getList().stream().map(x -> x.getText()).toList().equals(List.of("hard", "hat")), "Suggestions contain exactly the prefix matches");
         detector();
+        faceVectors(Path.of(args[3]));
+        faceTargets();
         for (String name : List.of("hard_track_2", "a-b")) TrackStore.validateName(name);
         for (String name : List.of("A", "a b", "a/b")) {
             try { TrackStore.validateName(name); throw new AssertionError("Accepted invalid name: " + name); }
@@ -48,6 +50,29 @@ public final class TrackTests {
     private static void check(boolean condition, String message) {
         checks++;
         if (!condition) throw new AssertionError(message);
+    }
+
+    private static void faceVectors(Path path) throws IOException {
+        for (String line : Files.readAllLines(path)) {
+            String[] v = line.trim().split("\\s+");
+            double[] n = new double[12];
+            for (int i = 0; i < 12; i++) n[i] = Double.parseDouble(v[i]);
+            var before = new net.minecraft.world.phys.AABB(n[0], n[1], n[2], n[3], n[4], n[5]);
+            var after = new net.minecraft.world.phys.AABB(n[6], n[7], n[8], n[9], n[10], n[11]);
+            var cell = new TrackStore.Cell(Integer.parseInt(v[12]), Integer.parseInt(v[13]), Integer.parseInt(v[14]));
+            check(TrackDetector.touchesB(before, after, cell, v[15].equals("any") ? null : v[15]) == Boolean.parseBoolean(v[16]), "Face vector: " + line);
+        }
+    }
+
+    /** A west-face track does not finish on the top: only the selected face stops the clock. */
+    private static void faceTargets() {
+        var b = new TrackStore.Cell(-3, 5, 9);
+        var detector = new TrackDetector();
+        var top = new net.minecraft.world.phys.AABB(-2.75, 6, 9.25, -2.25, 7.5, 9.75);
+        var side = new net.minecraft.world.phys.AABB(-3.5, 5, 9.25, -3, 6.5, 9.75);
+        event(detector, true, false, false, 0, 0, TrackDetector.Event.ARMED);
+        event(detector, false, TrackDetector.touchesB(null, top, b, "west"), false, 1, 1, TrackDetector.Event.START);
+        event(detector, false, TrackDetector.touchesB(null, side, b, "west"), false, 2, 2, TrackDetector.Event.STOP);
     }
 
     private static void event(TrackDetector detector, boolean a, boolean b, boolean abandon, long tick, long game, TrackDetector.Event expected) {
@@ -95,15 +120,15 @@ public final class TrackTests {
         // A swimming/crawling-height player can have both endpoints outside a two-block fall.
         var above = new net.minecraft.world.phys.AABB(0.2, 6.1, 0.2, 0.8, 6.7, 0.8);
         var below = above.move(0, -2, 0);
-        check(!TrackDetector.touchesB(null, above, b) && !TrackDetector.touchesB(null, below, b),
+        check(!TrackDetector.touchesB(null, above, b, null) && !TrackDetector.touchesB(null, below, b, null),
             "Neither endpoint overlaps the non-solid finish cell");
-        check(TrackDetector.touchesB(above, below, b), "Swept stop detects a two-block-per-tick fall through non-solid B");
+        check(TrackDetector.touchesB(above, below, b, null), "Swept stop detects a two-block-per-tick fall through non-solid B");
         var away = above.move(2, 0, 0);
-        check(!TrackDetector.touchesB(away, away.move(0, -2, 0), b), "Swept stop rejects a fall beside B");
+        check(!TrackDetector.touchesB(away, away.move(0, -2, 0), b, null), "Swept stop rejects a fall beside B");
         detector.reset();
         event(detector, true, false, false, 60, 410, TrackDetector.Event.ARMED);
         event(detector, false, false, false, 61, 411, TrackDetector.Event.START);
-        event(detector, false, TrackDetector.touchesB(above, below, b), false, 62, 412, TrackDetector.Event.STOP);
+        event(detector, false, TrackDetector.touchesB(above, below, b, null), false, 62, 412, TrackDetector.Event.STOP);
         check(detector.ticks() == 1, "Swept contact stops on the first crossing sample");
         detector.reset();
         event(detector, true, false, false, 70, 420, TrackDetector.Event.ARMED);
@@ -182,6 +207,10 @@ public final class TrackTests {
             "minecraft:overworld", created, "human");
         store.create(track);
         check(store.read(track.name()).equals(track), "Definition roundtrip");
+        var faced = new TrackStore.Track("faced", track.a(), track.b(), track.dimension(), created, "human", "west");
+        store.create(faced);
+        check(store.read("faced").equals(faced), "Face survives definition roundtrip");
+        store.delete("faced");
         check(store.list().equals(List.of(track)), "Track listing");
         try { store.create(track); throw new AssertionError("Overwrite accepted"); }
         catch (IOException expected) { checks++; }

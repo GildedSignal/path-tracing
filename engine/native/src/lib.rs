@@ -63,9 +63,11 @@ pub unsafe extern "system" fn Java_pathtracing_NativeChannel_RequestGoal(env: *m
         let known = mask(&bits,&known,&provenance)?;
         let state = law::PlayerState::from_observed_bits(&bits,&known).map_err(|e| format!("{} at {}",e.reason,e.position))?;
         let meta = unsafe { read(env,meta)? }; let raw_goal = unsafe { read(env,goal)? };
-        if raw_goal.len() != 3 { return Err("goal length".into()); }
-        let mut goal = [0;3]; for a in 0..3 { goal[a] = raw_goal[a] as i32; if goal[a] as u64 != raw_goal[a] { return Err("goal range".into()); } }
-        let mut ready = resident::request(resident::Request { state,meta,goal,issue: issue as u64,version: version as u64 });
+        // B's cell, then optionally its face (`Direction.get3DDataValue()`); without one, any face.
+        if raw_goal.len() != 3 && raw_goal.len() != 4 { return Err("goal length".into()); }
+        let mut cell = [0;3]; for a in 0..3 { cell[a] = raw_goal[a] as i32; if cell[a] as u64 != raw_goal[a] { return Err("goal range".into()); } }
+        let face = match raw_goal.get(3) { None => None, Some(&f) if f < 6 => Some(plan::Face::from_3d_data(f as u8)), Some(_) => return Err("goal face".into()) };
+        let mut ready = resident::request(resident::Request { state,meta,goal: plan::Goal { cell, face },issue: issue as u64,version: version as u64 });
         if ready[0] == resident::READY { ready.extend([entered,qpc().0 as u64]); } Ok::<_,String>(ready)
     })()).unwrap_or_else(|_| Err("request panic".into())).unwrap_or_else(|e| resident::refusal(version as u64,e));
     result[2] = entered; result[3] = qpc().0 as u64;
