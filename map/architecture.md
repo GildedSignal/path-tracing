@@ -73,9 +73,9 @@ Ryzen 7800X3D (8 cores), RX 7900 XTX, Windows 11. Threads for the loop's parts; 
 
 | Crate | Holds |
 |---|---|
-| `engine/law` | `basis/` (the generators), `core.rs`, `face.rs`, `sim.rs` (`WorldDelta`), `shapes.rs`, `state.rs`, fluids/mining/place/interact/boats/portals/pistons/combat |
+| `engine/law` | `basis/` (the generators), `core.rs`, `face.rs`, `sim.rs` (`WorldDelta`), `dismount.rs`, `shapes.rs`, `state.rs`, fluids/mining/place/interact/boats/portals/pistons/combat |
 | `engine/plan` | `solve`, `cut`, `defect` (`TopoField` and the missing-cell guard), `kit` (`KitView`, `ObligationLedger`), `word_store` (`Word`, `NoRegen`), `certify`, `store`, `lattice`, `events`, `goal` (`Goal { cell, face }`: B's clicked face, the detector's zero-epsilon touch); `bin/plan-track`, `tests/generalize`, `tests/kit_unfold`, `tests/face_touch` |
-| `engine/world` | region files; the 26.2 state table (`StateId`, `STATE_TO_MODEL`, `STATE_TO_BLOCK` in `law::basis::cell`); `16³` paletted sections with `4³` summary masks (`World::uniform`) |
+| `engine/world` | region files; the 26.2 state table (`StateId`, `STATE_TO_MODEL`, `STATE_TO_BLOCK`, `data/cell_rule_index.tsv`); `16³` paletted sections with `4³` summary masks (`World::uniform`) |
 | `engine/words` | the programs the words run (`tiny_programs`) |
 | `engine/native` | the bot's mod channel (JNI: `resident`, `kit_wire`, `WORD_PLAN`, `KIT_PLAN`; the goal carries B's face) |
 | `engine/build` | building as (max, +): `/fill` and `/setblock` blueprints over `StateId` compiled into a Bernstein footprint DAG by a forward birth wave and a backward 4D demolition wave, with emergent scaffolding, then replayed by `verify_4d`; `bin/plan-build` |

@@ -24,7 +24,7 @@ How the bots see the world, so that creative travel, cooperation and building co
 
   | Case | Thinking floor | Measured |
   |---|---|---|
-  | one million blocks, plain, bare legs, Peaceful | about 5 µs (one label, one memo, about 20 binade events, a two-yaw count) | 11.25–15.15 µs warm (5.90 µs repeat, 0 B alloc); `straight800` 140 µs first, 6.0 µs repeat |
+  | one million blocks, plain, bare legs, Peaceful | about 5 µs (one label, one memo, about 20 binade events, a two-yaw count) | 12.75–13.90 µs warm (5.10 µs repeat, 0 B alloc); `straight800` 140 µs first, 6.0 µs repeat |
   | his 21 tracks | 10–100 µs warm; 12 ms per new joint pattern, once | 782 ms total across 16 bare-legs tracks (3.8–1,422 µs repeat); 1.01 s across 11 shared-store tracks |
   | `hardtrack` (easy-medium by his ruling, S166) | 0.5–1 ms warm; cold learning fits inside its 260-tick first ladder | T = 583 in 0.23 s |
   | 10⁴ varied blocks | first word about 100 µs; planning outruns the body by about 3×10⁵ | not run |
