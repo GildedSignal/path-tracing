@@ -203,8 +203,7 @@ pub fn execute_riders_jump_horse(m: &mut MountState, scale: f32, input_z: f64) {
     let v = m.velocity;
     m.velocity = Vec3::new(v.x, jump_power as f64, v.z);
     if input_z > 0.0 {
-        let s = math::sin((m.yaw * 0.017_453_292f32) as f64);
-        let c = math::cos((m.yaw * 0.017_453_292f32) as f64);
+        let (s, c) = math::sin_cos_degrees(m.yaw);
         m.velocity = m.velocity.plus(Vec3::new(
             (-0.4f32 * s * scale) as f64,
             0.0,
@@ -219,12 +218,8 @@ pub fn execute_riders_jump_horse(m: &mut MountState, scale: f32, input_z: f64) {
 pub fn execute_riders_jump_camel(m: &mut MountState, scale: f32) {
     let jump_power = (m.jump_strength_attribute as f32 * 1.0f32) * 1.0f32 + 0.0f32;
     // getLookAngle().multiply(1,0,1).normalize() with pitch 0 (dash is horizontal)
-    let look = Vec3::new(
-        (-math::sin((m.yaw * 0.017_453_292f32) as f64)) as f64,
-        0.0,
-        (math::cos((m.yaw * 0.017_453_292f32) as f64)) as f64,
-    )
-    .normalize();
+    let (s, c) = math::sin_cos_degrees(m.yaw);
+    let look = Vec3::new((-s) as f64, 0.0, c as f64).normalize();
     let horizontal = look.scale((22.2222f32 * scale) as f64 * m.speed_attribute * 1.0f32 as f64);
     let delta = horizontal.plus(Vec3::new(0.0, (1.4285f32 * scale) as f64 * jump_power as f64, 0.0));
     m.velocity = m.velocity.plus(delta);

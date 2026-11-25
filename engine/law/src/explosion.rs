@@ -190,10 +190,8 @@ pub const fn wind_charge_spawn_pos(player_pos: Vec3, eye_y: f64) -> Vec3 {
 /// `half_w = 0.3125f / 2`, `y0 = pos.y - 0.15f`, `y1 = y0 + 0.3125f`.
 #[inline]
 pub fn wind_charge_aabb(pos: Vec3) -> Aabb {
-    let half_w = (WIND_CHARGE_WIDTH / 2.0f32) as f64;
-    let y0 = pos.y - WIND_CHARGE_AABB_Y_OFFSET;
-    let y1 = y0 + WIND_CHARGE_HEIGHT as f64;
-    Aabb::new(pos.x - half_w, y0, pos.z - half_w, pos.x + half_w, y1, pos.z + half_w)
+    let base = Vec3::new(pos.x, pos.y - WIND_CHARGE_AABB_Y_OFFSET, pos.z);
+    Aabb::from_bottom(base, WIND_CHARGE_WIDTH, WIND_CHARGE_HEIGHT)
 }
 
 pub use crate::basis::body::shoot_from_rotation;
@@ -201,12 +199,7 @@ pub use crate::basis::body::shoot_from_rotation;
 /// `AbstractWindCharge.onHitBlock @39-53`: `hit_location + face.unit_vec * 0.25`.
 #[inline]
 pub fn wind_charge_block_hit_center(hit_location: Vec3, face: Direction) -> Vec3 {
-    let s = face.step();
-    hit_location.plus(Vec3::new(
-        s[0] as f64 * WIND_CHARGE_HIT_BLOCK_OFFSET,
-        s[1] as f64 * WIND_CHARGE_HIT_BLOCK_OFFSET,
-        s[2] as f64 * WIND_CHARGE_HIT_BLOCK_OFFSET,
-    ))
+    hit_location.plus(face.vector(WIND_CHARGE_HIT_BLOCK_OFFSET))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

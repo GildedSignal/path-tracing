@@ -697,16 +697,7 @@ fn inside_block(s: &mut PlayerState, world: &impl World, p: BlockPos, intersects
             None
         }
         Inside::BubbleColumn { drag } => {
-            if intersects && !s.flying {
-                let above = world.block([p[0], p[1] + 1, p[2]]);
-                let vy = s.velocity.y;
-                if above.shape.is_empty() && above.fluid.kind == FluidKind::Empty {
-                    s.velocity.y = if *drag { (-0.9f64).max(vy - 0.03) } else { 1.8f64.min(vy + 0.1) };
-                } else {
-                    s.velocity.y = if *drag { (-0.3f64).max(vy - 0.03) } else { 0.7f64.min(vy + 0.06) };
-                    s.fall_distance = 0.0;
-                }
-            }
+            crate::basis::body::bubble_column_contact(s, world, p, drag, intersects);
             None
         }
         Inside::Fire { soul } => { collector.add(CLEAR_FREEZE); collector.add(FIRE_IGNITE); collector.fire.push(*soul); None }

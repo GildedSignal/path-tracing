@@ -351,10 +351,10 @@ fn server_unloaded_chunk_applies_gravity_not_minus_0_1() {
 
 #[test]
 fn jar_world_hooks() {
-    use law::basis::cell::{CellState, SimCell, WorldMut};
+    use law::basis::cell::{CellState, StateId, WorldMut, DIRECTION, FACE};
     use law::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
-    use law::world_hooks::*;
-    use law::{Block, BlockPos, BoxWorld, Fluid, FluidKind};
+    use law::{sim::SimWorld, world_hooks::*};
+    use law::{BlockPos, BoxWorld, FluidKind, PlayerState};
     use std::collections::HashMap;
 
     let h64 = |s: &str| u64::from_str_radix(s, 16).unwrap();
@@ -386,52 +386,18 @@ fn jar_world_hooks() {
         _ => panic!("bad dir: {s}"),
     };
 
-    const AIR_ID: BlockId = BlockId(0);
-    const STONE_ID: BlockId = BlockId(1);
-    const WATER_ID: BlockId = BlockId(2);
-    const LAVA_ID: BlockId = BlockId(3);
-    const SLAB_ID: BlockId = BlockId(4);
-    const LADDER_ID: BlockId = BlockId(5);
-    const OAK_PLATE_ID: BlockId = BlockId(10);
-    const STONE_PLATE_ID: BlockId = BlockId(11);
-    const GOLD_PLATE_ID: BlockId = BlockId(12);
-    const IRON_PLATE_ID: BlockId = BlockId(13);
-    const STONE_BTN_ID: BlockId = BlockId(20);
-    const OAK_BTN_ID: BlockId = BlockId(21);
+    const OAK_PLATE_ID: BlockId = BlockId(261);
+    const STONE_PLATE_ID: BlockId = BlockId(259);
+    const GOLD_PLATE_ID: BlockId = BlockId(471);
+    const IRON_PLATE_ID: BlockId = BlockId(472);
+    const STONE_BTN_ID: BlockId = BlockId(275);
+    const OAK_BTN_ID: BlockId = BlockId(443);
     const WIRE_ID: BlockId = BlockId(402); // registry rows: the tripwire rules build cells of these blocks
     const HOOK_ID: BlockId = BlockId(401);
     assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
 
-    struct MapBucketWorld {
-        cells: HashMap<BlockPos, BucketCell>,
-        evap: bool,
-    }
-    impl MapBucketWorld {
-        fn new(evap: bool) -> Self {
-            Self { cells: HashMap::new(), evap }
-        }
-    }
-    impl BucketWorld for MapBucketWorld {
-        fn air_id(&self) -> BlockId { AIR_ID }
-        fn water_block_id(&self) -> BlockId { WATER_ID }
-        fn lava_block_id(&self) -> BlockId { LAVA_ID }
-        fn cell(&self, pos: BlockPos) -> BucketCell {
-            self.cells.get(&pos).copied().unwrap_or_else(|| BucketCell::air(AIR_ID))
-        }
-        fn set_cell(&mut self, pos: BlockPos, cell: BucketCell) {
-            if cell.is_air { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
-        }
-        fn water_evaporates(&self, _pos: BlockPos) -> bool { self.evap }
-    }
-
     let block_name = |id: BlockId| -> &'static str {
         match id {
-            AIR_ID => "air",
-            STONE_ID => "stone",
-            WATER_ID => "water",
-            LAVA_ID => "lava",
-            SLAB_ID => "oak_slab",
-            LADDER_ID => "ladder",
             OAK_PLATE_ID => "oak_pressure_plate",
             STONE_PLATE_ID => "stone_pressure_plate",
             GOLD_PLATE_ID => "light_weighted_pressure_plate",
@@ -452,29 +418,30 @@ fn jar_world_hooks() {
         Direction::East => "east",
     };
 
-    let fmt_bucket_events = |evs: &[BucketEvent]| -> String {
+    let fmt_bucket_events = |evs: &[CellEvent]| -> String {
         let mut parts = Vec::new();
         for ev in evs {
             match *ev {
-                BucketEvent::DestroyBlock { pos: [x, y, z], drop } => {
+                CellEvent::DestroyBlock { pos: [x, y, z], drop } => {
                     parts.push(format!("DESTROY({x},{y},{z},{drop})"));
                 }
-                BucketEvent::SetBlock { pos: [x, y, z], cell, flags } => {
-                    let tag = if let Some(wl) = cell.waterlogged {
-                        let extra = if cell.block_id == LADDER_ID { ",fac=north" } else { "" };
-                        format!("wl={wl}{extra}")
-                    } else if let Some((_, lvl)) = cell.liquid_block {
-                        format!("lvl={lvl}")
+                CellEvent::SetBlock { pos: [x, y, z], state: cell, flags } => {
+                    let name = cell.block().name();
+                    let tag = if let Some(wl) = cell.get("waterlogged") {
+                        let facing = if name == "ladder" { format!(",fac={}", cell.get("facing").unwrap()) } else { String::new() };
+                        format!("wl={wl}{facing}")
+                    } else if let Some(level) = cell.get("level") {
+                        format!("lvl={level}")
                     } else {
                         String::new()
                     };
-                    parts.push(format!("SET({x},{y},{z},{},{flags},{tag})", block_name(cell.block_id)));
+                    parts.push(format!("SET({x},{y},{z},{name},{flags},{tag})"));
                 }
-                BucketEvent::ScheduleFluidTick { pos: [x, y, z], fluid, delay } => {
+                CellEvent::ScheduleFluidTick { pos: [x, y, z], fluid, delay } => {
                     let fnm = match fluid { BucketContent::Water => "water", BucketContent::Lava => "lava", BucketContent::Empty => "empty" };
                     parts.push(format!("SCHED_FLUID({x},{y},{z},{fnm},{delay})"));
                 }
-                BucketEvent::PlaySound { pos: [x, y, z], sound } => {
+                CellEvent::PlaySound { pos: [x, y, z], sound } => {
                     let sn = match sound {
                         BucketSound::EmptyWater => "item.bucket.empty",
                         BucketSound::EmptyLava => "item.bucket.empty_lava",
@@ -484,25 +451,30 @@ fn jar_world_hooks() {
                     };
                     parts.push(format!("SOUND({x},{y},{z},{sn})"));
                 }
-                BucketEvent::GameEvent { pos: [x, y, z], event } => {
+                CellEvent::GameEvent { pos: [x, y, z], event } => {
                     let en = match event {
                         BucketGameEvent::FluidPlace => "minecraft:fluid_place",
                         BucketGameEvent::FluidPickup => "minecraft:fluid_pickup",
                     };
                     parts.push(format!("GAME_EVENT({x},{y},{z},{en})"));
                 }
-                BucketEvent::EvaporateSmokeParticles { count, .. } => {
+                CellEvent::EvaporateSmokeParticles { count, .. } => {
                     for _ in 0..count { parts.push("PARTICLE".to_string()); }
                 }
+                other => panic!("unexpected bucket event: {other:?}"),
             }
         }
         parts.join(";")
     };
 
-    let fmt_plate_events_id = |id: BlockId, evs: &[PlateEvent]| -> String {
+    let fmt_plate_events_id = |id: BlockId, evs: &[CellEvent]| -> String {
         let bname = block_name(id);
         evs.iter().map(|ev| match *ev {
-            PlateEvent::SetSignal { pos: [x, y, z], flags, signal } => {
+            CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                let signal = state.get("power").map_or_else(
+                    || if state.get("powered") == Some("true") { 15 } else { 0 },
+                    |power| power.parse::<u8>().unwrap(),
+                );
                 let tag = if id == GOLD_PLATE_ID || id == IRON_PLATE_ID {
                     format!("sig={signal}")
                 } else {
@@ -510,10 +482,10 @@ fn jar_world_hooks() {
                 };
                 format!("SET({x},{y},{z},{bname},{flags},{tag})")
             }
-            PlateEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+            CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                 format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id))
             }
-            PlateEvent::PlaySound { pos: [x, y, z], activated } => {
+            CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
                 let snd = match (id, activated) {
                     (OAK_PLATE_ID, true) => "block.wooden_pressure_plate.click_on",
                     (OAK_PLATE_ID, false) => "block.wooden_pressure_plate.click_off",
@@ -522,64 +494,64 @@ fn jar_world_hooks() {
                     (_, true) => "block.metal_pressure_plate.click_on",
                     (_, false) => "block.metal_pressure_plate.click_off",
                 };
-                format!("SOUND({x},{y},{z},{snd})")
+                format!("SOUND({x},{y},{z},{snd});GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
             }
-            PlateEvent::GameEvent { pos: [x, y, z], activated } => {
-                format!("GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
-            }
-            PlateEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+            CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                 format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id))
             }
+            other => panic!("unexpected sensor event: {other:?}"),
         }).collect::<Vec<_>>().join(";")
     };
 
-    let fmt_button_events = |id: BlockId, facing: Direction, evs: &[ButtonEvent]| -> String {
+    let fmt_button_events = |id: BlockId, facing: Direction, evs: &[CellEvent]| -> String {
         let bname = block_name(id);
         let fstr = dir_lower(facing);
         evs.iter().map(|ev| match *ev {
-            ButtonEvent::SetPowered { pos: [x, y, z], flags, powered } => {
-                format!("SET({x},{y},{z},{bname},{flags},pow={powered},fac={fstr})")
+            CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                format!("SET({x},{y},{z},{bname},{flags},pow={},fac={fstr})", state.get("powered").unwrap())
             }
-            ButtonEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+            CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                 format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id))
             }
-            ButtonEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+            CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                 format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id))
             }
-            ButtonEvent::PlaySound { pos: [x, y, z], activated } => {
+            CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
                 let snd = match (id == OAK_BTN_ID, activated) {
                     (true, true) => "block.wooden_button.click_on",
                     (true, false) => "block.wooden_button.click_off",
                     (false, true) => "block.stone_button.click_on",
                     (false, false) => "block.stone_button.click_off",
                 };
-                format!("SOUND({x},{y},{z},{snd})")
+                format!("SOUND({x},{y},{z},{snd});GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
             }
-            ButtonEvent::GameEvent { pos: [x, y, z], activated } => {
-                format!("GAME_EVENT({x},{y},{z},{})", if activated { "block_activate" } else { "block_deactivate" })
-            }
+            other => panic!("unexpected sensor event: {other:?}"),
         }).collect::<Vec<_>>().join(";")
     };
 
-    let fmt_tripwire_events = |evs: &[TripwireEvent]| -> String {
+    let fmt_tripwire_events = |evs: &[CellEvent]| -> String {
         let mut parts = Vec::new();
         for ev in evs {
             match *ev {
-                TripwireEvent::SetWire { pos: [x, y, z], flags, wire } => {
-                    parts.push(format!("SET({x},{y},{z},tripwire,{flags},pow={},att={},dis={})",
-                        wire.powered, wire.attached, wire.disarmed));
+                CellEvent::SetBlock { pos: [x, y, z], flags, state } => {
+                    let name = state.block().name();
+                    let powered = state.get("powered").unwrap();
+                    let attached = state.get("attached").unwrap();
+                    let extra = if name == "tripwire" {
+                        format!("dis={}", state.get("disarmed").unwrap())
+                    } else {
+                        format!("fac={}", state.get("facing").unwrap())
+                    };
+                    parts.push(format!("SET({x},{y},{z},{name},{flags},pow={powered},att={attached},{extra})"));
                 }
-                TripwireEvent::SetHook { pos: [x, y, z], flags, hook } => {
-                    parts.push(format!("SET({x},{y},{z},tripwire_hook,{flags},pow={},att={},fac={})",
-                        hook.powered, hook.attached, dir_lower(hook.facing)));
-                }
-                TripwireEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
+
+                CellEvent::ScheduleTick { pos: [x, y, z], block_id, delay } => {
                     parts.push(format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id)));
                 }
-                TripwireEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
+                CellEvent::UpdateNeighborsAt { pos: [x, y, z], source_id } => {
                     parts.push(format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id)));
                 }
-                TripwireEvent::HookFeedback { pos: [x, y, z], feedback } => {
+                CellEvent::HookFeedback { pos: [x, y, z], feedback } => {
                     let (snd, ge) = match feedback {
                         TripwireHookFeedback::ClickOn => ("block.tripwire.click_on", "block_activate"),
                         TripwireHookFeedback::ClickOff => ("block.tripwire.click_off", "block_deactivate"),
@@ -589,35 +561,34 @@ fn jar_world_hooks() {
                     parts.push(format!("SOUND({x},{y},{z},{snd})"));
                     parts.push(format!("GAME_EVENT({x},{y},{z},{ge})"));
                 }
-                TripwireEvent::GameEventShear { pos: [x, y, z] } => {
+                CellEvent::GameEventShear { pos: [x, y, z] } => {
                     parts.push(format!("GAME_EVENT({x},{y},{z},shear)"));
                 }
+                other => panic!("unexpected tripwire event: {other:?}"),
             }
         }
         if parts.is_empty() { "NONE".to_string() } else { parts.join(";") }
     };
 
     struct MapTripwireWorld {
-        cells: HashMap<BlockPos, SimCell>,
+        cells: HashMap<BlockPos, StateId>,
         scheduled: Vec<(BlockPos, BlockId)>,
     }
     impl MapTripwireWorld {
         fn new() -> Self { Self { cells: HashMap::new(), scheduled: Vec::new() } }
         fn put_wire(&mut self, pos: BlockPos, powered: bool, attached: bool, disarmed: bool) {
-            let wire = TripwireWireState { block_id: WIRE_ID, powered, attached, disarmed };
-            self.cells.insert(pos, SimCell::new(WIRE_ID, CellState::TripwireWire(wire)));
+            self.cells.insert(pos, WIRE_ID.default_state().with_bool("powered", powered).with_bool("attached", attached).with_bool("disarmed", disarmed));
         }
         fn put_hook(&mut self, pos: BlockPos, facing: Direction, powered: bool, attached: bool) {
-            let hook = TripwireHookState { block_id: HOOK_ID, facing, powered, attached };
-            self.cells.insert(pos, SimCell::new(HOOK_ID, CellState::TripwireHook(hook)));
+            self.cells.insert(pos, HOOK_ID.default_state().with("facing", DIRECTION[facing as usize]).with_bool("powered", powered).with_bool("attached", attached));
         }
-        fn cell(&self, pos: BlockPos) -> TripwireCell { tripwire_cell(self, pos) }
+        fn cell(&self, pos: BlockPos) -> CellState { WorldMut::cell(self, pos).kind() }
     }
     impl WorldMut for MapTripwireWorld {
-        fn cell(&self, pos: BlockPos) -> SimCell {
-            self.cells.get(&pos).cloned().unwrap_or_else(|| SimCell::air(BlockId::of("air")))
+        fn cell(&self, pos: BlockPos) -> StateId {
+            self.cells.get(&pos).copied().unwrap_or(StateId::AIR)
         }
-        fn set(&mut self, pos: BlockPos, cell: SimCell) {
+        fn set(&mut self, pos: BlockPos, cell: StateId) {
             if cell.is_air() { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
         }
         fn has_scheduled_tick(&self, pos: BlockPos, block_id: BlockId) -> bool {
@@ -639,10 +610,12 @@ fn jar_world_hooks() {
     };
 
     // Mutable states tracked across sequential plate/button/tripwire trace lines:
-    let mut seq_plate = PressurePlateState {
-        block_id: OAK_PLATE_ID,
-        kind: PressurePlateKind::Binary { mobs_only: false },
-        signal: 0,
+    let base = BoxWorld::default();
+    let mut plates = SimWorld::new(&base);
+    let pos = [0, 64, 0];
+    let button_state = |block, face: AttachFace, facing: Direction, powered| {
+        StateId::of(block, &[("face", FACE[face as usize]), ("facing", DIRECTION[facing as usize])])
+            .with_bool("powered", powered)
     };
     let mut seq_tw = MapTripwireWorld::new();
     let mut seq_tw_player = TriggerEntity {
@@ -691,15 +664,17 @@ fn jar_world_hooks() {
                 assert_eq!(fr_cre.added_to_inventory, None);
             }
             "BUCKET_CASE" => {
-                let mut ev = Vec::new();
+                let base = law::BoxWorld::default();
+                let mut w = law::sim::SimWorld::new(&base);
+                let target = [0, 65, 0];
+                let state = |name, properties: &[(&str, &str)]| StateId::of(BlockId::of(name), properties);
                 match f[1] {
                     "air_above_stone" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 64, 0], BucketCell::solid(STONE_ID));
+                        w.set_cell_raw([0, 64, 0], state("stone", &[]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 64, 0], face: Direction::Up, location: Vec3::new(0.5, 65.0, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert_eq!(res, BucketUseResult::Success(FilledResult {
                             hand_stack: BucketStack::new(BucketContent::Empty, 1),
                             added_to_inventory: None,
@@ -708,113 +683,104 @@ fn jar_world_hooks() {
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_water_0" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_source(WATER_ID, BucketContent::Water));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("water", &[]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_water_3" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_flowing(WATER_ID, BucketContent::Water, 3));
-                        assert!(bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).is_none());
+                        w.set_cell_raw(target, state("water", &[("level", "3")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        assert!(picked.is_none());
                         assert!(ev.is_empty());
                     }
                     "waterlog_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 64, 0], BucketCell::solid(STONE_ID));
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
+                        w.set_cell_raw([0, 64, 0], state("stone", &[]));
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 64.5, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(true));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("true"));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, true, true));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "true")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "waterlog_already" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, true, true));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], Some(([0, 65, 0], Direction::Up)), false, false, &mut ev);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "true")]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, Some(([0, 65, 0], Direction::Up)), false);
                         assert!(ok);
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "double_slab_redirect" => {
-                        let mut w = MapBucketWorld::new(false);
-                        let mut dbl = BucketCell::waterloggable(SLAB_ID, false, true);
-                        dbl.accepts_water_container = false;
-                        w.set_cell([0, 65, 0], dbl);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "double")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 66.0, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Water, 0)));
+                        assert_eq!(w.cell([0, 66, 0]), state("water", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "sneak_redirect" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], Some(([0, 65, 0], Direction::Up)), true, false, &mut ev);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, Some(([0, 65, 0], Direction::Up)), true);
                         assert!(ok);
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Water, 0)));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
+                        assert_eq!(w.cell([0, 66, 0]), state("water", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[5]));
                     }
                     "pickup_unsurvivable" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(LADDER_ID, true, false));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("ladder", &[("facing", "north"), ("waterlogged", "true")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
-                        assert!(w.cell([0, 65, 0]).is_air);
+                        assert!(w.cell(target).is_air());
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "evaporate_water" => {
-                        let mut w = MapBucketWorld::new(true);
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.water_evaporates = true;
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(ok);
-                        assert!(w.cell([0, 65, 0]).is_air);
+                        assert!(w.cell(target).is_air());
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "evaporate_lava" => {
-                        let mut w = MapBucketWorld::new(true);
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Lava, [0, 65, 0], None, false, false, &mut ev);
+                        w.water_evaporates = true;
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Lava, None, false);
                         assert!(ok);
-                        assert_eq!(w.cell([0, 65, 0]).liquid_block, Some((BucketContent::Lava, 0)));
+                        assert_eq!(w.cell(target), state("lava", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "existing_source" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_source(WATER_ID, BucketContent::Water));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.set_cell_raw(target, state("water", &[]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(ok);
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[3]));
                     }
                     "solid_null_hit" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::solid(STONE_ID));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.set_cell_raw(target, state("stone", &[]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(!ok);
                         assert!(ev.is_empty());
                     }
                     "lava_on_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 65.5, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Lava, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Lava, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Lava, 0)));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
+                        assert_eq!(w.cell([0, 66, 0]), state("lava", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[5]));
                     }
                     other => panic!("unexpected bucket case {other}"),
@@ -831,112 +797,66 @@ fn jar_world_hooks() {
                 assert_box_bits(actual, exp, f[1]);
             }
             "PLATE_WEIGHTED" => {
-                let max_w: i32 = f[1].parse().unwrap();
-                let cnt: i32 = f[2].parse().unwrap();
-                let exp_sig: u8 = f[3].parse().unwrap();
-                let exp_time: u32 = f[4].parse().unwrap();
-                let plate = PressurePlateState {
-                    block_id: if max_w == 15 { GOLD_PLATE_ID } else { IRON_PLATE_ID },
-                    kind: PressurePlateKind::Weighted { max_weight: max_w },
-                    signal: 0,
-                };
-                assert_eq!(weighted_or_binary_signal(plate.kind, cnt), exp_sig, "weighted max={max_w} cnt={cnt}");
-                assert_eq!(plate.pressed_time(), exp_time);
+                let id = if f[1] == "15" { GOLD_PLATE_ID } else { IRON_PLATE_ID };
+                let state = id.default_state();
+                let CellState::PressurePlate(plate) = state.kind() else { unreachable!() };
+                assert_eq!(plate.pressed_time(), f[4].parse::<u32>().unwrap());
+                let count: usize = f[2].parse().unwrap();
+                let bodies = vec![TriggerEntity {
+                    bbox: Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8),
+                    is_living: false, is_spectator: false, is_ignoring_block_triggers: false,
+                }; count];
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, state);
+                world.sensor_input(pos, SensorInput::Contact { bodies: &bodies, arrows: &[], client: false });
+                assert_eq!(world.get_signal(pos, Direction::Up, true), f[3].parse::<u8>().unwrap(), "{raw}");
             }
             "PLATE_TRACE" => {
-                let pos = [0, 64, 0];
-                let mut ev = Vec::new();
-                let std_box = Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8);
-                let ent = |is_living, is_spectator, is_ignoring_block_triggers, bbox| TriggerEntity {
+                let body = |is_living, is_spectator, is_ignoring_block_triggers, bbox| TriggerEntity {
                     bbox, is_living, is_spectator, is_ignoring_block_triggers,
                 };
-                match f[1] {
-                    "wood_press" => {
-                        seq_plate = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_entity_inside(&mut seq_plate, pos, false, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[4]);
+                let standard = Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8);
+                let player = || body(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
+                let (id, reset, scheduled, bodies, signal, trace) = match f[1] {
+                    "wood_press" => (OAK_PLATE_ID, true, false, vec![player()], f[2].parse().unwrap(), f[4]),
+                    "wood_reentry" => (OAK_PLATE_ID, false, false, vec![player()], f[2].parse().unwrap(), ""),
+                    "wood_held_tick" => (OAK_PLATE_ID, false, true, vec![player()], f[2].parse().unwrap(), f[3]),
+                    "wood_release_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), f[3]),
+                    "wood_unpowered_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), ""),
+                    "wood_spectator" => (OAK_PLATE_ID, true, false, vec![body(false, true, false, standard)], 0, ""),
+                    "wood_ignoring" => (OAK_PLATE_ID, true, false, vec![body(false, false, true, standard)], 0, ""),
+                    "wood_hover_exact_025" | "wood_hover_0249" => {
+                        let inside = f[1] == "wood_hover_0249";
+                        let y = if inside { 64.249 } else { 64.25 };
+                        (OAK_PLATE_ID, true, false,
+                            vec![body(false, false, false, Aabb::new(0.2, y, 0.2, 0.8, 64.8, 0.8))],
+                            if inside { 15 } else { 0 }, if inside { f[3] } else { "" })
                     }
-                    "wood_reentry" => {
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_entity_inside(&mut seq_plate, pos, false, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert!(ev.is_empty());
-                    }
-                    "wood_held_tick" => {
-                        let e = ent(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
-                        pressure_plate_tick(&mut seq_plate, pos, &[e], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[3]);
-                    }
-                    "wood_release_tick" => {
-                        pressure_plate_tick(&mut seq_plate, pos, &[], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert_eq!(fmt_plate_events_id(seq_plate.block_id, &ev), f[3]);
-                    }
-                    "wood_unpowered_tick" => {
-                        pressure_plate_tick(&mut seq_plate, pos, &[], &mut ev);
-                        assert_eq!(seq_plate.signal, f[2].parse::<u8>().unwrap());
-                        assert!(ev.is_empty());
-                    }
-                    "wood_spectator" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, true, false, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_ignoring" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, true, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_hover_exact_025" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, Aabb::new(0.2, 64.25, 0.2, 0.8, 64.8, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "wood_hover_0249" => {
-                        let mut p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, Aabb::new(0.2, 64.249, 0.2, 0.8, 64.8, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 15);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "stone_item" => {
-                        let mut p = PressurePlateState { block_id: STONE_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: true }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(false, false, false, std_box)], &mut ev);
-                        assert_eq!(p.signal, 0);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_mob" => {
-                        let mut p = PressurePlateState { block_id: STONE_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: true }, signal: 0 };
-                        pressure_plate_entity_inside(&mut p, pos, false, &[ent(true, false, false, Aabb::new(0.2, 64.0, 0.2, 0.8, 65.5, 0.8))], &mut ev);
-                        assert_eq!(p.signal, 15);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "gold_3" => {
-                        let mut p = PressurePlateState { block_id: GOLD_PLATE_ID, kind: PressurePlateKind::Weighted { max_weight: 15 }, signal: 0 };
-                        let list = vec![ent(false, false, false, std_box); 3];
-                        pressure_plate_entity_inside(&mut p, pos, false, &list, &mut ev);
-                        assert_eq!(p.signal, 3);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
-                    "iron_11" => {
-                        let mut p = PressurePlateState { block_id: IRON_PLATE_ID, kind: PressurePlateKind::Weighted { max_weight: 150 }, signal: 0 };
-                        let list = vec![ent(false, false, false, std_box); 11];
-                        pressure_plate_entity_inside(&mut p, pos, false, &list, &mut ev);
-                        assert_eq!(p.signal, 2);
-                        assert_eq!(fmt_plate_events_id(p.block_id, &ev), f[3]);
-                    }
+                    "stone_item" => (STONE_PLATE_ID, true, false, vec![body(false, false, false, standard)], 0, ""),
+                    "stone_mob" => (STONE_PLATE_ID, true, false,
+                        vec![body(true, false, false, Aabb::new(0.2, 64.0, 0.2, 0.8, 65.5, 0.8))], 15, f[3]),
+                    "gold_3" => (GOLD_PLATE_ID, true, false, vec![body(false, false, false, standard); 3], 3, f[3]),
+                    "iron_11" => (IRON_PLATE_ID, true, false, vec![body(false, false, false, standard); 11], 2, f[3]),
                     other => panic!("unexpected plate trace {other}"),
+                };
+                if reset {
+                    plates.set_cell_raw(pos, id.default_state());
                 }
+                let input = if scheduled {
+                    SensorInput::Scheduled { bodies: &bodies, arrows: &[] }
+                } else {
+                    SensorInput::Contact { bodies: &bodies, arrows: &[], client: false }
+                };
+                let (_, events) = plates.sensor_input(pos, input);
+                assert_eq!(plates.get_signal(pos, Direction::Up, true), signal, "{raw}");
+                assert_eq!(fmt_plate_events_id(id, &events), trace, "{raw}");
             }
             "PLATE_SIGNALS" => {
-                let p = PressurePlateState { block_id: OAK_PLATE_ID, kind: PressurePlateKind::Binary { mobs_only: false }, signal: 15 };
-                assert_eq!(p.own_signal(), 15);
-                let got: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", p.direct_signal(*d)).to_ascii_uppercase()).collect();
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, OAK_PLATE_ID.default_state().with_bool("powered", true));
+                assert_eq!(world.get_signal(pos, Direction::Up, true), 15);
+                let got: Vec<String> = Direction::ALL.iter().map(|d|
+                    format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[2]);
             }
             "BUTTON_META" => {
@@ -949,98 +869,52 @@ fn jar_world_hooks() {
                 let face = parse_face(f[1]);
                 let facing = parse_dir(f[2]);
                 let powered = f[3] == "true";
-                let btn = ButtonState {
-                    block_id: OAK_BTN_ID,
-                    face,
-                    facing,
-                    powered,
-                    ticks_to_stay_pressed: BUTTON_STAY_WOOD,
-                    arrow_activatable: true,
-                };
-                assert_box_bits(btn.shape(), parse_box(&f[4..10]), &format!("BUTTON_SHAPE {face:?} {facing:?} {powered}"));
+                let CellState::Button(button) = button_state(OAK_BTN_ID, face, facing, powered).kind() else { unreachable!() };
+                assert_box_bits(button.shape(), parse_box(&f[4..10]), &format!("BUTTON_SHAPE {face:?} {facing:?} {powered}"));
             }
             "BUTTON_TRACE" => {
-                let pos = [0, 64, 0];
-                let mut ev = Vec::new();
-                let mut stone = ButtonState {
-                    block_id: STONE_BTN_ID, face: AttachFace::Wall, facing: Direction::North, powered: false, ticks_to_stay_pressed: BUTTON_STAY_STONE, arrow_activatable: false,
-                };
-                let mut oak = ButtonState {
-                    block_id: OAK_BTN_ID, face: AttachFace::Wall, facing: Direction::North, powered: false, ticks_to_stay_pressed: BUTTON_STAY_WOOD, arrow_activatable: true,
-                };
-                match f[1] {
-                    "stone_use_unpowered" => {
-                        let res = button_use_without_item(&mut stone, pos, &mut ev);
-                        assert_eq!(res, ButtonUseResult::Success);
-                        assert_eq!(fmt_button_events(STONE_BTN_ID, Direction::North, &ev), f[3]);
-                    }
-                    "stone_use_powered" => {
-                        stone.powered = true;
-                        let res = button_use_without_item(&mut stone, pos, &mut ev);
-                        assert_eq!(res, ButtonUseResult::Consume);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_tick_unpowered" => {
-                        button_tick(&mut stone, pos, &[], &mut ev);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_tick_release" => {
-                        stone.powered = true;
-                        button_tick(&mut stone, pos, &[], &mut ev);
-                        assert!(!stone.powered);
-                        assert_eq!(fmt_button_events(STONE_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_press" => {
-                        let arr = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut oak, pos, false, &[arr], &mut ev);
-                        assert!(oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_hold" => {
-                        oak.powered = true;
-                        let arr = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
-                        button_check_pressed(&mut oak, pos, &[arr], &mut ev);
-                        assert!(oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_tip_release" => {
-                        oak.powered = true;
-                        let tip = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.93);
-                        button_check_pressed(&mut oak, pos, &[tip], &mut ev);
-                        assert!(!oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_arrow_gone_release" => {
-                        oak.powered = true;
-                        button_check_pressed(&mut oak, pos, &[], &mut ev);
-                        assert!(!oak.powered);
-                        assert_eq!(fmt_button_events(OAK_BTN_ID, Direction::North, &ev), f[2]);
-                    }
-                    "oak_entity_inside_powered" => {
-                        oak.powered = true;
-                        let arr = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut oak, pos, false, &[arr], &mut ev);
-                        assert!(ev.is_empty());
-                    }
-                    "stone_entity_inside_arrow" => {
-                        let arr = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
-                        button_entity_inside(&mut stone, pos, false, &[arr], &mut ev);
-                        assert!(ev.is_empty());
-                    }
+                let stone = STONE_BTN_ID;
+                let oak = OAK_BTN_ID;
+                let normal = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
+                let tip = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.93);
+                let back = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
+                let (id, powered, active, result, arrows, trace) = match f[1] {
+                    "stone_use_unpowered" => (stone, false, true, Some(ButtonUseResult::Success), None, f[3]),
+                    "stone_use_powered" => (stone, true, true, Some(ButtonUseResult::Consume), None, ""),
+                    "stone_tick_unpowered" => (stone, false, false, None, None, ""),
+                    "stone_tick_release" => (stone, true, false, None, None, f[2]),
+                    "oak_arrow_press" => (oak, false, true, None, Some(normal), f[2]),
+                    "oak_arrow_hold" => (oak, true, true, None, Some(normal), f[2]),
+                    "oak_arrow_tip_release" => (oak, true, false, None, Some(tip), f[2]),
+                    "oak_arrow_gone_release" => (oak, true, false, None, None, f[2]),
+                    "oak_entity_inside_powered" => (oak, true, true, None, Some(back), ""),
+                    "stone_entity_inside_arrow" => (stone, false, false, None, Some(back), ""),
                     other => panic!("unexpected button trace {other}"),
-                }
+                };
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, button_state(id, AttachFace::Wall, Direction::North, powered));
+                let arrows = arrows.as_slice();
+                let input = if result.is_some() {
+                    SensorInput::Use
+                } else if matches!(f[1], "oak_arrow_press" | "oak_entity_inside_powered" | "stone_entity_inside_arrow") {
+                    SensorInput::Contact { bodies: &[], arrows, client: false }
+                } else {
+                    SensorInput::Scheduled { bodies: &[], arrows }
+                };
+                let (used, events) = world.sensor_input(pos, input);
+                assert_eq!(used, result, "{raw}");
+                assert_eq!(world.cell(pos).get("powered"), Some(if active { "true" } else { "false" }), "{raw}");
+                assert_eq!(fmt_button_events(id, Direction::North, &events), trace, "{raw}");
             }
             "BUTTON_GEOM" => {
-                let face = parse_face(f[1]);
                 let facing = parse_dir(f[2]);
-                let mut btn = ButtonState {
-                    block_id: STONE_BTN_ID, face, facing, powered: false, ticks_to_stay_pressed: BUTTON_STAY_STONE, arrow_activatable: false,
-                };
-                let mut ev = Vec::new();
-                button_press(&mut btn, [0, 64, 0], &mut ev);
-                let got_dirs: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", btn.direct_signal(*d)).to_ascii_uppercase()).collect();
-                assert_eq!(got_dirs.join(","), f[3]);
-                assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &ev), f[4]);
+                let mut world = SimWorld::new(&base);
+                world.set_cell_raw(pos, button_state(STONE_BTN_ID, parse_face(f[1]), facing, false));
+                let (_, events) = world.sensor_input(pos, SensorInput::Use);
+                let got: Vec<String> = Direction::ALL.iter().map(|d|
+                    format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
+                assert_eq!(got.join(","), f[3]);
+                assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &events), f[4]);
             }
             "TRIPWIRE_SHAPE" => {
                 let exp = parse_box(&f[2..8]);
@@ -1146,17 +1020,17 @@ fn jar_world_hooks() {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook([0, 64, 0], Direction::East, true, true);
                         w.put_hook([1, 64, 0], Direction::West, true, true);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([1, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: false }));
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: false }));
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     "adj_fardist_1_from_unatt" => {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook([0, 64, 0], Direction::East, false, false);
                         w.put_hook([1, 64, 0], Direction::West, false, false);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
@@ -1166,9 +1040,9 @@ fn jar_world_hooks() {
                         for i in 1..=40 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([41, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [40, 64, 0], false, ent(40.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true }));
-                        assert_eq!(w.cell([41, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: true, attached: true }));
-                        let set_sched: Vec<_> = ev.iter().copied().filter(|e| matches!(e, TripwireEvent::SetWire { .. } | TripwireEvent::SetHook { .. } | TripwireEvent::ScheduleTick { .. })).collect();
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true }));
+                        assert_eq!(w.cell([41, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: true, attached: true }));
+                        let set_sched: Vec<_> = ev.iter().copied().filter(|e| matches!(e, CellEvent::SetBlock { .. } | CellEvent::ScheduleTick { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&set_sched), f[3]);
                     }
                     "span41_wire41_enter" => {
@@ -1177,10 +1051,10 @@ fn jar_world_hooks() {
                         for i in 1..=41 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([42, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [41, 64, 0], false, ent(41.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([42, 64, 0]), TripwireCell::Hook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: true }));
-                        assert_eq!(w.cell([1, 64, 0]), TripwireCell::Wire(TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false }));
-                        let non_nbr: Vec<_> = ev.iter().copied().filter(|e| !matches!(e, TripwireEvent::UpdateNeighborsAt { .. })).collect();
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([42, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: true }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireWire(TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false }));
+                        let non_nbr: Vec<_> = ev.iter().copied().filter(|e| !matches!(e, CellEvent::UpdateNeighborsAt { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&non_nbr), f[3]);
                     }
                     "span42_wire42_enter" => {
@@ -1208,7 +1082,7 @@ fn jar_world_hooks() {
                         w.put_wire([0, 64, 3], false, true, false);
                         w.put_hook([0, 64, 4], Direction::North, false, true);
                         tripwire_entity_inside(&mut w, [0, 64, 3], false, ent(0.5, 3.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 2]), TripwireCell::Empty);
+                        assert_eq!(w.cell([0, 64, 2]), CellState::Empty);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     "ns_gap_north_enter" => {
@@ -1226,9 +1100,9 @@ fn jar_world_hooks() {
                         w.put_wire([0, 64, 1], true, true, false);
                         w.put_wire([0, 64, 3], false, true, false);
                         w.put_hook([0, 64, 4], Direction::North, true, true);
-                        let TripwireCell::Hook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
+                        let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
-                        assert_eq!(w.cell([0, 64, 2]), TripwireCell::Empty);
+                        assert_eq!(w.cell([0, 64, 2]), CellState::Empty);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     other => panic!("unexpected tripwire boundary {other}"),
@@ -1241,45 +1115,31 @@ fn jar_world_hooks() {
                 assert_eq!(got.join(","), f[1]);
             }
             "BUBBLE" => {
-                let above_kind = f[1];
+                use law::basis::body::bubble_column_contact;
+                let block = BlockId::of(&f[1].to_ascii_lowercase()).default_state().model_block();
                 let open_top = f[2] == "true";
-                let drag_down = f[3] == "true";
-                let intersects = f[4] == "true";
-                let vy_in = d64(f[5]);
-                let exp_vy_out = h64(f[6]);
-                let fall_in = d64(f[7]);
-                let exp_fall_out = h64(f[8]);
-
-                let step = bubble_column_entity_inside(vy_in, drag_down, open_top, intersects);
-                assert_eq!(step.vy.to_bits(), exp_vy_out, "bubble vy line {line_idx}: {raw}");
-                let actual_fall = if step.reset_fall_distance { 0.0 } else { fall_in };
-                assert_eq!(actual_fall.to_bits(), exp_fall_out, "bubble fall line {line_idx}: {raw}");
-
-                // Also verify World-backed above probe matches AIR / TORCH / STONE / WATER / BUBBLE_COLUMN:
-                let mut bw = BoxWorld::default();
-                let above_block = match above_kind {
-                    "AIR" => Block::default(),
-                    "TORCH" => Block { air: false, ..Block::default() },
-                    "STONE" => Block::full(),
-                    "WATER" | "BUBBLE_COLUMN" => Block {
-                        air: false,
-                        fluid: Fluid { kind: FluidKind::Water, raw_amount: Some(8), raw_falling: Some(false), ..Fluid::default() },
-                        ..Block::default()
-                    },
-                    other => panic!("unknown above kind {other}"),
+                assert_eq!(block.shape.is_empty() && block.fluid.kind == FluidKind::Empty, open_top);
+                let mut world = BoxWorld::default();
+                world.set([0, 65, 0], block.clone());
+                let mut state = PlayerState {
+                    velocity: Vec3::new(0.0, d64(f[5]), 0.0),
+                    fall_distance: d64(f[7]),
+                    ..PlayerState::default()
                 };
-                bw.set([0, 65, 0], above_block);
-                let wstep = bubble_column_world_step(&bw, [0, 64, 0], vy_in, drag_down, intersects);
-                assert_eq!(wstep.vy.to_bits(), exp_vy_out, "bubble world vy line {line_idx}");
-                assert_eq!(wstep.reset_fall_distance, step.reset_fall_distance);
+                bubble_column_contact(&mut state, &world, [0, 64, 0], &(f[3] == "true"), f[4] == "true");
+                assert_eq!(state.velocity.y.to_bits(), h64(f[6]), "bubble vy line {line_idx}: {raw}");
+                assert_eq!(state.fall_distance.to_bits(), h64(f[8]), "bubble fall line {line_idx}: {raw}");
             }
             "BUBBLE_CLIMB" => {
-                let mut vy = 0.0;
+                use law::basis::body::bubble_column_contact;
+                let mut world = BoxWorld::default();
+                world.set([0, 65, 0], BlockId::of("water").default_state().model_block().clone());
+                let mut state = PlayerState::default();
                 for (t, hex) in f[1..].iter().enumerate() {
-                    let step = bubble_column_entity_inside(vy, false, false, true);
-                    vy = step.vy;
-                    assert!(step.reset_fall_distance);
-                    assert_eq!(vy.to_bits(), h64(hex), "climb step {t}");
+                    state.fall_distance = 1.0;
+                    bubble_column_contact(&mut state, &world, [0, 64, 0], &false, true);
+                    assert_eq!(state.fall_distance.to_bits(), 0.0f64.to_bits());
+                    assert_eq!(state.velocity.y.to_bits(), h64(hex), "climb step {t}");
                 }
             }
             other => panic!("unexpected world_hooks row kind: {other}"),
@@ -2118,14 +1978,15 @@ fn jar_movement_wired() {
 fn jar_world_items_vehicles() {
     use law::block_hooks::{
         BambooLeaves, HookContext, HookEntityKind, NonPlayerHookBlock, ShulkerAnimationStatus,
-        ShulkerBoxEntityState, ShulkerBreakOutcome, SpeleothemThickness, TipDirection,
-        WorldHookAction, aabb_contract, bamboo_collision_aabb, bamboo_outline_aabb,
+        ShulkerBoxEntityState, ShulkerBreakOutcome,
+        WorldHookAction, aabb_contract, bamboo_outline_aabb,
         detector_rail_search_bb, evaluate_entity_inside, evaluate_step_on, get_seed,
-        get_xz_offset, hopper_suck_aabb, offset_collision_shape, shulker_break_outcome,
+        get_xz_offset, hopper_suck_aabb, shulker_break_outcome,
         shulker_can_open, shulker_can_open_box, shulker_collision_aabb,
         shulker_entity_push_vector, shulker_open_support_aabb, shulker_placement_facing,
-        speleothem_aabb, turtle_egg_can_destroy, OffsetCollisionSpec,
+        turtle_egg_can_destroy,
     };
+    use law::basis::cell::StateId;
     use law::interact::{BlockId, Direction};
     use law::items::{
         can_consume, consume_ticks, eat, eat_food, eat_with_modifier, push, riptide_push,
@@ -2627,41 +2488,13 @@ fn jar_world_items_vehicles() {
                 assert_eq!(off.y.to_bits(), h64(c[8]).to_bits(), "row {idx} oy: {row}");
                 assert_eq!(off.z.to_bits(), h64(c[9]).to_bits(), "row {idx} oz: {row}");
                 let expected = parse_box(&c[10..16]);
-                let actual = match c[1] {
-                    "bamboo" => bamboo_collision_aabb([x, 0, z]),
-                    "sulfur_spike" | "pointed_dripstone" => {
-                        let th = match c[2] {
-                            "TIP_MERGE" => SpeleothemThickness::TipMerge,
-                            "TIP" => SpeleothemThickness::Tip,
-                            "FRUSTUM" => SpeleothemThickness::Frustum,
-                            "MIDDLE" => SpeleothemThickness::Middle,
-                            "BASE" => SpeleothemThickness::Base,
-                            other => panic!("unknown thickness {other}"),
-                        };
-                        let td = match c[3] {
-                            "UP" => TipDirection::Up,
-                            "DOWN" => TipDirection::Down,
-                            other => panic!("unknown tip dir {other}"),
-                        };
-                        let shape = offset_collision_shape(
-                            OffsetCollisionSpec::Speleothem { thickness: th, tip_direction: td },
-                            [x, 0, z],
-                        )
-                        .unwrap();
-                        let v = shape.view();
-                        let s_box = Aabb::new(
-                            v.coord(0, 0),
-                            v.coord(1, 0),
-                            v.coord(2, 0),
-                            v.coord(0, 1),
-                            v.coord(1, 1),
-                            v.coord(2, 1),
-                        );
-                        assert_box(s_box, expected, &format!("row {idx} shape"));
-                        speleothem_aabb([x, 0, z], th, td)
-                    }
-                    other => panic!("unknown offset block {other}"),
-                };
+                let state = StateId::of(BlockId::of(c[1]), &[
+                    ("thickness", &c[2].to_ascii_lowercase()),
+                    ("vertical_direction", &c[3].to_ascii_lowercase()),
+                ]);
+                let v = state.block_at([x, 0, z]).shape.view();
+                let actual = Aabb::new(v.coord(0, 0), v.coord(1, 0), v.coord(2, 0),
+                    v.coord(0, 1), v.coord(1, 1), v.coord(2, 1));
                 assert_box(actual, expected, &format!("row {idx}"));
             }
             "OFFSET_BAMBOO_OUTLINE" => {
@@ -3380,6 +3213,7 @@ fn jar_player_elytra_damage() {
 
 #[test]
 fn jar_cauldron_and_redstone() {
+    use law::basis::cell::{BlockId, StateId};
     use law::{block_hooks::*, player, redstone::*, tick, try_tick, BoxWorld, Block, Input, Inside, PlayerState, Vec3, VoxelShape};
 
     let h64 = |s: &str| -> f64 { f64::from_bits(u64::from_str_radix(s, 16).unwrap()) };
@@ -3461,10 +3295,9 @@ fn jar_cauldron_and_redstone() {
                 assert_eq!(got.to_bits(), exp.to_bits(), "row {idx}: {row}");
             }
             "CAULDRON_SHAPE" => {
-                let lvl: u8 = c[2].parse().unwrap();
                 let expected = parse_shape(c[3]);
-                let actual = cauldron_filled_inside_shape(lvl);
-                assert_shape_eq(&actual, &expected, row);
+                let state = StateId::of(BlockId::of(c[1]), &[("level", c[2])]);
+                assert_shape_eq(state.model_block().inside_shape.as_ref().unwrap(), &expected, row);
             }
             "CAULDRON_INSIDE" => {
                 let kind = if c[1] == "powder_snow_cauldron" {
@@ -3493,12 +3326,7 @@ fn jar_cauldron_and_redstone() {
                 let mut w = BoxWorld::default();
                 w.set(
                     [0, 64, 0],
-                    Block {
-                        air: false,
-                        inside: Inside::Extinguish,
-                        inside_shape: Some(cauldron_filled_inside_shape(lvl)),
-                        ..Block::default()
-                    },
+                    StateId::of(BlockId::of(c[1]), &[("level", c[2])]).model_block().clone(),
                 );
                 let mut s = PlayerState {
                     position: Vec3::new(0.5, 64.25, 0.5),
@@ -3516,12 +3344,7 @@ fn jar_cauldron_and_redstone() {
                 let mut w = BoxWorld::default();
                 w.set(
                     [0, 64, 0],
-                    Block {
-                        air: false,
-                        inside: Inside::Lava,
-                        inside_shape: Some(cauldron_filled_inside_shape(3)),
-                        ..Block::default()
-                    },
+                    BlockId::of("lava_cauldron").default_state().model_block().clone(),
                 );
                 let mut s = PlayerState {
                     position: Vec3::new(0.5, 64.25, 0.5),
@@ -3550,11 +3373,8 @@ fn jar_cauldron_and_redstone() {
                 let expected_shape = parse_shape(c[4]);
                 assert_eq!(tilt.delay_until_next_state(), exp_delay, "row {idx}: {row}");
                 assert_eq!(tilt.causes_vibration(), exp_vib, "row {idx}: {row}");
-                let actual_shape = match big_dripleaf_collision_aabb(tilt) {
-                    Some(a) => VoxelShape::boxes(&[a]),
-                    None => VoxelShape::default(),
-                };
-                assert_shape_eq(&actual_shape, &expected_shape, row);
+                let state = StateId::of(BlockId::of("big_dripleaf"), &[("tilt", c[1])]);
+                assert_shape_eq(&state.model_block().shape, &expected_shape, row);
             }
             "BIG_DRIPLEAF_INSIDE" => {
                 let by: i32 = c[1].parse().unwrap();
@@ -3748,31 +3568,17 @@ fn jar_cauldron_and_redstone() {
                 let x: i32 = c[1].parse().unwrap();
                 let z: i32 = c[2].parse().unwrap();
                 let expected = parse_shape(c[3]);
-                let actual = offset_collision_shape(OffsetCollisionSpec::Bamboo, [x, 64, z]).unwrap();
-                assert_shape_eq(&actual, &expected, row);
+                let state = BlockId::of("bamboo").default_state();
+                assert_shape_eq(&state.block_at([x, 64, z]).shape, &expected, row);
             }
             "OFFSET_SPELEOTHEM" => {
                 let x: i32 = c[1].parse().unwrap();
                 let z: i32 = c[2].parse().unwrap();
-                let thickness = match c[3] {
-                    "tip_merge" => SpeleothemThickness::TipMerge,
-                    "tip" => SpeleothemThickness::Tip,
-                    "frustum" => SpeleothemThickness::Frustum,
-                    "middle" => SpeleothemThickness::Middle,
-                    "base" => SpeleothemThickness::Base,
-                    other => panic!("unexpected thickness {other}"),
-                };
-                let tip_direction = match c[4] {
-                    "up" => TipDirection::Up,
-                    "down" => TipDirection::Down,
-                    other => panic!("unexpected tip direction {other}"),
-                };
                 let expected = parse_shape(c[5]);
-                let actual = offset_collision_shape(
-                    OffsetCollisionSpec::Speleothem { thickness, tip_direction },
-                    [x, 64, z],
-                ).unwrap();
-                assert_shape_eq(&actual, &expected, row);
+                let state = StateId::of(BlockId::of("pointed_dripstone"), &[
+                    ("thickness", c[3]), ("vertical_direction", c[4]),
+                ]);
+                assert_shape_eq(&state.block_at([x, 64, z]).shape, &expected, row);
             }
             other => panic!("unknown tag {other}"),
         }
@@ -4105,16 +3911,90 @@ fn jar_projectiles_and_redstone() {
 }
 
 #[test]
+fn bucket_respects_jar_water_and_lava_replaceability() {
+    use law::{BoxWorld, basis::cell::BlockId, sim::SimWorld, world_hooks::BucketContent};
+
+    let base = BoxWorld::default();
+    let mut sim = SimWorld::new(&base);
+    let target = [0, 65, 0];
+    // The 26.2 Fluid overload returns false for each of these states.
+    for name in ["stone", "granite", "dirt"] {
+        let state = BlockId::of(name).default_state();
+        sim.set_cell_raw(target, state);
+        for content in [BucketContent::Water, BucketContent::Lava] {
+            assert!(!sim.empty_bucket_at(content, target, None, false), "{name}: {content:?}");
+            assert_eq!(sim.cell(target), state);
+        }
+    }
+    assert!(sim.empty_bucket_at(BucketContent::Water, [1, 65, 0], None, false));
+    assert_eq!(sim.cell([1, 65, 0]), BlockId::of("water").default_state());
+}
+
+#[test]
+fn piston_tick_refuses_jar_unbreakable_bedrock() {
+    use law::{BoxWorld, basis::cell::{BlockId, StateId}, sim::SimWorld};
+
+    let base = BoxWorld::default();
+    let stone = BlockId::of("stone").default_state();
+    let bedrock = BlockId::of("bedrock").default_state();
+    assert_eq!(bedrock.rules().destroy_speed.to_bits(), 0xbf80_0000);
+    let lever = StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east")]);
+    let piston = StateId::of(BlockId::of("piston"), &[("facing", "east")]);
+    for (payload, extends) in [(bedrock, false), (stone, true)] {
+        let mut sim = SimWorld::new(&base);
+        sim.set_cell_raw([0, 63, 0], stone);
+        sim.set_cell_raw([0, 64, 0], lever);
+        sim.set_cell_raw([1, 64, 0], piston);
+        sim.set_cell_raw([2, 64, 0], payload);
+        assert!(sim.pull_lever([0, 64, 0]).0);
+        for _ in 0..8 {
+            sim.step_tick();
+        }
+        assert_eq!(sim.cell([1, 64, 0]), piston.with_bool("extended", extends));
+        if extends {
+            assert_eq!(sim.cell([2, 64, 0]).block().name(), "piston_head");
+            assert_eq!(sim.cell([3, 64, 0]), stone);
+        } else {
+            assert_eq!(sim.cell([2, 64, 0]), bedrock);
+            assert_eq!(sim.cell([3, 64, 0]), StateId::AIR);
+        }
+    }
+}
+
+#[test]
+fn bucket_preserves_single_slab_type_and_redirects_double_slab() {
+    use law::{BoxWorld, basis::cell::{BlockId, StateId}, neighbor::Direction, sim::SimWorld, world_hooks::BucketContent};
+
+    let base = BoxWorld::default();
+    let target = [0, 65, 0];
+    let above = Direction::Up.relative(target);
+    let water = BlockId::of("water").default_state();
+    // world_hooks.tsv records the in-place and redirected bucket writes.
+    for kind in ["bottom", "top", "double"] {
+        let mut sim = SimWorld::new(&base);
+        let slab = StateId::of(BlockId::of("oak_slab"), &[("type", kind), ("waterlogged", "false")]);
+        sim.set_cell_raw(target, slab);
+        assert!(sim.empty_bucket_at(BucketContent::Water, target, Some((target, Direction::Up)), false));
+        if kind == "double" {
+            assert_eq!(sim.cell(target), slab);
+            assert_eq!(sim.cell(above), water);
+        } else {
+            assert_eq!(sim.cell(target), slab.with_bool("waterlogged", true));
+            assert_eq!(sim.cell(above), StateId::AIR);
+        }
+    }
+}
+
+#[test]
 fn jar_world_sim() {
     use law::boat::{self, BoatStatus, Controls as BoatControls};
     use law::fluid::{FlowKind, FluidCell};
     use law::footprint::RecordingWorld;
-    use law::interact::{AttachFace, DoorHalf};
+    use law::basis::cell::StateId;
     use law::neighbor::{Direction, update_flags};
-    use law::place::{DoorHinge, DoorPlaceState, Half};
-    use law::interact::{BlockId, LeverState};
+    use law::interact::BlockId;
     use law::sim::{
-        CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldDelta,
+        CellState, FallingKind, SimLivingEntity, SimWorld, WorldDelta,
     };
     use law::world_hooks::BucketContent;
     use law::{BlockPos, BoxWorld, PlayerState, Vec3, World};
@@ -4137,9 +4017,9 @@ fn jar_world_sim() {
     }
     fn sim_block_tag<W: World>(sim: &SimWorld<'_, W>, pos: BlockPos) -> String {
         let cell = sim.cell(pos);
-        match cell.state {
+        match cell.kind() {
             CellState::Empty => "air".to_owned(),
-            CellState::Plain => match cell.id.name() {
+            CellState::Plain => match cell.block().name() {
                 name @ ("stone" | "cobblestone" | "obsidian" | "torch") => name.to_owned(),
                 "slime_block" => "slime".to_owned(),
                 "honey_block" => "honey".to_owned(),
@@ -4154,7 +4034,7 @@ fn jar_world_sim() {
             }
             CellState::Falling(FallingKind::Sand) => "sand".to_owned(),
             CellState::Falling(FallingKind::ConcretePowder) => "concrete_powder".to_owned(),
-            CellState::Falling(FallingKind::Anvil { .. }) => match cell.id.name() {
+            CellState::Falling(FallingKind::Anvil { .. }) => match cell.block().name() {
                 name @ ("anvil" | "chipped_anvil") => name.to_owned(),
                 _ => "damaged_anvil".to_owned(),
             },
@@ -4204,7 +4084,7 @@ fn jar_world_sim() {
         }
     }
     fn floor_stone<W: World>(sim: &mut SimWorld<'_, W>, x0: i32, z0: i32, x1: i32, z1: i32, y: i32) {
-        let stone = SimCell::plain(BlockId::of("stone"));
+        let stone = BlockId::of("stone").default_state();
         for x in x0..=x1 {
             for z in z0..=z1 {
                 sim.set_cell_raw([x, y, z], stone.clone());
@@ -4280,44 +4160,30 @@ fn jar_world_sim() {
         let lever_pos = [0, 65, 0];
         sim.set_cell_raw(
             lever_pos,
-            SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })),
+            StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]),
         );
         for i in 1..=8 {
-            sim.set_cell_raw([i, 65, 0], SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
+            sim.set_cell_raw([i, 65, 0], BlockId::of("redstone_wire").default_state());
         }
         let branch_wire = [2, 65, 1];
-        sim.set_cell_raw(branch_wire, SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
+        sim.set_cell_raw(branch_wire, BlockId::of("redstone_wire").default_state());
         let door_low = [9, 65, 0];
         let door_high = [9, 66, 0];
         sim.set_cell_raw(
             door_low,
-            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
-                block_id: BlockId::of("iron_door"),
-                facing: law::neighbor::Direction::North,
-                half: DoorHalf::Lower,
-                hinge: DoorHinge::Left,
-                open: false,
-                powered: false,
-            })),
+            StateId::of(BlockId::of("iron_door"), &[("facing", "north"), ("half", "lower"), ("hinge", "left"), ("open", "false"), ("powered", "false")]),
         );
         sim.set_cell_raw(
             door_high,
-            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
-                block_id: BlockId::of("iron_door"),
-                facing: law::neighbor::Direction::North,
-                half: DoorHalf::Upper,
-                hinge: DoorHinge::Left,
-                open: false,
-                powered: false,
-            })),
+            StateId::of(BlockId::of("iron_door"), &[("facing", "north"), ("half", "upper"), ("hinge", "left"), ("open", "false"), ("powered", "false")]),
         );
         let trap_pos = [2, 65, 2];
         sim.set_cell_raw(
             trap_pos,
-            SimCell::new(BlockId::of("oak_trapdoor"), CellState::TrapDoor { facing: Direction::North, half: Half::Bottom, open: false, powered: false, waterlogged: true }),
+            StateId::of(BlockId::of("oak_trapdoor"), &[("facing", "north"), ("half", "bottom"), ("open", "false"), ("powered", "false"), ("waterlogged", "true")]),
         );
-        sim.set_cell_raw([1, 65, 2], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([2, 65, 3], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([1, 65, 2], BlockId::of("stone").default_state());
+        sim.set_cell_raw([2, 65, 3], BlockId::of("stone").default_state());
 
         let check_a = |sim: &SimWorld<'_, BoxWorld>, row: &[&str]| {
             assert_eq!(sim_block_tag(sim, lever_pos), row[3], "row {row:?} lever");
@@ -4351,14 +4217,14 @@ fn jar_world_sim() {
         let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, 62, -2, 72, 16, 63);
         floor_stone(&mut sim, 62, -2, 72, 16, 64);
-        let stone = SimCell::plain(BlockId::of("stone"));
+        let stone = BlockId::of("stone").default_state();
         for x in 64..=70 {
             sim.set_cell_raw([x, 65, -1], stone.clone());
             sim.set_cell_raw([x, 65, 1], stone.clone());
         }
         sim.set_cell_raw([64, 65, 0], stone.clone());
         sim.set_cell_raw([70, 65, 0], stone.clone());
-        sim.set_cell_raw([68, 64, 0], SimCell::air(BlockId::of("air")));
+        sim.set_cell_raw([68, 64, 0], StateId::AIR);
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 3], stone.clone());
@@ -4373,7 +4239,7 @@ fn jar_world_sim() {
         }
         sim.set_cell_raw([64, 65, 8], stone.clone());
         sim.set_cell_raw([67, 65, 8], stone.clone());
-        sim.set_cell_raw([66, 65, 8], SimCell::lava(BlockId::of("lava"), false, FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([66, 65, 8], StateId::liquid("lava", FluidCell::WATER_SOURCE));
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 10], stone.clone());
@@ -4427,18 +4293,18 @@ fn jar_world_sim() {
         floor_stone(&mut sim, 126, -2, 134, 10, 63);
         floor_stone(&mut sim, 126, -2, 134, 10, 64);
 
-        sim.set_cell_raw([128, 64, 4], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::Up, extended: false }));
-        sim.set_cell_raw([128, 65, 4], SimCell::plain(BlockId::of("slime_block")));
+        sim.set_cell_raw([128, 64, 4], StateId::of(BlockId::of("sticky_piston"), &[("facing", "up"), ("extended", "false")]));
+        sim.set_cell_raw([128, 65, 4], BlockId::of("slime_block").default_state());
         let c1_lever = [127, 65, 4];
-        sim.set_cell_raw(c1_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
+        sim.set_cell_raw(c1_lever, StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]));
         let pig_c1 = sim.spawn_living(pig_entity(128.5, 66.0, 4.5));
 
-        sim.set_cell_raw([128, 65, 0], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::East, extended: false }));
-        sim.set_cell_raw([129, 65, 0], SimCell::plain(BlockId::of("honey_block")));
-        sim.set_cell_raw([129, 65, 1], SimCell::plain(BlockId::of("slime_block")));
-        sim.set_cell_raw([130, 65, 0], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([128, 65, 0], StateId::of(BlockId::of("sticky_piston"), &[("facing", "east"), ("extended", "false")]));
+        sim.set_cell_raw([129, 65, 0], BlockId::of("honey_block").default_state());
+        sim.set_cell_raw([129, 65, 1], BlockId::of("slime_block").default_state());
+        sim.set_cell_raw([130, 65, 0], BlockId::of("stone").default_state());
         let c2_lever = [127, 65, 0];
-        sim.set_cell_raw(c2_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
+        sim.set_cell_raw(c2_lever, StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]));
         let pig_c2 = sim.spawn_living(pig_entity(129.5, 66.0, 0.5));
 
         sim.pull_lever(c1_lever);
@@ -4485,34 +4351,34 @@ fn jar_world_sim() {
 
         let d1_sup = [192, 69, 0];
         let d1_sand = [192, 70, 0];
-        sim.set_cell_raw(d1_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d1_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
+        sim.set_cell_raw(d1_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d1_sand, BlockId::of("sand").default_state());
 
         let d2_sup = [196, 68, 0];
         let d2_anvil = [196, 69, 0];
-        sim.set_cell_raw(d2_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d2_anvil, SimCell::new(BlockId::of("anvil"), CellState::Falling(FallingKind::Anvil { facing_x_axis: false, stage: law::falling::AnvilStage::Intact })));
+        sim.set_cell_raw(d2_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d2_anvil, StateId::of(BlockId::of("anvil"), &[("facing", "north")]));
         let pig_d2 = sim.spawn_living(pig_entity(196.5, 65.0, 0.5));
 
         let d3_torch = [200, 65, 0];
         let d3_sup = [200, 67, 0];
         let d3_sand = [200, 68, 0];
-        sim.set_cell_raw(d3_torch, SimCell::plain(BlockId::of("torch")));
-        sim.set_cell_raw(d3_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d3_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
+        sim.set_cell_raw(d3_torch, BlockId::of("torch").default_state());
+        sim.set_cell_raw(d3_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d3_sand, BlockId::of("sand").default_state());
 
         let d4_water = [204, 65, 0];
-        sim.set_cell_raw([203, 65, 0], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([205, 65, 0], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([204, 65, -1], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([204, 65, 1], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d4_water, SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([203, 65, 0], BlockId::of("stone").default_state());
+        sim.set_cell_raw([205, 65, 0], BlockId::of("stone").default_state());
+        sim.set_cell_raw([204, 65, -1], BlockId::of("stone").default_state());
+        sim.set_cell_raw([204, 65, 1], BlockId::of("stone").default_state());
+        sim.set_cell_raw(d4_water, StateId::liquid("water", FluidCell::WATER_SOURCE));
         let d4_sup = [204, 67, 0];
         let d4_powder = [204, 68, 0];
-        sim.set_cell_raw(d4_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d4_powder, SimCell::new(BlockId::of("white_concrete_powder"), CellState::Falling(FallingKind::ConcretePowder)));
+        sim.set_cell_raw(d4_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d4_powder, BlockId::of("white_concrete_powder").default_state());
 
-        let air = SimCell::air(BlockId::of("air"));
+        let air = StateId::AIR;
         sim.set_cell_with_flags(d1_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d2_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d3_sup, air.clone(), update_flags::ALL);
@@ -4584,7 +4450,7 @@ fn jar_world_sim() {
         floor_stone(&mut sim, 253, -3, 275, 5, 64);
         for x in 254..=260 {
             for z in -2..=2 {
-                sim.set_cell_raw([x, 64, z], SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
+                sim.set_cell_raw([x, 64, z], StateId::liquid("water", FluidCell::WATER_SOURCE));
             }
         }
 

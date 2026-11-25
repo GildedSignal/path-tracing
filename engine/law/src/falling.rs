@@ -12,7 +12,8 @@ use crate::{math, Vec3};
 /// `FallingBlockEntity.fall(level, pos, state) 5-32`: center X/Z (`+ 0.5`), raw block Y, `Vec3::ZERO`.
 #[inline]
 pub fn spawn(x: i32, y: i32, z: i32) -> (f64, f64, f64) {
-    (x as f64 + 0.5, y as f64, z as f64 + 0.5)
+    let pos = Vec3::block_bottom_center([x, y, z]);
+    (pos.x, pos.y, pos.z)
 }
 
 /// One free-air flight tick (vertical): `vy -= 0.04`, `y += vy`, `vy *= (double)0.98f`.

@@ -5,7 +5,7 @@
 //! - `lab/results/local-20261114-1255-1-0-port-scheduled-tick-dedup/dossier.md`
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::BlockPos;
@@ -214,97 +214,53 @@ impl<T: Copy + Eq + Hash> LevelChunkTicks<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ContainerHead {
-    chunk: ChunkPos,
-    priority: TickPriority,
-    sub_tick_order: i64,
-}
-
-impl ContainerHead {
-    #[inline]
-    fn cmp_intra(&self, other: &Self) -> Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| self.sub_tick_order.cmp(&other.sub_tick_order))
-            .then_with(|| self.chunk.cmp(&other.chunk))
-    }
-}
-
-impl PartialOrd for ContainerHead {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ContainerHead {
-    #[inline]
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Flip for max-heap so smallest (priority, sub_tick_order) pops first.
-        other.cmp_intra(self)
-    }
-}
-
-/// Mojang `LevelTicks<T>`: global `(priority, subTickOrder)` merge across chunk containers,
-/// `tickCheck` deferral, and `65,536` per-tick execution cap with deferral (zero drops).
-///
-/// Reuses internal scratch buffers for zero per-tick steady-state heap allocations.
+/// Chunks wait by head deadline. Once due, their heads merge by priority
+/// and sub-tick order, while each chunk continues to drain in time order.
 pub struct LevelTicks<T: Copy + Eq + Hash> {
     chunks: HashMap<ChunkPos, LevelChunkTicks<T>, FastBuildHasher>,
-    next_tick_for_container: HashMap<ChunkPos, i64, FastBuildHasher>,
-    containers_to_tick: BinaryHeap<ContainerHead>,
-    candidate_chunks: Vec<ContainerHead>,
+    wakes: BTreeSet<(i64, ChunkPos)>,
+    ready: BinaryHeap<Reverse<(TickPriority, i64, ChunkPos)>>,
     drain_scratch: Vec<ScheduledTick<T>>,
 }
 
 impl<T: Copy + Eq + Hash> Default for LevelTicks<T> {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl<T: Copy + Eq + Hash> LevelTicks<T> {
     pub fn new() -> Self {
         Self {
-            chunks: HashMap::with_hasher(FastBuildHasher),
-            next_tick_for_container: HashMap::with_hasher(FastBuildHasher),
-            containers_to_tick: BinaryHeap::new(),
-            candidate_chunks: Vec::new(),
+            chunks: HashMap::default(),
+            wakes: BTreeSet::new(),
+            ready: BinaryHeap::new(),
             drain_scratch: Vec::new(),
         }
     }
 
-    #[inline]
     pub fn container(&self, chunk: ChunkPos) -> Option<&LevelChunkTicks<T>> {
         self.chunks.get(&chunk)
     }
 
     pub fn total_queued(&self) -> usize {
-        self.chunks.values().map(|c| c.len()).sum()
+        self.chunks.values().map(LevelChunkTicks::len).sum()
     }
 
-    /// `LevelAccessor.createTick` + `LevelTicks.schedule`:
-    /// enqueues with first-wins `(kind, pos)` dedup inside the target chunk container.
-    /// Any tick scheduled during `tick` becomes eligible on `game_time + 1` at earliest.
     pub fn schedule(&mut self, tick: ScheduledTick<T>) -> bool {
         let chunk = ChunkPos::from_block_pos(tick.pos);
-        let container = self.chunks.entry(chunk).or_default();
-        if !container.schedule(tick) {
+        let ticks = self.chunks.entry(chunk).or_default();
+        let previous = ticks.peek().map(|head| head.trigger_tick);
+        if !ticks.schedule(tick) {
             return false;
         }
-        if let Some(head) = container.peek() {
-            self.next_tick_for_container.insert(chunk, head.trigger_tick);
+        if previous.is_none_or(|time| tick.trigger_tick < time) {
+            if let Some(time) = previous {
+                self.wakes.remove(&(time, chunk));
+            }
+            self.wakes.insert((tick.trigger_tick, chunk));
         }
         true
     }
 
-    /// Collects up to `cap` due ticks (`trigger_tick <= game_time`) in global
-    /// `(priority, sub_tick_order)` order into `out`, leaving excess or non-ticking-chunk
-    /// ticks in their chunk containers for future ticks.
-    ///
-    /// Using this two-step API (`collect_due` + `schedule`) lets callers mutate `LevelTicks`
-    /// while executing collected ticks without re-entrancy borrow issues.
     pub fn collect_due(
         &mut self,
         game_time: i64,
@@ -313,83 +269,41 @@ impl<T: Copy + Eq + Hash> LevelTicks<T> {
         out: &mut Vec<ScheduledTick<T>>,
     ) {
         out.clear();
-        self.containers_to_tick.clear();
-        self.candidate_chunks.clear();
-
-        // 1. sortContainersToTick(time)
-        for (&chunk, &next_trigger) in &self.next_tick_for_container {
-            if next_trigger <= game_time && tick_check(chunk) {
-                if let Some(container) = self.chunks.get(&chunk) {
-                    if let Some(head) = container.peek() {
-                        if head.trigger_tick <= game_time {
-                            self.candidate_chunks.push(ContainerHead {
-                                chunk,
-                                priority: head.priority,
-                                sub_tick_order: head.sub_tick_order,
-                            });
-                        }
-                    }
-                }
+        let last_due = (game_time, ChunkPos(i32::MAX, i32::MAX));
+        for &(_, chunk) in self.wakes.range(..=last_due) {
+            if tick_check(chunk) {
+                let head = self.chunks[&chunk].peek().unwrap();
+                self.ready.push(Reverse((head.priority, head.sub_tick_order, chunk)));
             }
         }
-        for c in self.candidate_chunks.drain(..) {
-            self.containers_to_tick.push(c);
-        }
-
-        // 2. drainContainers(time, cap) & updateContainerScheduling
         while out.len() < cap {
-            let Some(current) = self.containers_to_tick.pop() else {
-                break;
-            };
-            let next_best = self.containers_to_tick.peek().copied();
-            let Some(container) = self.chunks.get_mut(&current.chunk) else {
-                self.next_tick_for_container.remove(&current.chunk);
-                continue;
-            };
-
-            let mut requeue = None;
+            let Some(Reverse((_, _, chunk))) = self.ready.pop() else { break };
+            let ticks = self.chunks.get_mut(&chunk).unwrap();
+            let before = ticks.peek().unwrap().trigger_tick;
+            let competing = self.ready.peek().map(|&Reverse((priority, order, _))| (priority, order));
             while out.len() < cap {
-                let Some(head) = container.peek().copied() else {
-                    break;
-                };
+                let Some(head) = ticks.peek() else { break };
                 if head.trigger_tick > game_time {
                     break;
                 }
-                if let Some(ref nb) = next_best {
-                    if (head.priority, head.sub_tick_order) > (nb.priority, nb.sub_tick_order) {
-                        requeue = Some(ContainerHead {
-                            chunk: current.chunk,
-                            priority: head.priority,
-                            sub_tick_order: head.sub_tick_order,
-                        });
-                        break;
-                    }
+                let order = (head.priority, head.sub_tick_order);
+                if competing.is_some_and(|next| order > next) {
+                    self.ready.push(Reverse((order.0, order.1, chunk)));
+                    break;
                 }
-                if let Some(polled) = container.poll() {
-                    out.push(polled);
-                }
+                out.push(ticks.poll().unwrap());
             }
-
-            if let Some(re) = requeue {
-                self.containers_to_tick.push(re);
-            } else if let Some(head) = container.peek() {
-                self.next_tick_for_container.insert(current.chunk, head.trigger_tick);
-            } else {
-                self.next_tick_for_container.remove(&current.chunk);
+            let after = ticks.peek().map(|head| head.trigger_tick);
+            if after != Some(before) {
+                self.wakes.remove(&(before, chunk));
+                if let Some(time) = after {
+                    self.wakes.insert((time, chunk));
+                }
             }
         }
-
-        // 3. rescheduleLeftoverContainers
-        while let Some(leftover) = self.containers_to_tick.pop() {
-            if let Some(head) = self.chunks.get(&leftover.chunk).and_then(|c| c.peek()) {
-                self.next_tick_for_container.insert(leftover.chunk, head.trigger_tick);
-            } else {
-                self.next_tick_for_container.remove(&leftover.chunk);
-            }
-        }
+        self.ready.clear();
     }
 
-    /// Runs `collect_due` and invokes `runner` on each collected tick FIFO.
     pub fn tick(
         &mut self,
         game_time: i64,
@@ -400,15 +314,11 @@ impl<T: Copy + Eq + Hash> LevelTicks<T> {
         let mut scratch = std::mem::take(&mut self.drain_scratch);
         self.collect_due(game_time, cap, tick_check, &mut scratch);
         let ran = scratch.len();
-        for &t in &scratch {
-            runner(t);
-        }
-        scratch.clear();
+        scratch.drain(..).for_each(&mut runner);
         self.drain_scratch = scratch;
         ran
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

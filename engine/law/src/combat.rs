@@ -71,11 +71,7 @@ pub fn is_sweep_attack(
     speed: f32,
     holding_sword: bool,
 ) -> bool {
-    if !full_strength || critical || sprint_knockback || !on_ground || !holding_sword {
-        return false;
-    }
-    let threshold = (speed as f64) * 2.5;
-    known_movement.horizontal_sqr() < threshold * threshold
+    is_sweep(full_strength, critical, sprint_knockback, on_ground, known_movement.horizontal_sqr(), speed, holding_sword)
 }
 
 /// `LivingEntity.knockback(double strength, double x, double z, ...) @0-184`.
@@ -515,14 +511,7 @@ pub struct CritGate {
 }
 
 pub fn is_critical(g: &CritGate) -> bool {
-    g.fall_distance > 0.0
-        && !g.on_ground
-        && !g.on_climbable
-        && !g.in_water
-        && !g.blind
-        && !g.passenger
-        && g.target_is_living
-        && !g.sprinting
+    can_critical_attack(g.fall_distance, g.on_ground, g.on_climbable, g.in_water, g.blind, g.passenger, g.target_is_living, g.sprinting)
 }
 
 // ------------------------------------------------------------ sweep gate ----

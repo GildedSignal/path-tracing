@@ -148,28 +148,12 @@ pub struct PearlLanding {
 
 /// `EntityDimensions.makeBoundingBox` for `EntityTypes.ENDER_PEARL` (0.25 x 0.25).
 pub fn pearl_aabb(pos: Vec3) -> Aabb {
-    let half = (PEARL_WIDTH / 2.0f32) as f64;
-    Aabb::new(
-        pos.x - half,
-        pos.y,
-        pos.z - half,
-        pos.x + half,
-        pos.y + PEARL_HEIGHT as f64,
-        pos.z + half,
-    )
+    Aabb::from_bottom(pos, PEARL_WIDTH, PEARL_HEIGHT)
 }
 
 /// `ProjectileUtil.computeMargin` (`@0-19`).
 pub fn compute_margin(tick_count: i32) -> f32 {
     0.0f32.max(0.3f32.min((tick_count - 2) as f32 / 20.0f32))
-}
-
-fn clip_aabb_with_inside(aabb: Aabb, from: Vec3, to: Vec3) -> Option<Vec3> {
-    if aabb.contains(from) {
-        Some(from)
-    } else {
-        aabb.clip(from, to)
-    }
 }
 
 /// `ProjectileUtil.getHitResultOnMoveVector` (`@0-32`) + `getHitResult` (`@0-85`):
@@ -180,19 +164,22 @@ pub fn pearl_raytrace(
     pearl: &PearlState,
     entities: &[PearlEntityTarget],
 ) -> PearlHit {
-    let from = pearl.pos;
-    let delta = pearl.vel;
+    trace_motion(world, pearl.pos, pearl.vel, pearl.tick_count, entities).0
+}
+
+fn trace_motion(
+    world: &impl World,
+    from: Vec3,
+    delta: Vec3,
+    tick_count: i32,
+    entities: &[PearlEntityTarget],
+) -> (PearlHit, Vec3) {
     let mut to = from.plus(delta);
-    let ctx = CollisionContext {
-        feet_y: from.y,
-        descending: false,
-        fall_distance: 0.0,
-        leather_boots: false,
-    };
+    let ctx = CollisionContext::empty(from.y);
 
     let hit = crate::basis::ray::clip(from, to, crate::basis::ray::ClipFluidMode::None, |pos| (world.collision_shape(pos, ctx), None, 0.0, false));
     let block_hit = hit.is_hit().then(|| hit.location());
-    let mut result = match block_hit {
+    let result = match block_hit {
         Some(location) => {
             to = location;
             PearlHit::Block { location }
@@ -202,7 +189,7 @@ pub fn pearl_raytrace(
 
     // ProjectileUtil.getHitResult @54-81: bb.expandTowards(delta).inflate(1.0)
     let sweep = pearl_aabb(from).expand(delta).deflate(-1.0);
-    let margin = compute_margin(pearl.tick_count) as f64;
+    let margin = compute_margin(tick_count) as f64;
     let mut best_dist = f64::MAX;
     let mut best_entity = None;
     for target in entities {
@@ -210,7 +197,7 @@ pub fn pearl_raytrace(
             continue;
         }
         let inflated = target.aabb.deflate(-margin);
-        if let Some(loc) = clip_aabb_with_inside(inflated, from, to) {
+        if let Some(loc) = inflated.clip_or_inside(from, to) {
             let dist = from.minus(loc).length_sqr();
             if dist < best_dist {
                 best_dist = dist;
@@ -219,9 +206,9 @@ pub fn pearl_raytrace(
         }
     }
     if let Some((id, location)) = best_entity {
-        result = PearlHit::Entity { id, location };
+        return (PearlHit::Entity { id, location }, location);
     }
-    result
+    (result, to)
 }
 
 /// One server frame (`ServerLevel.tickNonPassenger` + `ThrowableProjectile.tick` +
@@ -238,15 +225,11 @@ pub fn pearl_tick(
 ) -> Option<PearlLanding> {
     pearl.old_pos = pearl.pos;
     pearl.tick_count += 1;
-
-    crate::basis::body::THROWABLE.gravity(&mut pearl.vel, false);
-    crate::basis::body::THROWABLE.drag(&mut pearl.vel, pearl.in_water);
-
-    let hit = pearl_raytrace(world, pearl, entities);
-    pearl.pos = match hit {
-        PearlHit::Miss => pearl.pos.plus(pearl.vel),
-        PearlHit::Block { location } | PearlHit::Entity { location, .. } => location,
-    };
+    use crate::basis::body::{Medium, THROWABLE};
+    let (hit, endpoint) = THROWABLE.advance(&mut pearl.vel, Medium::Steady(pearl.in_water), |delta| {
+        trace_motion(world, pearl.pos, delta, pearl.tick_count, entities)
+    });
+    pearl.pos = endpoint;
 
     if hit != PearlHit::Miss && owner_teleportable {
         Some(PearlLanding {

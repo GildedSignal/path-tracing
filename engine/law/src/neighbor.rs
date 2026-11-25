@@ -69,6 +69,11 @@ impl Direction {
         }
     }
 
+    pub(crate) fn vector(self, length: f64) -> crate::Vec3 {
+        let [x, y, z] = self.step();
+        crate::Vec3::new(x as f64 * length, y as f64 * length, z as f64 * length)
+    }
+
     #[inline]
     pub const fn opposite(self) -> Direction {
         match self {
@@ -229,30 +234,6 @@ pub const fn decide_update_or_destroy(
     }
 }
 
-/// `CollectingNeighborUpdater` internal stack/layer item.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NeighborEntry<B: Copy> {
-    Simple {
-        pos: BlockPos,
-        source_block: B,
-        moved_by_piston: bool,
-    },
-    Multi {
-        origin: BlockPos,
-        source_block: B,
-        skip: Option<Direction>,
-        idx: u8,
-    },
-    Shape {
-        pos: BlockPos,
-        direction: Direction,
-        neighbor_pos: BlockPos,
-        neighbor_state: B,
-        flags: i32,
-        recursion_left: i32,
-    },
-}
-
 /// One concrete dispatch popped by `CollectingNeighborUpdater` for execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateEvent<B: Copy> {
@@ -279,217 +260,96 @@ pub struct DrainStats {
     pub first_skipped_pos: Option<BlockPos>,
 }
 
-/// Split-borrowable queue storage so handlers can enqueue nested updates re-entrantly
-/// without allocating per cascade (`stack` and `added_this_layer` keep capacity across runs).
+#[derive(Clone, Copy, Debug)]
+enum Pending<B: Copy> {
+    One(UpdateEvent<B>),
+    Around { center: BlockPos, source: B, remaining: u8 },
+}
+
+/// FIFO within a layer, depth first across layers. A six-neighbor update
+/// consumes one queue slot and can be interrupted by a nested update.
 #[derive(Clone, Debug)]
 pub struct NeighborQueue<B: Copy> {
-    stack: Vec<NeighborEntry<B>>,
-    added_this_layer: Vec<NeighborEntry<B>>,
-    count: i32,
-    max_chained_updates: i32,
-    overflowed: bool,
-    first_skipped_pos: Option<BlockPos>,
+    stack: Vec<Pending<B>>,
+    layer: Vec<Pending<B>>,
+    added: i32,
+    limit: i32,
+    stats: DrainStats,
+}
+
+impl<B: Copy> Default for NeighborQueue<B> {
+    fn default() -> Self { Self::new(0) }
 }
 
 impl<B: Copy> NeighborQueue<B> {
-    pub fn new(max_chained_updates: i32) -> Self {
-        Self {
-            stack: Vec::with_capacity(64),
-            added_this_layer: Vec::with_capacity(16),
-            count: 0,
-            max_chained_updates,
-            overflowed: false,
-            first_skipped_pos: None,
-        }
+    pub fn new(limit: i32) -> Self {
+        Self { stack: Vec::new(), layer: Vec::new(), added: 0, limit, stats: DrainStats::default() }
     }
 
-
-    /// Enqueues a single-cell `neighborChanged` update. Returns `true` if the caller
-    /// is at the root (not nested) and should invoke `run_updates`.
     pub fn neighbor_changed(&mut self, pos: BlockPos, source_block: B, moved_by_piston: bool) -> bool {
-        self.add(pos, NeighborEntry::Simple { pos, source_block, moved_by_piston })
+        self.add(pos, Pending::One(UpdateEvent::Simple { pos, source_block, moved_by_piston }))
     }
 
-    /// Enqueues `MultiNeighborUpdate` around `origin` in `UPDATE_ORDER`, skipping `skip`.
-    pub fn update_neighbors_except(
-        &mut self,
-        origin: BlockPos,
-        source_block: B,
-        skip: Option<Direction>,
-    ) -> bool {
-        let mut idx = 0u8;
-        if Some(UPDATE_ORDER[0]) == skip {
-            idx = 1;
+    pub fn update_neighbors_except(&mut self, center: BlockPos, source: B, skip: Option<Direction>) -> bool {
+        let mut remaining = 0b11_1111;
+        if let Some(idx) = UPDATE_ORDER.iter().position(|&dir| Some(dir) == skip) {
+            remaining ^= 1 << idx;
         }
-        self.add(
-            origin,
-            NeighborEntry::Multi {
-                origin,
-                source_block,
-                skip,
-                idx,
-            },
-        )
+        self.add(center, Pending::Around { center, source, remaining })
     }
 
-    /// Enqueues a shape update on `pos` caused by neighbor `neighbor_pos` along `direction`.
     pub fn shape_update(
-        &mut self,
-        direction: Direction,
-        neighbor_state: B,
-        pos: BlockPos,
-        neighbor_pos: BlockPos,
-        flags: i32,
-        recursion_left: i32,
+        &mut self, direction: Direction, neighbor_state: B, pos: BlockPos, neighbor_pos: BlockPos,
+        flags: i32, recursion_left: i32,
     ) -> bool {
-        self.add(
-            pos,
-            NeighborEntry::Shape {
-                pos,
-                direction,
-                neighbor_pos,
-                neighbor_state,
-                flags,
-                recursion_left,
-            },
-        )
+        self.add(pos, Pending::One(UpdateEvent::Shape {
+            pos, direction, neighbor_pos, neighbor_state, flags, recursion_left,
+        }))
     }
 
-    /// Exact `CollectingNeighborUpdater.addAndRun @0-174` queueing rule.
-    /// Pushing to `added_this_layer` guarantees FIFO order within any layer (root or nested)
-    /// and LIFO nesting across layers when flushed in reverse onto `stack`.
-    fn add(&mut self, pos: BlockPos, entry: NeighborEntry<B>) -> bool {
-        let already_running = self.count > 0;
-        let exceeded = self.max_chained_updates >= 0 && self.count >= self.max_chained_updates;
-        self.count += 1;
-        if !exceeded {
-            self.added_this_layer.push(entry);
-        } else if self.count - 1 == self.max_chained_updates {
-            self.overflowed = true;
-            self.first_skipped_pos = Some(pos);
+    fn add(&mut self, pos: BlockPos, pending: Pending<B>) -> bool {
+        let root = self.added == 0;
+        if self.limit < 0 || self.added < self.limit {
+            self.layer.push(pending);
+        } else if self.added == self.limit {
+            self.stats.overflowed = true;
+            self.stats.first_skipped_pos = Some(pos);
         }
-        !already_running
+        self.added += 1;
+        root
     }
 
-    /// Pops the next single dispatch from `CollectingNeighborUpdater.runUpdates`,
-    /// flushing any nested `added_this_layer` onto `stack` in reverse first.
-    pub fn pop_next(&mut self) -> Option<UpdateEvent<B>> {
-        if !self.added_this_layer.is_empty() {
-            for entry in self.added_this_layer.drain(..).rev() {
-                self.stack.push(entry);
-            }
-        }
-        let top = self.stack.last_mut()?;
-        match top {
-            NeighborEntry::Multi {
-                origin,
-                source_block,
-                skip,
-                idx,
-            } => {
-                let dir = UPDATE_ORDER[*idx as usize];
-                let target = dir.relative_by(*origin, 1);
-                let src = *source_block;
-                let skip_dir = *skip;
-                *idx += 1;
-                if (*idx as usize) < UPDATE_ORDER.len() && Some(UPDATE_ORDER[*idx as usize]) == skip_dir {
-                    *idx += 1;
-                }
-                if (*idx as usize) >= UPDATE_ORDER.len() {
-                    self.stack.pop();
+    fn pop(&mut self) -> Option<UpdateEvent<B>> {
+        self.stack.extend(self.layer.drain(..).rev());
+        match self.stack.pop()? {
+            Pending::One(event) => Some(event),
+            Pending::Around { center, source, mut remaining } => {
+                let dir = UPDATE_ORDER[remaining.trailing_zeros() as usize];
+                remaining &= remaining - 1;
+                if remaining != 0 {
+                    self.stack.push(Pending::Around { center, source, remaining });
                 }
                 Some(UpdateEvent::Simple {
-                    pos: target,
-                    source_block: src,
-                    moved_by_piston: false,
+                    pos: dir.relative_by(center, 1), source_block: source, moved_by_piston: false,
                 })
             }
-            NeighborEntry::Simple { .. } => match self.stack.pop() {
-                Some(NeighborEntry::Simple {
-                    pos,
-                    source_block,
-                    moved_by_piston,
-                }) => Some(UpdateEvent::Simple {
-                    pos,
-                    source_block,
-                    moved_by_piston,
-                }),
-                _ => unreachable!(),
-            },
-            NeighborEntry::Shape { .. } => match self.stack.pop() {
-                Some(NeighborEntry::Shape {
-                    pos,
-                    direction,
-                    neighbor_pos,
-                    neighbor_state,
-                    flags,
-                    recursion_left,
-                }) => Some(UpdateEvent::Shape {
-                    pos,
-                    direction,
-                    neighbor_pos,
-                    neighbor_state,
-                    flags,
-                    recursion_left,
-                }),
-                _ => unreachable!(),
-            },
         }
     }
 
-    pub fn finish_run(&mut self) -> DrainStats {
-        let stats = DrainStats {
-            dispatched: 0,
-            overflowed: self.overflowed,
-            first_skipped_pos: self.first_skipped_pos,
-        };
-        self.stack.clear();
-        self.added_this_layer.clear();
-        self.count = 0;
-        self.overflowed = false;
-        self.first_skipped_pos = None;
-        stats
-    }
-}
-
-/// Reusable synchronous Mojang `CollectingNeighborUpdater` runner.
-/// Zero heap allocations after warmup when reused across edits.
-#[derive(Clone, Debug)]
-pub struct CollectingNeighborUpdater<B: Copy> {
-    queue: NeighborQueue<B>,
-}
-
-impl<B: Copy> CollectingNeighborUpdater<B> {
-    pub fn new(max_chained_updates: i32) -> Self {
-        Self {
-            queue: NeighborQueue::new(max_chained_updates),
-        }
-    }
-
-    #[inline]
-    pub fn queue_mut(&mut self) -> &mut NeighborQueue<B> {
-        &mut self.queue
-    }
-
-    /// Runs a root update cascade to completion, passing `&mut NeighborQueue<B>`
-    /// so `handler` can enqueue nested neighbor/shape updates re-entrantly.
     pub fn drain_with(
         &mut self,
-        seed: impl FnOnce(&mut NeighborQueue<B>),
-        mut handler: impl FnMut(&mut NeighborQueue<B>, UpdateEvent<B>),
+        seed: impl FnOnce(&mut Self),
+        mut handle: impl FnMut(&mut Self, UpdateEvent<B>),
     ) -> DrainStats {
-        seed(&mut self.queue);
-        let mut dispatched = 0usize;
-        while let Some(event) = self.queue.pop_next() {
-            dispatched += 1;
-            handler(&mut self.queue, event);
+        seed(self);
+        while let Some(event) = self.pop() {
+            self.stats.dispatched += 1;
+            handle(self, event);
         }
-        let mut stats = self.queue.finish_run();
-        stats.dispatched = dispatched;
-        stats
+        self.added = 0;
+        std::mem::take(&mut self.stats)
     }
 }
-
 /// `DefaultRedstoneWireEvaluator.calculateTargetStrength` + `RedstoneWireEvaluator.getIncomingWireSignal`:
 /// `block_signal` = direct/strong power from non-wire neighbors (with short-circuit at 15),
 /// `incoming_wire_signals` = wire `POWER` along the 4 horizontal directions (including conductor up-step/down-step).
@@ -665,7 +525,7 @@ mod tests {
         world.insert([9, 1, 0], Cell::Door { open: false });
         world.insert([9, 2, 0], Cell::Door { open: false });
 
-        let mut updater = CollectingNeighborUpdater::new(100_000);
+        let mut updater = NeighborQueue::new(100_000);
         let mut visited_order = Vec::new();
         let mut door_write_flags = Vec::new();
         let mut wire_write_flags = Vec::new();
@@ -745,7 +605,7 @@ mod tests {
     /// Reproduces `local-20261114-1158-1-0-port-update-order` support-loss pop + chain cap.
     #[test]
     fn ladder_support_loss_and_chain_cap() {
-        let mut updater = CollectingNeighborUpdater::new(1_000);
+        let mut updater = NeighborQueue::new(1_000);
         let mut shape_order_seen = Vec::new();
         let mut ladder_popped = false;
 
@@ -786,7 +646,7 @@ mod tests {
         );
 
         // Chained cap enforcement: max 3 drops the 4th update and records first_skipped_pos.
-        let mut capped = CollectingNeighborUpdater::new(3);
+        let mut capped = NeighborQueue::new(3);
         let cap_stats = capped.drain_with(
             |q| {
                 q.update_neighbors_except([0, 0, 0], 1u8, None);

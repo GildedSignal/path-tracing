@@ -11,7 +11,7 @@ use law::falling::flight_tick;
 use law::fluid::{compute_spread_directions, FlowKind};
 use law::neighbor::{
     powered_toggle_on_signal, redstone_wire_target_strength, update_flags,
-    CollectingNeighborUpdater, Direction, UpdateEvent,
+    NeighborQueue, Direction, UpdateEvent,
 };
 use law::piston::{BlockKind, PistonBlock, PistonWorld, Resolver};
 use law::ticks::{LevelTicks, SubTickCounter, ScheduledTick, TickPriority, MAX_TICKS_PER_TICK};
@@ -174,9 +174,9 @@ fn benchmark_ported_core_laws() {
         println!("PERF piston::Resolver (10-block branched): {:.1} ns/op", ns_per_op(iters, t0.elapsed()));
     }
 
-    // 5. CollectingNeighborUpdater (8-wire cascade with flat fixed array world).
+    // 5. NeighborQueue (8-wire cascade with flat fixed array world).
     {
-        let mut updater = CollectingNeighborUpdater::new(100_000);
+        let mut updater = NeighborQueue::new(100_000);
         let mut powers = [0u8; 16];
         let iters = 20_000usize;
         let t0 = Instant::now();

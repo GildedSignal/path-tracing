@@ -10,7 +10,6 @@ use crate::{
     FluidKind,
     Pose,
     Vec3,
-    VoxelShape,
     World,
 };
 
@@ -29,15 +28,7 @@ pub const BOAT_DAMAGE_DECAY: f32 = 1.0;
 
 // EntityDimensions.makeBoundingBox for EntityTypes.OAK_BOAT (1.375 x 0.5625).
 pub fn boat_aabb(position: Vec3) -> Aabb {
-    let half = (BOAT_WIDTH / 2.0f32) as f64;
-    Aabb::new(
-        position.x - half,
-        position.y,
-        position.z - half,
-        position.x + half,
-        position.y + BOAT_HEIGHT as f64,
-        position.z + half,
-    )
+    Aabb::from_bottom(position, BOAT_WIDTH, BOAT_HEIGHT)
 }
 
 // AbstractBoat.getPassengerAttachmentPoint 31-85; Entity.positionRider.
@@ -267,7 +258,7 @@ pub fn place_boat(
 
     let pos = hit.location();
     let aabb = boat_aabb(pos);
-    if !world.no_collision(aabb, empty_context(pos.y)) {
+    if !world.no_collision(aabb, CollisionContext::empty(pos.y)) {
         return BoatPlaceResult::Fail;
     }
 
@@ -319,15 +310,6 @@ impl Default for BoatBody {
     }
 }
 
-fn empty_context(feet_y: f64) -> CollisionContext {
-    CollisionContext {
-        feet_y,
-        descending: false,
-        fall_distance: 0.0,
-        leather_boots: false,
-    }
-}
-
 // AbstractBoat.getGroundFriction @5-340
 pub fn get_ground_friction(world: &impl World, position: Vec3) -> f32 {
     let bb = boat_aabb(position);
@@ -338,7 +320,7 @@ pub fn get_ground_friction(world: &impl World, position: Vec3) -> f32 {
     let y1 = probe.max.y.ceil() as i32 + 1;
     let z0 = math::floor(probe.min.z) - 1;
     let z1 = probe.max.z.ceil() as i32 + 1;
-    let context = empty_context(position.y);
+    let context = CollisionContext::empty(position.y);
     let mut sum = 0.0f32;
     let mut count = 0i32;
     for x in x0..x1 {
@@ -522,7 +504,7 @@ fn float_boat(body: &mut BoatBody, world: &impl World, player_controlling: bool)
         let wla = water_level_above(world, bb, body.last_yd);
         let target_y = water_entry_target(wla, BOAT_HEIGHT);
         let moved = bb.moved(Vec3::new(0.0, target_y - body.boat.position.y, 0.0));
-        if world.no_collision(moved, empty_context(body.boat.position.y)) {
+        if world.no_collision(moved, CollisionContext::empty(body.boat.position.y)) {
             body.boat.position.y = target_y;
             // v.multiply(1, 0, 1): preserves negative zero when falling.
             body.boat.velocity = body.boat.velocity.multiply(Vec3::new(1.0, 0.0, 1.0));
@@ -607,7 +589,7 @@ pub fn tick_body(
 
     // AbstractBoat.maxUpStep() == 0.0f: the sweep without step-up; Entity.move @546 ->
     // AbstractBoat.checkFallDamage @0-8 reads the velocity before restitution.
-    let moved = crate::basis::sweep::moved(world, boat_aabb(body.boat.position), empty_context(body.boat.position.y), body.boat.velocity);
+    let moved = crate::basis::sweep::moved(world, boat_aabb(body.boat.position), CollisionContext::empty(body.boat.position.y), body.boat.velocity);
     body.last_yd = body.boat.velocity.y;
     let m = crate::basis::body::settle(&mut body.boat.position, &mut body.boat.velocity, moved);
     body.horizontal_collision = m.horizontal();
@@ -686,53 +668,13 @@ pub fn position_rider_rotation(
 /// `Entity.getCollisionHorizontalEscapeVector` (`@0-81`).
 pub fn collision_horizontal_escape_vector(a: f64, b: f64, yaw: f32) -> Vec3 {
     let d5 = (a + b + (1.0e-5f32 as f64)) / 2.0;
-    let rad = (yaw * 0.017453292f32) as f64;
-    let f = -math::sin(rad);
-    let f1 = math::cos(rad);
+    let (sin, f1) = math::sin_cos_degrees(yaw);
+    let f = -sin;
     let f2 = f.abs().max(f1.abs());
     Vec3::new((f as f64 * d5) / (f2 as f64), 0.0, (f1 as f64 * d5) / (f2 as f64))
 }
 
-fn shape_max_y(shape: &VoxelShape) -> f64 {
-    if shape.is_empty() {
-        return f64::NEG_INFINITY;
-    }
-    let nx = shape.coords[0].len().saturating_sub(1);
-    let ny = shape.coords[1].len().saturating_sub(1);
-    let nz = shape.coords[2].len().saturating_sub(1);
-    let mut max_y = f64::NEG_INFINITY;
-    for x in 0..nx {
-        for y in 0..ny {
-            for z in 0..nz {
-                if shape.is_full([x, y, z]) {
-                    max_y = max_y.max(shape.coords[1][y + 1]);
-                }
-            }
-        }
-    }
-    max_y
-}
-
-/// `BlockGetter.getBlockFloorHeight` (`@0-44`).
-pub fn block_floor_height(world: &impl World, pos: BlockPos) -> f64 {
-    let ctx = empty_context(f64::NEG_INFINITY);
-    let shape = world.collision_shape(pos, ctx);
-    if !shape.is_empty() {
-        return shape_max_y(shape);
-    }
-    let below_shape = world.collision_shape([pos[0], pos[1] - 1, pos[2]], ctx);
-    let below_max = shape_max_y(below_shape);
-    if below_max >= 1.0 {
-        below_max - 1.0
-    } else {
-        f64::NEG_INFINITY
-    }
-}
-
-/// `DismountHelper.isBlockFloorValid` (`@0-18`).
-pub fn is_block_floor_valid(floor_height: f64) -> bool {
-    !floor_height.is_infinite() && floor_height < 1.0
-}
+pub use crate::dismount::{block_floor_height, is_block_floor_valid};
 
 /// `AbstractBoat.getDismountLocationForPassenger` (`@0-271`) with player poses
 /// `[Standing, Crouching, Swimming]`. Returns `(exit_pos, Some(new_pose))` on candidate
@@ -756,31 +698,10 @@ pub fn dismount_location(
     let below = [candidate_pos[0], candidate_pos[1] - 1, candidate_pos[2]];
 
     if world.fluid_block(below).fluid.kind != FluidKind::Water {
-        let mut candidates = Vec::with_capacity(2);
-        let h1 = block_floor_height(world, candidate_pos);
-        if is_block_floor_valid(h1) {
-            candidates.push(Vec3::new(exit_x, candidate_pos[1] as f64 + h1, exit_z));
-        }
-        let h2 = block_floor_height(world, below);
-        if is_block_floor_valid(h2) {
-            candidates.push(Vec3::new(exit_x, below[1] as f64 + h2, exit_z));
-        }
-        let half = (rider_width / 2.0f32) as f64;
-        for pose in [Pose::Standing, Pose::Crouching, Pose::Swimming] {
-            let local = Aabb::new(
-                -half,
-                0.0,
-                -half,
-                half,
-                pose.height() as f64,
-                half,
-            );
-            for &vec in &candidates {
-                let test_box = local.moved(vec);
-                if world.no_collision(test_box, empty_context(vec.y)) {
-                    return (vec, Some(pose));
-                }
-            }
+        if let Some((pos, pose)) = crate::dismount::clear_pose(
+            world, rider_width, [exit_x, exit_z], [candidate_pos, below],
+        ) {
+            return (pos, Some(pose));
         }
     }
 

@@ -147,10 +147,12 @@ fn clamp_f64(v: f64, min: f64, max: f64) -> f64 {
     }
 }
 
-/// `Vec3.horizontalDistance()`: `Math.sqrt(x * x + z * z)`.
-#[inline]
-fn horizontal_distance(v: Vec3) -> f64 {
-    (v.x * v.x + v.z * v.z).sqrt()
+fn rail_at_position(rails: &(impl Rails + ?Sized), position: Vec3) -> (BlockPos, Option<RailInfo>) {
+    let mut pos = crate::world::block_pos(position);
+    if rails.rails_tag_below(pos) {
+        pos[1] -= 1;
+    }
+    (pos, rails.rail_at(pos))
 }
 
 impl Minecart {
@@ -160,17 +162,8 @@ impl Minecart {
         if !c.no_gravity {
             crate::basis::body::MINECART.gravity(&mut self.velocity, c.in_water);
         }
-        let bx = math::floor(self.position.x);
-        let by = math::floor(self.position.y);
-        let bz = math::floor(self.position.z);
-        // OldMinecartBehavior.tick @82-110
-        let rail_y = if rails.rails_tag_below([bx, by, bz]) {
-            by - 1
-        } else {
-            by
-        };
-        let rail_pos = [bx, rail_y, bz];
-        match rails.rail_at(rail_pos) {
+        let (rail_pos, rail) = rail_at_position(rails, self.position);
+        match rail {
             Some(rail) => self.move_along_track(rails, rail, rail_pos, c),
             None => self.come_off_track(c),
         }
@@ -225,7 +218,7 @@ impl Minecart {
             dx = -dx;
             dz = -dz;
         }
-        let speed = 2.0f64.min(horizontal_distance(self.velocity));
+        let speed = 2.0f64.min(self.velocity.horizontal_sqr().sqrt());
         self.velocity = Vec3::new(speed * dx / exit_len, self.velocity.y, speed * dz / exit_len);
 
         // Passenger steer (@449-581): ServerPlayer move intent adds 0.001 when h^2 < 0.01
@@ -240,7 +233,7 @@ impl Minecart {
 
         // Unpowered golden-rail brake (@583-631).
         if brake {
-            let h = horizontal_distance(self.velocity);
+            let h = self.velocity.horizontal_sqr().sqrt();
             if h < BRAKE_STOP_SPEED {
                 self.velocity = Vec3::default();
             } else {
@@ -310,7 +303,7 @@ impl Minecart {
         let post = self.get_pos(rails, self.position.x, self.position.y, self.position.z);
         if let (Some(post), Some(pre)) = (post, pre) {
             let dy = (pre.y - post.y) * 0.05;
-            let h = horizontal_distance(self.velocity);
+            let h = self.velocity.horizontal_sqr().sqrt();
             if h > 0.0 {
                 let k = (h + dy) / h;
                 self.velocity.x *= k;
@@ -323,7 +316,7 @@ impl Minecart {
         let nx = math::floor(self.position.x);
         let nz = math::floor(self.position.z);
         if nx != bx || nz != bz {
-            let h = horizontal_distance(self.velocity);
+            let h = self.velocity.horizontal_sqr().sqrt();
             self.velocity = Vec3::new(
                 h * (nx - bx) as f64,
                 self.velocity.y,
@@ -333,7 +326,7 @@ impl Minecart {
 
         // Powered golden-rail boost or wall push (@1321-1528).
         if powered {
-            let h = horizontal_distance(self.velocity);
+            let h = self.velocity.horizontal_sqr().sqrt();
             if h > POWERED_BOOST_MIN_SPEED {
                 self.velocity = self.velocity.plus(Vec3::new(
                     self.velocity.x / h * POWERED_BOOST,
@@ -390,13 +383,8 @@ impl Minecart {
     /// `OldMinecartBehavior.getPos` (`@1140-1359`): projects `(x, y, z)` onto the rail line at
     /// `blockY + 0.0625`, lifting slopes so the low end sits at `blockY + 0.0625`.
     pub fn get_pos(&self, rails: &(impl Rails + ?Sized), x: f64, y: f64, z: f64) -> Option<Vec3> {
-        let bx = math::floor(x);
-        let mut by = math::floor(y);
-        let bz = math::floor(z);
-        if rails.rails_tag_below([bx, by, bz]) {
-            by -= 1;
-        }
-        let rail = rails.rail_at([bx, by, bz])?;
+        let ([bx, by, bz], rail) = rail_at_position(rails, Vec3::new(x, y, z));
+        let rail = rail?;
         let (a, b) = rail.shape.exits();
         let ax = bx as f64 + 0.5 + a[0] as f64 * 0.5;
         let ay = by as f64 + RAIL_TOP_OFFSET + a[1] as f64 * 0.5;
@@ -435,13 +423,8 @@ impl Minecart {
         mut z: f64,
         offset: f64,
     ) -> Option<Vec3> {
-        let bx = math::floor(x);
-        let mut by = math::floor(y);
-        let bz = math::floor(z);
-        if rails.rails_tag_below([bx, by, bz]) {
-            by -= 1;
-        }
-        let rail = rails.rail_at([bx, by, bz])?;
+        let ([bx, by, bz], rail) = rail_at_position(rails, Vec3::new(x, y, z));
+        let rail = rail?;
         y = by as f64;
         if rail.shape.is_slope() {
             y = (by + 1) as f64;

@@ -3,11 +3,11 @@
 //! block's id) with its properties' values, so a state's id is Mojang's own; `blocks.tsv` holds the
 //! model of each state its relevant properties select (`maps.tsv`); `models.tsv` holds one row per
 //! distinct model: boxes, friction, speed and jump factors, the inside and step hooks; `census.tsv`
-//! names the blocks refused. `rules.tsv` (beside this file) holds what a rule reads of a block and
-//! the model does not: hardness, push reaction, conductor, signal source, survival.
-use crate::block_hooks::{OffsetCollisionSpec, SpeleothemThickness, TipDirection, offset_collision_shape_for_keys};
+//! names the blocks refused. `rules.tsv` holds the generated state-local answers used by edits;
+//! `cell_rule_index.tsv` maps the canonical states to those rows.
+use crate::block_hooks::xz_offset_from_keys;
 use crate::piston::{BlockKind as PistonKind, PushReaction};
-use crate::{Aabb, Block, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, VoxelShape};
+use crate::{Aabb, Block, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, Vec3, VoxelShape};
 use std::{collections::BTreeMap, sync::OnceLock};
 
 /// A block's row in `states.tsv`: its 26.2 registry id.
@@ -41,26 +41,30 @@ pub struct Models {
     pub offset_variants: Vec<Option<Box<[Block]>>>,
     pub reach: Vec<u8>,
     refusals: Vec<Option<&'static str>>,
-    rules: Vec<Option<Rules>>,
+    rules: Vec<Rules>,
+    state_rules: Box<[u16]>,
 }
 
-/// What a rule reads of a block beyond its model (`rules.tsv`).
+/// State-local facts from the jar. `None` on a context-sensitive getter means it needs a world.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rules {
     pub destroy_speed: f32,
     pub requires_correct_tool: bool,
-    pub is_redstone_conductor: bool,
-    /// Sturdy faces, `[Down, Up, North, South, West, East]`.
-    pub sturdy_faces: [bool; 6],
+    pub redstone_conductor: Option<bool>,
+    pub sturdy_faces: Option<u8>,
     pub push_reaction: PushReaction,
-    pub piston_kind: PistonKind,
     pub blocks_motion: bool,
-    pub replaceable_by_fluid: bool,
+    pub replaceable_by_water: bool,
+    pub replaceable_by_lava: bool,
     pub can_be_replaced: bool,
     pub is_signal_source: bool,
     pub has_block_entity: bool,
-    pub survive_rule: SurviveRule,
+    pub is_air: bool,
+    pub water_container: WaterContainer,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaterContainer { None, Accepts, Rejects, Other }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SurviveRule {
@@ -79,10 +83,12 @@ pub fn models() -> &'static Models {
         for line in include_str!("../../../world/data/models.tsv").lines() {
             let (block, offset) = parse_model(line);
             let (variants, r) = match offset {
-                OffsetCollisionSpec::None => (None, if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND }),
-                spec => {
+                None => (None, if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND }),
+                Some(cap) => {
                     let list = (0..256).map(|k| {
-                        let shifted = offset_collision_shape_for_keys(spec, (k >> 4) as u8, (k & 15) as u8).expect("non-none offset spec");
+                        // The jar row is measured at the origin, with seed keys (0, 0).
+                        let offset = xz_offset_from_keys((k >> 4) as u8, (k & 15) as u8, cap);
+                        let shifted = block.shape.moved(Vec3::new(offset.x + f64::from(cap), 0.0, offset.z + f64::from(cap)));
                         let mut v = block.clone();
                         v.shape = shifted.clone();
                         v.above_shape = Some(shifted.clone());
@@ -140,13 +146,24 @@ pub fn models() -> &'static Models {
         }
         assert_eq!(state_block.len(), 32_366, "26.2 registry states");
         let rows: BTreeMap<_, _> = names.iter().enumerate().map(|(i, &n)| (n, BlockId(i as u16))).collect();
-        let mut rules = vec![None; names.len()];
-        for line in include_str!("rules.tsv").lines().filter(|l| !l.starts_with('#')) {
-            let (name, row) = parse_rules(line);
-            let at = *rows.get(format!("minecraft:{name}").as_str()).unwrap_or_else(|| panic!("rules.tsv: {name} is not a 26.2 block"));
-            rules[at.0 as usize] = Some(row);
+        let (mut rules, mut rule_rows, mut rule_ids) = (Vec::new(), Vec::new(), BTreeMap::new());
+        for line in include_str!("rules.tsv").lines().filter(|line| !line.starts_with('#')) {
+            let (_, row) = line.split_once('\t').expect("generated rule name");
+            rule_rows.push(*rule_ids.entry(row).or_insert_with(|| {
+                let id = u16::try_from(rules.len()).expect("rule id fits in u16");
+                rules.push(parse_rules(row));
+                id
+            }));
         }
-        Models { names, rows, states, state_block: state_block.into(), state_model: state_model.into(), blocks, offset_variants, reach, refusals, rules }
+        let mut state_rules = Vec::with_capacity(state_block.len());
+        for line in include_str!("../../../world/data/cell_rule_index.tsv").lines().filter(|line| !line.starts_with('#')) {
+            let (end, id) = line.split_once('\t').expect("generated rule index");
+            let (end, row): (usize, usize) = (end.parse().unwrap(), id.parse().unwrap());
+            assert!(end > state_rules.len() && end <= state_block.len());
+            state_rules.resize(end, rule_rows[row]);
+        }
+        assert_eq!(state_rules.len(), state_block.len());
+        Models { names, rows, states, state_block: state_block.into(), state_model: state_model.into(), blocks, offset_variants, reach, refusals, rules, state_rules: state_rules.into() }
     })
 }
 
@@ -169,9 +186,20 @@ impl BlockId {
     pub fn name(self) -> &'static str {
         models().names[self.0 as usize].trim_start_matches("minecraft:")
     }
-    /// The rules row; a block `rules.tsv` does not list has none.
-    pub fn rules(self) -> Rules {
-        models().rules[self.0 as usize].unwrap_or_else(|| panic!("rules.tsv has no row for {}", self.name()))
+    pub fn default_state(self) -> StateId {
+        let s = &models().states[self.0 as usize];
+        StateId(s.first + s.default)
+    }
+
+    pub fn rules(self) -> Rules { self.default_state().rules() }
+}
+
+impl Rules {
+    pub fn replaces_with(self, kind: FlowKind) -> bool {
+        match kind {
+            FlowKind::Water => self.replaceable_by_water,
+            FlowKind::Lava { .. } => self.replaceable_by_lava,
+        }
     }
 }
 
@@ -196,6 +224,30 @@ impl StateId {
         Self::parse(name, |p| properties.iter().find(|(k, _)| *k == p).map(|(_, v)| *v)).unwrap_or_else(|e| panic!("{name} {properties:?}: {e}"))
     }
     pub fn block(self) -> BlockId { models().state_block[self.0 as usize] }
+    pub fn rules(self) -> Rules {
+        let m = models();
+        m.rules[m.state_rules[self.0 as usize] as usize]
+    }
+
+    /// Set a single property without losing any of the state's other digits.
+    pub fn with(self, name: &str, value: &str) -> Self {
+        let s = &models().states[self.block().0 as usize];
+        let local = usize::from(self.0 - s.first);
+        let mut stride = 1;
+        for (property, values) in s.properties.iter().rev() {
+            if *property == name {
+                let old = local / stride % values.len();
+                let new = values.iter().position(|v| *v == value).expect("valid state property value");
+                return Self((usize::from(self.0) - old * stride + new * stride) as u16);
+            }
+            stride *= values.len();
+        }
+        panic!("{} has no {name} property", self.block().name());
+    }
+
+    pub fn with_bool(self, name: &str, value: bool) -> Self {
+        self.with(name, if value { "true" } else { "false" })
+    }
     /// The value of property `name`, if the block has it.
     pub fn get(self, name: &str) -> Option<&'static str> {
         let s = &models().states[self.block().0 as usize];
@@ -245,24 +297,27 @@ pub fn lookup<'a>(name: &str, properties: impl Fn(&str) -> Option<&'a str>) -> R
     match models().refusals[state.block().0 as usize] { Some(reason) => Err(reason.into()), None => Ok(state) }
 }
 
-fn parse_rules(line: &str) -> (&str, Rules) {
-    let f: Vec<_> = line.split('\t').collect();
-    assert_eq!(f.len(), 13, "rules.tsv schema: {line}");
-    let yes = |i: usize| match f[i] { "y" => true, "n" => false, s => panic!("rules.tsv flag {s}") };
-    let sturdy = match f[4] { "all" => [true; 6], "none" => [false; 6], s => panic!("rules.tsv sturdy {s}") };
-    let push_reaction = match f[5] { "normal" => PushReaction::Normal, "destroy" => PushReaction::Destroy, "block" => PushReaction::Block, s => panic!("rules.tsv push {s}") };
-    let piston_kind = match f[6] {
-        "other" => PistonKind::Other, "obsidian" => PistonKind::Obsidian, "slime" => PistonKind::SlimeBlock,
-        "honey" => PistonKind::HoneyBlock, "piston" => PistonKind::Piston { extended: false },
-        "sticky" => PistonKind::StickyPiston { extended: false }, "head" => PistonKind::PistonHead,
-        "moving" => PistonKind::MovingPiston, s => panic!("rules.tsv piston kind {s}"),
+fn parse_rules(row: &str) -> Rules {
+    let f: Vec<_> = row.split('\t').collect();
+    assert_eq!(f.len(), 12, "generated rule schema: {row}");
+    let yes = |i: usize| f[i].parse::<bool>().expect("generated rule flag");
+    let push_reaction = match f[4] {
+        "NORMAL" => PushReaction::Normal, "DESTROY" => PushReaction::Destroy, "BLOCK" => PushReaction::Block,
+        "IGNORE" => PushReaction::Ignore, "PUSH_ONLY" => PushReaction::PushOnly, s => panic!("generated push reaction {s}"),
     };
-    let survive_rule = match f[12] { "always" => SurviveRule::Always, "floor" => SurviveRule::FloorSturdy, "attached" => SurviveRule::Attached, s => panic!("rules.tsv survive {s}") };
-    (f[0], Rules {
-        destroy_speed: f[1].parse().expect("rules.tsv hardness"), requires_correct_tool: yes(2), is_redstone_conductor: yes(3),
-        sturdy_faces: sturdy, push_reaction, piston_kind, blocks_motion: yes(7), replaceable_by_fluid: yes(8),
-        can_be_replaced: yes(9), is_signal_source: yes(10), has_block_entity: yes(11), survive_rule,
-    })
+    let (air, water_container) = f[11].split_once(':').expect("generated air and water flags");
+    let water_container = match water_container {
+        "no" => WaterContainer::None, "accepts" => WaterContainer::Accepts,
+        "rejects" => WaterContainer::Rejects, "other" => WaterContainer::Other, s => panic!("generated water container {s}"),
+    };
+    Rules {
+        destroy_speed: f[0].parse().expect("generated hardness"),
+        requires_correct_tool: f[1] == "y", redstone_conductor: (f[2] != "-").then(|| yes(2)),
+        sturdy_faces: (f[3] != "-").then(|| f[3].parse().expect("generated sturdy mask")),
+        push_reaction, blocks_motion: yes(5), replaceable_by_water: yes(6), replaceable_by_lava: yes(7),
+        can_be_replaced: yes(8), is_signal_source: yes(9), has_block_entity: f[10] == "y",
+        is_air: air.parse().expect("generated air flag"), water_container,
+    }
 }
 
 fn shape(raw: &str) -> VoxelShape {
@@ -274,23 +329,7 @@ fn shape(raw: &str) -> VoxelShape {
     VoxelShape::boxes(&boxes)
 }
 
-fn parse_offset(raw: &str) -> OffsetCollisionSpec {
-    match raw.split(':').collect::<Vec<_>>()[..] {
-        ["none"] => OffsetCollisionSpec::None,
-        ["bamboo"] => OffsetCollisionSpec::Bamboo,
-        ["speleothem", thickness, tip] => OffsetCollisionSpec::Speleothem {
-            thickness: match thickness {
-                "tip_merge" => SpeleothemThickness::TipMerge, "tip" => SpeleothemThickness::Tip,
-                "frustum" => SpeleothemThickness::Frustum, "middle" => SpeleothemThickness::Middle,
-                "base" => SpeleothemThickness::Base, other => panic!("generated speleothem thickness {other}"),
-            },
-            tip_direction: match tip { "up" => TipDirection::Up, "down" => TipDirection::Down, other => panic!("generated tip direction {other}") },
-        },
-        _ => panic!("generated offset spec {raw}"),
-    }
-}
-
-fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
+fn parse_model(line: &str) -> (Block, Option<f32>) {
     let f: Vec<_> = line.split('\t').collect();
     assert_eq!(f.len(), 22, "generated model schema");
     let fp = |i: usize| f32::from_bits(u32::from_str_radix(f[i], 16).expect("generated float bits"));
@@ -327,7 +366,13 @@ fn parse_model(line: &str) -> (Block, OffsetCollisionSpec) {
         grounded_contact: match f[14] { "none" => GroundedContact::None, "hotFloor" => GroundedContact::DamageUnlessCareful(ContactDamage::HotFloor), _ => panic!("generated step hook") },
         ..Block::default()
     };
-    (block, parse_offset(f[21]))
+    let offset = match f[21].split(':').next().unwrap() {
+        "none" => None,
+        "bamboo" => Some(crate::block_hooks::BAMBOO_MAX_HORIZONTAL_OFFSET),
+        "speleothem" => Some(crate::block_hooks::SPELEOTHEM_MAX_HORIZONTAL_OFFSET),
+        other => panic!("generated offset spec {other}"),
+    };
+    (block, offset)
 }
 
 
@@ -346,8 +391,22 @@ use crate::BlockPos;
 
 /// The edit side of the world: one cell representation, read and written by every rule.
 pub trait WorldMut {
-    fn cell(&self, pos: BlockPos) -> SimCell;
-    fn set(&mut self, pos: BlockPos, cell: SimCell);
+    fn cell(&self, pos: BlockPos) -> StateId;
+    fn set(&mut self, pos: BlockPos, cell: StateId);
+    fn sturdy(&self, pos: BlockPos, face: Direction) -> bool { self.cell(pos).is_sturdy(face) }
+    fn can_survive(&self, pos: BlockPos, state: StateId) -> bool {
+        let support = match state.survive_rule() {
+            SurviveRule::Always => return true,
+            SurviveRule::FloorSturdy => Direction::Down,
+            SurviveRule::Attached => match state.kind() {
+                CellState::Lever(lever) => lever.connected_direction().opposite(),
+                CellState::Button(button) => button.connected_direction().opposite(),
+                CellState::TripwireHook(hook) => hook.facing.opposite(),
+                _ => state.direction("facing").opposite(),
+            },
+        };
+        self.sturdy(support.relative(pos), support.opposite())
+    }
     /// `LevelTicks.hasScheduledTick`: a tick of `block` is pending at `pos`.
     fn has_scheduled_tick(&self, _pos: BlockPos, _block: BlockId) -> bool {
         false
@@ -355,11 +414,11 @@ pub trait WorldMut {
 }
 
 /// A plain map world (unset cells are air), for rules run on their own.
-impl WorldMut for std::collections::HashMap<BlockPos, SimCell> {
-    fn cell(&self, pos: BlockPos) -> SimCell {
-        self.get(&pos).copied().unwrap_or_else(|| SimCell::air(BlockId::of("air")))
+impl WorldMut for std::collections::HashMap<BlockPos, StateId> {
+    fn cell(&self, pos: BlockPos) -> StateId {
+        self.get(&pos).copied().unwrap_or(StateId::AIR)
     }
-    fn set(&mut self, pos: BlockPos, cell: SimCell) {
+    fn set(&mut self, pos: BlockPos, cell: StateId) {
         self.insert(pos, cell);
     }
 }
@@ -392,73 +451,40 @@ pub enum CellState {
     Falling(FallingKind),
 }
 
-/// A rule's view of one canonical state: the block and the facts of its family.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SimCell {
-    pub id: BlockId,
-    pub state: CellState,
-}
-
 pub const DIRECTION: [&str; 6] = ["down", "up", "north", "south", "west", "east"];
-const FACE: [&str; 3] = ["floor", "wall", "ceiling"];
+pub const FACE: [&str; 3] = ["floor", "wall", "ceiling"];
 const ANVILS: [&str; 3] = ["anvil", "chipped_anvil", "damaged_anvil"];
 
-impl SimCell {
-    pub fn new(id: BlockId, state: CellState) -> Self {
-        Self { id, state }
+impl StateId {
+    pub const AIR: Self = Self(0);
+
+    pub fn liquid(name: &str, cell: FluidCell) -> Self {
+        Self::of(BlockId::of(name), &[("level", &cell.legacy_level().to_string())])
     }
 
-    pub fn air(id: BlockId) -> Self {
-        Self::new(id, CellState::Empty)
+    pub fn direction(self, name: &str) -> Direction {
+        let value = self.get(name).expect("direction property");
+        Direction::ALL[DIRECTION.iter().position(|d| *d == value).expect("direction value")]
     }
 
-    pub fn plain(id: BlockId) -> Self {
-        Self::new(id, CellState::Plain)
-    }
-
-    pub fn water(id: BlockId, cell: FluidCell) -> Self {
-        Self::new(id, CellState::Fluid { kind: FlowKind::Water, cell })
-    }
-
-    pub fn lava(id: BlockId, fast: bool, cell: FluidCell) -> Self {
-        Self::new(id, CellState::Fluid { kind: FlowKind::Lava { fast }, cell })
-    }
-
-    /// The canonical state this cell is: the first of its block's states, the default first,
-    /// that `from_state` reads as this cell. A cell no state holds is refused.
-    pub fn state_id(&self) -> StateId {
-        static CELLS: OnceLock<Vec<Vec<(CellState, StateId)>>> = OnceLock::new();
-        let cells = CELLS.get_or_init(|| models().states.iter().map(|s| {
-            let count = s.properties.iter().map(|(_, v)| v.len() as u16).product();
-            let mut cells: Vec<(CellState, StateId)> = Vec::new();
-            for id in std::iter::once(s.default).chain(0..count).map(|l| StateId(s.first + l)) {
-                let cell = Self::from_state(id, false).state;
-                if !cells.iter().any(|c| c.0 == cell) { cells.push((cell, id)); }
-            }
-            cells
-        }).collect());
-        let mut state = self.state;
-        if let CellState::Fluid { kind: FlowKind::Lava { fast }, .. } = &mut state { *fast = false; }
-        cells[self.id.0 as usize].iter().find(|c| c.0 == state).map(|c| c.1).unwrap_or_else(|| panic!("no canonical state holds {self:?}"))
-    }
-
-    /// The cell a canonical state is (`fast_lava` is the dimension's, not the state's).
-    pub fn from_state(s: StateId, fast_lava: bool) -> Self {
+    /// Decode a rule's inputs from the canonical state.
+    pub fn kind(self) -> CellState {
+        let s = self;
         let id = s.block();
         let name = id.name();
         let get = |p: &str| s.get(p).unwrap_or_else(|| panic!("{name} has no {p}"));
         let on = |p: &str| get(p) == "true";
         let number = |p: &str| get(p).parse::<u8>().expect("a number property");
-        let dir = |p: &str| Direction::ALL[DIRECTION.iter().position(|d| *d == get(p)).expect("a direction")];
+        let dir = |p: &str| s.direction(p);
         let face = || [AttachFace::Floor, AttachFace::Wall, AttachFace::Ceiling][FACE.iter().position(|f| *f == get("face")).expect("a face")];
         // BlockSetType: stone buttons and plates sense mobs only, stay 20 ticks, ignore arrows.
         let stone = name.starts_with("stone_") || name.starts_with("polished_blackstone_");
-        let state = match name {
+        match name {
             "air" | "cave_air" | "void_air" => CellState::Empty,
             "water" | "lava" => {
                 let l = number("level");
                 let cell = FluidCell { amount: if l == 0 || l >= 8 { 8 } else { 8 - l }, falling: l >= 8, source: l == 0 };
-                CellState::Fluid { kind: if name == "water" { FlowKind::Water } else { FlowKind::Lava { fast: fast_lava } }, cell }
+                CellState::Fluid { kind: if name == "water" { FlowKind::Water } else { FlowKind::Lava { fast: false } }, cell }
             }
             "redstone_wire" => CellState::RedstoneWire { power: number("power") },
             "lever" => CellState::Lever(LeverState { block_id: id, face: face(), facing: dir("facing"), powered: on("powered") }),
@@ -490,80 +516,67 @@ impl SimCell {
                 None => PressurePlateState { block_id: id, kind: PressurePlateKind::Binary { mobs_only: stone }, signal: if on("powered") { 15 } else { 0 } },
             }),
             _ => CellState::Plain,
-        };
-        Self { id, state }
-    }
-
-    /// The model the state selects (`blocks.tsv`, `maps.tsv`), unshifted.
-    pub fn block(&self) -> &'static Block {
-        self.state_id().model_block()
-    }
-
-    /// What a rule reads beyond the model: the block's rules row (a block `rules.tsv` lacks gets
-    /// the projection of its model), with a piston's kind and sturdy faces from its state.
-    pub fn props(&self) -> Rules {
-        let mut props = models().rules[self.id.0 as usize].unwrap_or_else(|| {
-            let b = self.block();
-            let full = b.shape.is_block();
-            Rules {
-                destroy_speed: 1.5, requires_correct_tool: true, is_redstone_conductor: full,
-                sturdy_faces: b.fluid_flow.map_or([full; 6], |ff| [full, full, ff.solid_faces[0], ff.solid_faces[2], ff.solid_faces[3], ff.solid_faces[1]]),
-                push_reaction: PushReaction::Normal, piston_kind: PistonKind::Other,
-                blocks_motion: b.fluid_flow.map_or(!b.shape.is_empty(), |ff| ff.blocks_motion),
-                replaceable_by_fluid: true, can_be_replaced: false, is_signal_source: false, has_block_entity: false, survive_rule: SurviveRule::Always,
-            }
-        });
-        match self.state {
-            CellState::Piston { sticky, facing, extended } => {
-                props.piston_kind = if sticky { PistonKind::StickyPiston { extended } } else { PistonKind::Piston { extended } };
-                props.sturdy_faces = [!extended; 6];
-                props.sturdy_faces[facing.opposite() as usize] = true;
-            }
-            CellState::PistonHead { facing, .. } => {
-                props.sturdy_faces = [false; 6];
-                props.sturdy_faces[facing as usize] = true;
-            }
-            _ => {}
         }
-        props
     }
 
-    #[inline]
-    pub fn is_air(&self) -> bool {
-        matches!(self.state, CellState::Empty)
+    pub fn is_air(self) -> bool { self.rules().is_air }
+
+    pub fn is_redstone_conductor(self) -> bool {
+        self.rules().redstone_conductor.expect("redstone conductor needs a world context")
     }
 
-    /// Extracts fluid info (including waterlogged blocks) for `fluid` and `world_hooks`.
-    pub fn fluid_info(&self) -> Option<(FlowKind, FluidCell)> {
-        match self.state {
-            CellState::Fluid { kind, cell } => Some((kind, cell)),
-            CellState::TrapDoor { waterlogged: true, .. }
-            | CellState::Scaffolding(ScaffoldingState { waterlogged: true, .. }) => Some((FlowKind::Water, FluidCell::WATER_SOURCE)),
+    pub fn is_sturdy(self, face: Direction) -> bool {
+        self.rules().sturdy_faces.expect("sturdy face needs a world context") & (1 << face as u8) != 0
+    }
+
+    pub fn survive_rule(self) -> SurviveRule {
+        match self.block().name() {
+            "torch" | "redstone_wire" | "stone_pressure_plate" => SurviveRule::FloorSturdy,
+            "lever" | "stone_button" | "oak_button" | "tripwire_hook" | "ladder" => SurviveRule::Attached,
+            _ => SurviveRule::Always,
+        }
+    }
+
+    pub fn fluid_info(self, fast_lava: bool) -> Option<(FlowKind, FluidCell)> {
+        match self.kind() {
+            CellState::Fluid { kind, cell } => {
+                let kind = if matches!(kind, FlowKind::Lava { .. }) { FlowKind::Lava { fast: fast_lava } } else { kind };
+                Some((kind, cell))
+            }
+            _ if self.get("waterlogged") == Some("true") => Some((FlowKind::Water, FluidCell::WATER_SOURCE)),
             _ => None,
         }
     }
 
-    pub fn is_waterlogged_container(&self) -> bool {
-        matches!(self.state, CellState::TrapDoor { .. } | CellState::Scaffolding(_))
+    pub fn is_waterlogged_container(self) -> bool {
+        self.rules().water_container == WaterContainer::Accepts
     }
 
-    pub fn set_waterlogged(&mut self, wl: bool) -> bool {
-        match &mut self.state {
-            CellState::TrapDoor { waterlogged, .. } => *waterlogged = wl,
-            CellState::Scaffolding(s) => s.waterlogged = wl,
-            _ => return false,
+    pub fn piston_kind(self) -> PistonKind {
+        let extended = || self.get("extended") == Some("true");
+        match self.block().name() {
+            "obsidian" => PistonKind::Obsidian,
+            "crying_obsidian" => PistonKind::CryingObsidian,
+            "respawn_anchor" => PistonKind::RespawnAnchor,
+            "reinforced_deepslate" => PistonKind::ReinforcedDeepslate,
+            "slime_block" => PistonKind::SlimeBlock,
+            "honey_block" => PistonKind::HoneyBlock,
+            "piston" => PistonKind::Piston { extended: extended() },
+            "sticky_piston" => PistonKind::StickyPiston { extended: extended() },
+            "piston_head" => PistonKind::PistonHead,
+            "moving_piston" => PistonKind::MovingPiston,
+            _ => PistonKind::Other,
         }
-        true
     }
 
-    pub fn as_piston_block(&self) -> PistonBlock {
-        let props = self.props();
+    pub fn as_piston_block(self) -> PistonBlock {
+        let props = self.rules();
         PistonBlock {
-            air: self.is_air(),
+            air: props.is_air,
             destroy_speed: props.destroy_speed,
             has_block_entity: props.has_block_entity,
             push_reaction: props.push_reaction,
-            kind: props.piston_kind,
+            kind: self.piston_kind(),
         }
     }
 }

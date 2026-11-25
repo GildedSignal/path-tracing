@@ -67,7 +67,7 @@ impl WorldBorderBounds {
     /// `WorldBorder.clampToBounds(BlockPos)` (`BlockPos.containing` via `Mth.floor`).
     /// Note: does not alter Y; runs AFTER fallback Y-clamping in `PortalForcer.createPortal`.
     pub fn clamp_to_bounds(self, pos: BlockPos) -> BlockPos {
-        self.clamp_vec_to_bounds(Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64))
+        self.clamp_vec_to_bounds(Vec3::block_corner(pos))
     }
 }
 
@@ -382,10 +382,7 @@ pub const CREATE_PORTAL_SPIRAL_RADIUS: i32 = 16;
 
 /// `Vec3i.distSqr` in double arithmetic, as the jar computes it.
 pub fn dist_sqr(a: BlockPos, b: BlockPos) -> f64 {
-    let dx = (a[0] - b[0]) as f64;
-    let dy = (a[1] - b[1]) as f64;
-    let dz = (a[2] - b[2]) as f64;
-    dx * dx + dy * dy + dz * dz
+    Vec3::new((a[0] - b[0]) as f64, (a[1] - b[1]) as f64, (a[2] - b[2]) as f64).length_sqr()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

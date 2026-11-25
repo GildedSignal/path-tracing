@@ -76,6 +76,7 @@ pub mod state_reads;
 pub mod ticks;
 
 pub mod boat;
+mod dismount;
 pub mod elytra;
 pub mod interact;
 pub mod pearl;
