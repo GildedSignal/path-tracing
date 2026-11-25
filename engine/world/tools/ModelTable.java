@@ -240,10 +240,85 @@ public final class ModelTable {
         if (base!=Block.BLOCK_STATE_REGISTRY.size()) throw new AssertionError(base+" states");
         Files.write(out,lines);
     }
+
+    // A rule row contains only facts visible without a world. A dash marks a getter
+    // that reads a neighbour or block entity. The index is in exact StateId order.
+    static List<String> cellRules(BlockState state) {
+        Block block=state.getBlock();
+        String conductor="-", sturdy="-", waterContainer="no";
+        try { conductor=Boolean.toString(state.isRedstoneConductor(LOCAL,BlockPos.ZERO)); }
+        catch (Refused ignored) {}
+        try {
+            int mask=0;
+            for (Direction dir:Direction.values()) {
+                if (state.isFaceSturdy(LOCAL,BlockPos.ZERO,dir)) mask|=1<<dir.get3DDataValue();
+            }
+            sturdy=Integer.toString(mask);
+        } catch (Refused ignored) {}
+        if (block instanceof LiquidBlockContainer container) {
+            boolean accepts=container.canPlaceLiquid(null,LOCAL,BlockPos.ZERO,state,Fluids.WATER);
+            if (block instanceof SimpleWaterloggedBlock) {
+                waterContainer=accepts ? "accepts" : "rejects";
+            } else {
+                if (accepts) throw new AssertionError("unmodeled liquid container: "+state);
+                waterContainer="other";
+            }
+        }
+        return List.of(
+            Integer.toHexString(Float.floatToRawIntBits(state.getDestroySpeed(LOCAL,BlockPos.ZERO))),
+            Boolean.toString(state.requiresCorrectToolForDrops()), conductor, sturdy,
+            state.getPistonPushReaction().name(), Boolean.toString(state.blocksMotion()),
+            Boolean.toString(state.canBeReplaced(Fluids.WATER)), Boolean.toString(state.canBeReplaced(Fluids.LAVA)),
+            Boolean.toString(state.canBeReplaced()), Boolean.toString(state.isSignalSource()),
+            Boolean.toString(state.hasBlockEntity()), Boolean.toString(state.isAir()), waterContainer);
+    }
+
+    // Keep the columns read by the kit projection in place. The same rows serve
+    // its block defaults and the simulator's full state index.
+    static String cellRuleLine(String name, List<String> row) {
+        float hardness=Float.intBitsToFloat(Integer.parseUnsignedInt(row.get(0),16));
+        return String.join("\t", name, Float.toString(hardness), row.get(1).equals("true")?"y":"n",
+            row.get(2), row.get(3), row.get(4), row.get(5), row.get(6), row.get(7), row.get(8),
+            row.get(9), row.get(10).equals("true")?"y":"n", row.get(11)+":"+row.get(12));
+    }
+
+    static void writeCellRules(Path out, Path rules) throws IOException {
+        var ids=new LinkedHashMap<List<String>,Integer>();
+        var index=new ArrayList<String>();
+        var rows=new ArrayList<String>();
+        int blocks=0, states=0, previous=-1;
+        for (Block block:BuiltInRegistries.BLOCK) {
+            if (BuiltInRegistries.BLOCK.getId(block)!=blocks++) throw new AssertionError("registry order");
+            var defaults=cellRules(block.defaultBlockState());
+            ids.putIfAbsent(defaults,rows.size());
+            rows.add(cellRuleLine(BuiltInRegistries.BLOCK.getKey(block).getPath(),defaults));
+        }
+        for (Block block:BuiltInRegistries.BLOCK) {
+            for (BlockState state:block.getStateDefinition().getPossibleStates()) {
+                if (Block.getId(state)!=states) throw new AssertionError("state order: "+state);
+                int id=ids.computeIfAbsent(cellRules(state), row -> {
+                    int next=rows.size();
+                    rows.add(cellRuleLine("@"+next,row));
+                    return next;
+                });
+                if (id!=previous && previous!=-1) index.add(states+"\t"+previous);
+                previous=id;
+                states++;
+            }
+        }
+        if (blocks!=1196 || states!=32366) throw new AssertionError(blocks+" blocks, "+states+" states");
+        index.add(states+"\t"+previous);
+        index.addFirst("# state id (exclusive end)\trule row");
+        rows.addFirst("# block default or variant\thardness\tcorrect tool\tconductor\tsturdy faces\tpush reaction\tblocks motion\treplaceable by water\treplaceable by lava\treplaceable\tsignal source\tblock entity\tair:water container");
+        Files.write(rules,rows);
+        Files.write(out.resolve("cell_rule_index.tsv"),index);
+    }
+
     public static void main(String[] args) throws Exception {
         SharedConstants.tryDetectVersion(); Bootstrap.bootStrap();
         if (args[0].equals("--shapes")) { shapes(Path.of(args[1]),Arrays.copyOfRange(args,2,args.length)); return; }
         if (args[0].equals("--states")) { states(Path.of(args[1])); return; }
+        if (args[0].equals("--cell-rules")) { writeCellRules(Path.of(args[1]),Path.of(args[2])); return; }
         var rows=new TreeMap<String,String>();
         // Each registry state lands in one bucket of its block: "modeled", or the reason it is refused.
         var census=new TreeMap<String,Integer>();
@@ -306,6 +381,9 @@ public final class ModelTable {
         var censusLines=new ArrayList<String>(List.of("# "+Block.BLOCK_STATE_REGISTRY.size()+" registry states"));
         for(var entry:census.entrySet()) censusLines.add(entry.getKey()+"\t"+entry.getValue());
         Files.write(Path.of(args[0],"census.tsv"),censusLines);
+        Path out=Path.of(args[0]).normalize();
+        Path rules=out.resolve("../../law/src/basis/rules.tsv").normalize();
+        writeCellRules(out,Files.isDirectory(rules.getParent())?rules:out.resolve("rules.tsv"));
         System.out.println(rows.size()+" of "+total+" states modeled, "+models.size()+" physical models");
     }
 }

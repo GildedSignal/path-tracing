@@ -14,7 +14,7 @@
 //! Block identity is strictly data-driven (`BlockId` and properties, never block-name strings).
 
 use crate::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
-use crate::basis::cell::{CellState, SimCell, WorldMut};
+use crate::basis::cell::{CellState, StateId, WaterContainer, WorldMut, DIRECTION};
 use crate::neighbor::update_flags;
 use crate::{Aabb, BlockPos, FluidKind, Vec3, World};
 
@@ -152,111 +152,6 @@ pub const fn create_filled_result(
     }
 }
 
-/// Data-driven cell description for bucket placement / waterlogging / pickup.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BucketCell {
-    pub block_id: BlockId,
-    pub is_air: bool,
-    pub is_liquid: bool,
-    pub is_fluid_source: bool,
-    /// `BlockState.canBeReplaced(Fluid)` (`state.canBeReplaced() || !state.isSolid()`).
-    pub can_be_replaced_by_fluid: bool,
-    /// `block instanceof LiquidBlockContainer`.
-    pub is_liquid_block_container: bool,
-    /// Whether `LiquidBlockContainer.canPlaceLiquid` accepts `Water` (e.g. false for double slabs).
-    pub accepts_water_container: bool,
-    /// `SimpleWaterloggedBlock` waterlogged state (`None` if not simple-waterlogged).
-    pub waterlogged: Option<bool>,
-    /// `LiquidBlock` fluid + level (`level == 0` is source).
-    pub liquid_block: Option<(BucketContent, u8)>,
-    /// `state.canSurvive(level, pos)` checked after un-waterlogging in `SimpleWaterloggedBlock.pickupBlock`.
-    pub can_survive: bool,
-}
-
-impl BucketCell {
-    pub fn air(air_id: BlockId) -> Self {
-        Self {
-            block_id: air_id,
-            is_air: true,
-            is_liquid: false,
-            is_fluid_source: false,
-            can_be_replaced_by_fluid: true,
-            is_liquid_block_container: false,
-            accepts_water_container: false,
-            waterlogged: None,
-            liquid_block: None,
-            can_survive: true,
-        }
-    }
-
-    pub fn solid(block_id: BlockId) -> Self {
-        Self {
-            block_id,
-            is_air: false,
-            is_liquid: false,
-            is_fluid_source: false,
-            can_be_replaced_by_fluid: false,
-            is_liquid_block_container: false,
-            accepts_water_container: false,
-            waterlogged: None,
-            liquid_block: None,
-            can_survive: true,
-        }
-    }
-
-    pub fn liquid_source(block_id: BlockId, fluid: BucketContent) -> Self {
-        Self {
-            block_id,
-            is_air: false,
-            is_liquid: true,
-            is_fluid_source: true,
-            can_be_replaced_by_fluid: true,
-            is_liquid_block_container: false,
-            accepts_water_container: false,
-            waterlogged: None,
-            liquid_block: Some((fluid, 0)),
-            can_survive: true,
-        }
-    }
-
-    pub fn liquid_flowing(block_id: BlockId, fluid: BucketContent, level: u8) -> Self {
-        Self {
-            block_id,
-            is_air: false,
-            is_liquid: true,
-            is_fluid_source: false,
-            can_be_replaced_by_fluid: true,
-            is_liquid_block_container: false,
-            accepts_water_container: false,
-            waterlogged: None,
-            liquid_block: Some((fluid, level)),
-            can_survive: true,
-        }
-    }
-
-    pub fn waterloggable(block_id: BlockId, waterlogged: bool, can_survive: bool) -> Self {
-        Self {
-            block_id,
-            is_air: false,
-            is_liquid: false,
-            is_fluid_source: waterlogged,
-            can_be_replaced_by_fluid: false,
-            is_liquid_block_container: true,
-            accepts_water_container: true,
-            waterlogged: Some(waterlogged),
-            liquid_block: None,
-            can_survive,
-        }
-    }
-
-    #[inline]
-    pub const fn can_place_liquid(&self, content: BucketContent) -> bool {
-        self.is_liquid_block_container
-            && matches!(content, BucketContent::Water)
-            && self.accepts_water_container
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BucketSound {
     EmptyWater,
@@ -275,7 +170,7 @@ pub enum BucketGameEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BucketEvent {
     DestroyBlock { pos: BlockPos, drop: bool },
-    SetBlock { pos: BlockPos, cell: BucketCell, flags: i32 },
+    SetBlock { pos: BlockPos, cell: StateId, flags: i32 },
     ScheduleFluidTick { pos: BlockPos, fluid: BucketContent, delay: u32 },
     PlaySound { pos: BlockPos, sound: BucketSound },
     GameEvent { pos: BlockPos, event: BucketGameEvent },
@@ -289,103 +184,36 @@ pub enum BucketUseResult {
     Success(FilledResult),
 }
 
-pub trait BucketWorld {
-    fn air_id(&self) -> BlockId;
-    fn water_block_id(&self) -> BlockId;
-    fn lava_block_id(&self) -> BlockId;
-    fn cell(&self, pos: BlockPos) -> BucketCell;
-    fn set_cell(&mut self, pos: BlockPos, cell: BucketCell);
-    fn water_evaporates(&self, pos: BlockPos) -> bool;
-}
-
-fn legacy_fluid_source_cell(world: &impl BucketWorld, content: BucketContent) -> BucketCell {
+fn bucket_source(content: BucketContent) -> StateId {
     match content {
-        BucketContent::Water => BucketCell::liquid_source(world.water_block_id(), BucketContent::Water),
-        BucketContent::Lava => BucketCell::liquid_source(world.lava_block_id(), BucketContent::Lava),
-        BucketContent::Empty => BucketCell::air(world.air_id()),
+        BucketContent::Water => BlockId::of("water").default_state(),
+        BucketContent::Lava => BlockId::of("lava").default_state(),
+        BucketContent::Empty => StateId::AIR,
     }
 }
 
-/// `SimpleWaterloggedBlock.placeLiquid` (`@0-83`).
-pub fn simple_waterlogged_place_liquid(
-    world: &mut impl BucketWorld,
-    pos: BlockPos,
-    cell: BucketCell,
-    content: BucketContent,
-    is_client_side: bool,
-    events: &mut Vec<BucketEvent>,
-) -> bool {
-    let Some(false) = cell.waterlogged else {
-        return false;
-    };
-    if !matches!(content, BucketContent::Water) {
-        return false;
-    }
-    if !is_client_side {
-        let mut next = cell;
-        next.waterlogged = Some(true);
-        next.is_fluid_source = true;
-        world.set_cell(pos, next);
-        events.push(BucketEvent::SetBlock {
-            pos,
-            cell: next,
-            flags: UPDATE_ALL,
-        });
-        events.push(BucketEvent::ScheduleFluidTick {
-            pos,
-            fluid: BucketContent::Water,
-            delay: WATER_TICK_DELAY,
-        });
-    }
-    true
-}
-
-/// `BucketPickup.pickupBlock` for both `LiquidBlock` (`@0-51`) and `SimpleWaterloggedBlock` (`@0-74`).
-pub fn bucket_pickup_block(
-    world: &mut impl BucketWorld,
+/// `BucketPickup.pickupBlock` for liquid blocks and waterlogged blocks.
+pub(crate) fn bucket_pickup_block(
+    world: &impl WorldMut,
     pos: BlockPos,
     events: &mut Vec<BucketEvent>,
 ) -> Option<(BucketStack, BucketSound)> {
     let cell = world.cell(pos);
-    if let Some((fluid, level)) = cell.liquid_block {
-        if level == 0 && fluid.is_flowing_fluid() {
-            let air = BucketCell::air(world.air_id());
-            world.set_cell(pos, air);
-            events.push(BucketEvent::SetBlock {
-                pos,
-                cell: air,
-                flags: UPDATE_ALL_IMMEDIATE,
-            });
-            let sound = match fluid {
-                BucketContent::Lava => BucketSound::PickupLava,
-                BucketContent::Water | BucketContent::Empty => BucketSound::PickupWater,
-            };
-            return Some((BucketStack::new(fluid, 1), sound));
+    let (content, sound) = match cell.block().name() {
+        "water" if cell.get("level") == Some("0") => (BucketContent::Water, BucketSound::PickupWater),
+        "lava" if cell.get("level") == Some("0") => (BucketContent::Lava, BucketSound::PickupLava),
+        _ if cell.is_waterlogged_container() && cell.get("waterlogged") == Some("true") => {
+            let dry = cell.with_bool("waterlogged", false);
+            events.push(BucketEvent::SetBlock { pos, cell: dry, flags: UPDATE_ALL });
+            if !world.can_survive(pos, dry) {
+                events.push(BucketEvent::DestroyBlock { pos, drop: true });
+            }
+            return Some((BucketStack::new(BucketContent::Water, 1), BucketSound::PickupWater));
         }
-        return None;
-    }
-    if let Some(true) = cell.waterlogged {
-        let mut next = cell;
-        next.waterlogged = Some(false);
-        next.is_fluid_source = false;
-        world.set_cell(pos, next);
-        events.push(BucketEvent::SetBlock {
-            pos,
-            cell: next,
-            flags: UPDATE_ALL,
-        });
-        if !cell.can_survive {
-            // `Level.destroyBlock` refuses air, and here `next` is non-air.
-            let air = BucketCell::air(world.air_id());
-            world.set_cell(pos, air);
-            events.push(BucketEvent::DestroyBlock { pos, drop: true });
-        }
-        return Some((
-            BucketStack::new(BucketContent::Water, 1),
-            BucketSound::PickupWater,
-        ));
-    }
-    None
+        _ => return None,
+    };
+    events.push(BucketEvent::SetBlock { pos, cell: StateId::AIR, flags: UPDATE_ALL_IMMEDIATE });
+    Some((BucketStack::new(content, 1), sound))
 }
 
 fn emit_empty_sound_and_event(pos: BlockPos, content: BucketContent, events: &mut Vec<BucketEvent>) {
@@ -401,8 +229,9 @@ fn emit_empty_sound_and_event(pos: BlockPos, content: BucketContent, events: &mu
 }
 
 /// `BucketItem.emptyContents(LivingEntity, Level, BlockPos, BlockHitResult)` (`@0-463`).
-pub fn bucket_empty_contents(
-    world: &mut impl BucketWorld,
+pub(crate) fn bucket_empty_contents(
+    world: &impl WorldMut,
+    water_evaporates: bool,
     content: BucketContent,
     pos: BlockPos,
     hit: Option<(BlockPos, Direction)>,
@@ -414,71 +243,47 @@ pub fn bucket_empty_contents(
         return false;
     }
     let state = world.cell(pos);
-    let can_replace = state.can_be_replaced_by_fluid;
-    let can_place = can_replace || state.can_place_liquid(content);
-    let proceed = state.is_air || (can_place && (!is_sneaking || hit.is_none()));
+    let rules = state.rules();
+    let water = content == BucketContent::Water;
+    let can_replace = if water { rules.replaceable_by_water } else { rules.replaceable_by_lava };
+    let accepts_water = water && rules.water_container == WaterContainer::Accepts;
+    let proceed = rules.is_air || ((can_replace || accepts_water) && (!is_sneaking || hit.is_none()));
     if !proceed {
-        return if let Some((hit_pos, hit_face)) = hit {
-            bucket_empty_contents(
-                world,
-                content,
-                hit_face.relative(hit_pos),
-                None,
-                is_sneaking,
-                is_client_side,
-                events,
-            )
-        } else {
-            false
-        };
+        return hit.is_some_and(|(hit_pos, face)| bucket_empty_contents(
+            world, water_evaporates, content, face.relative(hit_pos), None, is_sneaking, is_client_side, events,
+        ));
     }
 
-    if world.water_evaporates(pos) && matches!(content, BucketContent::Water) {
-        events.push(BucketEvent::PlaySound {
-            pos,
-            sound: BucketSound::FireExtinguish,
-        });
+    if water && water_evaporates {
+        events.push(BucketEvent::PlaySound { pos, sound: BucketSound::FireExtinguish });
         events.push(BucketEvent::EvaporateSmokeParticles { pos, count: 8 });
         return true;
     }
 
-    if state.is_liquid_block_container && matches!(content, BucketContent::Water) {
-        // Bytecode @380-394 pops `placeLiquid`'s boolean return and unconditionally emits sound + true.
-        let _ = simple_waterlogged_place_liquid(world, pos, state, content, is_client_side, events);
-        emit_empty_sound_and_event(pos, content, events);
-        return true;
-    }
-
-    if !is_client_side && can_replace && !state.is_liquid && !state.is_air {
-        // Note: `Level.destroyBlock` no-ops on air (`offsets 0-16`).
-        let air = BucketCell::air(world.air_id());
-        world.set_cell(pos, air);
-        events.push(BucketEvent::DestroyBlock { pos, drop: true });
-    }
-
-    let source = legacy_fluid_source_cell(world, content);
-    let current = world.cell(pos);
-    let placed = current != source;
-    if placed {
-        world.set_cell(pos, source);
-        events.push(BucketEvent::SetBlock {
-            pos,
-            cell: source,
-            flags: UPDATE_ALL_IMMEDIATE,
-        });
-    }
-    if placed || state.is_fluid_source {
-        emit_empty_sound_and_event(pos, content, events);
-        true
+    if water && rules.water_container != WaterContainer::None {
+        // BucketItem ignores placeLiquid's return value, including for an already wet block.
+        if accepts_water && state.get("waterlogged") == Some("false") && !is_client_side {
+            events.push(BucketEvent::SetBlock { pos, cell: state.with_bool("waterlogged", true), flags: UPDATE_ALL });
+            events.push(BucketEvent::ScheduleFluidTick { pos, fluid: content, delay: WATER_TICK_DELAY });
+        }
     } else {
-        false
+        if !is_client_side && can_replace && !rules.is_air && !matches!(state.block().name(), "water" | "lava") {
+            events.push(BucketEvent::DestroyBlock { pos, drop: true });
+        }
+        let source = bucket_source(content);
+        if state != source {
+            events.push(BucketEvent::SetBlock { pos, cell: source, flags: UPDATE_ALL_IMMEDIATE });
+        }
     }
+    emit_empty_sound_and_event(pos, content, events);
+    true
 }
 
 /// `BucketItem.use(Level, Player, InteractionHand)` (`@0-369`).
 #[allow(clippy::too_many_arguments)]
-pub fn bucket_use(
-    world: &mut impl BucketWorld,
+pub(crate) fn bucket_use(
+    world: &impl WorldMut,
+    water_evaporates: bool,
     held: BucketStack,
     hit: BlockHitResult,
     may_interact: bool,
@@ -499,7 +304,7 @@ pub fn bucket_use(
     }
 
     let hit_state = world.cell(pos);
-    let target = if hit_state.is_liquid_block_container && matches!(held.content, BucketContent::Water) {
+    let target = if hit_state.rules().water_container != WaterContainer::None && matches!(held.content, BucketContent::Water) {
         pos
     } else {
         offset_pos
@@ -507,6 +312,7 @@ pub fn bucket_use(
 
     if bucket_empty_contents(
         world,
+        water_evaporates,
         held.content,
         target,
         Some((pos, face)),
@@ -1134,19 +940,30 @@ pub enum TripwireEvent {
 
 /// The tripwire rules' view of a cell: a wire, a hook, or neither.
 pub fn tripwire_cell(world: &impl WorldMut, pos: BlockPos) -> TripwireCell {
-    match world.cell(pos).state {
+    match world.cell(pos).kind() {
         CellState::TripwireWire(w) => TripwireCell::Wire(w),
         CellState::TripwireHook(h) => TripwireCell::Hook(h),
         _ => TripwireCell::Empty,
     }
 }
 
+pub(crate) fn wire_state(state: StateId, wire: TripwireWireState) -> StateId {
+    let base = if state.block() == wire.block_id { state } else { wire.block_id.default_state() };
+    base.with_bool("powered", wire.powered).with_bool("attached", wire.attached).with_bool("disarmed", wire.disarmed)
+}
+
+pub(crate) fn hook_state(state: StateId, hook: TripwireHookState) -> StateId {
+    let base = if state.block() == hook.block_id { state } else { hook.block_id.default_state() };
+    base.with("facing", DIRECTION[hook.facing as usize]).with_bool("powered", hook.powered).with_bool("attached", hook.attached)
+}
+
 fn set_tripwire(world: &mut impl WorldMut, pos: BlockPos, cell: TripwireCell) {
-    world.set(pos, match cell {
-        TripwireCell::Empty => SimCell::air(BlockId::of("air")),
-        TripwireCell::Wire(w) => SimCell::new(w.block_id, CellState::TripwireWire(w)),
-        TripwireCell::Hook(h) => SimCell::new(h.block_id, CellState::TripwireHook(h)),
-    });
+    let state = match cell {
+        TripwireCell::Empty => StateId::AIR,
+        TripwireCell::Wire(wire) => wire_state(world.cell(pos), wire),
+        TripwireCell::Hook(hook) => hook_state(world.cell(pos), hook),
+    };
+    world.set(pos, state);
 }
 
 fn push_hook_neighbor_updates(

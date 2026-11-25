@@ -17,7 +17,7 @@ use crate::fluid::{
 };
 use crate::footprint::Footprint;
 use crate::interact::{
-    self, BlockId, DoorHalf,
+    self, BlockHitResult, BlockId, DoorHalf,
     RedstoneEvent,
 };
 use crate::neighbor::{
@@ -34,14 +34,14 @@ use crate::piston::{
 use crate::place::{
     self, ScaffoldingCell,
 };
-use crate::basis::cell::StateId;
+use crate::basis::cell::{DIRECTION, StateId};
 use crate::basis::sweep::shapes as collide_with_shapes;
 use crate::ticks::{
     ChunkPos, LevelTicks, MAX_TICKS_PER_TICK, ScheduledTick, SubTickCounter, TickPriority,
 };
 use crate::world::block_pos;
 use crate::world_hooks::{
-    self, BucketCell, BucketContent, BucketEvent, BucketWorld,
+    self, BucketContent, BucketEvent, BucketSound, BucketStack, BucketUseResult,
     ButtonEvent, ButtonState, PlateEvent, PressurePlateState, TriggerEntity,
     TripwireEvent,
     WATER_TICK_DELAY,
@@ -224,7 +224,7 @@ impl<W: World> World for WorldDelta<'_, W> {
 // 3. The cell (`basis::cell`): a block id, the family's state, the table's rows
 // ============================================================================
 
-pub use crate::basis::cell::{CellState, FallingKind, Rules as CellProps, SimCell, SurviveRule, WorldMut};
+pub use crate::basis::cell::{CellState, FallingKind, Rules as CellProps, SurviveRule, WorldMut};
 
 // ============================================================================
 // 4. Tick keys, BlockEvents, MovingPistons, and Entity states
@@ -267,7 +267,7 @@ pub struct BlockEvent {
 pub struct MovingPistonEntry {
     pub pos: BlockPos,
     pub moving: MovingPiston,
-    pub carried: SimCell,
+    pub carried: StateId,
     pub last_ticked: i64,
 }
 
@@ -278,7 +278,7 @@ pub struct FallingEntity {
     pub time: i32,
     pub fall_distance: f64,
     pub on_ground: bool,
-    pub cell: SimCell,
+    pub cell: StateId,
     pub drop_item: bool,
     pub cancel_drop: bool,
     pub hurt_entities: bool,
@@ -557,21 +557,21 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     /// The rule's view of the cell at `pos`: its canonical state, edited or the base's. A base
     /// that holds no states is read by its model: air, a fluid, slime, honey, else stone.
-    pub fn cell(&self, pos: BlockPos) -> SimCell {
+    pub fn cell(&self, pos: BlockPos) -> StateId {
         if let Some(state) = self.world.state_id(pos) {
-            return SimCell::from_state(state, self.fast_lava);
+            return state;
         }
         let b = self.world.base().block(pos);
         let amount = b.fluid.raw_amount.unwrap_or(8);
         let falling = b.fluid.raw_falling.unwrap_or(false);
         let fluid = FluidCell { amount, falling, source: amount == 8 && !falling };
         match b.fluid.kind {
-            _ if b.air => SimCell::air(BlockId::of("air")),
-            FluidKind::Water => SimCell::water(BlockId::of("water"), fluid),
-            FluidKind::Lava => SimCell::lava(BlockId::of("lava"), self.fast_lava, fluid),
-            _ if b.slime => SimCell::plain(BlockId::of("slime_block")),
-            _ if b.inside == Inside::Honey => SimCell::plain(BlockId::of("honey_block")),
-            _ => SimCell::plain(BlockId::of("stone")),
+            _ if b.air => StateId::AIR,
+            FluidKind::Water => StateId::liquid("water", fluid),
+            FluidKind::Lava => StateId::liquid("lava", fluid),
+            _ if b.slime => BlockId::of("slime_block").default_state(),
+            _ if b.inside == Inside::Honey => BlockId::of("honey_block").default_state(),
+            _ => BlockId::of("stone").default_state(),
         }
     }
 
@@ -580,20 +580,13 @@ impl<'a, W: World> SimWorld<'a, W> {
     }
 
     /// Direct setup write without triggering neighbor/shape updates (for building fixtures).
-    pub fn set_cell_raw(&mut self, pos: BlockPos, cell: SimCell) {
+    pub fn set_cell_raw(&mut self, pos: BlockPos, cell: StateId) {
         self.update_hook_tracking(pos, &cell);
-        self.put(pos, cell);
+        self.world.set(pos, cell);
     }
 
-    /// Writes `cell` as its canonical state; a cell no state holds is refused.
-    fn put(&mut self, pos: BlockPos, cell: SimCell) {
-        let state = cell.state_id();
-        assert_eq!(SimCell::from_state(state, self.fast_lava), cell, "no canonical state holds this cell");
-        self.world.set(pos, state);
-    }
-
-    fn update_hook_tracking(&mut self, pos: BlockPos, cell: &SimCell) {
-        match cell.state {
+    fn update_hook_tracking(&mut self, pos: BlockPos, cell: &StateId) {
+        match cell.kind() {
             CellState::PressurePlate(_) => {
                 self.pressure_plate_positions.insert(pos);
                 self.tripwire_positions.remove(&pos);
@@ -662,14 +655,14 @@ impl<'a, W: World> SimWorld<'a, W> {
     // Block mutation with Mojang `Level.setBlock` flags & neighbor cascades
     // ------------------------------------------------------------------------
 
-    pub fn set_cell_with_flags(&mut self, pos: BlockPos, cell: SimCell, flags: i32) -> DrainStats {
+    pub fn set_cell_with_flags(&mut self, pos: BlockPos, cell: StateId, flags: i32) -> DrainStats {
         self.set_cell_with_flags_limit(pos, cell, flags, update_flags::DEFAULT_LIMIT)
     }
 
     pub fn set_cell_with_flags_limit(
         &mut self,
         pos: BlockPos,
-        cell: SimCell,
+        cell: StateId,
         flags: i32,
         recursion_limit: i32,
     ) -> DrainStats {
@@ -697,7 +690,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self,
         mut queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
-        new_cell: SimCell,
+        new_cell: StateId,
         flags: i32,
         recursion_limit: i32,
     ) -> bool {
@@ -710,10 +703,10 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
 
         self.update_hook_tracking(pos, &new_cell);
-        self.put(pos, new_cell);
+        self.world.set(pos, new_cell);
 
         let moved_by_piston = (flags & update_flags::MOVE_BY_PISTON) != 0;
-        if old_cell.id != new_cell.id {
+        if old_cell.block() != new_cell.block() {
             self.on_remove(queue.as_deref_mut(), pos, &old_cell, moved_by_piston);
         }
         if update_flags::triggers_on_place(flags) {
@@ -723,7 +716,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let mut enqueued = false;
         if update_flags::triggers_neighbor_updates(flags) {
             if let Some(q) = queue.as_deref_mut() {
-                q.update_neighbors_except(pos, old_cell.id, None);
+                q.update_neighbors_except(pos, old_cell.block(), None);
                 enqueued = true;
             }
         }
@@ -735,13 +728,13 @@ impl<'a, W: World> SimWorld<'a, W> {
                     let neighbor = self.cell(neighbor_pos);
                     if update_flags::skip_shape_update_on_wire(
                         prop_flags,
-                        matches!(neighbor.state, CellState::RedstoneWire { .. }),
+                        matches!(neighbor.kind(), CellState::RedstoneWire { .. }),
                     ) {
                         continue;
                     }
                     q.shape_update(
                         dir.opposite(),
-                        new_cell.id,
+                        new_cell.block(),
                         neighbor_pos,
                         pos,
                         prop_flags,
@@ -759,11 +752,11 @@ impl<'a, W: World> SimWorld<'a, W> {
         if old.is_air() {
             return false;
         }
-        let replacement = match old.fluid_info() {
+        let replacement = match old.fluid_info(self.fast_lava) {
             Some((FlowKind::Water, _)) => {
-                SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE)
+                StateId::liquid("water", FluidCell::WATER_SOURCE)
             }
-            _ => SimCell::air(BlockId::of("air")),
+            _ => StateId::AIR,
         };
         self.set_cell_with_flags(pos, replacement, update_flags::ALL);
         true
@@ -773,10 +766,10 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self,
         mut queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
-        old_cell: &SimCell,
+        old_cell: &StateId,
         moved_by_piston: bool,
     ) {
-        match old_cell.state {
+        match old_cell.kind() {
             CellState::Button(btn) => {
                 let mut evs = Vec::new();
                 world_hooks::button_after_removal(btn, pos, moved_by_piston, &mut evs);
@@ -827,11 +820,11 @@ impl<'a, W: World> SimWorld<'a, W> {
                     self.enqueue_update_neighbors(
                         queue.as_deref_mut(),
                         dir.relative_by(pos, 1),
-                        old_cell.id,
+                        old_cell.block(),
                         None,
                     );
                 }
-                self.update_wire_neighbors(queue, pos, old_cell.id);
+                self.update_wire_neighbors(queue, pos, old_cell.block());
             }
             CellState::MovingPiston { .. } => {
                 self.moving_pistons.remove(&pos);
@@ -844,35 +837,35 @@ impl<'a, W: World> SimWorld<'a, W> {
         &mut self,
         mut queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
-        new_cell: &SimCell,
-        old_cell: &SimCell,
+        new_cell: &StateId,
+        old_cell: &StateId,
         _moved_by_piston: bool,
     ) {
-        match new_cell.state {
+        match new_cell.kind() {
             CellState::Fluid { kind, cell } => {
                 self.handle_liquid_block_place_or_neighbor(queue, pos, kind, cell);
             }
             CellState::Falling(_) => {
                 self.schedule_block_tick(pos, BlockTickKind::FallingBlock, 2);
             }
-            CellState::RedstoneWire { .. } if old_cell.id != new_cell.id => {
+            CellState::RedstoneWire { .. } if old_cell.block() != new_cell.block() => {
                 self.update_redstone_wire(queue.as_deref_mut(), pos);
                 for dir in [Direction::Up, Direction::Down] {
                     self.enqueue_update_neighbors(
                         queue.as_deref_mut(),
                         dir.relative_by(pos, 1),
-                        new_cell.id,
+                        new_cell.block(),
                         None,
                     );
                 }
-                self.update_wire_neighbors(queue, pos, new_cell.id);
+                self.update_wire_neighbors(queue, pos, new_cell.block());
             }
             CellState::Piston {
                 sticky,
                 facing,
                 extended,
-            } if old_cell.id != new_cell.id => {
-                self.piston_check_if_extend(pos, new_cell.id, sticky, facing, extended);
+            } if old_cell.block() != new_cell.block() => {
+                self.piston_check_if_extend(pos, new_cell.block(), sticky, facing, extended);
             }
             _ => {}
         }
@@ -913,7 +906,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         for dir in Direction::HORIZONTAL {
             let side = dir.relative_by(pos, 1);
             self.enqueue_update_neighbors(queue.as_deref_mut(), side, wire_id, None);
-            let target = if self.cell(side).props().is_redstone_conductor {
+            let target = if self.cell(side).is_redstone_conductor() {
                 Direction::Up.relative_by(side, 1)
             } else {
                 Direction::Down.relative_by(side, 1)
@@ -934,10 +927,10 @@ impl<'a, W: World> SimWorld<'a, W> {
                 moved_by_piston: _,
             } => {
                 let cell = self.cell(pos);
-                match cell.state {
+                match cell.kind() {
                     CellState::RedstoneWire { .. } => {
-                        if !self.can_survive(pos, &cell) {
-                            let air = SimCell::air(BlockId::of("air"));
+                        if !self.can_survive(pos, cell) {
+                            let air = StateId::AIR;
                             self.apply_set_cell(
                                 Some(queue),
                                 pos,
@@ -949,7 +942,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                             self.update_redstone_wire(Some(queue), pos);
                         }
                     }
-                    CellState::Door(mut door) => {
+                    CellState::Door(door) => {
                         if source_block == door.block_id {
                             return;
                         }
@@ -961,9 +954,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         if let Some((new_powered, flags)) =
                             neighbor::powered_toggle_on_signal(door.powered, sig)
                         {
-                            door.powered = new_powered;
-                            door.open = new_powered;
-                            let updated = SimCell::new(door.block_id, CellState::Door(door));
+                            let updated = cell.with_bool("powered", new_powered).with_bool("open", new_powered);
                             self.apply_set_cell(
                                 Some(queue),
                                 pos,
@@ -973,18 +964,12 @@ impl<'a, W: World> SimWorld<'a, W> {
                             );
                         }
                     }
-                    CellState::TrapDoor {
-                        facing,
-                        half,
-                        open: _,
-                        powered,
-                        waterlogged,
-                    } => {
+                    CellState::TrapDoor { powered, waterlogged, .. } => {
                         let sig = self.has_neighbor_signal(pos);
                         if let Some((new_powered, flags)) =
                             neighbor::powered_toggle_on_signal(powered, sig)
                         {
-                            let updated = SimCell::new(cell.id, CellState::TrapDoor { facing, half, open: new_powered, powered: new_powered, waterlogged });
+                            let updated = cell.with_bool("powered", new_powered).with_bool("open", new_powered);
                             self.apply_set_cell(
                                 Some(queue),
                                 pos,
@@ -1001,17 +986,13 @@ impl<'a, W: World> SimWorld<'a, W> {
                             }
                         }
                     }
-                    CellState::FenceGate {
-                        facing,
-                        open: _,
-                        powered,
-                    } => {
+                    CellState::FenceGate { powered, .. } => {
                         let sig = self.has_neighbor_signal(pos);
                         if let Some((new_powered, flags)) =
                             neighbor::powered_toggle_on_signal(powered, sig)
                         {
                             let updated =
-                                SimCell::new(cell.id, CellState::FenceGate { facing, open: new_powered, powered: new_powered });
+                                cell.with_bool("powered", new_powered).with_bool("open", new_powered);
                             self.apply_set_cell(
                                 Some(queue),
                                 pos,
@@ -1026,7 +1007,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         facing,
                         extended,
                     } => {
-                        self.piston_check_if_extend(pos, cell.id, sticky, facing, extended);
+                        self.piston_check_if_extend(pos, cell.block(), sticky, facing, extended);
                     }
                     CellState::Fluid { kind, cell: fcell } => {
                         self.handle_liquid_block_place_or_neighbor(
@@ -1051,14 +1032,14 @@ impl<'a, W: World> SimWorld<'a, W> {
                     return;
                 }
                 let cell = self.cell(pos);
-                match cell.state {
-                    CellState::Door(mut door) => {
+                match cell.kind() {
+                    CellState::Door(door) => {
                         let other_dir = match door.half {
                             DoorHalf::Lower => Direction::Up,
                             DoorHalf::Upper => Direction::Down,
                         };
                         if direction == Direction::Down && door.half == DoorHalf::Lower {
-                            if !self.cell(neighbor_pos).props().sturdy_faces[Direction::Up as usize] {
+                            if !self.cell(neighbor_pos).is_sturdy(Direction::Up) {
                                 let action = neighbor::decide_update_or_destroy(
                                     true,
                                     true,
@@ -1069,14 +1050,11 @@ impl<'a, W: World> SimWorld<'a, W> {
                             }
                         } else if direction == other_dir {
                             let neighbor = self.cell(neighbor_pos);
-                            if let CellState::Door(other) = neighbor.state {
+                            if let CellState::Door(other) = neighbor.kind() {
                                 if other.half != door.half {
-                                    door.facing = other.facing;
-                                    door.hinge = other.hinge;
-                                    door.open = other.open;
-                                    door.powered = other.powered;
-                                    let next = SimCell::new(door.block_id, CellState::Door(door));
-                                    let changed = next.state != cell.state;
+                                    let next = ["facing", "hinge", "open", "powered"]
+                                        .into_iter().fold(cell, |state, name| state.with(name, neighbor.get(name).unwrap()));
+                                    let changed = next != cell;
                                     let action = neighbor::decide_update_or_destroy(
                                         changed,
                                         false,
@@ -1104,7 +1082,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     CellState::Fluid { kind, cell: fcell } => {
                         let nf_source = self
                             .cell(neighbor_pos)
-                            .fluid_info()
+                            .fluid_info(self.fast_lava)
                             .is_some_and(|(_, nf)| nf.source);
                         if fcell.source || nf_source {
                             self.schedule_fluid_tick(
@@ -1125,7 +1103,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         );
                     }
                     _ => {
-                        if cell.props().survive_rule != SurviveRule::Always && !self.can_survive(pos, &cell)
+                        if cell.survive_rule() != SurviveRule::Always && !self.can_survive(pos, cell)
                         {
                             let action = neighbor::decide_update_or_destroy(
                                 true,
@@ -1135,7 +1113,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                             );
                             self.execute_update_or_destroy(Some(queue), pos, action, None);
                         } else if matches!(
-                            cell.fluid_info(),
+                            cell.fluid_info(self.fast_lava),
                             Some((FlowKind::Water, FluidCell { source: true, .. }))
                         ) {
                             self.schedule_fluid_tick(pos, FluidTickKind::Water, WATER_TICK_DELAY);
@@ -1151,7 +1129,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
         action: UpdateOrDestroyAction,
-        replacement: Option<SimCell>,
+        replacement: Option<StateId>,
     ) {
         match action {
             UpdateOrDestroyAction::NoOp => {}
@@ -1159,7 +1137,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 drop_resources: _,
                 recursion_left,
             } => {
-                let air = SimCell::air(BlockId::of("air"));
+                let air = StateId::AIR;
                 self.apply_set_cell(queue, pos, air, update_flags::ALL, recursion_left);
             }
             UpdateOrDestroyAction::SetBlock {
@@ -1173,34 +1151,6 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
     }
 
-    fn can_survive(&self, pos: BlockPos, cell: &SimCell) -> bool {
-        match cell.props().survive_rule {
-            SurviveRule::Always => true,
-            SurviveRule::FloorSturdy => {
-                let below = self.cell(Direction::Down.relative_by(pos, 1));
-                below.props().sturdy_faces[Direction::Up as usize]
-            }
-            SurviveRule::Attached => match cell.state {
-                CellState::Lever(l) => {
-                    let attach = l.connected_direction().opposite();
-                    let support = attach.relative_by(pos, 1);
-                    self.cell(support).props().sturdy_faces[attach.opposite() as usize]
-                }
-                CellState::Button(b) => {
-                    let attach = b.connected_direction().opposite();
-                    let support = attach.relative_by(pos, 1);
-                    self.cell(support).props().sturdy_faces[attach.opposite() as usize]
-                }
-                CellState::TripwireHook(h) => {
-                    let attach = h.facing.opposite();
-                    let support = attach.relative_by(pos, 1);
-                    self.cell(support).props().sturdy_faces[(h.facing) as usize]
-                }
-                _ => true,
-            },
-        }
-    }
-
     // ------------------------------------------------------------------------
     // Redstone signals & wire evaluation (reusing interact.rs & neighbor.rs)
     // ------------------------------------------------------------------------
@@ -1208,23 +1158,22 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn wire_has_connections(&self, pos: BlockPos) -> [bool; 4] {
         let above_conductor = self
             .cell(Direction::Up.relative_by(pos, 1))
-            .props()
-            .is_redstone_conductor;
+            .is_redstone_conductor();
         let mut conn = [false; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
             let side = dir.relative_by(pos, 1);
             let sc = self.cell(side);
-            let flat = matches!(sc.state, CellState::RedstoneWire { .. }) || sc.props().is_signal_source;
+            let flat = matches!(sc.kind(), CellState::RedstoneWire { .. }) || sc.rules().is_signal_source;
             if flat {
                 conn[i] = true;
-            } else if sc.props().is_redstone_conductor {
+            } else if sc.is_redstone_conductor() {
                 if !above_conductor {
                     let up = Direction::Up.relative_by(side, 1);
-                    conn[i] = matches!(self.cell(up).state, CellState::RedstoneWire { .. });
+                    conn[i] = matches!(self.cell(up).kind(), CellState::RedstoneWire { .. });
                 }
             } else {
                 let down = Direction::Down.relative_by(side, 1);
-                conn[i] = matches!(self.cell(down).state, CellState::RedstoneWire { .. });
+                conn[i] = matches!(self.cell(down).kind(), CellState::RedstoneWire { .. });
             }
         }
         // Straight-line and cross connection rules (`RedStoneWireBlock.getConnectionState`):
@@ -1241,7 +1190,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     pub fn get_signal(&self, pos: BlockPos, dir: Direction, wire_should_signal: bool) -> u8 {
         let cell = self.cell(pos);
-        let own = match cell.state {
+        let own = match cell.kind() {
             CellState::RedstoneWire { power } => {
                 if !wire_should_signal || dir == Direction::Down {
                     0
@@ -1265,7 +1214,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             CellState::TripwireHook(h) => h.own_signal(),
             _ => 0,
         };
-        if cell.props().is_redstone_conductor {
+        if cell.is_redstone_conductor() {
             own.max(self.get_direct_signal_to(pos, wire_should_signal))
         } else {
             own
@@ -1274,7 +1223,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     pub fn get_direct_signal(&self, pos: BlockPos, dir: Direction, wire_should_signal: bool) -> u8 {
         let cell = self.cell(pos);
-        match cell.state {
+        match cell.kind() {
             CellState::RedstoneWire { .. } => {
                 if wire_should_signal {
                     self.get_signal(pos, dir, true)
@@ -1350,33 +1299,33 @@ impl<'a, W: World> SimWorld<'a, W> {
         mut queue: Option<&mut NeighborQueue<BlockId>>,
         pos: BlockPos,
     ) {
-        let CellState::RedstoneWire { power } = self.cell(pos).state else {
+        let wire = self.cell(pos);
+        let CellState::RedstoneWire { power } = wire.kind() else {
             return;
         };
         let block_sig = self.get_best_neighbor_signal(pos, false);
         let above_conductor = self
             .cell(Direction::Up.relative_by(pos, 1))
-            .props()
-            .is_redstone_conductor;
+            .is_redstone_conductor();
         let mut incoming = [0u8; 4];
         for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
             let side = dir.relative_by(pos, 1);
             let side_cell = self.cell(side);
-            let flat = match side_cell.state {
+            let flat = match side_cell.kind() {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
-            let up_wire = match self.cell(Direction::Up.relative_by(side, 1)).state {
+            let up_wire = match self.cell(Direction::Up.relative_by(side, 1)).kind() {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
-            let down_wire = match self.cell(Direction::Down.relative_by(side, 1)).state {
+            let down_wire = match self.cell(Direction::Down.relative_by(side, 1)).kind() {
                 CellState::RedstoneWire { power: p } => Some(p),
                 _ => None,
             };
             incoming[i] = neighbor::redstone_wire_side_signal(
                 flat,
-                side_cell.props().is_redstone_conductor,
+                side_cell.is_redstone_conductor(),
                 above_conductor,
                 up_wire,
                 down_wire,
@@ -1384,8 +1333,8 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
         let target = neighbor::redstone_wire_target_strength(block_sig, incoming);
         if target != power {
-            let wire_id = self.cell(pos).id;
-            let next = SimCell::new(wire_id, CellState::RedstoneWire { power: target });
+            let wire_id = wire.block();
+            let next = wire.with("power", &target.to_string());
             self.apply_set_cell(
                 queue.as_deref_mut(),
                 pos,
@@ -1430,15 +1379,15 @@ impl<'a, W: World> SimWorld<'a, W> {
                 Direction::West,
             ] {
                 let nc = self.cell(dir.relative_by(pos, 1));
-                if nc.fluid_info().is_some_and(|(k, _)| matches!(k, FlowKind::Water)) {
+                if nc.fluid_info(self.fast_lava).is_some_and(|(k, _)| matches!(k, FlowKind::Water)) {
                     water_above_or_beside = true;
                 }
-                if nc.id == BlockId::of("blue_ice") {
+                if nc.block() == BlockId::of("blue_ice") {
                     blue_ice_above_or_beside = true;
                 }
             }
         }
-        let soul_soil_below = self.cell(Direction::Down.relative_by(pos, 1)).id == BlockId::of("soul_soil");
+        let soul_soil_below = self.cell(Direction::Down.relative_by(pos, 1)).block() == BlockId::of("soul_soil");
         let (contact, should_sched) = fluid::should_spread_liquid(
             is_lava,
             cell.source,
@@ -1448,7 +1397,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         );
         match contact {
             LavaContact::Obsidian => {
-                let obs = SimCell::plain(BlockId::of("obsidian"));
+                let obs = BlockId::of("obsidian").default_state();
                 self.apply_set_cell(
                     queue,
                     pos,
@@ -1458,7 +1407,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 );
             }
             LavaContact::Cobblestone => {
-                let cobble = SimCell::plain(BlockId::of("cobblestone"));
+                let cobble = BlockId::of("cobblestone").default_state();
                 self.apply_set_cell(
                     queue,
                     pos,
@@ -1468,7 +1417,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                 );
             }
             LavaContact::Basalt => {
-                let basalt = SimCell::plain(BlockId::of("basalt"));
+                let basalt = BlockId::of("basalt").default_state();
                 self.apply_set_cell(
                     queue,
                     pos,
@@ -1501,19 +1450,19 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn can_pass_through_wall(&self, _dir: Direction, from: BlockPos, to: BlockPos) -> bool {
         let a = self.cell(from);
         let b = self.cell(to);
-        !a.props().blocks_motion && !b.props().blocks_motion
+        !a.rules().blocks_motion && !b.rules().blocks_motion
             || (a.is_waterlogged_container() || b.is_waterlogged_container())
-                && !b.block().shape.is_block()
+                && !b.model_block().shape.is_block()
     }
 
-    fn can_hold_any_fluid(cell: &SimCell) -> bool {
-        if cell.is_air() || cell.props().replaceable_by_fluid || cell.is_waterlogged_container() {
+    fn can_hold_any_fluid(cell: &StateId) -> bool {
+        if cell.is_air() || cell.rules().replaceable_by_water || cell.rules().replaceable_by_lava || cell.is_waterlogged_container() {
             return true;
         }
-        !cell.props().blocks_motion
+        !cell.rules().blocks_motion
     }
 
-    fn can_hold_specific_fluid(cell: &SimCell, kind: FlowKind) -> bool {
+    fn can_hold_specific_fluid(cell: &StateId, kind: FlowKind) -> bool {
         if cell.is_waterlogged_container() {
             matches!(kind, FlowKind::Water)
         } else {
@@ -1547,7 +1496,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         for dir in Direction::HORIZONTAL {
             let np = dir.relative_by(pos, 1);
             let nc = self.cell(np);
-            if let Some((nk, nfluid)) = nc.fluid_info() {
+            if let Some((nk, nfluid)) = nc.fluid_info(self.fast_lava) {
                 if Self::same_fluid_kind(kind, nk) && self.can_pass_through_wall(dir, pos, np) {
                     if nfluid.source {
                         source_neighbors += 1;
@@ -1559,15 +1508,15 @@ impl<'a, W: World> SimWorld<'a, W> {
         let above = Direction::Up.relative_by(pos, 1);
         let fed_from_above = self
             .cell(above)
-            .fluid_info()
+            .fluid_info(self.fast_lava)
             .is_some_and(|(ak, _)| Self::same_fluid_kind(kind, ak))
             && self.can_pass_through_wall(Direction::Up, pos, above);
 
         let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
-        let below_solid_or_same_source = !below_cell.is_air() && below_cell.props().blocks_motion
+        let below_solid_or_same_source = !below_cell.is_air() && below_cell.rules().blocks_motion
             || below_cell
-                .fluid_info()
+                .fluid_info(self.fast_lava)
                 .is_some_and(|(bk, bf)| Self::same_fluid_kind(kind, bk) && bf.source);
 
         fluid::get_new_liquid(
@@ -1584,7 +1533,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let mut count = 0u8;
         for dir in Direction::HORIZONTAL {
             let np = dir.relative_by(pos, 1);
-            if let Some((nk, nf)) = self.cell(np).fluid_info() {
+            if let Some((nk, nf)) = self.cell(np).fluid_info(self.fast_lava) {
                 if Self::same_fluid_kind(kind, nk) && nf.source {
                     count += 1;
                 }
@@ -1593,21 +1542,21 @@ impl<'a, W: World> SimWorld<'a, W> {
         count
     }
 
-    fn fluid_cell_from_kind(&self, kind: FlowKind, fcell: FluidCell) -> SimCell {
+    fn fluid_cell_from_kind(&self, kind: FlowKind, fcell: FluidCell) -> StateId {
         match kind {
-            FlowKind::Water => SimCell::water(BlockId::of("water"), fcell),
-            FlowKind::Lava { .. } => SimCell::lava(BlockId::of("lava"), self.fast_lava, fcell),
+            FlowKind::Water => StateId::liquid("water", fcell),
+            FlowKind::Lava { .. } => StateId::liquid("lava", fcell),
         }
     }
 
     fn spread_fluid_to(&mut self, pos: BlockPos, dir: Direction, kind: FlowKind, new_fluid: FluidCell) {
         let target_cell = self.cell(pos);
-        let existing_fluid = target_cell.fluid_info();
+        let existing_fluid = target_cell.fluid_info(self.fast_lava);
         let target_block = if target_cell.is_air() {
             TargetBlock::Air
         } else if target_cell.is_waterlogged_container() {
             TargetBlock::Container
-        } else if target_cell.props().replaceable_by_fluid {
+        } else if target_cell.rules().replaces_with(kind) {
             TargetBlock::Destroyable
         } else {
             TargetBlock::Solid
@@ -1615,23 +1564,20 @@ impl<'a, W: World> SimWorld<'a, W> {
         let tcell = TargetCell {
             block: target_block,
             fluid_is_water: existing_fluid.is_some_and(|(k, _)| matches!(k, FlowKind::Water)),
-            block_is_liquid: matches!(target_cell.state, CellState::Fluid { .. }),
+            block_is_liquid: matches!(target_cell.kind(), CellState::Fluid { .. }),
             new_legacy_level: new_fluid.legacy_level(),
         };
         let is_lava = matches!(kind, FlowKind::Lava { .. });
         match fluid::spread_write(is_lava, dir, tcell) {
             SpreadWrite::Stone => {
-                let stone = SimCell::plain(BlockId::of("stone"));
+                let stone = BlockId::of("stone").default_state();
                 self.set_cell_with_flags(pos, stone, update_flags::ALL);
             }
             SpreadWrite::FizzOnly => {}
             SpreadWrite::PlaceLiquid => {
                 if fluid::can_waterlog_container(matches!(kind, FlowKind::Water) && new_fluid.source) {
-                    let mut next = target_cell;
-                    if next.set_waterlogged(true) {
-                        self.set_cell_with_flags(pos, next, update_flags::ALL);
-                        self.schedule_fluid_tick(pos, FluidTickKind::Water, WATER_TICK_DELAY);
-                    }
+                    self.set_cell_with_flags(pos, target_cell.with_bool("waterlogged", true), update_flags::ALL);
+                    self.schedule_fluid_tick(pos, FluidTickKind::Water, WATER_TICK_DELAY);
                 }
             }
             SpreadWrite::ReplaceFluid { .. } => {
@@ -1643,7 +1589,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     fn run_fluid_tick(&mut self, pos: BlockPos, tick_kind: FluidTickKind) {
         let current = self.cell(pos);
-        let Some((kind, mut fcell)) = current.fluid_info() else {
+        let Some((kind, mut fcell)) = current.fluid_info(self.fast_lava) else {
             return;
         };
         if FluidTickKind::from(kind) != tick_kind {
@@ -1655,7 +1601,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             let delay = kind.spread_delay(fcell, new_liquid, r4) as u32;
             if new_liquid.amount == 0 {
                 fcell = FluidCell::EMPTY;
-                let air = SimCell::air(BlockId::of("air"));
+                let air = StateId::AIR;
                 self.set_cell_with_flags(pos, air, update_flags::ALL);
             } else if new_liquid != fcell {
                 fcell = new_liquid;
@@ -1671,7 +1617,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         // `FlowingFluid.spread`: check downward first
         let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
-        let below_fluid = below_cell.fluid_info();
+        let below_fluid = below_cell.fluid_info(self.fast_lava);
         let can_maybe_down = !below_fluid
             .is_some_and(|(bk, bf)| Self::same_fluid_kind(kind, bk) && bf.source)
             && Self::can_hold_any_fluid(&below_cell)
@@ -1703,7 +1649,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             for (i, dir) in Direction::HORIZONTAL.into_iter().enumerate() {
                 let np = dir.relative_by(pos, 1);
                 let nc = self.cell(np);
-                let nf = nc.fluid_info();
+                let nf = nc.fluid_info(self.fast_lava);
                 let maybe = !nf
                     .is_some_and(|(nk, nfl)| Self::same_fluid_kind(kind, nk) && nfl.source)
                     && Self::can_hold_any_fluid(&nc)
@@ -1727,7 +1673,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                         return true;
                     }
                     let c = self.cell([x, y, z]);
-                    let f = c.fluid_info();
+                    let f = c.fluid_info(self.fast_lava);
                     !f.is_some_and(|(fk, fl)| Self::same_fluid_kind(kind, fk) && fl.source)
                         && Self::can_hold_specific_fluid(&c, kind)
                 },
@@ -1735,7 +1681,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     let here = [x, y, z];
                     let below = [x, y - 1, z];
                     let bc = self.cell(below);
-                    let bf = bc.fluid_info();
+                    let bf = bc.fluid_info(self.fast_lava);
                     self.can_pass_through_wall(Direction::Down, here, below)
                         && (bf.is_some_and(|(fk, _)| Self::same_fluid_kind(kind, fk))
                             || Self::can_hold_specific_fluid(&bc, kind))
@@ -1802,20 +1748,20 @@ impl<'a, W: World> SimWorld<'a, W> {
         while let Some(ev) = self.block_events.pop_front() {
             self.block_events_set.remove(&ev);
             let cell = self.cell(ev.pos);
-            if cell.id != ev.block_id {
+            if cell.block() != ev.block_id {
                 continue;
             }
             if let CellState::Piston {
                 sticky,
                 facing: _,
                 extended: _,
-            } = cell.state
+            } = cell.kind()
             {
                 let dir = Direction::from_3d_data(ev.param as u8);
                 let head_pos = dir.relative_by(ev.pos, 1);
                 let front2_pos = dir.relative_by(ev.pos, 2);
                 let front_moving_piston =
-                    matches!(self.cell(head_pos).state, CellState::MovingPiston { .. });
+                    matches!(self.cell(head_pos).kind(), CellState::MovingPiston { .. });
                 let front2_moving_piston_extending_same_direction =
                     self.moving_pistons.get(&front2_pos).is_some_and(|e| {
                         e.moving.extending && e.moving.direction == dir
@@ -1834,7 +1780,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     for &action in actions.as_slice() {
                         match action {
                             TriggerAction::MoveBlocks { extending } => {
-                                if !self.execute_piston_move(ev.pos, cell.id, sticky, dir, extending) {
+                                if !self.execute_piston_move(ev.pos, cell.block(), sticky, dir, extending) {
                                     ok = false;
                                     break;
                                 }
@@ -1843,8 +1789,8 @@ impl<'a, W: World> SimWorld<'a, W> {
                                 let new_extended = ev.event_id == piston_trigger::EXTEND;
                                 if flags == set_block_flags::RETRACT_BODY_TO_MOVING {
                                     let carried =
-                                        SimCell::new(cell.id, CellState::Piston { sticky, facing: dir, extended: false });
-                                    let mp = SimCell::new(BlockId::of("moving_piston"), CellState::MovingPiston { sticky, facing: dir });
+                                        cell.with_bool("extended", false);
+                                    let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[dir as usize])]);
                                     self.set_cell_with_flags(ev.pos, mp, flags);
                                     self.insert_moving_piston(
                                         ev.pos,
@@ -1853,15 +1799,15 @@ impl<'a, W: World> SimWorld<'a, W> {
                                     );
                                 } else {
                                     let next =
-                                        SimCell::new(cell.id, CellState::Piston { sticky, facing: dir, extended: new_extended });
+                                        cell.with_bool("extended", new_extended);
                                     self.set_cell_with_flags(ev.pos, next, flags);
                                 }
                             }
                             TriggerAction::StickyPull => {
-                                self.execute_piston_move(ev.pos, cell.id, sticky, dir, false);
+                                self.execute_piston_move(ev.pos, cell.block(), sticky, dir, false);
                             }
                             TriggerAction::RemoveHead => {
-                                let air = SimCell::air(BlockId::of("air"));
+                                let air = StateId::AIR;
                                 self.set_cell_with_flags(
                                     head_pos,
                                     air,
@@ -1882,7 +1828,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         ran
     }
 
-    fn insert_moving_piston(&mut self, pos: BlockPos, moving: MovingPiston, carried: SimCell) {
+    fn insert_moving_piston(&mut self, pos: BlockPos, moving: MovingPiston, carried: StateId) {
         if !self.moving_pistons.contains_key(&pos) {
             self.moving_piston_order.push(pos);
         }
@@ -1906,8 +1852,8 @@ impl<'a, W: World> SimWorld<'a, W> {
         extending: bool,
     ) -> bool {
         let head_pos = facing.relative_by(piston_pos, 1);
-        if !extending && matches!(self.cell(head_pos).state, CellState::PistonHead { .. }) {
-            let air = SimCell::air(BlockId::of("air"));
+        if !extending && matches!(self.cell(head_pos).kind(), CellState::PistonHead { .. }) {
+            let air = StateId::AIR;
             self.set_cell_with_flags(head_pos, air, set_block_flags::RETRACT_HEAD_TO_AIR);
         }
 
@@ -1919,7 +1865,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let to_destroy: Vec<BlockPos> = resolver.to_destroy().to_vec();
         let push_dir = resolver.push_direction();
 
-        let mut map: HashMap<BlockPos, SimCell> = HashMap::with_capacity(to_push.len());
+        let mut map: HashMap<BlockPos, StateId> = HashMap::with_capacity(to_push.len());
         let mut orig_push_cells = Vec::with_capacity(to_push.len());
         for &p in &to_push {
             let c = self.cell(p);
@@ -1933,7 +1879,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         // Destroy frontier blocks first (reverse order)
         for &dpos in to_destroy.iter().rev() {
             let old = self.cell(dpos);
-            let air = SimCell::air(BlockId::of("air"));
+            let air = StateId::AIR;
             self.set_cell_with_flags(dpos, air, set_block_flags::DESTROYED_TO_AIR);
             update_positions.push(dpos);
             update_old_cells.push(old);
@@ -1944,7 +1890,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             let old_state = orig_push_cells[idx].clone();
             let dst_pos = push_dir.relative_by(src_pos, 1);
             map.remove(&dst_pos);
-            let mp = SimCell::new(BlockId::of("moving_piston"), CellState::MovingPiston { sticky, facing });
+            let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
             self.set_cell_with_flags(dst_pos, mp, set_block_flags::PUSHED_TO_MOVING);
             self.insert_moving_piston(
                 dst_pos,
@@ -1957,8 +1903,8 @@ impl<'a, W: World> SimWorld<'a, W> {
 
         if extending {
             map.remove(&head_pos);
-            let head_carried = SimCell::new(BlockId::of("piston_head"), CellState::PistonHead { sticky, facing });
-            let mp = SimCell::new(BlockId::of("moving_piston"), CellState::MovingPiston { sticky, facing });
+            let head_carried = StateId::of(BlockId::of("piston_head"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
+            let mp = StateId::of(BlockId::of("moving_piston"), &[("type", if sticky { "sticky" } else { "normal" }), ("facing", DIRECTION[facing as usize])]);
             self.set_cell_with_flags(head_pos, mp, set_block_flags::PUSHED_TO_MOVING);
             self.insert_moving_piston(
                 head_pos,
@@ -1968,13 +1914,13 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
 
         // Leftover source positions become Air
-        let air = SimCell::air(BlockId::of("air"));
+        let air = StateId::AIR;
         for (&leftover, _) in &map {
             self.set_cell_with_flags(leftover, air.clone(), set_block_flags::LEFTOVER_TO_AIR);
         }
 
         for (p, old) in update_positions.iter().zip(update_old_cells.iter()) {
-            self.enqueue_update_neighbors(None, *p, old.id, None);
+            self.enqueue_update_neighbors(None, *p, old.block(), None);
         }
         if extending {
             self.enqueue_update_neighbors(
@@ -1991,7 +1937,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         let Some(entry) = self.moving_pistons.remove(&pos) else {
             return;
         };
-        if matches!(self.cell(pos).state, CellState::MovingPiston { .. }) {
+        if matches!(self.cell(pos).kind(), CellState::MovingPiston { .. }) {
             let restored = entry.carried;
             self.set_cell_with_flags(pos, restored, set_block_flags::FINAL_RESTORE);
         }
@@ -2014,12 +1960,12 @@ impl<'a, W: World> SimWorld<'a, W> {
             }
             let finished = entry.moving.advance(false);
             if finished {
-                if matches!(self.cell(pos).state, CellState::MovingPiston { .. }) {
+                if matches!(self.cell(pos).kind(), CellState::MovingPiston { .. }) {
                     let mut restored = entry.carried;
                     if restored.is_waterlogged_container() {
-                        restored.set_waterlogged(false);
+                        restored = restored.with_bool("waterlogged", false);
                     }
-                    let id = restored.id;
+                    let id = restored.block();
                     self.set_cell_with_flags(pos, restored, set_block_flags::FINAL_RESTORE);
                     self.enqueue_update_neighbors(None, pos, id, None);
                 }
@@ -2062,7 +2008,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         if entry.moving.is_source_piston {
             (piston_head_boxes(entry.moving.direction), 2)
         } else {
-            Self::extract_shape_boxes(&entry.carried.block().shape)
+            Self::extract_shape_boxes(&entry.carried.model_block().shape)
         }
     }
 
@@ -2072,7 +2018,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             if !entry.moving.extending
                 && entry.moving.is_source_piston
                 && matches!(
-                    entry.carried.props().piston_kind,
+                    entry.carried.piston_kind(),
                     PistonBlockKind::Piston { .. } | PistonBlockKind::StickyPiston { .. }
                 )
             {
@@ -2113,8 +2059,8 @@ impl<'a, W: World> SimWorld<'a, W> {
         if nboxes == 0 {
             return;
         }
-        let slime_moved = entry.carried.props().piston_kind == PistonBlockKind::SlimeBlock;
-        let honey_moved = entry.carried.props().piston_kind == PistonBlockKind::HoneyBlock;
+        let slime_moved = entry.carried.piston_kind() == PistonBlockKind::SlimeBlock;
+        let honey_moved = entry.carried.piston_kind() == PistonBlockKind::HoneyBlock;
         let move_dir = piston::movement_direction(entry.moving.extending, entry.moving.direction);
         let delta = (new_progress - entry.moving.progress) as f64;
 
@@ -2240,9 +2186,9 @@ impl<'a, W: World> SimWorld<'a, W> {
     // Falling blocks (reusing falling.rs)
     // ------------------------------------------------------------------------
 
-    pub fn spawn_falling_block(&mut self, pos: BlockPos, cell: SimCell) -> usize {
+    pub fn spawn_falling_block(&mut self, pos: BlockPos, cell: StateId) -> usize {
         let (x, y, z) = falling::spawn(pos[0], pos[1], pos[2]);
-        let (hurt, per_dist, max_dmg) = match cell.state {
+        let (hurt, per_dist, max_dmg) = match cell.kind() {
             CellState::Falling(FallingKind::Anvil { .. }) => (
                 true,
                 falling::ANVIL_PER_DISTANCE,
@@ -2272,31 +2218,31 @@ impl<'a, W: World> SimWorld<'a, W> {
         let cell = self.cell(pos);
         match kind {
             BlockTickKind::FallingBlock => {
-                if !matches!(cell.state, CellState::Falling(_)) {
+                if !matches!(cell.kind(), CellState::Falling(_)) {
                     return;
                 }
                 let below = self.cell(Direction::Down.relative_by(pos, 1));
                 let below_is_free = falling::is_free(
                     below.is_air(),
                     false,
-                    matches!(below.state, CellState::Fluid { .. }),
-                    below.props().can_be_replaced,
+                    matches!(below.kind(), CellState::Fluid { .. }),
+                    below.rules().can_be_replaced,
                 );
                 if below_is_free && pos[1] >= self.min_y {
                     self.spawn_falling_block(pos, cell);
-                    let air = SimCell::air(BlockId::of("air"));
+                    let air = StateId::AIR;
                     self.set_cell_with_flags(pos, air, update_flags::ALL);
                 }
             }
             BlockTickKind::Button => {
-                if let CellState::Button(mut btn) = cell.state {
+                if let CellState::Button(mut btn) = cell.kind() {
                     let mut evs = Vec::new();
                     world_hooks::button_tick(&mut btn, pos, &[], &mut evs);
                     self.apply_button_events(btn, &evs);
                 }
             }
             BlockTickKind::PressurePlate => {
-                if let CellState::PressurePlate(mut plate) = cell.state {
+                if let CellState::PressurePlate(mut plate) = cell.kind() {
                     let triggers: Vec<TriggerEntity> = self
                         .living_entities
                         .iter()
@@ -2329,21 +2275,21 @@ impl<'a, W: World> SimWorld<'a, W> {
                 self.apply_tripwire_events(None, evs);
             }
             BlockTickKind::Scaffolding => {
-                if let CellState::Scaffolding(mut sc) = cell.state {
+                if let CellState::Scaffolding(mut sc) = cell.kind() {
                     let dist = place::scaffolding_get_distance(pos, |p| self.scaffolding_cell(p));
                     let below_scaf = matches!(
-                        self.cell(Direction::Down.relative_by(pos, 1)).state,
+                        self.cell(Direction::Down.relative_by(pos, 1)).kind(),
                         CellState::Scaffolding(_)
                     );
                     let bottom = place::scaffolding_is_bottom(dist, below_scaf);
                     if !place::scaffolding_can_survive(dist) {
                         self.spawn_falling_block(pos, cell);
-                        let air = SimCell::air(BlockId::of("air"));
+                        let air = StateId::AIR;
                         self.set_cell_with_flags(pos, air, update_flags::ALL);
                     } else if sc.distance != dist || sc.bottom != bottom {
                         sc.distance = dist;
                         sc.bottom = bottom;
-                        let next = SimCell::new(cell.id, CellState::Scaffolding(sc));
+                        let next = cell.with("distance", &sc.distance.to_string()).with_bool("bottom", sc.bottom);
                         self.set_cell_with_flags(pos, next, update_flags::ALL);
                     }
                 }
@@ -2386,10 +2332,10 @@ impl<'a, W: World> SimWorld<'a, W> {
 
             let bpos = block_pos(fb.pos);
             let is_concrete_powder =
-                matches!(fb.cell.state, CellState::Falling(FallingKind::ConcretePowder));
+                matches!(fb.cell.kind(), CellState::Falling(FallingKind::ConcretePowder));
             let in_water = self
                 .cell(bpos)
-                .fluid_info()
+                .fluid_info(self.fast_lava)
                 .is_some_and(|(k, _)| matches!(k, FlowKind::Water));
 
             // Entity.checkFallDamage (`(float) moved.y` cast before subtraction!)
@@ -2411,9 +2357,9 @@ impl<'a, W: World> SimWorld<'a, W> {
                             }
                         }
                         if let CellState::Falling(FallingKind::Anvil {
-                            facing_x_axis,
+                            facing_x_axis: _,
                             stage,
-                        }) = fb.cell.state
+                        }) = fb.cell.kind()
                         {
                             let r = self.next_float();
                             if falling::anvil_degrades(cells, r) {
@@ -2427,7 +2373,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                                         AnvilStage::Damaged => BlockId::of("damaged_anvil"),
                                         AnvilStage::Broken => BlockId::of("air"),
                                     };
-                                    fb.cell = SimCell::new(next_id, CellState::Falling(FallingKind::Anvil { facing_x_axis, stage: next_stage }));
+                                    fb.cell = next_id.default_state().with("facing", fb.cell.get("facing").unwrap());
                                 }
                             }
                         }
@@ -2449,9 +2395,9 @@ impl<'a, W: World> SimWorld<'a, W> {
                 for (di, d) in dirs.into_iter().enumerate() {
                     let nc = self.cell(d.relative_by(bpos, 1));
                     let has_w = nc
-                        .fluid_info()
+                        .fluid_info(self.fast_lava)
                         .is_some_and(|(k, _)| matches!(k, FlowKind::Water));
-                    neigh_water[di] = has_w && !nc.props().sturdy_faces[d.opposite() as usize];
+                    neigh_water[di] = has_w && !nc.is_sturdy(d.opposite());
                 }
                 falling::concrete_powder_should_solidify(in_water, neigh_water)
             } else {
@@ -2463,24 +2409,24 @@ impl<'a, W: World> SimWorld<'a, W> {
             let below_is_free = falling::is_free(
                 below_cell.is_air(),
                 false,
-                matches!(below_cell.state, CellState::Fluid { .. }),
-                below_cell.props().can_be_replaced,
+                matches!(below_cell.kind(), CellState::Fluid { .. }),
+                below_cell.rules().can_be_replaced,
             );
             let ctx = LandingContext {
                 on_ground: fb.on_ground,
                 in_water,
                 landing_is_moving_piston: matches!(
-                    landing_cell.state,
+                    landing_cell.kind(),
                     CellState::MovingPiston { .. }
                 ),
                 cancel_drop: fb.cancel_drop,
-                landing_can_be_replaced: landing_cell.is_air() || landing_cell.props().can_be_replaced,
-                carried_can_survive: self.can_survive(bpos, &fb.cell),
+                landing_can_be_replaced: landing_cell.is_air() || landing_cell.rules().can_be_replaced,
+                carried_can_survive: self.can_survive(bpos, fb.cell),
                 below_is_free,
                 is_concrete_powder,
                 carried_has_waterlogged: fb.cell.is_waterlogged_container(),
                 landing_fluid_is_water: landing_cell
-                    .fluid_info()
+                    .fluid_info(self.fast_lava)
                     .is_some_and(|(k, _)| matches!(k, FlowKind::Water)),
                 drop_item: fb.drop_item,
                 entity_drops_gamerule: self.entity_drops,
@@ -2492,12 +2438,12 @@ impl<'a, W: World> SimWorld<'a, W> {
             match falling::resolve_landing(ctx) {
                 LandingOutcome::Placed { flags, waterlogged } => {
                     let mut placed = if solidify_powder {
-                        SimCell::plain(BlockId::of("stone"))
+                        BlockId::of("stone").default_state()
                     } else {
                         fb.cell.clone()
                     };
                     if waterlogged && !solidify_powder {
-                        placed.set_waterlogged(true);
+                        placed = placed.with_bool("waterlogged", true);
                     }
                     self.set_cell_with_flags(bpos, placed, flags);
                     fb.removed = true;
@@ -2725,12 +2671,12 @@ impl<'a, W: World> SimWorld<'a, W> {
         for ev in events {
             match ev {
                 RedstoneEvent::SetBlock { pos: p, flags, powered: pwr, .. } => {
-                    if let CellState::Lever(mut l) = self.cell(p).state {
-                        l.powered = pwr;
+                    let lever = self.cell(p);
+                    if matches!(lever.kind(), CellState::Lever(_)) {
                         self.apply_set_cell(
                             Some(updater.queue_mut()),
                             p,
-                            SimCell::new(l.block_id, CellState::Lever(l)),
+                            lever.with_bool("powered", pwr),
                             flags as i32,
                             update_flags::DEFAULT_LIMIT,
                         );
@@ -2764,7 +2710,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         for &ev in evs {
             match ev {
                 ButtonEvent::SetPowered { pos, flags, .. } => {
-                    let next = SimCell::new(btn.block_id, CellState::Button(btn));
+                    let next = self.cell(pos).with_bool("powered", btn.powered);
                     self.set_cell_with_flags(pos, next, flags);
                 }
                 ButtonEvent::UpdateNeighborsAt { pos, source_id } => {
@@ -2782,7 +2728,10 @@ impl<'a, W: World> SimWorld<'a, W> {
         for &ev in evs {
             match ev {
                 PlateEvent::SetSignal { pos, flags, .. } => {
-                    let next = SimCell::new(plate.block_id, CellState::PressurePlate(plate));
+                    let next = match plate.kind {
+                        world_hooks::PressurePlateKind::Binary { .. } => self.cell(pos).with_bool("powered", plate.signal != 0),
+                        world_hooks::PressurePlateKind::Weighted { .. } => self.cell(pos).with("power", &plate.signal.to_string()),
+                    };
                     self.set_cell_with_flags(pos, next, flags);
                 }
                 PlateEvent::UpdateNeighborsAt { pos, source_id } => {
@@ -2804,7 +2753,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         for ev in evs {
             match ev {
                 TripwireEvent::SetWire { pos, flags, wire } => {
-                    let next = SimCell::new(wire.block_id, CellState::TripwireWire(wire));
+                    let next = world_hooks::wire_state(self.cell(pos), wire);
                     if queue.is_some() {
                         self.apply_set_cell(
                             queue.as_deref_mut(),
@@ -2818,7 +2767,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     }
                 }
                 TripwireEvent::SetHook { pos, flags, hook } => {
-                    let next = SimCell::new(hook.block_id, CellState::TripwireHook(hook));
+                    let next = world_hooks::hook_state(self.cell(pos), hook);
                     if queue.is_some() {
                         self.apply_set_cell(
                             queue.as_deref_mut(),
@@ -2858,21 +2807,38 @@ impl<'a, W: World> SimWorld<'a, W> {
         hit: Option<(BlockPos, Direction)>,
         is_sneaking: bool,
     ) -> bool {
+        self.empty_bucket(pos, content, hit, is_sneaking).0
+    }
+
+    pub fn empty_bucket(
+        &mut self, pos: BlockPos, content: BucketContent,
+        hit: Option<(BlockPos, Direction)>, is_sneaking: bool,
+    ) -> (bool, Vec<BucketEvent>) {
         let mut events = Vec::new();
-        let ok = {
-            let mut bw = Pending::new(self);
-            world_hooks::bucket_empty_contents(
-                &mut bw,
-                content,
-                pos,
-                hit,
-                is_sneaking,
-                false,
-                &mut events,
-            )
-        };
+        let ok = world_hooks::bucket_empty_contents(self, self.water_evaporates, content, pos, hit, is_sneaking, false, &mut events);
         self.apply_bucket_events(&events);
-        ok
+        (ok, events)
+    }
+
+    pub fn pickup_bucket(&mut self, pos: BlockPos) -> (Option<(BucketStack, BucketSound)>, Vec<BucketEvent>) {
+        let mut events = Vec::new();
+        let result = world_hooks::bucket_pickup_block(self, pos, &mut events);
+        self.apply_bucket_events(&events);
+        (result, events)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn use_bucket(
+        &mut self, held: BucketStack, hit: BlockHitResult, may_interact: bool,
+        may_use_item_at_offset: bool, is_sneaking: bool, has_infinite_materials: bool,
+        inventory_contains_result: bool, inventory_can_add_result: bool, is_client_side: bool,
+    ) -> (BucketUseResult, Vec<BucketEvent>) {
+        let mut events = Vec::new();
+        let result = world_hooks::bucket_use(self, self.water_evaporates, held, hit, may_interact,
+            may_use_item_at_offset, is_sneaking, has_infinite_materials, inventory_contains_result,
+            inventory_can_add_result, is_client_side, &mut events);
+        self.apply_bucket_events(&events);
+        (result, events)
     }
 
     fn apply_bucket_events(&mut self, events: &[BucketEvent]) {
@@ -2882,8 +2848,7 @@ impl<'a, W: World> SimWorld<'a, W> {
                     self.destroy_block(pos, drop);
                 }
                 BucketEvent::SetBlock { pos, cell, flags } => {
-                    let sim_cell = self.bucket_cell_to_sim(pos, cell);
-                    self.set_cell_with_flags(pos, sim_cell, flags);
+                    self.set_cell_with_flags(pos, cell, flags);
                 }
                 BucketEvent::ScheduleFluidTick { pos, fluid, delay } => {
                     let fk = match fluid {
@@ -2899,28 +2864,9 @@ impl<'a, W: World> SimWorld<'a, W> {
         }
     }
 
-    fn bucket_cell_to_sim(&self, pos: BlockPos, bc: BucketCell) -> SimCell {
-        if bc.is_air {
-            return SimCell::air(BlockId::of("air"));
-        }
-        if let Some((fluid, level)) = bc.liquid_block {
-            let name = match fluid {
-                BucketContent::Water => "water",
-                BucketContent::Lava => "lava",
-                BucketContent::Empty => return SimCell::air(BlockId::of("air")),
-            };
-            return SimCell::from_state(StateId::of(BlockId::of(name), &[("level", &level.to_string())]), self.fast_lava);
-        }
-        let mut existing = self.cell(pos);
-        if let Some(wl) = bc.waterlogged {
-            existing.set_waterlogged(wl);
-        }
-        existing
-    }
-
     fn scaffolding_cell(&self, pos: BlockPos) -> ScaffoldingCell {
         let c = self.cell(pos);
-        match c.state {
+        match c.kind() {
             CellState::Scaffolding(s) => ScaffoldingCell {
                 is_scaffolding: true,
                 distance: s.distance,
@@ -2930,8 +2876,8 @@ impl<'a, W: World> SimWorld<'a, W> {
             _ => ScaffoldingCell {
                 is_scaffolding: false,
                 distance: 0,
-                sturdy_up: c.props().sturdy_faces[Direction::Up as usize],
-                replaceable: c.is_air() || c.props().can_be_replaced,
+                sturdy_up: c.is_sturdy(Direction::Up),
+                replaceable: c.is_air() || c.rules().can_be_replaced,
             },
         }
     }
@@ -2950,7 +2896,7 @@ impl<'a, W: World> SimWorld<'a, W> {
         if !triggers.is_empty() {
             let plates: Vec<BlockPos> = self.pressure_plate_positions.iter().copied().collect();
             for p in plates {
-                if let CellState::PressurePlate(mut plate) = self.cell(p).state {
+                if let CellState::PressurePlate(mut plate) = self.cell(p).kind() {
                     let touch = world_hooks::PRESSURE_PLATE_TOUCH_AABB
                         .moved(Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64));
                     if triggers.iter().any(|t| t.bbox.intersects(touch)) {
@@ -2969,7 +2915,7 @@ impl<'a, W: World> SimWorld<'a, W> {
 
             let wires: Vec<BlockPos> = self.tripwire_positions.iter().copied().collect();
             for w in wires {
-                if let CellState::TripwireWire(wire_st) = self.cell(w).state {
+                if let CellState::TripwireWire(wire_st) = self.cell(w).kind() {
                     let box_w = wire_st
                         .shape()
                         .moved(Vec3::new(w[0] as f64, w[1] as f64, w[2] as f64));
@@ -3054,8 +3000,25 @@ impl<'a, W: World> SimWorld<'a, W> {
 }
 
 // ============================================================================
-// 6. Subsystem Trait Views over SimWorld (zero-duplication bridges)
+// 6. Subsystems sharing the canonical world
 // ============================================================================
+
+impl<W: World> WorldMut for SimWorld<'_, W> {
+    fn cell(&self, pos: BlockPos) -> StateId { SimWorld::cell(self, pos) }
+
+    fn set(&mut self, pos: BlockPos, state: StateId) {
+        self.set_cell_with_flags(pos, state, update_flags::ALL);
+    }
+
+    fn has_scheduled_tick(&self, pos: BlockPos, block: BlockId) -> bool {
+        let kind = match block.name() {
+            "tripwire_hook" => BlockTickKind::TripwireHook,
+            "tripwire" => BlockTickKind::TripwireWire,
+            _ => return false,
+        };
+        self.block_ticks.container(ChunkPos::from_block_pos(pos)).is_some_and(|c| c.has_scheduled_tick(kind, pos))
+    }
+}
 
 impl<W: World> PistonWorld for SimWorld<'_, W> {
     fn block(&self, position: BlockPos) -> PistonBlock {
@@ -3069,83 +3032,28 @@ impl<W: World> PistonWorld for SimWorld<'_, W> {
     }
 }
 
-/// The world a rule edits while it runs (cell by cell, or bucket by bucket): its own writes,
+/// The world a rule edits while it runs: its own writes,
 /// over the sim's cells. The sim then applies the rule's events with their update flags.
 struct Pending<'s, 'a, W: World> {
-    sim: &'s mut SimWorld<'a, W>,
-    pending: HashMap<BlockPos, SimCell>,
+    sim: &'s SimWorld<'a, W>,
+    pending: HashMap<BlockPos, StateId>,
 }
 
 impl<'s, 'a, W: World> Pending<'s, 'a, W> {
-    fn new(sim: &'s mut SimWorld<'a, W>) -> Self {
+    fn new(sim: &'s SimWorld<'a, W>) -> Self {
         Self { sim, pending: HashMap::new() }
     }
 }
 
 impl<W: World> WorldMut for Pending<'_, '_, W> {
-    fn cell(&self, pos: BlockPos) -> SimCell {
-        self.pending.get(&pos).cloned().unwrap_or_else(|| self.sim.cell(pos))
+    fn cell(&self, pos: BlockPos) -> StateId {
+        self.pending.get(&pos).copied().unwrap_or_else(|| self.sim.cell(pos))
     }
-    fn set(&mut self, pos: BlockPos, cell: SimCell) {
+    fn set(&mut self, pos: BlockPos, cell: StateId) {
         self.pending.insert(pos, cell);
     }
     fn has_scheduled_tick(&self, pos: BlockPos, block: BlockId) -> bool {
-        let kind = if block == BlockId::of("tripwire_hook") { BlockTickKind::TripwireHook } else { BlockTickKind::TripwireWire };
-        self.sim.block_ticks.container(ChunkPos::from_block_pos(pos)).is_some_and(|c| c.has_scheduled_tick(kind, pos))
-    }
-}
-
-impl<W: World> BucketWorld for Pending<'_, '_, W> {
-    fn air_id(&self) -> BlockId {
-        BlockId::of("air")
-    }
-    fn water_block_id(&self) -> BlockId {
-        BlockId::of("water")
-    }
-    fn lava_block_id(&self) -> BlockId {
-        BlockId::of("lava")
-    }
-    fn cell(&self, pos: BlockPos) -> BucketCell {
-        let c = WorldMut::cell(self, pos);
-        if c.is_air() {
-            return BucketCell::air(c.id);
-        }
-        if let CellState::Fluid { kind, cell } = c.state {
-            let content = match kind {
-                FlowKind::Water => BucketContent::Water,
-                FlowKind::Lava { .. } => BucketContent::Lava,
-            };
-            return if cell.source {
-                BucketCell::liquid_source(c.id, content)
-            } else {
-                BucketCell::liquid_flowing(c.id, content, cell.legacy_level())
-            };
-        }
-        if c.is_waterlogged_container() {
-            let wl = c.fluid_info().is_some();
-            return BucketCell::waterloggable(c.id, wl, self.sim.can_survive(pos, &c));
-        }
-        BucketCell {
-            block_id: c.id,
-            is_air: false,
-            is_liquid: false,
-            is_fluid_source: false,
-            can_be_replaced_by_fluid: c.props().replaceable_by_fluid,
-            is_liquid_block_container: false,
-            accepts_water_container: false,
-            waterlogged: None,
-            liquid_block: None,
-            can_survive: self.sim.can_survive(pos, &c),
-        }
-    }
-
-    fn set_cell(&mut self, pos: BlockPos, cell: BucketCell) {
-        let next = self.sim.bucket_cell_to_sim(pos, cell);
-        self.pending.insert(pos, next);
-    }
-
-    fn water_evaporates(&self, _pos: BlockPos) -> bool {
-        self.sim.water_evaporates
+        self.sim.has_scheduled_tick(pos, block)
     }
 }
 

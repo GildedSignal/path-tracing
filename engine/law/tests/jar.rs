@@ -351,7 +351,7 @@ fn server_unloaded_chunk_applies_gravity_not_minus_0_1() {
 
 #[test]
 fn jar_world_hooks() {
-    use law::basis::cell::{CellState, SimCell, WorldMut};
+    use law::basis::cell::{StateId, WorldMut, DIRECTION};
     use law::interact::{AttachFace, BlockHitResult, BlockId, ClipFluidMode, Direction};
     use law::world_hooks::*;
     use law::{Block, BlockPos, BoxWorld, Fluid, FluidKind};
@@ -386,12 +386,6 @@ fn jar_world_hooks() {
         _ => panic!("bad dir: {s}"),
     };
 
-    const AIR_ID: BlockId = BlockId(0);
-    const STONE_ID: BlockId = BlockId(1);
-    const WATER_ID: BlockId = BlockId(2);
-    const LAVA_ID: BlockId = BlockId(3);
-    const SLAB_ID: BlockId = BlockId(4);
-    const LADDER_ID: BlockId = BlockId(5);
     const OAK_PLATE_ID: BlockId = BlockId(10);
     const STONE_PLATE_ID: BlockId = BlockId(11);
     const GOLD_PLATE_ID: BlockId = BlockId(12);
@@ -402,36 +396,8 @@ fn jar_world_hooks() {
     const HOOK_ID: BlockId = BlockId(401);
     assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
 
-    struct MapBucketWorld {
-        cells: HashMap<BlockPos, BucketCell>,
-        evap: bool,
-    }
-    impl MapBucketWorld {
-        fn new(evap: bool) -> Self {
-            Self { cells: HashMap::new(), evap }
-        }
-    }
-    impl BucketWorld for MapBucketWorld {
-        fn air_id(&self) -> BlockId { AIR_ID }
-        fn water_block_id(&self) -> BlockId { WATER_ID }
-        fn lava_block_id(&self) -> BlockId { LAVA_ID }
-        fn cell(&self, pos: BlockPos) -> BucketCell {
-            self.cells.get(&pos).copied().unwrap_or_else(|| BucketCell::air(AIR_ID))
-        }
-        fn set_cell(&mut self, pos: BlockPos, cell: BucketCell) {
-            if cell.is_air { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
-        }
-        fn water_evaporates(&self, _pos: BlockPos) -> bool { self.evap }
-    }
-
     let block_name = |id: BlockId| -> &'static str {
         match id {
-            AIR_ID => "air",
-            STONE_ID => "stone",
-            WATER_ID => "water",
-            LAVA_ID => "lava",
-            SLAB_ID => "oak_slab",
-            LADDER_ID => "ladder",
             OAK_PLATE_ID => "oak_pressure_plate",
             STONE_PLATE_ID => "stone_pressure_plate",
             GOLD_PLATE_ID => "light_weighted_pressure_plate",
@@ -460,15 +426,16 @@ fn jar_world_hooks() {
                     parts.push(format!("DESTROY({x},{y},{z},{drop})"));
                 }
                 BucketEvent::SetBlock { pos: [x, y, z], cell, flags } => {
-                    let tag = if let Some(wl) = cell.waterlogged {
-                        let extra = if cell.block_id == LADDER_ID { ",fac=north" } else { "" };
-                        format!("wl={wl}{extra}")
-                    } else if let Some((_, lvl)) = cell.liquid_block {
-                        format!("lvl={lvl}")
+                    let name = cell.block().name();
+                    let tag = if let Some(wl) = cell.get("waterlogged") {
+                        let facing = if name == "ladder" { format!(",fac={}", cell.get("facing").unwrap()) } else { String::new() };
+                        format!("wl={wl}{facing}")
+                    } else if let Some(level) = cell.get("level") {
+                        format!("lvl={level}")
                     } else {
                         String::new()
                     };
-                    parts.push(format!("SET({x},{y},{z},{},{flags},{tag})", block_name(cell.block_id)));
+                    parts.push(format!("SET({x},{y},{z},{name},{flags},{tag})"));
                 }
                 BucketEvent::ScheduleFluidTick { pos: [x, y, z], fluid, delay } => {
                     let fnm = match fluid { BucketContent::Water => "water", BucketContent::Lava => "lava", BucketContent::Empty => "empty" };
@@ -598,26 +565,24 @@ fn jar_world_hooks() {
     };
 
     struct MapTripwireWorld {
-        cells: HashMap<BlockPos, SimCell>,
+        cells: HashMap<BlockPos, StateId>,
         scheduled: Vec<(BlockPos, BlockId)>,
     }
     impl MapTripwireWorld {
         fn new() -> Self { Self { cells: HashMap::new(), scheduled: Vec::new() } }
         fn put_wire(&mut self, pos: BlockPos, powered: bool, attached: bool, disarmed: bool) {
-            let wire = TripwireWireState { block_id: WIRE_ID, powered, attached, disarmed };
-            self.cells.insert(pos, SimCell::new(WIRE_ID, CellState::TripwireWire(wire)));
+            self.cells.insert(pos, WIRE_ID.default_state().with_bool("powered", powered).with_bool("attached", attached).with_bool("disarmed", disarmed));
         }
         fn put_hook(&mut self, pos: BlockPos, facing: Direction, powered: bool, attached: bool) {
-            let hook = TripwireHookState { block_id: HOOK_ID, facing, powered, attached };
-            self.cells.insert(pos, SimCell::new(HOOK_ID, CellState::TripwireHook(hook)));
+            self.cells.insert(pos, HOOK_ID.default_state().with("facing", DIRECTION[facing as usize]).with_bool("powered", powered).with_bool("attached", attached));
         }
         fn cell(&self, pos: BlockPos) -> TripwireCell { tripwire_cell(self, pos) }
     }
     impl WorldMut for MapTripwireWorld {
-        fn cell(&self, pos: BlockPos) -> SimCell {
-            self.cells.get(&pos).cloned().unwrap_or_else(|| SimCell::air(BlockId::of("air")))
+        fn cell(&self, pos: BlockPos) -> StateId {
+            self.cells.get(&pos).copied().unwrap_or(StateId::AIR)
         }
-        fn set(&mut self, pos: BlockPos, cell: SimCell) {
+        fn set(&mut self, pos: BlockPos, cell: StateId) {
             if cell.is_air() { self.cells.remove(&pos); } else { self.cells.insert(pos, cell); }
         }
         fn has_scheduled_tick(&self, pos: BlockPos, block_id: BlockId) -> bool {
@@ -691,15 +656,17 @@ fn jar_world_hooks() {
                 assert_eq!(fr_cre.added_to_inventory, None);
             }
             "BUCKET_CASE" => {
-                let mut ev = Vec::new();
+                let base = law::BoxWorld::default();
+                let mut w = law::sim::SimWorld::new(&base);
+                let target = [0, 65, 0];
+                let state = |name, properties: &[(&str, &str)]| StateId::of(BlockId::of(name), properties);
                 match f[1] {
                     "air_above_stone" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 64, 0], BucketCell::solid(STONE_ID));
+                        w.set_cell_raw([0, 64, 0], state("stone", &[]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 64, 0], face: Direction::Up, location: Vec3::new(0.5, 65.0, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert_eq!(res, BucketUseResult::Success(FilledResult {
                             hand_stack: BucketStack::new(BucketContent::Empty, 1),
                             added_to_inventory: None,
@@ -708,113 +675,104 @@ fn jar_world_hooks() {
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_water_0" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_source(WATER_ID, BucketContent::Water));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("water", &[]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_water_3" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_flowing(WATER_ID, BucketContent::Water, 3));
-                        assert!(bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).is_none());
+                        w.set_cell_raw(target, state("water", &[("level", "3")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        assert!(picked.is_none());
                         assert!(ev.is_empty());
                     }
                     "waterlog_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 64, 0], BucketCell::solid(STONE_ID));
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
+                        w.set_cell_raw([0, 64, 0], state("stone", &[]));
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 64.5, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(true));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("true"));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "pickup_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, true, true));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "true")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "waterlog_already" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, true, true));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], Some(([0, 65, 0], Direction::Up)), false, false, &mut ev);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "true")]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, Some(([0, 65, 0], Direction::Up)), false);
                         assert!(ok);
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "double_slab_redirect" => {
-                        let mut w = MapBucketWorld::new(false);
-                        let mut dbl = BucketCell::waterloggable(SLAB_ID, false, true);
-                        dbl.accepts_water_container = false;
-                        w.set_cell([0, 65, 0], dbl);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "double")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 66.0, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Water, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Water, 0)));
+                        assert_eq!(w.cell([0, 66, 0]), state("water", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "sneak_redirect" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], Some(([0, 65, 0], Direction::Up)), true, false, &mut ev);
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, Some(([0, 65, 0], Direction::Up)), true);
                         assert!(ok);
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Water, 0)));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
+                        assert_eq!(w.cell([0, 66, 0]), state("water", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[5]));
                     }
                     "pickup_unsurvivable" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(LADDER_ID, true, false));
-                        let picked = bucket_pickup_block(&mut w, [0, 65, 0], &mut ev).unwrap();
+                        w.set_cell_raw(target, state("ladder", &[("facing", "north"), ("waterlogged", "true")]));
+                        let (picked, ev) = w.pickup_bucket(target);
+                        let picked = picked.unwrap();
                         assert_eq!(picked.0, BucketStack::new(BucketContent::Water, 1));
-                        assert!(w.cell([0, 65, 0]).is_air);
+                        assert!(w.cell(target).is_air());
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "evaporate_water" => {
-                        let mut w = MapBucketWorld::new(true);
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.water_evaporates = true;
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(ok);
-                        assert!(w.cell([0, 65, 0]).is_air);
+                        assert!(w.cell(target).is_air());
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "evaporate_lava" => {
-                        let mut w = MapBucketWorld::new(true);
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Lava, [0, 65, 0], None, false, false, &mut ev);
+                        w.water_evaporates = true;
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Lava, None, false);
                         assert!(ok);
-                        assert_eq!(w.cell([0, 65, 0]).liquid_block, Some((BucketContent::Lava, 0)));
+                        assert_eq!(w.cell(target), state("lava", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[4]));
                     }
                     "existing_source" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::liquid_source(WATER_ID, BucketContent::Water));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.set_cell_raw(target, state("water", &[]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(ok);
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[3]));
                     }
                     "solid_null_hit" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::solid(STONE_ID));
-                        let ok = bucket_empty_contents(&mut w, BucketContent::Water, [0, 65, 0], None, false, false, &mut ev);
+                        w.set_cell_raw(target, state("stone", &[]));
+                        let (ok, ev) = w.empty_bucket(target, BucketContent::Water, None, false);
                         assert!(!ok);
                         assert!(ev.is_empty());
                     }
                     "lava_on_slab" => {
-                        let mut w = MapBucketWorld::new(false);
-                        w.set_cell([0, 65, 0], BucketCell::waterloggable(SLAB_ID, false, true));
+                        w.set_cell_raw(target, state("oak_slab", &[("type", "bottom"), ("waterlogged", "false")]));
                         let hit = BlockHitResult::Hit {
                             pos: [0, 65, 0], face: Direction::Up, location: Vec3::new(0.5, 65.5, 0.5), inside: false,
                         };
-                        let res = bucket_use(&mut w, BucketStack::new(BucketContent::Lava, 1), hit, true, true, false, false, false, true, false, &mut ev);
+                        let (res, ev) = w.use_bucket(BucketStack::new(BucketContent::Lava, 1), hit, true, true, false, false, false, true, false);
                         assert!(matches!(res, BucketUseResult::Success(_)));
-                        assert_eq!(w.cell([0, 65, 0]).waterlogged, Some(false));
-                        assert_eq!(w.cell([0, 66, 0]).liquid_block, Some((BucketContent::Lava, 0)));
+                        assert_eq!(w.cell(target).get("waterlogged"), Some("false"));
+                        assert_eq!(w.cell([0, 66, 0]), state("lava", &[]));
                         assert_eq!(fmt_bucket_events(&ev), filter_jar_bucket_log(f[5]));
                     }
                     other => panic!("unexpected bucket case {other}"),
@@ -4105,16 +4063,90 @@ fn jar_projectiles_and_redstone() {
 }
 
 #[test]
+fn bucket_respects_jar_water_and_lava_replaceability() {
+    use law::{BoxWorld, basis::cell::BlockId, sim::SimWorld, world_hooks::BucketContent};
+
+    let base = BoxWorld::default();
+    let mut sim = SimWorld::new(&base);
+    let target = [0, 65, 0];
+    // The 26.2 Fluid overload returns false for each of these states.
+    for name in ["stone", "granite", "dirt"] {
+        let state = BlockId::of(name).default_state();
+        sim.set_cell_raw(target, state);
+        for content in [BucketContent::Water, BucketContent::Lava] {
+            assert!(!sim.empty_bucket_at(content, target, None, false), "{name}: {content:?}");
+            assert_eq!(sim.cell(target), state);
+        }
+    }
+    assert!(sim.empty_bucket_at(BucketContent::Water, [1, 65, 0], None, false));
+    assert_eq!(sim.cell([1, 65, 0]), BlockId::of("water").default_state());
+}
+
+#[test]
+fn piston_tick_refuses_jar_unbreakable_bedrock() {
+    use law::{BoxWorld, basis::cell::{BlockId, StateId}, sim::SimWorld};
+
+    let base = BoxWorld::default();
+    let stone = BlockId::of("stone").default_state();
+    let bedrock = BlockId::of("bedrock").default_state();
+    assert_eq!(bedrock.rules().destroy_speed.to_bits(), 0xbf80_0000);
+    let lever = StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east")]);
+    let piston = StateId::of(BlockId::of("piston"), &[("facing", "east")]);
+    for (payload, extends) in [(bedrock, false), (stone, true)] {
+        let mut sim = SimWorld::new(&base);
+        sim.set_cell_raw([0, 63, 0], stone);
+        sim.set_cell_raw([0, 64, 0], lever);
+        sim.set_cell_raw([1, 64, 0], piston);
+        sim.set_cell_raw([2, 64, 0], payload);
+        assert!(sim.pull_lever([0, 64, 0]).0);
+        for _ in 0..8 {
+            sim.step_tick();
+        }
+        assert_eq!(sim.cell([1, 64, 0]), piston.with_bool("extended", extends));
+        if extends {
+            assert_eq!(sim.cell([2, 64, 0]).block().name(), "piston_head");
+            assert_eq!(sim.cell([3, 64, 0]), stone);
+        } else {
+            assert_eq!(sim.cell([2, 64, 0]), bedrock);
+            assert_eq!(sim.cell([3, 64, 0]), StateId::AIR);
+        }
+    }
+}
+
+#[test]
+fn bucket_preserves_single_slab_type_and_redirects_double_slab() {
+    use law::{BoxWorld, basis::cell::{BlockId, StateId}, neighbor::Direction, sim::SimWorld, world_hooks::BucketContent};
+
+    let base = BoxWorld::default();
+    let target = [0, 65, 0];
+    let above = Direction::Up.relative(target);
+    let water = BlockId::of("water").default_state();
+    // world_hooks.tsv records the in-place and redirected bucket writes.
+    for kind in ["bottom", "top", "double"] {
+        let mut sim = SimWorld::new(&base);
+        let slab = StateId::of(BlockId::of("oak_slab"), &[("type", kind), ("waterlogged", "false")]);
+        sim.set_cell_raw(target, slab);
+        assert!(sim.empty_bucket_at(BucketContent::Water, target, Some((target, Direction::Up)), false));
+        if kind == "double" {
+            assert_eq!(sim.cell(target), slab);
+            assert_eq!(sim.cell(above), water);
+        } else {
+            assert_eq!(sim.cell(target), slab.with_bool("waterlogged", true));
+            assert_eq!(sim.cell(above), StateId::AIR);
+        }
+    }
+}
+
+#[test]
 fn jar_world_sim() {
     use law::boat::{self, BoatStatus, Controls as BoatControls};
     use law::fluid::{FlowKind, FluidCell};
     use law::footprint::RecordingWorld;
-    use law::interact::{AttachFace, DoorHalf};
+    use law::basis::cell::StateId;
     use law::neighbor::{Direction, update_flags};
-    use law::place::{DoorHinge, DoorPlaceState, Half};
-    use law::interact::{BlockId, LeverState};
+    use law::interact::BlockId;
     use law::sim::{
-        CellState, FallingKind, SimCell, SimLivingEntity, SimWorld, WorldDelta,
+        CellState, FallingKind, SimLivingEntity, SimWorld, WorldDelta,
     };
     use law::world_hooks::BucketContent;
     use law::{BlockPos, BoxWorld, PlayerState, Vec3, World};
@@ -4137,9 +4169,9 @@ fn jar_world_sim() {
     }
     fn sim_block_tag<W: World>(sim: &SimWorld<'_, W>, pos: BlockPos) -> String {
         let cell = sim.cell(pos);
-        match cell.state {
+        match cell.kind() {
             CellState::Empty => "air".to_owned(),
-            CellState::Plain => match cell.id.name() {
+            CellState::Plain => match cell.block().name() {
                 name @ ("stone" | "cobblestone" | "obsidian" | "torch") => name.to_owned(),
                 "slime_block" => "slime".to_owned(),
                 "honey_block" => "honey".to_owned(),
@@ -4154,7 +4186,7 @@ fn jar_world_sim() {
             }
             CellState::Falling(FallingKind::Sand) => "sand".to_owned(),
             CellState::Falling(FallingKind::ConcretePowder) => "concrete_powder".to_owned(),
-            CellState::Falling(FallingKind::Anvil { .. }) => match cell.id.name() {
+            CellState::Falling(FallingKind::Anvil { .. }) => match cell.block().name() {
                 name @ ("anvil" | "chipped_anvil") => name.to_owned(),
                 _ => "damaged_anvil".to_owned(),
             },
@@ -4204,7 +4236,7 @@ fn jar_world_sim() {
         }
     }
     fn floor_stone<W: World>(sim: &mut SimWorld<'_, W>, x0: i32, z0: i32, x1: i32, z1: i32, y: i32) {
-        let stone = SimCell::plain(BlockId::of("stone"));
+        let stone = BlockId::of("stone").default_state();
         for x in x0..=x1 {
             for z in z0..=z1 {
                 sim.set_cell_raw([x, y, z], stone.clone());
@@ -4280,44 +4312,30 @@ fn jar_world_sim() {
         let lever_pos = [0, 65, 0];
         sim.set_cell_raw(
             lever_pos,
-            SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })),
+            StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]),
         );
         for i in 1..=8 {
-            sim.set_cell_raw([i, 65, 0], SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
+            sim.set_cell_raw([i, 65, 0], BlockId::of("redstone_wire").default_state());
         }
         let branch_wire = [2, 65, 1];
-        sim.set_cell_raw(branch_wire, SimCell::new(BlockId::of("redstone_wire"), CellState::RedstoneWire { power: 0 }));
+        sim.set_cell_raw(branch_wire, BlockId::of("redstone_wire").default_state());
         let door_low = [9, 65, 0];
         let door_high = [9, 66, 0];
         sim.set_cell_raw(
             door_low,
-            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
-                block_id: BlockId::of("iron_door"),
-                facing: law::neighbor::Direction::North,
-                half: DoorHalf::Lower,
-                hinge: DoorHinge::Left,
-                open: false,
-                powered: false,
-            })),
+            StateId::of(BlockId::of("iron_door"), &[("facing", "north"), ("half", "lower"), ("hinge", "left"), ("open", "false"), ("powered", "false")]),
         );
         sim.set_cell_raw(
             door_high,
-            SimCell::new(BlockId::of("iron_door"), CellState::Door(DoorPlaceState {
-                block_id: BlockId::of("iron_door"),
-                facing: law::neighbor::Direction::North,
-                half: DoorHalf::Upper,
-                hinge: DoorHinge::Left,
-                open: false,
-                powered: false,
-            })),
+            StateId::of(BlockId::of("iron_door"), &[("facing", "north"), ("half", "upper"), ("hinge", "left"), ("open", "false"), ("powered", "false")]),
         );
         let trap_pos = [2, 65, 2];
         sim.set_cell_raw(
             trap_pos,
-            SimCell::new(BlockId::of("oak_trapdoor"), CellState::TrapDoor { facing: Direction::North, half: Half::Bottom, open: false, powered: false, waterlogged: true }),
+            StateId::of(BlockId::of("oak_trapdoor"), &[("facing", "north"), ("half", "bottom"), ("open", "false"), ("powered", "false"), ("waterlogged", "true")]),
         );
-        sim.set_cell_raw([1, 65, 2], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([2, 65, 3], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([1, 65, 2], BlockId::of("stone").default_state());
+        sim.set_cell_raw([2, 65, 3], BlockId::of("stone").default_state());
 
         let check_a = |sim: &SimWorld<'_, BoxWorld>, row: &[&str]| {
             assert_eq!(sim_block_tag(sim, lever_pos), row[3], "row {row:?} lever");
@@ -4351,14 +4369,14 @@ fn jar_world_sim() {
         let mut sim = SimWorld::new(&base);
         floor_stone(&mut sim, 62, -2, 72, 16, 63);
         floor_stone(&mut sim, 62, -2, 72, 16, 64);
-        let stone = SimCell::plain(BlockId::of("stone"));
+        let stone = BlockId::of("stone").default_state();
         for x in 64..=70 {
             sim.set_cell_raw([x, 65, -1], stone.clone());
             sim.set_cell_raw([x, 65, 1], stone.clone());
         }
         sim.set_cell_raw([64, 65, 0], stone.clone());
         sim.set_cell_raw([70, 65, 0], stone.clone());
-        sim.set_cell_raw([68, 64, 0], SimCell::air(BlockId::of("air")));
+        sim.set_cell_raw([68, 64, 0], StateId::AIR);
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 3], stone.clone());
@@ -4373,7 +4391,7 @@ fn jar_world_sim() {
         }
         sim.set_cell_raw([64, 65, 8], stone.clone());
         sim.set_cell_raw([67, 65, 8], stone.clone());
-        sim.set_cell_raw([66, 65, 8], SimCell::lava(BlockId::of("lava"), false, FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([66, 65, 8], StateId::liquid("lava", FluidCell::WATER_SOURCE));
 
         for x in 64..=68 {
             sim.set_cell_raw([x, 65, 10], stone.clone());
@@ -4427,18 +4445,18 @@ fn jar_world_sim() {
         floor_stone(&mut sim, 126, -2, 134, 10, 63);
         floor_stone(&mut sim, 126, -2, 134, 10, 64);
 
-        sim.set_cell_raw([128, 64, 4], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::Up, extended: false }));
-        sim.set_cell_raw([128, 65, 4], SimCell::plain(BlockId::of("slime_block")));
+        sim.set_cell_raw([128, 64, 4], StateId::of(BlockId::of("sticky_piston"), &[("facing", "up"), ("extended", "false")]));
+        sim.set_cell_raw([128, 65, 4], BlockId::of("slime_block").default_state());
         let c1_lever = [127, 65, 4];
-        sim.set_cell_raw(c1_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
+        sim.set_cell_raw(c1_lever, StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]));
         let pig_c1 = sim.spawn_living(pig_entity(128.5, 66.0, 4.5));
 
-        sim.set_cell_raw([128, 65, 0], SimCell::new(BlockId::of("sticky_piston"), CellState::Piston { sticky: true, facing: Direction::East, extended: false }));
-        sim.set_cell_raw([129, 65, 0], SimCell::plain(BlockId::of("honey_block")));
-        sim.set_cell_raw([129, 65, 1], SimCell::plain(BlockId::of("slime_block")));
-        sim.set_cell_raw([130, 65, 0], SimCell::plain(BlockId::of("stone")));
+        sim.set_cell_raw([128, 65, 0], StateId::of(BlockId::of("sticky_piston"), &[("facing", "east"), ("extended", "false")]));
+        sim.set_cell_raw([129, 65, 0], BlockId::of("honey_block").default_state());
+        sim.set_cell_raw([129, 65, 1], BlockId::of("slime_block").default_state());
+        sim.set_cell_raw([130, 65, 0], BlockId::of("stone").default_state());
         let c2_lever = [127, 65, 0];
-        sim.set_cell_raw(c2_lever, SimCell::new(BlockId::of("lever"), CellState::Lever(LeverState { block_id: BlockId::of("lever"), face: AttachFace::Floor, facing: law::neighbor::Direction::East, powered: false })));
+        sim.set_cell_raw(c2_lever, StateId::of(BlockId::of("lever"), &[("face", "floor"), ("facing", "east"), ("powered", "false")]));
         let pig_c2 = sim.spawn_living(pig_entity(129.5, 66.0, 0.5));
 
         sim.pull_lever(c1_lever);
@@ -4485,34 +4503,34 @@ fn jar_world_sim() {
 
         let d1_sup = [192, 69, 0];
         let d1_sand = [192, 70, 0];
-        sim.set_cell_raw(d1_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d1_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
+        sim.set_cell_raw(d1_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d1_sand, BlockId::of("sand").default_state());
 
         let d2_sup = [196, 68, 0];
         let d2_anvil = [196, 69, 0];
-        sim.set_cell_raw(d2_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d2_anvil, SimCell::new(BlockId::of("anvil"), CellState::Falling(FallingKind::Anvil { facing_x_axis: false, stage: law::falling::AnvilStage::Intact })));
+        sim.set_cell_raw(d2_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d2_anvil, StateId::of(BlockId::of("anvil"), &[("facing", "north")]));
         let pig_d2 = sim.spawn_living(pig_entity(196.5, 65.0, 0.5));
 
         let d3_torch = [200, 65, 0];
         let d3_sup = [200, 67, 0];
         let d3_sand = [200, 68, 0];
-        sim.set_cell_raw(d3_torch, SimCell::plain(BlockId::of("torch")));
-        sim.set_cell_raw(d3_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d3_sand, SimCell::new(BlockId::of("sand"), CellState::Falling(FallingKind::Sand)));
+        sim.set_cell_raw(d3_torch, BlockId::of("torch").default_state());
+        sim.set_cell_raw(d3_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d3_sand, BlockId::of("sand").default_state());
 
         let d4_water = [204, 65, 0];
-        sim.set_cell_raw([203, 65, 0], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([205, 65, 0], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([204, 65, -1], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw([204, 65, 1], SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d4_water, SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
+        sim.set_cell_raw([203, 65, 0], BlockId::of("stone").default_state());
+        sim.set_cell_raw([205, 65, 0], BlockId::of("stone").default_state());
+        sim.set_cell_raw([204, 65, -1], BlockId::of("stone").default_state());
+        sim.set_cell_raw([204, 65, 1], BlockId::of("stone").default_state());
+        sim.set_cell_raw(d4_water, StateId::liquid("water", FluidCell::WATER_SOURCE));
         let d4_sup = [204, 67, 0];
         let d4_powder = [204, 68, 0];
-        sim.set_cell_raw(d4_sup, SimCell::plain(BlockId::of("stone")));
-        sim.set_cell_raw(d4_powder, SimCell::new(BlockId::of("white_concrete_powder"), CellState::Falling(FallingKind::ConcretePowder)));
+        sim.set_cell_raw(d4_sup, BlockId::of("stone").default_state());
+        sim.set_cell_raw(d4_powder, BlockId::of("white_concrete_powder").default_state());
 
-        let air = SimCell::air(BlockId::of("air"));
+        let air = StateId::AIR;
         sim.set_cell_with_flags(d1_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d2_sup, air.clone(), update_flags::ALL);
         sim.set_cell_with_flags(d3_sup, air.clone(), update_flags::ALL);
@@ -4584,7 +4602,7 @@ fn jar_world_sim() {
         floor_stone(&mut sim, 253, -3, 275, 5, 64);
         for x in 254..=260 {
             for z in -2..=2 {
-                sim.set_cell_raw([x, 64, z], SimCell::water(BlockId::of("water"), FluidCell::WATER_SOURCE));
+                sim.set_cell_raw([x, 64, z], StateId::liquid("water", FluidCell::WATER_SOURCE));
             }
         }
 
