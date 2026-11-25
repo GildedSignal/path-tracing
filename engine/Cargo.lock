@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "build"
+version = "0.1.0"
+dependencies = [
+ "law",
+]
+
+[[package]]
 name = "law"
 version = "0.1.0"
 dependencies = [
