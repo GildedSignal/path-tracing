@@ -1,0 +1,7 @@
+iso NE day
+iso NW day
+iso SE day
+iso SW day
+iso SE night
+plan top
+eye 2176 -60 0 90 -10 70 day trail

@@ -1,0 +1,11 @@
+iso NE day
+iso SW night
+plan top
+plan -50
+elev N
+elev E
+elev S
+elev W
+section x 78
+section z 0
+eye 73.5 -59 14.5 -162 -20 70 day courtyard
