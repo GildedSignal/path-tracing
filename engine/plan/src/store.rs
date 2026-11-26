@@ -82,6 +82,19 @@ impl Gait {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct SharedFieldSnapshot {
+    sections: Vec<(([u8; 32], BlockPos), Arc<crate::far_field::SectionSummary>)>,
+    far_fields: Vec<(crate::far_field::FarKey, Arc<crate::far_field::FarField>)>,
+    topo_entries: Vec<crate::defect::TopoCacheEntry>,
+}
+
+impl SharedFieldSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty() && self.far_fields.is_empty() && self.topo_entries.is_empty()
+    }
+}
+
 #[derive(Default)]
 pub struct GeneratorStore {
     pub words: RefCell<crate::word_store::WordStore>,
@@ -105,6 +118,91 @@ impl GeneratorStore {
     }
     pub fn warm_far_section(&self, provenance: [u8; 32], w: &impl World, sec: BlockPos) -> bool {
         self.far.borrow_mut().warm_section(provenance, w, sec)
+    }
+    pub fn warm_far_sections_in(
+        &self,
+        provenance: [u8; 32],
+        w: &impl World,
+        min: BlockPos,
+        max: BlockPos,
+        max_sections: usize,
+    ) -> usize {
+        let smin = min.map(|v| v.div_euclid(16));
+        let smax = max.map(|v| v.div_euclid(16));
+        let mut warmed = 0usize;
+        let mut checked = 0usize;
+        let mut cache = self.far.borrow_mut();
+        for sz in smin[2]..=smax[2] {
+            for sx in smin[0]..=smax[0] {
+                for sy in smin[1]..=smax[1] {
+                    if checked >= max_sections {
+                        return warmed;
+                    }
+                    checked += 1;
+                    if cache.warm_section(provenance, w, [sx, sy, sz]) {
+                        warmed += 1;
+                    }
+                }
+            }
+        }
+        warmed
+    }
+    pub fn prewarm_batch_fields<S: CorridorSource>(
+        &self,
+        source: &S,
+        from: &PlayerState,
+        goal: crate::Goal,
+        swarm_min: BlockPos,
+        swarm_max: BlockPos,
+        codec: &mut codec::Interner,
+    ) -> bool {
+        let Ok(label) = source.entry_label(codec, from) else {
+            return false;
+        };
+        let _ = crate::far_field::FarField::get_or_build_box(
+            self,
+            source,
+            label,
+            from,
+            goal,
+            None,
+            0,
+            swarm_min,
+            swarm_max,
+        );
+        crate::defect::prewarm_batch_topo(
+            self,
+            source,
+            label,
+            from,
+            goal,
+            swarm_min,
+            swarm_max,
+        );
+        true
+    }
+    pub fn export_shared_fields(&self) -> SharedFieldSnapshot {
+        let far = self.far.borrow();
+        let topo = self.topo.borrow();
+        SharedFieldSnapshot {
+            sections: far.export_sections(),
+            far_fields: far.export_fields(),
+            topo_entries: topo.export_entries(),
+        }
+    }
+    pub fn import_shared_fields(&self, snap: &SharedFieldSnapshot) {
+        {
+            let mut far = self.far.borrow_mut();
+            far.import_sections(&snap.sections);
+            far.import_fields(&snap.far_fields);
+        }
+        self.topo.borrow_mut().import_entries(&snap.topo_entries);
+    }
+    pub fn topo_cache_builds(&self) -> u64 {
+        self.topo.borrow().builds()
+    }
+    pub fn far_field_builds(&self) -> u64 {
+        self.far.borrow().far_field_builds()
     }
     pub fn cached_far_sections(&self) -> usize {
         self.far.borrow().cached_section_count()

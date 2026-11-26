@@ -2,6 +2,7 @@
 mod disk_world;
 mod pool;
 mod protocol;
+mod reserve;
 mod shm;
 mod world_mirror;
 
@@ -1203,5 +1204,142 @@ mod tests {
             }
         }
         panic!("knockback self_sync bot did not arc and settle cleanly");
+    }
+
+    #[test]
+    fn shared_goal_field_reused_across_workers_for_obstacle_batch() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-2..=3, -2..=2)));
+        {
+            let mut wg = world.write().unwrap();
+            for z in -4..=4 {
+                assert!(wg.set_block_delta([12, -60, z], "minecraft:stone"));
+                assert!(wg.set_block_delta([12, -59, z], "minecraft:stone"));
+            }
+        }
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(4, world.clone(), progs);
+        pool.spawn_batch(
+            16,
+            1,
+            0,
+            protocol::MODE_VIRTUAL,
+            4,
+            0.5,
+            -60.0,
+            -2.5,
+            1.0,
+            1.5,
+        );
+
+        let sum1 = pool.goal_batch(24, -60, 0, false);
+        assert_eq!(sum1.ready, 16, "ready={}, refused={}, sample={}", sum1.ready, sum1.refused, sum1.sample_msg);
+        assert_eq!(sum1.refused, 0);
+        assert_eq!(sum1.joints, 0);
+        assert!(sum1.shared_topo_builds >= 1, "expected shared TopoField prewarm");
+        assert_eq!(sum1.worker_topo_builds, 0, "workers rebuilt TopoField despite shared cache: {}", sum1.worker_topo_builds);
+        assert_eq!(sum1.worker_far_builds, 0, "workers rebuilt FarField despite shared cache: {}", sum1.worker_far_builds);
+
+        // Open a center breach and verify section invalidation + shorter detour recompute cleanly.
+        assert!(world.write().unwrap().set_block_delta([12, -60, 0], "minecraft:air"));
+        assert!(world.write().unwrap().set_block_delta([12, -59, 0], "minecraft:air"));
+        pool.replan_in_corridor([12, -60, 0]);
+        pool.replan_in_corridor([12, -59, 0]);
+
+        let sum2 = pool.goal_batch(24, -60, 0, false);
+        assert_eq!(sum2.ready, 16, "replan ready={}, refused={}, sample={}", sum2.ready, sum2.refused, sum2.sample_msg);
+        assert!(sum2.max_pred_t <= sum1.max_pred_t, "breached wall max_t={} exceeded walled max_t={}", sum2.max_pred_t, sum1.max_pred_t);
+        assert_eq!(sum2.worker_topo_builds, 0);
+    }
+
+    #[test]
+    fn four_d_reservations_separate_bottleneck_bridge_without_drift() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=2, -2..=2)));
+        {
+            let mut wg = world.write().unwrap();
+            for z in -15..=15 {
+                if z == 0 {
+                    continue;
+                }
+                assert!(wg.set_block_delta([10, -60, z], "minecraft:stone"));
+                assert!(wg.set_block_delta([10, -59, z], "minecraft:stone"));
+            }
+        }
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(4, world, progs);
+        pool.spawn_batch(
+            8,
+            1,
+            0,
+            protocol::MODE_MATERIALIZED,
+            2,
+            2.5,
+            -60.0,
+            -1.5,
+            1.5,
+            1.5,
+        );
+
+        let sum = pool.goal_batch(18, -60, 0, false);
+        assert_eq!(sum.ready, 8, "ready={}, refused={}, sample={}", sum.ready, sum.refused, sum.sample_msg);
+        assert_eq!(sum.refused, 0);
+        assert!(sum.reserve_stats.staggered_bots >= 4, "expected bottleneck staggering, got {:?}", sum.reserve_stats);
+        assert_eq!(sum.reserve_stats.residual_conflicts, 0, "residual conflicts: {:?}", sum.reserve_stats);
+
+        let cfg = SwarmConfig {
+            canary_count: 0,
+            ..SwarmConfig::default()
+        };
+        let mut last_sent = FxHashMap::default();
+        let max_ticks = u64::from(sum.max_pred_t) + u64::from(sum.reserve_stats.max_extra_delay) + 40;
+        let mut all_settled = false;
+        for tick in 1..=max_ticks {
+            let (out, _) = pool.step_tick(tick, cfg, SwarmPosture::default(), &[], &mut last_sent, false, false);
+            let mut doorway_cells: Vec<(u32, [i32; 3])> = Vec::new();
+            for cmd in &out.tick_cmds {
+                let cx = cmd.x.floor() as i32;
+                let cy = cmd.y.floor() as i32;
+                let cz = cmd.z.floor() as i32;
+                if (9..=11).contains(&cx) && cz == 0 {
+                    if let Some((other_id, _)) = doorway_cells.iter().find(|(_, c)| *c == [cx, cy, cz]) {
+                        panic!(
+                            "doorway collision at tick {tick}: bots {other_id} and {} both inside {:?}",
+                            cmd.bot_id, [cx, cy, cz]
+                        );
+                    }
+                    doorway_cells.push((cmd.bot_id, [cx, cy, cz]));
+                }
+            }
+            if out.stats.settled_count == 8 {
+                assert_eq!(out.stats.arrived_count, 8);
+                assert_eq!(out.stats.exact_t_count, 8, "staggering must keep 100% exact law ticks");
+                all_settled = true;
+                break;
+            }
+        }
+        assert!(all_settled, "not all 8 bottleneck bots settled within {max_ticks} ticks");
+    }
+
+    #[test]
+    fn disjoint_open_formation_pays_zero_reservation_delay() {
+        let world = Arc::new(RwLock::new(build_flat_mirror(-1..=5, -1..=2)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::new(world, progs);
+        pool.spawn_batch(
+            32,
+            1,
+            0,
+            protocol::MODE_VIRTUAL,
+            4,
+            0.5,
+            -60.0,
+            0.5,
+            2.0,
+            2.0,
+        );
+        let sum = pool.goal_batch(40, -60, 0, true);
+        assert_eq!(sum.ready, 32, "ready={}, refused={}, sample={}", sum.ready, sum.refused, sum.sample_msg);
+        assert_eq!(sum.reserve_stats.checked_bots, 32);
+        assert_eq!(sum.reserve_stats.staggered_bots, 0, "parallel open grid should have 0 conflicts: {:?}", sum.reserve_stats);
+        assert_eq!(sum.reserve_stats.max_extra_delay, 0);
     }
 }

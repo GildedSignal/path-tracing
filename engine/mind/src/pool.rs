@@ -9,7 +9,11 @@ use std::{
 };
 
 use law::{BlockPos, PlayerState, Vec3, World, codec::Interner};
-use plan::{Goal, Kit, PlanOutcome, store::GeneratorStore};
+use plan::{
+    Goal, Kit, PlanOutcome, SharedFieldSnapshot,
+    source::{CorridorResult, CorridorSource},
+    store::GeneratorStore,
+};
 use words::Arguments;
 
 use crate::{
@@ -21,6 +25,7 @@ use crate::{
         POSTURE_STARE, TIER_FLAG_ON_GROUND, TIER_FLAG_SNEAKING, TIER_FLAG_SPRINTING,
         TIER_MATERIALIZED, TIER_VIRTUAL, TIER_VISUAL,
     },
+    reserve::{BotFootprint, ReservationTable, ReserveStats, extract_footprint},
     world_mirror::{FxHashMap, FxHashSet, WorldMirror},
 };
 
@@ -96,7 +101,7 @@ pub struct CertifiedStep {
     pub curve: Option<Arc<Vec<StepPose>>>,
 }
 
-const JUMP_ARC_Y: [f64; 12] = [
+pub(crate) const JUMP_ARC_Y: [f64; 12] = [
     0.0,
     0.42,
     0.7532,
@@ -323,6 +328,11 @@ pub struct SolveSummary {
     pub solve_ns_samples: Vec<u64>,
     pub sample_msg: String,
     pub statuses: Vec<PlanStatusOut>,
+    pub reserve_stats: ReserveStats,
+    pub shared_topo_builds: u64,
+    pub shared_far_builds: u64,
+    pub worker_topo_builds: u64,
+    pub worker_far_builds: u64,
 }
 
 #[derive(Default)]
@@ -346,6 +356,17 @@ struct SpawnBatchJob {
     base_z: f64,
     spacing_x: f64,
     spacing_z: f64,
+}
+
+struct GoalChunkInfo {
+    chunks: Vec<[i32; 2]>,
+    bot_min: Option<BlockPos>,
+    bot_max: Option<BlockPos>,
+    sample_state: Option<PlayerState>,
+    goal_min: Option<BlockPos>,
+    goal_max: Option<BlockPos>,
+    unique_goal: Option<BlockPos>,
+    multi_goal: bool,
 }
 
 enum WorkerTask {
@@ -392,6 +413,11 @@ enum WorkerTask {
     SolveBatch {
         spec: Arc<SolveGoalSpec>,
         emit_statuses: bool,
+        shared_fields: Option<Arc<SharedFieldSnapshot>>,
+        collect_footprints: bool,
+    },
+    ApplyDelays {
+        delays: Vec<(u32, u16)>,
     },
     CollectStepIntents {
         server_tick: u64,
@@ -416,8 +442,9 @@ enum WorkerTask {
 
 enum WorkerReply {
     Ack,
-    GoalChunks(Vec<[i32; 2]>),
-    SolveDone(SolveSummary),
+    GoalOneChunks(Vec<[i32; 2]>),
+    GoalBatchChunks(GoalChunkInfo),
+    SolveDone(SolveSummary, Vec<BotFootprint>),
     StepIntents {
         candidates: Vec<CandidateOut>,
         ticket_needs: Vec<TicketNeed>,
@@ -647,6 +674,11 @@ impl WorkerState {
                 WorkerReply::Ack
             }
             WorkerTask::MarkReplanAt { pos: [x, y, z] } => {
+                self.store.invalidate_far_section([
+                    x.div_euclid(16),
+                    y.div_euclid(16),
+                    z.div_euclid(16),
+                ]);
                 for bot in &mut self.bots {
                     if let BotPhase::Executing {
                         goal_air,
@@ -694,29 +726,79 @@ impl WorkerState {
                         msg: "unknown bot".into(),
                     });
                 }
-                WorkerReply::SolveDone(sum)
+                WorkerReply::SolveDone(sum, Vec::new())
             }
             WorkerTask::CollectGoalOneChunks { bot_id, goal_air } => {
                 let mut chunks = FxHashSet::default();
                 if let Some(bot) = self.bots.iter().find(|b| b.bot_id == bot_id) {
                     insert_corridor_chunks(&mut chunks, bot.approx_pose().0, goal_air);
                 }
-                WorkerReply::GoalChunks(chunks.into_iter().collect())
+                WorkerReply::GoalOneChunks(chunks.into_iter().collect())
             }
             WorkerTask::CollectGoalChunks { spec } => {
                 let mut chunks = FxHashSet::default();
+                let mut bot_min: Option<BlockPos> = None;
+                let mut bot_max: Option<BlockPos> = None;
+                let mut sample_state: Option<PlayerState> = None;
+                let mut goal_min: Option<BlockPos> = None;
+                let mut goal_max: Option<BlockPos> = None;
+                let mut unique_goal: Option<BlockPos> = None;
+                let mut multi_goal = false;
+                let expand_box = |lo: &mut Option<BlockPos>, hi: &mut Option<BlockPos>, p: BlockPos| {
+                    *lo = Some(lo.map_or(p, |m| [m[0].min(p[0]), m[1].min(p[1]), m[2].min(p[2])]));
+                    *hi = Some(hi.map_or(p, |m| [m[0].max(p[0]), m[1].max(p[1]), m[2].max(p[2])]));
+                };
                 for bot in &self.bots {
+                    let pos = bot.approx_pose().0;
+                    let bp = [
+                        pos.x.floor() as i32,
+                        pos.y.floor() as i32,
+                        pos.z.floor() as i32,
+                    ];
+                    expand_box(&mut bot_min, &mut bot_max, bp);
+                    if sample_state.is_none() {
+                        sample_state = Some(bot.state.clone());
+                    }
                     let goal_air = goal_for_bot(bot, &spec);
-                    insert_corridor_chunks(&mut chunks, bot.approx_pose().0, goal_air);
+                    expand_box(&mut goal_min, &mut goal_max, goal_air);
+                    if !multi_goal {
+                        match unique_goal {
+                            None => unique_goal = Some(goal_air),
+                            Some(g) if g != goal_air => multi_goal = true,
+                            _ => {}
+                        }
+                    }
+                    insert_corridor_chunks(&mut chunks, pos, goal_air);
                 }
-                WorkerReply::GoalChunks(chunks.into_iter().collect())
+                WorkerReply::GoalBatchChunks(GoalChunkInfo {
+                    chunks: chunks.into_iter().collect(),
+                    bot_min,
+                    bot_max,
+                    sample_state,
+                    goal_min,
+                    goal_max,
+                    unique_goal,
+                    multi_goal,
+                })
             }
             WorkerTask::SolveBatch {
                 spec,
                 emit_statuses,
+                shared_fields,
+                collect_footprints,
             } => {
+                if let Some(snap) = shared_fields.as_deref() {
+                    self.store.import_shared_fields(snap);
+                }
+                let topo_before = self.store.topo_cache_builds();
+                let far_before = self.store.far_field_builds();
                 let mut sum = SolveSummary::default();
                 sum.solve_ns_samples.reserve(self.bots.len());
+                let mut footprints = if collect_footprints {
+                    Vec::with_capacity(self.bots.len())
+                } else {
+                    Vec::new()
+                };
                 let world = self.world.read().unwrap();
                 let cols = spec.cols.max(1);
                 let rows = spec.total_bots.max(1).div_ceil(cols).max(1);
@@ -740,9 +822,32 @@ impl WorkerState {
                         &self.programs,
                         &mut self.step_curves,
                     );
+                    if collect_footprints
+                        && out.status == PLAN_STATUS_READY
+                        && let BotPhase::Executing { steps, delay_ticks, .. } = &bot.phase
+                    {
+                        footprints.push(extract_footprint(
+                            bot.bot_id,
+                            bot.bot_index,
+                            *delay_ticks,
+                            steps,
+                        ));
+                    }
                     record_solve(&mut sum, out, emit_statuses);
                 }
-                WorkerReply::SolveDone(sum)
+                sum.worker_topo_builds = self.store.topo_cache_builds().saturating_sub(topo_before);
+                sum.worker_far_builds = self.store.far_field_builds().saturating_sub(far_before);
+                WorkerReply::SolveDone(sum, footprints)
+            }
+            WorkerTask::ApplyDelays { delays } => {
+                for (bot_id, extra) in delays {
+                    if let Some(bot) = self.get_bot_mut(bot_id)
+                        && let BotPhase::Executing { delay_ticks, .. } = &mut bot.phase
+                    {
+                        *delay_ticks = delay_ticks.saturating_add(extra);
+                    }
+                }
+                WorkerReply::Ack
             }
             WorkerTask::CollectStepIntents {
                 server_tick,
@@ -1017,6 +1122,10 @@ pub struct WorkerPool {
     spawn_cols: u32,
     spawn_spacing_x: f64,
     spawn_spacing_z: f64,
+    shared_store: GeneratorStore,
+    shared_codec: Interner,
+    shared_world_prov: [u8; 32],
+    reservations: ReservationTable,
 }
 
 impl WorkerPool {
@@ -1045,6 +1154,10 @@ impl WorkerPool {
             spawn_cols: 1,
             spawn_spacing_x: 1.5,
             spawn_spacing_z: 1.5,
+            shared_store: GeneratorStore::default(),
+            shared_codec: Interner::default(),
+            shared_world_prov: [0u8; 32],
+            reservations: ReservationTable::default(),
         }
     }
 
@@ -1057,6 +1170,8 @@ impl WorkerPool {
         self.spawn_cols = 1;
         self.spawn_spacing_x = 1.5;
         self.spawn_spacing_z = 1.5;
+        self.shared_store.clear_far();
+        self.reservations.clear();
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::Clear);
         }
@@ -1066,6 +1181,10 @@ impl WorkerPool {
     }
 
     pub fn reset_stores(&mut self) {
+        self.shared_store = GeneratorStore::default();
+        self.shared_codec = Interner::default();
+        self.shared_world_prov = [0u8; 32];
+        self.reservations.clear();
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::ResetStores);
         }
@@ -1194,6 +1313,7 @@ impl WorkerPool {
     }
 
     pub fn stop_all(&mut self) {
+        self.reservations.clear();
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::StopAll);
         }
@@ -1216,7 +1336,7 @@ impl WorkerPool {
             bot_id,
             goal_air,
         });
-        if let Ok(WorkerReply::GoalChunks(chunks)) = self.workers[owner].rx.recv()
+        if let Ok(WorkerReply::GoalOneChunks(chunks)) = self.workers[owner].rx.recv()
             && !chunks.is_empty()
         {
             self.world.write().unwrap().ensure_chunks_from_disk(&chunks);
@@ -1228,7 +1348,7 @@ impl WorkerPool {
             emit_status: true,
         });
         match self.workers[owner].rx.recv() {
-            Ok(WorkerReply::SolveDone(s)) => s.statuses,
+            Ok(WorkerReply::SolveDone(s, _)) => s.statuses,
             _ => Vec::new(),
         }
     }
@@ -1277,30 +1397,147 @@ impl WorkerPool {
             let _ = w.tx.send(WorkerTask::CollectGoalChunks { spec: spec.clone() });
         }
         let mut needed = FxHashSet::default();
+        let mut bot_min: Option<BlockPos> = None;
+        let mut bot_max: Option<BlockPos> = None;
+        let mut sample_state: Option<PlayerState> = None;
+        let mut goal_min: Option<BlockPos> = None;
+        let mut goal_max: Option<BlockPos> = None;
+        let mut unique_goal: Option<BlockPos> = None;
+        let mut multi_goal = false;
+        let merge_box = |lo: &mut Option<BlockPos>, hi: &mut Option<BlockPos>, a: Option<BlockPos>, b: Option<BlockPos>| {
+            if let Some(p) = a {
+                *lo = Some(lo.map_or(p, |m| [m[0].min(p[0]), m[1].min(p[1]), m[2].min(p[2])]));
+            }
+            if let Some(p) = b {
+                *hi = Some(hi.map_or(p, |m| [m[0].max(p[0]), m[1].max(p[1]), m[2].max(p[2])]));
+            }
+        };
         for w in &self.workers {
-            if let Ok(WorkerReply::GoalChunks(v)) = w.rx.recv() {
-                needed.extend(v);
+            if let Ok(WorkerReply::GoalBatchChunks(info)) = w.rx.recv() {
+                needed.extend(info.chunks);
+                merge_box(&mut bot_min, &mut bot_max, info.bot_min, info.bot_max);
+                if sample_state.is_none() {
+                    sample_state = info.sample_state;
+                }
+                merge_box(&mut goal_min, &mut goal_max, info.goal_min, info.goal_max);
+                if info.multi_goal {
+                    multi_goal = true;
+                } else if !multi_goal && let Some(g) = info.unique_goal {
+                    match unique_goal {
+                        None => unique_goal = Some(g),
+                        Some(prev) if prev != g => multi_goal = true,
+                        _ => {}
+                    }
+                }
             }
         }
         let needed_vec: Vec<[i32; 2]> = needed.into_iter().collect();
         self.world.write().unwrap().ensure_chunks_from_disk(&needed_vec);
+
+        let all_same_goal = if !multi_goal { unique_goal } else { None };
+        let shared_topo_before = self.shared_store.topo_cache_builds();
+        let shared_far_before = self.shared_store.far_field_builds();
+        let shared_fields = if total >= 2
+            && let (Some(mut sample_from), Some(bmin), Some(bmax), Some(gmin), Some(gmax)) =
+                (sample_state, bot_min, bot_max, goal_min, goal_max)
+        {
+            let world = self.world.read().unwrap();
+            let prov = world.provenance_version();
+            if prov != self.shared_world_prov {
+                self.shared_store.clear_far();
+                self.shared_world_prov = prov;
+            }
+            let sp = [
+                sample_from.position.x.floor() as i32,
+                sample_from.position.y.floor() as i32,
+                sample_from.position.z.floor() as i32,
+            ];
+            let sa = world.support_cell(&sample_from);
+            if sample_from.main_supporting_block.is_none() && sample_from.on_ground && world.loaded(sa) && !world.is_air(sa) {
+                sample_from.main_supporting_block = Some(sa);
+            }
+            let sample_goal_air = snap_airborne_goal(&world, all_same_goal.unwrap_or(gmin));
+            let sample_goal_solid = [sample_goal_air[0], sample_goal_air[1] - 1, sample_goal_air[2]];
+            let cmin = [
+                bmin[0].min(gmin[0]) - 2,
+                sa[1],
+                bmin[2].min(gmin[2]) - 2,
+            ];
+            let cmax = [
+                bmax[0].max(gmax[0]) + 2,
+                (bmax[1].max(gmax[1]) + 4).min(world.max_loaded_y()),
+                bmax[2].max(gmax[2]) + 2,
+            ];
+            let flat_clear = world
+                .entry_label(&mut self.shared_codec, &sample_from)
+                .ok()
+                .is_some_and(|label| {
+                    matches!(
+                        world.corridor_query(&mut self.shared_codec, label, cmin, cmax),
+                        CorridorResult::Clear(_)
+                    )
+                });
+            let _ = sp;
+            if !flat_clear {
+                if let Some(goal_air) = all_same_goal {
+                    let _ = sample_goal_solid;
+                    let snapped = snap_airborne_goal(&world, goal_air);
+                    let gsolid = [snapped[0], snapped[1] - 1, snapped[2]];
+                    self.shared_store.prewarm_batch_fields(
+                        &*world,
+                        &sample_from,
+                        Goal::of(gsolid),
+                        bmin,
+                        bmax,
+                        &mut self.shared_codec,
+                    );
+                } else {
+                    self.shared_store.warm_far_sections_in(
+                        prov,
+                        &*world,
+                        [cmin[0] - 16, world.min_loaded_y(), cmin[2] - 16],
+                        [cmax[0] + 16, cmax[1] + 16, cmax[2] + 16],
+                        256,
+                    );
+                }
+            }
+            let snap = self.shared_store.export_shared_fields();
+            if snap.is_empty() {
+                None
+            } else {
+                Some(Arc::new(snap))
+            }
+        } else {
+            None
+        };
+
+        let collect_footprints = total <= 2048
+            || all_same_goal.is_some()
+            || shared_fields.is_some()
+            || spec.spacing_x < 1.0
+            || spec.spacing_z < 1.0;
 
         let emit_statuses = self.bot_owner.len() <= 64;
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::SolveBatch {
                 spec: spec.clone(),
                 emit_statuses,
+                shared_fields: shared_fields.clone(),
+                collect_footprints,
             });
         }
 
         let mut merged = SolveSummary::default();
         merged.min_pred_t = u32::MAX;
+        let mut all_footprints = Vec::new();
         for w in &self.workers {
-            if let Ok(WorkerReply::SolveDone(mut part)) = w.rx.recv() {
+            if let Ok(WorkerReply::SolveDone(mut part, mut fps)) = w.rx.recv() {
                 merged.ready += part.ready;
                 merged.already += part.already;
                 merged.joints += part.joints;
                 merged.refused += part.refused;
+                merged.worker_topo_builds += part.worker_topo_builds;
+                merged.worker_far_builds += part.worker_far_builds;
                 if part.min_pred_t > 0 {
                     merged.min_pred_t = merged.min_pred_t.min(part.min_pred_t);
                 }
@@ -1310,10 +1547,38 @@ impl WorkerPool {
                     merged.sample_msg = part.sample_msg;
                 }
                 merged.statuses.append(&mut part.statuses);
+                all_footprints.append(&mut fps);
             }
         }
         if merged.min_pred_t == u32::MAX {
             merged.min_pred_t = 0;
+        }
+        merged.shared_topo_builds = self.shared_store.topo_cache_builds().saturating_sub(shared_topo_before);
+        merged.shared_far_builds = self.shared_store.far_field_builds().saturating_sub(shared_far_before);
+
+        if !all_footprints.is_empty() {
+            let (extra_delays, stats) = self.reservations.resolve_batch(&mut all_footprints);
+            merged.reserve_stats = stats;
+            if !extra_delays.is_empty() {
+                let mut per_worker: Vec<Vec<(u32, u16)>> = vec![Vec::new(); self.workers.len()];
+                for (bot_id, extra) in extra_delays {
+                    if let Some(&owner) = self.bot_owner.get(&bot_id) {
+                        per_worker[owner].push((bot_id, extra));
+                    }
+                }
+                let mut awaited = Vec::new();
+                for (wi, delays) in per_worker.into_iter().enumerate() {
+                    if !delays.is_empty() {
+                        let _ = self.workers[wi].tx.send(WorkerTask::ApplyDelays { delays });
+                        awaited.push(wi);
+                    }
+                }
+                for wi in awaited {
+                    let _ = self.workers[wi].rx.recv();
+                }
+            }
+        } else {
+            self.reservations.clear();
         }
         merged
     }
@@ -1496,6 +1761,11 @@ impl WorkerPool {
     }
 
     pub fn replan_in_corridor(&mut self, pos: BlockPos) {
+        self.shared_store.invalidate_far_section([
+            pos[0].div_euclid(16),
+            pos[1].div_euclid(16),
+            pos[2].div_euclid(16),
+        ]);
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::MarkReplanAt { pos });
         }

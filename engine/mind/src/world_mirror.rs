@@ -547,7 +547,9 @@ impl WorldMirror {
     }
 
     pub fn unload_chunk(&mut self, cx: i32, cz: i32) {
-        self.server_loaded_chunks.remove(&[cx, cz]);
+        if self.server_loaded_chunks.remove(&[cx, cz]) {
+            self.edit_rev = self.edit_rev.wrapping_add(1).max(1);
+        }
     }
 
     pub fn min_loaded_y(&self) -> i32 {
@@ -721,7 +723,7 @@ impl WorldMirror {
         first
     }
 
-    fn provenance_version(&self) -> [u8; 32] {
+    pub fn provenance_version(&self) -> [u8; 32] {
         let mut bytes = Vec::with_capacity(48);
         bytes.extend(codec::SCHEMA);
         bytes.extend(self.session.to_le_bytes());
@@ -758,6 +760,13 @@ impl WorldMirror {
 }
 
 impl World for WorldMirror {
+    fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
+        match self.cell_state(p) {
+            Ok(id) => Ok(id.block_at(p)),
+            Err(_) => Err("unloaded or unmodeled cell"),
+        }
+    }
+
     fn block(&self, p: BlockPos) -> &Block {
         match self.cell_block(p) {
             Ok(block) => block,
@@ -767,6 +776,73 @@ impl World for WorldMirror {
 
     fn state_id(&self, p: BlockPos) -> Option<StateId> {
         self.cell_state(p).ok()
+    }
+
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> {
+        if lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2] {
+            return None;
+        }
+        #[inline]
+        fn uniform_state_block(id: StateId) -> Option<&'static Block> {
+            let mb = id.model_block();
+            if std::ptr::eq(id.block_at([0, 0, 0]), mb) && std::ptr::eq(id.block_at([1, 0, 1]), mb) {
+                Some(mb)
+            } else {
+                None
+            }
+        }
+        let mut expected: Option<&'static Block> = None;
+        let mut check_block = |b: &'static Block| -> bool {
+            match expected {
+                None => {
+                    expected = Some(b);
+                    true
+                }
+                Some(prev) => std::ptr::eq(prev, b),
+            }
+        };
+        let sx0 = lo[0].div_euclid(16);
+        let sx1 = hi[0].div_euclid(16);
+        let sy0 = lo[1].div_euclid(16);
+        let sy1 = hi[1].div_euclid(16);
+        let sz0 = lo[2].div_euclid(16);
+        let sz1 = hi[2].div_euclid(16);
+        for sz in sz0..=sz1 {
+            for sy in sy0..=sy1 {
+                let y0 = (lo[1] - sy * 16).max(0) as usize;
+                let y1 = (hi[1] - sy * 16).min(15) as usize;
+                for sx in sx0..=sx1 {
+                    let entry = self.sections.get(&[sx, sy, sz])?;
+                    match &entry.section {
+                        Section::AllAir => {
+                            if !check_block(self.air_block) {
+                                return None;
+                            }
+                        }
+                        Section::Layered { layers, .. } => {
+                            for ly in y0..=y1 {
+                                let Ok(id) = layers[ly] else { return None };
+                                let b = uniform_state_block(id)?;
+                                if !check_block(b) {
+                                    return None;
+                                }
+                            }
+                        }
+                        Section::Palette(ps) => {
+                            for ly in y0..=y1 {
+                                let u = ps.uniform_y[ly]?;
+                                let Ok(id) = ps.palette[u as usize] else { return None };
+                                let b = uniform_state_block(id)?;
+                                if !check_block(b) {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        expected
     }
 
     fn loaded(&self, p: BlockPos) -> bool {
@@ -792,6 +868,54 @@ impl World for WorldMirror {
 
     fn has_inside_effects(&self) -> bool {
         self.inside_section_count > 0
+    }
+
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        if self.fluid_section_count == 0 || lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2] {
+            return false;
+        }
+        let sx0 = lo[0].div_euclid(16);
+        let sx1 = hi[0].div_euclid(16);
+        let sy0 = lo[1].div_euclid(16);
+        let sy1 = hi[1].div_euclid(16);
+        let sz0 = lo[2].div_euclid(16);
+        let sz1 = hi[2].div_euclid(16);
+        for sz in sz0..=sz1 {
+            for sy in sy0..=sy1 {
+                for sx in sx0..=sx1 {
+                    if let Some(entry) = self.sections.get(&[sx, sy, sz])
+                        && entry.section.flags().0
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        if self.inside_section_count == 0 || lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2] {
+            return false;
+        }
+        let sx0 = lo[0].div_euclid(16);
+        let sx1 = hi[0].div_euclid(16);
+        let sy0 = lo[1].div_euclid(16);
+        let sy1 = hi[1].div_euclid(16);
+        let sz0 = lo[2].div_euclid(16);
+        let sz1 = hi[2].div_euclid(16);
+        for sz in sz0..=sz1 {
+            for sy in sy0..=sy1 {
+                for sx in sx0..=sx1 {
+                    if let Some(entry) = self.sections.get(&[sx, sy, sz])
+                        && entry.section.flags().1
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn visit_collision_cells(
@@ -855,6 +979,10 @@ fn legs_differs(a: &Block, b: &Block) -> Result<bool, law::pattern::PatternError
 }
 
 impl CorridorSource for WorldMirror {
+    fn provenance(&self) -> [u8; 32] {
+        self.provenance_version()
+    }
+
     fn support_cell(&self, s: &PlayerState) -> BlockPos {
         s.main_supporting_block
             .filter(|&c| self.loaded(c) && !self.is_air(c))

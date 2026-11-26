@@ -181,7 +181,8 @@ pub(crate) fn below(c: BlockPos) -> BlockPos {
     [c[0], c[1] - 1, c[2]]
 }
 
-struct TopoCacheEntry {
+#[derive(Clone)]
+pub(crate) struct TopoCacheEntry {
     provenance: [u8; 32],
     goal: Goal,
     kit_key: u64,
@@ -195,6 +196,7 @@ struct TopoCacheEntry {
 #[derive(Default)]
 pub(crate) struct TopoCache {
     entries: Vec<TopoCacheEntry>,
+    builds: u64,
 }
 
 impl TopoCache {
@@ -210,6 +212,33 @@ impl TopoCache {
                 || e.max[1] < smin[1] || e.min[1] > smax[1]
                 || e.max[2] < smin[2] || e.min[2] > smax[2]
         });
+    }
+
+    pub(crate) fn export_entries(&self) -> Vec<TopoCacheEntry> {
+        self.entries.clone()
+    }
+
+    pub(crate) fn import_entries(&mut self, incoming: &[TopoCacheEntry]) {
+        for e in incoming {
+            let dup = self.entries.iter().any(|cur| {
+                cur.provenance == e.provenance
+                    && cur.goal == e.goal
+                    && cur.kit_key == e.kit_key
+                    && cur.legs_bits == e.legs_bits
+                    && cur.min == e.min
+                    && cur.max == e.max
+            });
+            if !dup {
+                if self.entries.len() >= 8 {
+                    self.entries.remove(0);
+                }
+                self.entries.push(e.clone());
+            }
+        }
+    }
+
+    pub(crate) fn builds(&self) -> u64 {
+        self.builds
     }
 }
 
@@ -262,14 +291,17 @@ impl TopoField {
         legs: Legs,
     ) -> Arc<Self> {
         let (req_min, req_max) = Self::bounds_for(bounds, from, goal, kit);
+        let fy = from.position.y.floor() as i32;
         let legs_bits = (legs.h.to_bits(), legs.up.to_bits(), legs.down.to_bits(), legs.reach);
         let hit_pos = store.topo.borrow().entries.iter().position(|e| {
+            let y_ok = (e.min[1] <= req_min[1] && e.max[1] >= req_max[1])
+                || (e.min[1] <= fy.min(goal.cell[1]) - 2 && e.max[1] >= fy.max(goal.cell[1]) + 4);
             e.provenance == provenance
                 && e.goal == goal
                 && e.kit_key == kit_key
                 && e.legs_bits == legs_bits
                 && e.min[0] <= req_min[0] && e.max[0] >= req_max[0]
-                && e.min[1] <= req_min[1] && e.max[1] >= req_max[1]
+                && y_ok
                 && e.min[2] <= req_min[2] && e.max[2] >= req_max[2]
                 && e.field.query(from).is_finite()
         });
@@ -280,10 +312,12 @@ impl TopoField {
             cache.entries.push(entry);
             return field;
         }
-        let field = Arc::new(Self::build(grid, bounds, from, goal, kit, legs));
+        let (min, max) = (req_min, req_max);
+        let field = Arc::new(Self::build_box(grid, min, max, from, goal, kit, legs, true));
         if !field.dist.is_empty() {
             let mut cache = store.topo.borrow_mut();
-            if cache.entries.len() >= 4 {
+            cache.builds += 1;
+            if cache.entries.len() >= 8 {
                 cache.entries.remove(0);
             }
             cache.entries.push(TopoCacheEntry {
@@ -299,8 +333,16 @@ impl TopoField {
         field
     }
 
-    fn build<S: World>(grid: &ObservedWorld<'_, S>, bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>, legs: Legs) -> Self {
-        let (min, max) = Self::bounds_for(bounds, from, goal, kit);
+    fn build_box<S: World>(
+        grid: &ObservedWorld<'_, S>,
+        min: BlockPos,
+        max: BlockPos,
+        from: &PlayerState,
+        goal: Goal,
+        kit: Option<&KitView>,
+        legs: Legs,
+        stop_at_from: bool,
+    ) -> Self {
         let fx = from.position.x.floor() as i32;
         let fy = from.position.y.floor() as i32;
         let fz = from.position.z.floor() as i32;
@@ -355,7 +397,7 @@ impl TopoField {
         // Stop once the body's starting state is settled with a 25-tick margin; cache support & edge checks across runs.
         let from_cell = if body_fits(grid, [fx, fy, fz]) { [fx, fy, fz] } else { [fx, fy + 1, fz] };
         grid.reset_missing();
-        let from_ci = field.idx(from_cell);
+        let from_ci = stop_at_from.then(|| field.idx(from_cell)).flatten();
         let from_needs_r0 = has_step_support(grid, from_cell);
         grid.reset_missing();
         let mut from_settled_d: Option<f32> = None;
@@ -366,7 +408,7 @@ impl TopoField {
         let mut pops = 0usize;
         while let Some(Reverse((bits, e, cur, rc))) = heap.pop() {
             let cur_d = f32::from_bits(bits);
-            if pops >= 40_000 || from_settled_d.is_some_and(|fd| cur_d > fd + 25.0) {
+            if pops >= 40_000 || (stop_at_from && from_settled_d.is_some_and(|fd| cur_d > fd + 25.0)) {
                 break;
             }
             let Some(ci) = field.idx(cur) else { continue };
@@ -1898,4 +1940,85 @@ pub(super) fn solve_defect<S: CorridorSource>(
     }
 
     Ok((steps, obs))
+}
+
+pub(crate) fn prewarm_batch_topo<S: CorridorSource>(
+    store: &GeneratorStore,
+    source: &S,
+    label: LabelId,
+    sample_from: &PlayerState,
+    goal: Goal,
+    swarm_min: BlockPos,
+    swarm_max: BlockPos,
+) -> bool {
+    let Some(legs) = Legs::of(store, label, source, sample_from) else {
+        return false;
+    };
+    let legs_bits = (legs.h.to_bits(), legs.up.to_bits(), legs.down.to_bits(), legs.reach);
+    let provenance = source.provenance();
+    let depth = (sample_from.profile.safe_fall_distance + f64::from(sample_from.health)).ceil() as i32;
+    let pad_lo_y = depth.min(24).max(6);
+    let mut min = [
+        swarm_min[0].min(goal.cell[0]).saturating_sub(20),
+        swarm_min[1].min(goal.cell[1]).saturating_sub(pad_lo_y),
+        swarm_min[2].min(goal.cell[2]).saturating_sub(20),
+    ];
+    let mut max = [
+        swarm_max[0].max(goal.cell[0]).saturating_add(20),
+        swarm_max[1].max(goal.cell[1]).saturating_add(8),
+        swarm_max[2].max(goal.cell[2]).saturating_add(20),
+    ];
+    if let Some((bmin, bmax)) = source.bounds_box() {
+        min[0] = min[0].max(bmin[0] - 2);
+        min[1] = min[1].max(bmin[1] - 2);
+        min[2] = min[2].max(bmin[2] - 2);
+        max[0] = max[0].min(bmax[0] + 2);
+        max[1] = max[1].min(bmax[1] + 2);
+        max[2] = max[2].min(bmax[2] + 2);
+    } else {
+        min[1] = min[1].max(source.min_y() - 2);
+    }
+    let vol_of = |a: BlockPos, b: BlockPos| -> usize {
+        (b[0] - a[0] + 1).max(1) as usize
+            * (b[1] - a[1] + 1).max(1) as usize
+            * (b[2] - a[2] + 1).max(1) as usize
+    };
+    if vol_of(min, max) > MAX_TOPO_CELLS {
+        min[1] = swarm_min[1].min(goal.cell[1]).saturating_sub(4).max(source.min_y() - 2);
+        max[1] = swarm_max[1].max(goal.cell[1]).saturating_add(8);
+        if vol_of(min, max) > MAX_TOPO_CELLS {
+            return false;
+        }
+    }
+    if store.topo.borrow().entries.iter().any(|e| {
+        e.provenance == provenance
+            && e.goal == goal
+            && e.kit_key == 0
+            && e.legs_bits == legs_bits
+            && e.min[0] <= min[0] && e.max[0] >= max[0]
+            && e.min[1] <= min[1] && e.max[1] >= max[1]
+            && e.min[2] <= min[2] && e.max[2] >= max[2]
+    }) {
+        return true;
+    }
+    let grid = ObservedWorld::defect(source);
+    let field = Arc::new(TopoField::build_box(&grid, min, max, sample_from, goal, None, legs, false));
+    if field.dist.is_empty() {
+        return false;
+    }
+    let mut cache = store.topo.borrow_mut();
+    cache.builds += 1;
+    if cache.entries.len() >= 8 {
+        cache.entries.remove(0);
+    }
+    cache.entries.push(TopoCacheEntry {
+        provenance,
+        goal,
+        kit_key: 0,
+        legs_bits,
+        min: field.min,
+        max: field.max,
+        field,
+    });
+    true
 }

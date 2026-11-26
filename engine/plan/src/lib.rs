@@ -13,6 +13,7 @@ pub mod events;
 pub mod lattice;
 pub mod source;
 pub mod store;
+pub use store::SharedFieldSnapshot;
 pub mod word_store;
 mod cut;
 mod defect;

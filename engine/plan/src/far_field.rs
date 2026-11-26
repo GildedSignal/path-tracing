@@ -14,7 +14,7 @@ use crate::{
     Face, Goal,
     defect::{Legs, below, blockers, body_fits, has_step_support, way_clear},
     kit::{FieldEdit, KitView},
-    source::CorridorSource,
+    source::{CorridorSource, ObservedWorld},
     store::GeneratorStore,
 };
 
@@ -46,12 +46,16 @@ impl SectionSummary {
             if b.never_collides() && !b.climbable && b.fluid.kind == FluidKind::Empty {
                 let below_lo = [lo[0], lo[1] - 1, lo[2]];
                 let below_hi = [hi[0], lo[1] - 1, hi[2]];
-                if let Some(bb) = w.uniform(below_lo, below_hi) {
+                if w.loaded(below_lo)
+                    && let Some(bb) = w.uniform(below_lo, below_hi)
+                {
                     if bb.never_collides() && !bb.climbable && bb.fluid.kind == FluidKind::Empty {
                         return Some(Self::default());
                     }
-                    let above_clear = w.uniform([lo[0], lo[1] + 1, lo[2]], [hi[0], lo[1] + 1, hi[2]])
-                        .is_some_and(|ab| ab.never_collides() && !ab.has_inside_effects());
+                    let above_lo = [lo[0], lo[1] + 1, lo[2]];
+                    let above_clear = w.loaded(above_lo)
+                        && w.uniform(above_lo, [hi[0], lo[1] + 1, hi[2]])
+                            .is_some_and(|ab| ab.never_collides() && !ab.has_inside_effects());
                     if above_clear && (!bb.never_collides() || bb.climbable) {
                         let solid_below = bb.shape.is_block();
                         let mut nodes = Vec::with_capacity(16);
@@ -73,6 +77,7 @@ impl SectionSummary {
             }
         }
 
+        let safe = ObservedWorld::new(w);
         let mut nodes = Vec::new();
         for tz in 0..4 {
             for tx in 0..4 {
@@ -85,18 +90,30 @@ impl SectionSummary {
                     for sz in 0..4 {
                         for sx in 0..4 {
                             let p = [bx + sx, y, bz + sz];
-                            if w.known_block(p).is_err() {
+                            if !safe.loaded(p) || safe.known_block(p).is_err() {
+                                safe.reset_missing();
                                 continue;
                             }
-                            if has_step_support(w, p) && body_fits(w, p) {
+                            let bp = below(p);
+                            if !safe.loaded(bp) {
+                                safe.reset_missing();
+                                continue;
+                            }
+                            let ap = [p[0], p[1] + 1, p[2]];
+                            if !safe.loaded(ap) {
+                                safe.reset_missing();
+                                continue;
+                            }
+                            if has_step_support(&safe, p) && body_fits(&safe, p) {
                                 let bit = 1u16 << (sz * 4 + sx);
                                 mask |= bit;
-                                let sb = w.block(below(p));
-                                let pb = w.block(p);
+                                let sb = safe.block(bp);
+                                let pb = safe.block(p);
                                 if sb.shape.is_block() && pb.never_collides() && pb.fluid.kind == FluidKind::Empty {
                                     solid |= bit;
                                 }
                             }
+                            safe.reset_missing();
                         }
                     }
                     while mask != 0 {
@@ -125,7 +142,9 @@ impl SectionSummary {
                                     continue;
                                 }
                                 let np = [bx + nx, y, bz + nz];
-                                if way_clear(w, cp, np) {
+                                let ok = way_clear(&safe, cp, np);
+                                safe.reset_missing();
+                                if ok {
                                     mask &= !nbit;
                                     comp.push(ni);
                                     min_x = min_x.min(np[0]);
@@ -176,6 +195,7 @@ pub(crate) struct FarKey {
 pub(crate) struct FarCache {
     sections: HashMap<([u8; 32], BlockPos), Arc<SectionSummary>>,
     fields: HashMap<FarKey, Arc<FarField>>,
+    builds: u64,
 }
 
 impl FarCache {
@@ -200,6 +220,25 @@ impl FarCache {
     }
     pub(crate) fn cached_section_count(&self) -> usize {
         self.sections.len()
+    }
+    pub(crate) fn export_sections(&self) -> Vec<(([u8; 32], BlockPos), Arc<SectionSummary>)> {
+        self.sections.iter().map(|(&k, v)| (k, Arc::clone(v))).collect()
+    }
+    pub(crate) fn export_fields(&self) -> Vec<(FarKey, Arc<FarField>)> {
+        self.fields.iter().map(|(k, v)| (k.clone(), Arc::clone(v))).collect()
+    }
+    pub(crate) fn import_sections(&mut self, entries: &[(([u8; 32], BlockPos), Arc<SectionSummary>)]) {
+        for (k, v) in entries {
+            self.sections.entry(*k).or_insert_with(|| Arc::clone(v));
+        }
+    }
+    pub(crate) fn import_fields(&mut self, entries: &[(FarKey, Arc<FarField>)]) {
+        for (k, v) in entries {
+            self.fields.entry(k.clone()).or_insert_with(|| Arc::clone(v));
+        }
+    }
+    pub(crate) fn far_field_builds(&self) -> u64 {
+        self.builds
     }
 }
 
@@ -236,6 +275,36 @@ impl FarField {
         kit: Option<&KitView>,
         kit_key: u64,
     ) -> Arc<Self> {
+        let fx = from.position.x.floor() as i32;
+        let fy = from.position.y.floor() as i32;
+        let fz = from.position.z.floor() as i32;
+        let gx = goal.cell[0];
+        let gy = goal.cell[1];
+        let gz = goal.cell[2];
+        Self::get_or_build_box(
+            store,
+            source,
+            label,
+            from,
+            goal,
+            kit,
+            kit_key,
+            [fx.min(gx), fy.min(gy), fz.min(gz)],
+            [fx.max(gx), fy.max(gy), fz.max(gz)],
+        )
+    }
+
+    pub(crate) fn get_or_build_box<S: CorridorSource>(
+        store: &GeneratorStore,
+        source: &S,
+        label: LabelId,
+        from: &PlayerState,
+        goal: Goal,
+        kit: Option<&KitView>,
+        kit_key: u64,
+        focus_min: BlockPos,
+        focus_max: BlockPos,
+    ) -> Arc<Self> {
         let provenance = source.provenance();
         let key = FarKey {
             provenance,
@@ -247,22 +316,19 @@ impl FarField {
             return existing.clone();
         }
 
-        let fx = from.position.x.floor() as i32;
-        let fy = from.position.y.floor() as i32;
-        let fz = from.position.z.floor() as i32;
         let gx = goal.cell[0];
         let gy = goal.cell[1];
         let gz = goal.cell[2];
 
         let (mut lo, mut hi) = source.bounds_box().unwrap_or((
-            [fx.min(gx) - 96, fy.min(gy) - 48, fz.min(gz) - 96],
-            [fx.max(gx) + 96, fy.max(gy) + 32, fz.max(gz) + 96],
+            [focus_min[0].min(gx) - 96, focus_min[1].min(gy) - 48, focus_min[2].min(gz) - 96],
+            [focus_max[0].max(gx) + 96, focus_max[1].max(gy) + 32, focus_max[2].max(gz) + 96],
         ));
         // Keep search focused along the corridor ±96 blocks perpendicularly to avoid scanning unused million-block slabs.
-        lo[0] = lo[0].max(fx.min(gx) - 96);
-        lo[2] = lo[2].max(fz.min(gz) - 96);
-        hi[0] = hi[0].min(fx.max(gx) + 96);
-        hi[2] = hi[2].min(fz.max(gz) + 96);
+        lo[0] = lo[0].max(focus_min[0].min(gx) - 96);
+        lo[2] = lo[2].max(focus_min[2].min(gz) - 96);
+        hi[0] = hi[0].min(focus_max[0].max(gx) + 96);
+        hi[2] = hi[2].min(focus_max[2].max(gz) + 96);
 
         let smin = lo.map(|v| v.div_euclid(16));
         let smax = hi.map(|v| v.div_euclid(16));
@@ -300,6 +366,7 @@ impl FarField {
         let legs = Legs::of(store, label, source, from).unwrap_or(Legs { h: 2.81, up: 6.19, down: 0.0, reach: 4 });
         let cushioned = kit.is_some_and(|kv| kv.makes(FieldEdit::Cushion, kv.spec.counts()));
         let depth = if cushioned { i32::MAX } else { (from.profile.safe_fall_distance + f64::from(from.health)).ceil() as i32 };
+        let safe = ObservedWorld::new(source);
 
         let n = nodes.len();
         let mut dist = vec![f32::INFINITY; n];
@@ -369,12 +436,22 @@ impl FarField {
                         let uc = [ux, un.rep[1], uz];
                         let vc = [vx, vn.rep[1], vz];
                         let (edge_toll, add_edit) = if dx <= 1 && dz <= 1 {
-                            if way_clear(source, uc, vc) {
+                            safe.reset_missing();
+                            let clear = way_clear(&safe, uc, vc) && safe.check().is_ok();
+                            if clear {
                                 (0.0f32, 0u16)
                             } else if let Some(kv) = kit {
-                                let Some((et, _)) = kv.edge(source, &blockers(source, uc, vc), FieldEdit::Clear) else {
+                                safe.reset_missing();
+                                let bl = blockers(&safe, uc, vc);
+                                if safe.check().is_err() {
+                                    continue;
+                                }
+                                let Some((et, _)) = kv.edge(&safe, &bl, FieldEdit::Clear) else {
                                     continue;
                                 };
+                                if safe.check().is_err() {
+                                    continue;
+                                }
                                 (et, 1u16)
                             } else {
                                 continue;
@@ -382,9 +459,11 @@ impl FarField {
                         } else {
                             // Parkour jump across air gap: verify apex corridor clearance.
                             let mid = [(uc[0] + vc[0]) / 2, uc[1].max(vc[1]) + 1, (uc[2] + vc[2]) / 2];
-                            if !way_clear(source, [uc[0], mid[1], uc[2]], mid)
-                                || !way_clear(source, mid, [vc[0], mid[1], vc[2]])
-                            {
+                            safe.reset_missing();
+                            let ok1 = way_clear(&safe, [uc[0], mid[1], uc[2]], mid) && safe.check().is_ok();
+                            safe.reset_missing();
+                            let ok2 = way_clear(&safe, mid, [vc[0], mid[1], vc[2]]) && safe.check().is_ok();
+                            if !ok1 || !ok2 {
                                 continue;
                             }
                             (1.5f32, 0u16)
@@ -404,7 +483,9 @@ impl FarField {
         }
 
         let built = Arc::new(Self { nodes, cols, dist, next });
-        store.far.borrow_mut().fields.insert(key, built.clone());
+        let mut cache = store.far.borrow_mut();
+        cache.builds += 1;
+        cache.fields.insert(key, built.clone());
         built
     }
 
