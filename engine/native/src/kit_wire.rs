@@ -176,6 +176,7 @@ pub fn read(body: &[u64]) -> Carried {
         }
         restorable[..rcount].sort();
         spec.restore_blocks = Some(restorable);
+        spec.free_hotbar_slots = hotbar.iter().filter(|s| s.is_none()).count() as u8;
         if let Some((sid, n)) = hotbar.iter().flatten().filter_map(|i| Some((placeable(&i.id)?, i.count))).max_by_key(|p| p.1) {
             spec.place_block = sid;
             spec.blocks = n.min(u32::from(u16::MAX)) as u16;
@@ -223,18 +224,38 @@ impl Carried {
             .filter(|(_, t)| t.0 == kind).max_by_key(|(_, t)| t.1);
         best.map_or_else(|| self.hand(), |b| b.0)
     }
+    /// Simulated 26.2 `Inventory.add` onto the tracked 9-slot hotbar for picked-up self-drops.
+    fn add_drop(&mut self, id: String) {
+        if let Some(existing) = self.hotbar.iter_mut().flatten().find(|i| i.id == id && i.count < 64) {
+            existing.count += 1;
+            return;
+        }
+        if let Some(free) = self.hotbar.iter_mut().find(|s| s.is_none()) {
+            *free = Some(Item { id, count: 1, enchantments: Vec::new() });
+        }
+    }
 
     /// One action record: `[tick, slot, opcode, x, y, z, face, yaw, pitch, hold]`, `(x, y, z)` the
     /// edited cell. Place and bucket-empty click the neighbour `cell - normal(face)`; the others
     /// click the cell itself. `emptied` is the slot the last bucket was emptied from.
-    pub fn action(&self, world: &impl World, s: &PlayerState, op: KitOp, tick: u64, ticks: u32, emptied: &mut Option<u8>) -> Result<[u64; ACTION_WORDS], String> {
+    pub fn action(&mut self, world: &impl World, s: &PlayerState, op: KitOp, tick: u64, ticks: u32, emptied: &mut Option<u8>) -> Result<[u64; ACTION_WORDS], String> {
         let eye = law::interact::get_eye_position(s.position, s.pose.eye_height());
         let pos = op.pos();
         let before = world.state_id(pos).ok_or("edited cell has no state")?;
         let name = |sid: StateId| format!("minecraft:{}", sid.block().name());
+        let tool_key = match self.kit {
+            Kit::Carried(spec) => spec.tool,
+            Kit::BareLegs => ToolProfileKey::default(),
+        };
         let (slot, opcode, face) = match op {
             KitOp::Interact { .. } => (self.hand(), OP_INTERACT, facing(eye, pos)),
-            KitOp::Break { .. } => (self.tool(before), OP_BREAK_HOLD, facing(eye, pos)),
+            KitOp::Break { .. } => {
+                let slot = self.tool(before);
+                if kit::drops_self_with_tool(before, tool_key) {
+                    self.add_drop(name(before));
+                }
+                (slot, OP_BREAK_HOLD, facing(eye, pos))
+            }
             KitOp::BucketPickup { .. } => {
                 let slot = emptied.take().or_else(|| self.slot_of(|i| i.id == "minecraft:bucket")).ok_or("no empty bucket in the hotbar")?;
                 (slot, OP_BUCKET_PICKUP, 1)
@@ -247,8 +268,13 @@ impl Carried {
             }
             KitOp::Place { after, .. } => {
                 let id = name(after);
-                // Item drops are not modelled: a restore places from what the hotbar holds.
-                let slot = self.slot_of(|i| i.id == id).ok_or_else(|| format!("placing {id} needs it in the hotbar (item drops are not modelled)"))?;
+                let slot = self.slot_of(|i| i.id == id).ok_or_else(|| format!("placing {id} needs it in the hotbar or picked up from an earlier break"))?;
+                if let Some(Some(it)) = self.hotbar.get_mut(slot as usize) {
+                    it.count = it.count.saturating_sub(1);
+                    if it.count == 0 {
+                        self.hotbar[slot as usize] = None;
+                    }
+                }
                 let support = kit::place_faces(world, pos).min_by(|&a, &b| {
                     let key = |f: usize| {
                         let n = NORMALS[f];

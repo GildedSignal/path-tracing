@@ -96,6 +96,7 @@ pub struct KitSpec {
     pub dimension_flags: u8,
     pub restore_required: bool,
     pub restore_blocks: Option<[Option<BlockId>; 9]>,
+    pub free_hotbar_slots: u8,
 }
 
 impl KitSpec {
@@ -115,11 +116,25 @@ impl KitSpec {
             dimension_flags: 0,
             restore_required: true,
             restore_blocks: None,
+            free_hotbar_slots: 0,
         }
     }
 
+    pub fn holds_restore_block(&self, block: BlockId) -> bool {
+        self.restore_blocks.is_none_or(|held| held.contains(&Some(block)))
+    }
+
     pub fn can_restore_break(&self, block: BlockId, mode: RestoreMode) -> bool {
-        !self.restore_required || (mode != RestoreMode::Irreversible && self.restore_blocks.is_none_or(|held| held.contains(&Some(block))))
+        if !self.restore_required {
+            return true;
+        }
+        if mode == RestoreMode::Irreversible {
+            return false;
+        }
+        match self.restore_blocks {
+            None => true,
+            Some(held) => held.contains(&Some(block)) || (mode == RestoreMode::IdenticalDrop && self.free_hotbar_slots > 0),
+        }
     }
 
     pub fn interact_only() -> Self {
@@ -160,6 +175,7 @@ impl KitSpec {
         self.dimension_flags.hash(&mut h);
         self.restore_required.hash(&mut h);
         self.restore_blocks.hash(&mut h);
+        (self.free_hotbar_slots > 0).hash(&mut h);
         h.finish()
     }
 }
@@ -649,7 +665,15 @@ fn tier_speed(tier: u8) -> f32 {
 
 fn break_row_for_static(spec: BlockBreakStatic, tool: ToolProfileKey) -> BreakRow {
     let hardness = f32::from_bits(spec.hardness_bits);
-    let restore_mode = if spec.silk_only && !tool.silk_touch {
+    let (tool_tier, matched_tool) = match spec.pref {
+        PrefTool::None => (0, true),
+        PrefTool::Pickaxe(req) => (tool.pickaxe_tier, tool.pickaxe_tier > 0 && tool.pickaxe_tier >= req),
+        PrefTool::Axe => (tool.axe_tier, tool.axe_tier > 0),
+        PrefTool::Shovel => (tool.shovel_tier, tool.shovel_tier > 0),
+        PrefTool::ShearsOrSword => (if tool.silk_touch { 4 } else { 0 }, true),
+    };
+    let correct = !spec.requires_correct || matched_tool;
+    let restore_mode = if hardness < 0.0 || !correct || (spec.silk_only && !tool.silk_touch) {
         RestoreMode::Irreversible
     } else {
         spec.base_restore
@@ -660,13 +684,6 @@ fn break_row_for_static(spec: BlockBreakStatic, tool: ToolProfileKey) -> BreakRo
     if hardness == 0.0 {
         return BreakRow { break_ticks_ground: 1, break_ticks_air: 1, restore_mode };
     }
-    let (tool_tier, matched_tool) = match spec.pref {
-        PrefTool::None => (0, true),
-        PrefTool::Pickaxe(req) => (tool.pickaxe_tier, tool.pickaxe_tier > 0 && tool.pickaxe_tier >= req),
-        PrefTool::Axe => (tool.axe_tier, tool.axe_tier > 0),
-        PrefTool::Shovel => (tool.shovel_tier, tool.shovel_tier > 0),
-        PrefTool::ShearsOrSword => (if tool.silk_touch { 4 } else { 0 }, true),
-    };
     let tool_base = if (matched_tool && tool_tier > 0) || (matches!(spec.pref, PrefTool::Pickaxe(_)) && tool.pickaxe_tier > 0) {
         tier_speed(tool_tier)
     } else {
@@ -674,7 +691,6 @@ fn break_row_for_static(spec: BlockBreakStatic, tool: ToolProfileKey) -> BreakRo
     };
     let eff = if tool.efficiency > 0 { f64::from(tool.efficiency * tool.efficiency) + 1.0 } else { 0.0 };
     let haste_amp = if tool.haste > 0 { Some(i32::from(tool.haste - 1)) } else { None };
-    let correct = !spec.requires_correct || matched_tool;
     let calc = |on_ground: bool| -> u16 {
         let mods = MiningModifiers {
             tool_base_speed: tool_base,
@@ -1016,12 +1032,19 @@ pub fn tool_for(sid: StateId) -> ToolKind {
     }
 }
 
+pub fn drops_self_with_tool(sid: StateId, tool: ToolProfileKey) -> bool {
+    break_projection(tool).get(sid.block(), sid).restore_mode == RestoreMode::IdenticalDrop
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Obligation {
     pub pos: BlockPos,
     pub original_state: StateId,
     pub opened_tick: u64,
     pub undo_ticks_lb: u16,
+    pub drop_ready_tick: Option<u64>,
+    pub drop_collected: bool,
+    pub clear_ticks_paid: u16,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1030,7 +1053,7 @@ pub struct ObligationLedger {
 }
 
 impl ObligationLedger {
-    pub fn record_edit(&mut self, pos: BlockPos, before: StateId, after: StateId, tick: u64, undo_ticks_lb: u16) {
+    pub fn record_edit(&mut self, pos: BlockPos, before: StateId, after: StateId, tick: u64, undo_ticks_lb: u16, drop_ready_tick: Option<u64>, clear_ticks_paid: u16) {
         if let Some(i) = self.open.iter().position(|o| o.pos == pos) {
             if self.open[i].original_state == after {
                 self.open.remove(i);
@@ -1038,11 +1061,54 @@ impl ObligationLedger {
             return;
         }
         if before != after {
-            self.open.push(Obligation { pos, original_state: before, opened_tick: tick, undo_ticks_lb });
+            self.open.push(Obligation {
+                pos,
+                original_state: before,
+                opened_tick: tick,
+                undo_ticks_lb,
+                drop_ready_tick,
+                drop_collected: drop_ready_tick.is_none(),
+                clear_ticks_paid,
+            });
         }
     }
 
-    pub fn open_debt_lb(&self, from: &PlayerState, to: Goal, cone: &KitCone) -> u32 {
+    /// 26.2 `Player.aiStep` + `ItemEntity.playerTouch`: collect any broken block's drop once
+    /// `pickupDelay == 0` (`tick >= ready`) and the player's pickup box intersects the item box.
+    pub fn observe_pickup(&mut self, s: &PlayerState, tick: u64) -> bool {
+        let mut changed = false;
+        let pbox = s.bounding_box();
+        for o in &mut self.open {
+            if !o.drop_collected
+                && o.drop_ready_tick.is_some_and(|r| tick >= r)
+                && law::items::can_pickup(pbox, None, law::items::block_drop_center(o.pos), 0)
+            {
+                o.drop_collected = true;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub fn pending_drops(&self) -> u16 {
+        self.open.iter().filter(|o| !o.drop_collected).count() as u16
+    }
+
+    /// Remaining ticks until the earliest uncollected drop inside pickup reach turns pickable.
+    pub fn wait_ticks_here(&self, s: &PlayerState, tick: u64) -> Option<u32> {
+        let pbox = s.bounding_box();
+        self.open
+            .iter()
+            .filter(|o| !o.drop_collected)
+            .filter_map(|o| {
+                let ready = o.drop_ready_tick?;
+                (ready > tick && law::items::can_pickup(pbox, None, law::items::block_drop_center(o.pos), 0))
+                    .then(|| (ready - tick) as u32)
+            })
+            .min()
+    }
+
+    pub fn open_debt_lb(&self, from: &PlayerState, to: Goal, arrival: u64, cone: &KitCone) -> u32 {
         let mut best = 0u32;
         let mut undo_sum = 0u32;
         let eye = Vec3::new(from.position.x, from.position.y + f64::from(from.pose.eye_height()), from.position.z);
@@ -1054,10 +1120,11 @@ impl ObligationLedger {
             };
             let u = u32::from(o.undo_ticks_lb);
             undo_sum = undo_sum.saturating_add(u);
+            let wait = if !o.drop_collected { o.drop_ready_tick.map_or(0, |r| r.saturating_sub(arrival) as u32) } else { 0 };
             let to_ob = (reach_dist(o.pos) / cone.c_horiz).floor() as u32;
             let from_ob_goal = (to.gap(&from_pos_state(o.pos, from)) - 5.0).max(0.0);
             let back = (from_ob_goal / cone.c_horiz).floor() as u32;
-            best = best.max(to_ob.saturating_add(u).saturating_add(back));
+            best = best.max(to_ob.saturating_add(u).saturating_add(back)).max(wait.saturating_add(u));
         }
         best.max(undo_sum)
     }
@@ -1376,7 +1443,7 @@ impl KitView {
                 (!standing_on && !body.intersects(cbox) && past && bt < u16::MAX && state_static(cur).interact_kind() == InteractKind::None)
                     .then_some((KitOp::Break { pos: ob.pos, after: ob.original_state, break_ticks: bt.max(1) }, u32::from(bt.max(1))))
             } else {
-                (!body.intersects(cbox) && past && can_place_at(world, s, ob.pos, ob.original_state))
+                (ob.drop_collected && !body.intersects(cbox) && past && can_place_at(world, s, ob.pos, ob.original_state))
                     .then_some((KitOp::Place { pos: ob.pos, after: ob.original_state }, 1))
             };
             if let Some((op, ticks)) = op {
@@ -1457,6 +1524,9 @@ impl KitView {
                 (KitOp::Break { pos, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)))
             }
             KitVerb::Place => {
+                if ob.is_some_and(|o| !o.drop_collected) {
+                    return None;
+                }
                 let after = ob.map_or(self.spec.place_block, |o| o.original_state);
                 if solid || ob.is_none() && (!self.has(VerbKind::Place) || counts.blocks == 0) || !can_place_at(world, s, pos, after) {
                     return None;
@@ -1492,12 +1562,14 @@ impl KitView {
         before: StateId,
         op: KitOp,
         tick: u64,
+        step_ticks: u32,
         edits: &mut Vec<(BlockPos, StateId)>,
         ledger: &mut ObligationLedger,
         counts: &mut KitCounts,
     ) {
         let pos = op.pos();
         let restore = ledger.open.iter().any(|o| o.pos == pos);
+        let mut drop_ready_tick = None;
         let (after, undo) = match op {
             KitOp::Interact { after, partner, .. } => {
                 if let Some((pp, pa)) = partner {
@@ -1506,7 +1578,14 @@ impl KitView {
                 (after, 1)
             }
             KitOp::Break { after, .. } => {
-                if restore { counts.blocks = counts.blocks.saturating_add(1); }
+                if restore {
+                    counts.blocks = counts.blocks.saturating_add(1);
+                } else if self.spec.restore_required && !self.spec.holds_restore_block(before.block()) {
+                    drop_ready_tick = Some(
+                        tick.saturating_add(u64::from(step_ticks))
+                            .saturating_add(law::items::DEFAULT_PICKUP_DELAY as u64),
+                    );
+                }
                 (after, 1)
             }
             KitOp::Place { after, .. } => {
@@ -1526,7 +1605,12 @@ impl KitView {
         };
         update_edits(edits, base, pos, after);
         if self.spec.restore_required || matches!(op, KitOp::BucketEmpty { .. } | KitOp::BucketPickup { .. }) {
-            ledger.record_edit(pos, before, after, tick, undo);
+            let clear_ticks_paid = if !restore && matches!(op, KitOp::Break { .. }) {
+                step_ticks.min(u32::from(u16::MAX)) as u16
+            } else {
+                0
+            };
+            ledger.record_edit(pos, before, after, tick, undo, drop_ready_tick, clear_ticks_paid);
         }
     }
 
