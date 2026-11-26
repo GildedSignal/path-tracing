@@ -144,7 +144,16 @@ fn label_roles(codec:&mut Interner,world:&impl World,feet:BlockPos,support:Block
         classes[i]=Some(codec.legs(world.block(p),loaded,role).map_err(Refusal::Law)?);
     }
     let classes=classes.map(Option::unwrap);
-    codec.bare_legs_label(classes).ok_or(Refusal::Schema)
+    let eyes=eyes_class(codec,world,feet)?;
+    codec.bare_legs_label(classes,eyes).ok_or(Refusal::Schema)
+}
+/// The eyes' class where the law reads it to choose a mode (a fluid or a stuck cell at the eyes).
+pub fn eyes_class(codec:&mut Interner,world:&impl World,feet:BlockPos)->Result<Option<law::codec::ClassId>,Refusal> {
+    let eyes=[feet[0],feet[1]+1,feet[2]];
+    if !world.loaded(eyes) {return Err(Refusal::Loaded);}
+    let b=world.block(eyes);
+    if !b.has_inside_effects() {return Ok(None);}
+    codec.legs(b,true,LegsRole::Inside).map(Some).map_err(Refusal::Law)
 }
 
 // A section stores palette indices for cells that differ from the generator.
@@ -512,7 +521,8 @@ impl CorridorSource for GeneratorSuperflatSource {
         // Read the immutable generator, separately from its sparse edit journal.
         struct Base<'a>(&'a GeneratorSuperflatSource);
         impl World for Base<'_> {fn block(&self,p:BlockPos)->&Block {self.0.base(p)}}
-        match label_roles(codec,&Base(self),[support[0],self.floor_y+1,support[2]],support) {Ok(id) if id==expected=>(),Ok(_)=>return CorridorResult::Exception {first_pos:support,exceptions:1},Err(r)=>return CorridorResult::Unknown(r)}
+        // A zone in another mode's class (water far from A): every column answers like the first.
+        match label_roles(codec,&Base(self),[support[0],self.floor_y+1,support[2]],support) {Ok(id) if id==expected=>(),Ok(_)=>return self.uniform_corridor(codec,expected,min,max),Err(r)=>return CorridorResult::Unknown(r)}
         // An unknown shape may extend beyond its own cell into the corridor.
         let halo_min=min.map(|v|v.saturating_sub(1)); let halo_max=max.map(|v|v.saturating_add(1));
         if !self.reaches(halo_min) || !self.reaches(halo_max) {return CorridorResult::Unknown(Refusal::Coverage);}
@@ -567,6 +577,43 @@ impl CorridorSource for GeneratorSuperflatSource {
         if let Some(r)=refusal {return CorridorResult::Unknown(r);}
         if let Some(first_pos)=unknown.or(first) {CorridorResult::Exception {first_pos,exceptions}}
         else {CorridorResult::Clear(CorridorProof {label:expected,min,max,version:self.provenance_hash})}
+    }
+}
+impl GeneratorSuperflatSource {
+    /// The worldtube read cell by cell: each column's label (support at `min[1]`, feet, wet eyes)
+    /// is the expected one, the cells above its eyes answer like the first column's, and nothing
+    /// in the halo reaches into the box.
+    fn uniform_corridor(&self,codec:&mut Interner,expected:LabelId,min:BlockPos,max:BlockPos)->CorridorResult {
+        let halo_min=min.map(|v|v.saturating_sub(1)); let halo_max=max.map(|v|v.saturating_add(1));
+        if !self.reaches(halo_min) || !self.reaches(halo_max) {return CorridorResult::Unknown(Refusal::Coverage);}
+        let sy=min[1];
+        let above=|codec:&mut Interner,x:i32,z:i32|->Result<Vec<law::codec::ClassId>,Refusal> {
+            (sy+3..=max[1]).map(|y| {
+                let b=self.known_block([x,y,z]).map_err(|_|Refusal::Coverage)?;
+                codec.legs(b,true,LegsRole::Inside).map_err(Refusal::Law)
+            }).collect()
+        };
+        let reference=match above(codec,min[0],min[2]) {Ok(r)=>r,Err(r)=>return CorridorResult::Unknown(r)};
+        let (mut first,mut exceptions)=(None,0usize);
+        for z in min[2]..=max[2] {for x in min[0]..=max[0] {
+            let same=match label_roles(codec,self,[x,sy+1,z],[x,sy,z]) {Ok(id)=>id==expected,Err(r)=>return CorridorResult::Unknown(r)};
+            let same=same && match above(codec,x,z) {Ok(a)=>a==reference,Err(r)=>return CorridorResult::Unknown(r)};
+            if !same {exceptions+=1;first.get_or_insert([x,sy,z]);}
+        }}
+        // The halo: a shape outside the box that reaches into it.
+        for z in halo_min[2]..=halo_max[2] {for y in halo_min[1]..=halo_max[1] {for x in halo_min[0]..=halo_max[0] {
+            let p=[x,y,z];
+            if (0..3).all(|i|min[i]<=p[i] && p[i]<=max[i]) {continue;}
+            let Ok(b)=self.known_block(p) else {exceptions+=1;first.get_or_insert(p);continue};
+            let lo=std::array::from_fn::<_,3,_>(|i|f64::from(min[i])-f64::from(p[i]));
+            let hi=std::array::from_fn::<_,3,_>(|i|f64::from(max[i])+1.0-f64::from(p[i]));
+            let bounds=law::Aabb::new(lo[0],lo[1],lo[2],hi[0],hi[1],hi[2]);
+            if b.collision_shapes().any(|s|s.intersects(bounds)) {exceptions+=1;first.get_or_insert(p);}
+        }}}
+        match first {
+            Some(first_pos)=>CorridorResult::Exception {first_pos,exceptions},
+            None=>CorridorResult::Clear(CorridorProof {label:expected,min,max,version:self.provenance_hash}),
+        }
     }
 }
 

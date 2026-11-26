@@ -603,7 +603,8 @@ impl plan::source::CorridorSource for ResidentCorridor<'_> {
             if !loaded { return Err(law::codec::proof::Refusal::Loaded); }
             classes[i] = Some(codec.legs(self.block(p), loaded, role).map_err(law::codec::proof::Refusal::Law)?);
         }
-        codec.bare_legs_label(classes.map(Option::unwrap)).ok_or(law::codec::proof::Refusal::Schema)
+        let eyes = plan::source::eyes_class(codec, self, feet)?;
+        codec.bare_legs_label(classes.map(Option::unwrap), eyes).ok_or(law::codec::proof::Refusal::Schema)
     }
     fn corridor_query(&self, codec: &mut law::codec::Interner, expected: law::codec::LabelId, min: BlockPos, max: BlockPos) -> plan::source::CorridorResult {
         use law::codec::{self, LegsRole, proof::Refusal};
@@ -623,7 +624,7 @@ impl plan::source::CorridorSource for ResidentCorridor<'_> {
                     Err(e) => return CorridorResult::Unknown(Refusal::Law(e)),
                 }
             }
-            match codec.bare_legs_label(classes.map(Option::unwrap)) {
+            match codec.bare_legs_label(classes.map(Option::unwrap), None) {
                 Some(id) if id == expected => (),
                 Some(_) => return CorridorResult::Exception { first_pos: check_pos, exceptions: 1 },
                 None => return CorridorResult::Unknown(Refusal::Schema),

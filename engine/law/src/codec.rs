@@ -188,7 +188,7 @@ pub struct Interner {
     buckets: HashMap<u128, Vec<ClassId>>,
     labels: Vec<Box<[u8]>>,
     label_buckets: HashMap<u128, Vec<LabelId>>,
-    bare_labels: HashMap<[ClassId;4],LabelId>,
+    bare_labels: HashMap<([ClassId;4],Option<ClassId>),LabelId>,
     states: HashMap<Vec<u8>,StateClassId>,
     legs_cache:Vec<(Block,bool,LegsRole,ClassId)>,label_scratch:Vec<u8>,
 }
@@ -231,10 +231,13 @@ impl Interner {
         self.intern(&unknown_verb_bytes(verb, registry_hash, fine_state, kit)).map(Projection::Unknown)
     }
     pub fn identity(&self)->&std::sync::Arc<()> {&self.owner}
-    pub fn bare_legs_label(&mut self,classes:[ClassId;4])->Option<LabelId> {
-        if let Some(&id)=self.bare_labels.get(&classes) {return Some(id);}
-        let id=self.label(Label {law_schema:SCHEMA,body_kit:b"bare",support:&classes[..2],medium:&classes[2..]})?;
-        self.bare_labels.insert(classes,id);
+    /// The zone label: support and feet, and the eyes where they are wet (the law reads them to
+    /// swim); a dry cell's label is unchanged.
+    pub fn bare_legs_label(&mut self,classes:[ClassId;4],eyes:Option<ClassId>)->Option<LabelId> {
+        if let Some(&id)=self.bare_labels.get(&(classes,eyes)) {return Some(id);}
+        let medium=[classes[2],classes[3],eyes.unwrap_or(classes[3])];
+        let id=self.label(Label {law_schema:SCHEMA,body_kit:b"bare",support:&classes[..2],medium:if eyes.is_some() {&medium[..]} else {&medium[..2]}})?;
+        self.bare_labels.insert((classes,eyes),id);
         Some(id)
     }
     pub fn label(&mut self, label: Label<'_>) -> Option<LabelId> {

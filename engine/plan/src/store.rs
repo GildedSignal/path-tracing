@@ -9,17 +9,27 @@ pub const SPRINT: u16 = tiny_program_id(0, true, Never, Never);
 pub const WALK: u16 = tiny_program_id(0, false, Never, Never);
 pub fn sprint_allowed(s: &PlayerState) -> bool { codec::resource_guards(s.food_level, s.health)[3] != 0 }
 
+/// A mode's box: the support at `y`, the body's feet and eyes cells above it where they are wet or
+/// stuck (the eyes' block repeated upward), air where they are dry, as walking reads them.
 struct Sample<'a> {
-    floor: &'a Block, air: Block, y: i32, terms: Cell<(f64, f32)>, factor: Cell<f64>, ticks: Cell<u64>,
+    floor: &'a Block, feet: Option<&'a Block>, eyes: Option<&'a Block>, air: Block, y: i32,
+    terms: Cell<(f64, f32)>, factor: Cell<f64>, ticks: Cell<u64>,
 }
 impl World for Sample<'_> {
-    fn block(&self, p: BlockPos) -> &Block { if p[1] == self.y { self.floor } else { &self.air } }
+    fn block(&self, p: BlockPos) -> &Block {
+        match p[1] - self.y {
+            0 => self.floor,
+            1 => self.feet.unwrap_or(&self.air),
+            d if d > 1 => self.eyes.unwrap_or(&self.air),
+            _ => if self.floor.never_collides() { self.floor } else { &self.air },
+        }
+    }
     fn difficulty(&self) -> u8 { 0 }
     fn observe_tick(&self) { self.ticks.set(self.ticks.get() + 1); }
     fn observe_air_travel(&self, forward: f64, drag: f32) { self.terms.set((forward, drag)); }
     fn observe_speed_factor(&self, factor: f64) { self.factor.set(factor); }
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Phase {
     pub after: Arc<PlayerState>, pub forward: f64, pub impulse: f64, pub factor: f64, pub drag: f64,
     pub contact: bool, pub dy: f64, pub wanted_y: f64,
@@ -41,18 +51,29 @@ impl Phase {
         })
     }
 }
+/// A mode's gait: the law ticked under one program in the mode's box until the body's motion
+/// repeats. Walking's repeat is a landing on its floor; a mode without a floor (swimming) repeats
+/// when its vertical state does, and its rows hold at any depth (`floor` false).
 #[derive(Debug)]
-pub(crate) struct Gait { pub phases: Vec<Phase>, pub grounded: Phase, pub top: f64, pub program: u16 }
+pub(crate) struct Gait { pub phases: Vec<Phase>, pub grounded: Phase, pub top: f64, pub program: u16, pub floor: bool }
+/// The top of the support a body stands on, or a fluid support's cell top, where it floats.
+pub(crate) fn support_top(support: &Block, y: i32) -> f64 {
+    f64::from(y) + if support.never_collides() { 1.0 } else { support.shape.coords[1].last().copied().unwrap_or(1.0) }
+}
 impl Gait {
     fn learn(source: &impl CorridorSource, from: &PlayerState, program: u16, ticks: &Cell<u64>) -> Result<Self, String> {
         let p = source.support_cell(from);
-        let floor = source.block(p);
-        let w = Sample { floor, air: Block::default(), y: p[1], terms: Cell::default(), factor: Cell::new(1.0), ticks: Cell::default() };
-        let height = floor.shape.coords[1].last().copied().ok_or("no supporting surface")?;
-        let top = f64::from(p[1]) + height;
+        let support = source.block(p);
+        let wet = |b: &'_ Block| b.has_inside_effects();
+        let (feet, eyes) = (source.block([p[0], p[1] + 1, p[2]]), source.block([p[0], p[1] + 2, p[2]]));
+        let w = Sample { floor: support, feet: wet(feet).then_some(feet), eyes: wet(eyes).then_some(eyes), air: Block::default(), y: p[1],
+            terms: Cell::default(), factor: Cell::new(1.0), ticks: Cell::default() };
+        let floor = !support.never_collides();
+        if floor && support.shape.coords[1].last().is_none() { return Err("no supporting surface".into()); }
+        let top = support_top(support, p[1]);
         let mut s = from.clone();
         s.position = Vec3::new(0.5, top, 0.5);
-        s.velocity = Vec3::default(); s.main_supporting_block = Some([0, p[1], 0]); s.on_ground = true;
+        s.velocity = Vec3::default(); s.main_supporting_block = floor.then_some([0, p[1], 0]); s.on_ground = floor;
         s.no_jump_delay = 0;
         s.in_water = false; s.in_lava = false; s.water_height = 0.0; s.lava_height = 0.0;
         s.eye_in_water = false; s.was_eye_in_water = false; s.underwater = false; s.swimming = false;
@@ -61,22 +82,45 @@ impl Gait {
         law::try_tick(&mut s, &w, &Input::default()).map_err(|e| e.0)?;
         law::try_tick(&mut s, &w, &Input::default()).map_err(|e| e.0)?;
         let grounded = Phase::sample(&w, &mut s, keys)?;
+        let input = Input { jump: program == SPRINT_JUMP, ..keys };
         let mut phases = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        loop {
-            let phase = Phase::sample(&w, &mut s, Input { jump: program == SPRINT_JUMP, ..keys })?;
-            phases.push(phase);
-            if s.on_ground && s.no_jump_delay <= 1 { break; }
-            if !seen.insert((s.position.y.to_bits(), s.velocity.y.to_bits(), s.no_jump_delay, s.on_ground)) {
-                return Err("word does not return to its support".into());
+        // Walking's repeat is a landing; a body that leaves the floor and never lands (a swimmer
+        // above the seabed) is in a mode without one.
+        let mut floor = floor;
+        if floor {
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let phase = Phase::sample(&w, &mut s, input)?;
+                phases.push(phase);
+                if s.on_ground && s.no_jump_delay <= 1 { break; }
+                if phases.len() >= 4096 || !seen.insert((s.position.y.to_bits(), s.velocity.y.to_bits(), s.no_jump_delay, s.on_ground)) {
+                    floor = false;
+                    phases.clear();
+                    break;
+                }
             }
         }
+        if !floor {
+            // The vertical state the mode carries; its first repeat closes the cycle, and the ticks
+            // before it are the entry's transient, left out of the gait.
+            let sig = |s: &PlayerState| (s.velocity.y.to_bits(), s.no_jump_delay, s.on_ground, s.pose as u8, s.swimming, s.in_water, s.eye_in_water, s.sprinting);
+            let mut seen = std::collections::HashMap::new();
+            seen.insert(sig(&s), 0usize);
+            // A contraction reaches its fixed point bit for bit within the float's 53 bits of memory.
+            for _ in 0..4096 {
+                phases.push(Phase::sample(&w, &mut s, input)?);
+                if let Some(&j) = seen.get(&sig(&s)) { phases.drain(..j); break; }
+                seen.insert(sig(&s), phases.len());
+            }
+            if phases.len() >= 4096 { return Err("mode does not repeat within memory".into()); }
+        }
         ticks.set(ticks.get() + w.ticks.get());
-        Ok(Self { phases, grounded, top, program })
+        let grounded = if floor { grounded } else { phases.last().cloned().ok_or("mode has no cycle")? };
+        Ok(Self { phases, grounded, top, program, floor })
     }
     pub fn entry(&self, s: &PlayerState, top: f64) -> Option<usize> {
-        if s.on_ground && s.no_jump_delay <= 1 { return Some(0); }
-        self.phases.iter().position(|p| p.after.position.y - self.top == s.position.y - top &&
+        if self.floor && s.on_ground && s.no_jump_delay <= 1 { return Some(0); }
+        self.phases.iter().position(|p| (!self.floor || p.after.position.y - self.top == s.position.y - top) &&
             p.after.velocity.y == s.velocity.y && p.after.on_ground == s.on_ground && p.after.no_jump_delay == s.no_jump_delay)
             .map(|i| (i + 1) % self.phases.len())
     }

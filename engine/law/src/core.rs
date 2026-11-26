@@ -329,12 +329,15 @@ fn travel_fluid(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Resu
         s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.input.yaw));
         let collision = move_body(s, world, s.velocity)?;
         if s.horizontal_collision && climbable(s, world) { s.velocity.y = 0.2; }
+        // The same affine row as air travel: what the mode adds, then its drag.
+        world.observe_air_travel(movement.z * acceleration as f64, drag);
         s.velocity = s.velocity.multiply(Vec3::new(drag as f64, 0.8f32 as f64, drag as f64));
         fall_adjust(s);
         collision
     } else {
         s.velocity = s.velocity.plus(input_vector(movement, 0.02, s.input.yaw));
         let collision = move_body(s, world, s.velocity)?;
+        world.observe_air_travel(movement.z * 0.02, 0.5);
         if s.lava_height <= 0.4 { s.velocity = s.velocity.multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5)); fall_adjust(s); }
         else { s.velocity = s.velocity.scale(0.5); }
         if g != 0.0 { s.velocity.y += -g / 4.0; }

@@ -212,7 +212,8 @@ impl Crossing<'_> {
                 if projection <= edge && !held && before.phase == 0 {
                     m = before;
                     self.emit(start, m, gait.phases.last().unwrap(), program, yaw, 1)?;
-                    let ground_body = body(Vec3::new(m.p.x, self.top, m.p.z));
+                    // Walking lands on its floor; a mode without one holds its depth.
+                    let ground_body = body(Vec3::new(m.p.x, if gait.floor { self.top } else { m.p.y }, m.p.z));
                     let (above, below) = self.goal.axis_sides(ground_body, ground_body, 1);
                     if !(above && below) { return Err("goal lies outside the landing's vertical interval".into()); }
                     held = true;
@@ -279,6 +280,25 @@ impl Crossing<'_> {
     }
 }
 
+/// The fastest level gait of the mode the body is in, among the programs it may run: walking's is
+/// the sprint-jump, swimming's the sprint stroke. Level: its cycle lands on its floor or returns to
+/// its height (a stroke that climbs or sinks is a vertical move, not a zone). Learned once per label.
+fn mode_gait<S: CorridorSource>(store: &GeneratorStore, label: LabelId, source: &S, from: &PlayerState) -> Result<Arc<Gait>, String> {
+    let programs: &[u16] = if sprint_allowed(from) { &[SPRINT_JUMP, SPRINT, WALK] } else { &[WALK] };
+    let speed = |g: &Gait| crate::defect::cycle_advance(&g.phases) / g.phases.len() as f64;
+    let level = |g: &Gait| g.floor || g.phases.iter().map(|p| p.dy).sum::<f64>() == 0.0;
+    let mut last = String::from("no level gait in this mode");
+    let mut best: Option<Arc<Gait>> = None;
+    for &p in programs {
+        match store.gait(label, source, from, p) {
+            Ok(g) if level(&g) => if best.as_ref().is_none_or(|b| speed(&g) > speed(b)) { best = Some(g); },
+            Ok(_) => {}
+            Err(e) => last = e,
+        }
+    }
+    best.ok_or(last)
+}
+
 /// Shared corridor extend helper for `solve()` and defect tail handoffs.
 pub(crate) fn extend_corridor<S: CorridorSource>(
     from: &PlayerState,
@@ -288,11 +308,9 @@ pub(crate) fn extend_corridor<S: CorridorSource>(
     store: &GeneratorStore,
     codec: &mut Interner,
 ) -> Result<List<WordStep, 12>, String> {
-    let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
-    let g = store.gait(label, source, from, program)?;
+    let g = mode_gait(store, label, source, from)?;
     let support = source.support_cell(from);
-    let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
-    let top = f64::from(support[1]) + height;
+    let top = crate::store::support_top(source.block(support), support[1]);
     let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
     let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
     let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
@@ -460,20 +478,18 @@ pub fn solve_step<S: CorridorSource>(
                 let hi = [p[0].max(to.cell[0]) + 2, p[1].max(to.cell[1]) + 4, p[2].max(to.cell[2]) + 2];
                 cut::Cut::Defect(cut::Window { first: p, exceptions: 1, bounds: (lo, hi), prefixes: Vec::new() })
             };
-            let cut_outcome = if from.in_water || from.in_lava || from.crouching || to.settle {
+            let cut_outcome = if from.crouching || to.settle {
                 Ok(defect_window())
             } else {
                 (|| -> Result<cut::Cut, String> {
-                    let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
                     let ticks = store.preparation_ticks();
-                    let g = store.gait(label, source, from, program)?;
+                    let g = mode_gait(store, label, source, from)?;
                     thinking.entry_ns = clock.elapsed().as_nanos();
                     if store.preparation_ticks() != ticks {
-                        stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
+                        stages.push(Stage::Learn { program: g.program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
                     }
                     let support = source.support_cell(from);
-                    let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
-                    let top = f64::from(support[1]) + height;
+                    let top = crate::store::support_top(source.block(support), support[1]);
                     let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
                     let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
                     let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;

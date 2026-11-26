@@ -64,7 +64,7 @@ pub(crate) struct Legs {
 
 /// One cycle of a gait is the affine contraction `v -> a v + b` (section 10): its advance from
 /// the fixed point `b / (1 - a)`.
-fn cycle_advance(rows: &[crate::store::Phase]) -> f64 {
+pub(crate) fn cycle_advance(rows: &[crate::store::Phase]) -> f64 {
     let (a, b) = rows.iter().fold((1.0, 0.0), |(a, b), p| {
         let f = p.factor * p.drag;
         (a * f, (b + p.impulse + p.forward) * f)
