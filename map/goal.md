@@ -27,7 +27,7 @@ Path tracing here means pathfinding: a bot reaches the point Julien clicks with 
 | deviations: expected against seen, per thousand predictions | the deviation tool (`engine/plan/src/bin/deviation.rs`) |
 | cost per bot and server ms per tick at N bots | later (step 9) |
 
-Each row is shown beside its Fermi floor, with the gap in orders of magnitude.
+Each row is shown beside its Fermi floor, with the gap in orders of magnitude. What others publish, checked at the source: [detail/benchmarks.md](detail/benchmarks.md).
 
 ## Floors (Fermi, inputs in `detail/representation.md`)
 
