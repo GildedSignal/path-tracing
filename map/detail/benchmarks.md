@@ -12,6 +12,22 @@ Julien's session goal for 2026-11-26: gather the metrics that other people publi
 | 4 | ParkourCalculatorMod (`Leg0shii`, GPL-3.0, Fabric 26.3 / 1.21.3 / 1.20.4, Forge 1.8.9 / 1.12.2) | **no numbers published**: bit-exact X/Z stepper, yaw solver per tick under a time budget, re-verified on the real entity; its Stratfinder does one jump, at most one turn, no momentum chains | word quality: least ticks for one jump at matched budgets | the law's exact optimum for that jump | the specialist on precision; run its Minecraft-free `core/` on fixed jumps |
 | 5 | MineOdyssey (HKUST, arXiv 2610.11328): 30 worlds (20 outdoor, 10 indoor), Minecraft 1.21.11, 180 tasks of ordered waypoints, success within 3.5 blocks (1.5 vertical), adventure mode, no flight; 2.60 GB zipped | metrics are success, coverage, SPL and path length; **no non-LLM baseline**; the claimed best of 85.6 % is not on the pages read | success and T through buildings: doors, stairs, ladders | — | an independent built world; the worlds keep their makers' terms |
 
+## Measured here (Ryzen 7800X3D, 2026-11-26, both engines on this machine)
+
+SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` sections (`engine/world/src/bin/bench-course.rs`, `WorldSnapshot::from_fn`), µs per player-tick, medians over runs:
+
+| Course | SpectraPhysics 1.21.4 | SpectraPhysics 26.1 | the law, 26.2 | ratio against 26.1 |
+|---|---|---|---|---|
+| `exact`: their `tick.js` (49 of 50 players fall off the ±30 floor, to y ≈ −7,967) | 5.9–7.2 | 11.0–11.1 | 1.06–1.6 | ~7–10× |
+| `floored`: the same obstacles, stone to ±128, all 50 stay on the ground | 21.7–23.2 | 31.1–34.8 | 2.5–3.3 | ~10–13× |
+
+- Their README's "~3 µs" is not reproduced on this CPU: their own bench gives 5.9 µs at its default version, and the number is mostly free fall.
+- `straight` (one player, plain stone, the `law` `bench` workload): 1.8–2.7 µs on our sections, against 0.85–0.98 µs on `BoxWorld`. The goal's law-tick row (0.6–0.95 µs) is the box world; on the sections the planner reads, a tick is 2–3× that, ~1 order above the 0.1–0.3 µs floor. Most of it is fixed per tick, not per block: removing the water changes nothing.
+- Each section holds a `collide` mask, the 4³ subcells holding a state that can collide; a sweep through the others is proven empty in one bit test. It took `exact` from 3.6 to 1.06–1.6 µs and `straight` from 3.0 to 1.8–2.7 µs.
+- Parkour Spiral 3.0.5, the only build Hielke publishes, is DataVersion 5023 (26.3); the law is 4903 (26.2). No 26.2 build exists on his site.
+- MineOdyssey's 30 worlds (SHA-256 checked) are DataVersion 4671 (1.21.11), older than the law's: a 26.2 server's `--forceUpgrade` on copies brings them to 4903; its tasks name ordered waypoints by id (`tasks.json`).
+- Opponents and maps stay outside git: `D:\path-tracing-bench\opponents\` (SpectraPhysics, Baritone v1.19.0 for 26.2, SHA-1 checked), `D:\path-tracing-maps\` (Hielke, MineOdyssey).
+
 Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence); Gazelka's hybrid A\* post and SwarmBot (no numbers); JumpCraft and parkour.gg maps (server-hosted, no world files); SoulFire, Botcraft, mineflayer-pathfinder (no published numbers, a later many-bots row).
 
 ## Corrections to the pasted summary

@@ -23,7 +23,7 @@ pub fn model(state: &BlockState) -> Result<&'static Block, String> {
 /// models, each cell's palette index packed at a power-of-two width (none when the section is
 /// uniform), and a summary of its 4³ subcells (bit `(y/4 << 4) | (z/4 << 2) | x/4`): `mixed`
 /// marks those holding more than one state, `other` those holding a state unlike the first.
-struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64, flags: u8 }
+struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64, collide: u64, flags: u8 }
 impl Section {
     fn new(cells: &[StateId; 4096]) -> Self {
         let mut states = vec![cells[0]];
@@ -52,8 +52,13 @@ impl Section {
                 if b.has_inside_effects() { flags |= 2; }
                 s.model().expect("a modeled state")
             }
-        }).collect();
-        Self { states: states.into(), models, width, data: data.into(), mixed, other, flags }
+        }).collect::<Box<[ModelId]>>();
+        // The 4³ subcells holding a state that can collide: a sweep through the others meets nothing.
+        let reach = &cell::models().reach;
+        let collides: Vec<bool> = models.iter().map(|&m| m == UNKNOWN_MODEL || reach[m.0 as usize] != 0).collect();
+        let collide = index.iter().enumerate().filter(|&(_, &k)| collides[k as usize])
+            .fold(0u64, |c, (i, _)| c | 1u64 << (((i >> 10) << 4) | (((i >> 6) & 3) << 2) | ((i >> 2) & 3)));
+        Self { states: states.into(), models, width, data: data.into(), mixed, other, collide, flags }
     }
     #[inline]
     fn index(&self, i: usize) -> usize {
@@ -115,12 +120,9 @@ impl WorldSnapshot {
         let natural_regeneration = match rules.required("data")?.required("minecraft:natural_health_regeneration")?.byte()? {
             0 => false, 1 => true, _ => return Err(LoadError::Invalid("natural_health_regeneration is not boolean".into())),
         };
-        let origin = min.map(|v| v >> 4);
-        let span: [usize; 3] = std::array::from_fn(|i| ((max[i] >> 4) - origin[i] + 1) as usize);
-        let mut sections: Vec<Option<Section>> = (0..span.iter().product()).map(|_| None).collect();
         let (mut fluids, mut inside) = (false, false);
         let mut unknown = BTreeMap::new();
-        let mut read = |p: BlockPos| {
+        let read = |p: BlockPos| {
             let state = reader.block_state(p)?;
             let id = match state_id(state) {
                 Ok(id) => id,
@@ -137,6 +139,26 @@ impl WorldSnapshot {
             inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
             Ok::<_, LoadError>(id)
         };
+        let (origin, span, sections) = Self::sections(min, max, read)?;
+        Ok(Self { min, max, origin, span, sections, difficulty: reader.difficulty, natural_regeneration, fluids, inside, unknown })
+    }
+    /// The box `min..=max` holding `state(p)` at each cell, built in memory (normal difficulty,
+    /// natural regeneration on): the same sections a saved world loads into.
+    pub fn from_fn(min: BlockPos, max: BlockPos, mut state: impl FnMut(BlockPos) -> StateId) -> Self {
+        let (mut fluids, mut inside) = (false, false);
+        let (origin, span, sections) = Self::sections(min, max, |p| {
+            let id = state(p);
+            let block = id.model_block();
+            fluids |= block.fluid.kind != FluidKind::Empty;
+            inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
+            Ok(id)
+        }).expect("a generator cannot fail");
+        Self { min, max, origin, span, sections, difficulty: 2, natural_regeneration: true, fluids, inside, unknown: BTreeMap::new() }
+    }
+    fn sections(min: BlockPos, max: BlockPos, mut read: impl FnMut(BlockPos) -> Result<StateId, LoadError>) -> Result<(BlockPos, [usize; 3], Box<[Section]>), LoadError> {
+        let origin = min.map(|v| v >> 4);
+        let span: [usize; 3] = std::array::from_fn(|i| ((max[i] >> 4) - origin[i] + 1) as usize);
+        let mut sections: Vec<Option<Section>> = (0..span.iter().product()).map(|_| None).collect();
         // Chunk order avoids region rereads for every interleaved row of a large box.
         for sz in 0..span[2] { for sx in 0..span[0] { for sy in 0..span[1] {
             let base = [0, 1, 2].map(|i| (origin[i] + [sx, sy, sz][i] as i32) * 16);
@@ -146,8 +168,7 @@ impl WorldSnapshot {
             for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] { cells[local([x, y, z])] = read([x, y, z])?; } } }
             sections[(sz * span[1] + sy) * span[0] + sx] = Some(Section::new(&cells));
         } } }
-        let sections = sections.into_iter().map(|s| s.expect("every section loaded")).collect();
-        Ok(Self { min, max, origin, span, sections, difficulty: reader.difficulty, natural_regeneration, fluids, inside, unknown })
+        Ok((origin, span, sections.into_iter().map(|s| s.expect("every section loaded")).collect()))
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
     fn section_flags_in(&self, lo: BlockPos, hi: BlockPos, mask: u8) -> bool {
@@ -162,6 +183,19 @@ impl WorldSnapshot {
                 }
             }
         }
+        false
+    }
+    /// Whether a 4³ subcell met by `lo..=hi` holds a state that can collide.
+    fn may_collide(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        for sz in lo[2] >> 4..=hi[2] >> 4 { for sy in lo[1] >> 4..=hi[1] >> 4 { for sx in lo[0] >> 4..=hi[0] >> 4 {
+            let base = [sx * 16, sy * 16, sz * 16];
+            let section = self.section([0, 1, 2].map(|i| lo[i].max(base[i])));
+            if section.collide == 0 { continue; }
+            let (a, b): (BlockPos, BlockPos) = ([0, 1, 2].map(|i| (lo[i].max(base[i]) - base[i]) >> 2), [0, 1, 2].map(|i| (hi[i].min(base[i] + 15) - base[i]) >> 2));
+            for qy in a[1]..=b[1] { for qz in a[2]..=b[2] { for qx in a[0]..=b[0] {
+                if section.collide >> ((qy << 4) | (qz << 2) | qx) & 1 != 0 { return true; }
+            } } }
+        } } }
         false
     }
     fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
@@ -246,6 +280,7 @@ impl World for WorldSnapshot {
     /// where it cannot meet `bounds`. A cell outside the snapshot panics where the full scan
     /// would first ask it.
     fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
+        if self.covers(lo) && self.covers(hi) && !self.may_collide(lo, hi) { return true; }
         let near_lo = [bounds.min.x, bounds.min.y, bounds.min.z].map(law::math::floor);
         let near_hi = [bounds.max.x, bounds.max.y, bounds.max.z].map(law::math::floor);
         let near = |a: usize, v: i32| v >= near_lo[a] && v <= near_hi[a];
