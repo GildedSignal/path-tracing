@@ -661,7 +661,7 @@ impl WordStore {
         coarse_cap: usize,
         head_cap: usize,
         total_cap: usize,
-    ) -> Vec<WordId> {
+    ) -> (Vec<WordId>, usize) {
         let bands: [u8; 4] = match entry.speed_band {
             0 => [0, 1, 2, 3],
             1 => [1, 2, 0, 3],
@@ -677,6 +677,7 @@ impl WordStore {
         Self::fill_stage(&entries, fine_cap, total_cap, &mut out, &mut seen, |e| {
             self.fine_index.get(&(sig.fine, e))
         });
+        let fine = out.len();
         Self::fill_stage(&entries, coarse_cap, total_cap, &mut out, &mut seen, |e| {
             self.coarse_index.get(&(sig.coarse, e))
         });
@@ -685,20 +686,20 @@ impl WordStore {
                 self.zipf_head.get(&e)
             });
         }
-        out
+        (out, fine)
     }
 
     /// Top Zipf-ranked matching words (fine defect -> coarse defect -> general regime head),
-    /// capped at 14 words total; words with kit clicks only when a kit is carried.
-    pub fn propose(&self, sig: DefectSig, entry: EntryClass, kit: bool) -> Vec<WordId> {
-        let mut out = self.collect_matching(sig, entry, 8, 4, 4, 14);
-        out.retain(|&w| kit || !self.words[w.0].clicks);
-        out
+    /// capped at 14 words total; words with kit clicks only when a kit is carried. The count is
+    /// flag marks a word proposed because this exact defect was seen (`fine`); the rest are guesses.
+    pub fn propose(&self, sig: DefectSig, entry: EntryClass, kit: bool) -> Vec<(WordId, bool)> {
+        let (out, fine) = self.collect_matching(sig, entry, 8, 4, 4, 14);
+        out.into_iter().enumerate().filter(|&(_, w)| kit || !self.words[w.0].clicks).map(|(i, w)| (w, i < fine)).collect()
     }
 
     /// Tight defect-local movement words for Phase B guidance (fine + coarse only, max 4, no general head).
     pub fn propose_local(&self, sig: DefectSig, entry: EntryClass) -> Vec<WordId> {
-        let mut out = self.collect_matching(sig, entry, 4, 4, 0, 4);
+        let (mut out, _) = self.collect_matching(sig, entry, 4, 4, 0, 4);
         out.retain(|&w| !self.words[w.0].clicks);
         out
     }

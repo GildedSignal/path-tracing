@@ -21,6 +21,9 @@ final class ResidentRunner {
     // The plan's own edits: their echoes from the server are expected, every other edit stops the flight.
     private static List<KitAction> actions = List.of();
     private static int stalls;
+    private static int predictedT = -1;
+    /** Predicted ticks T from the last accepted native plan; clears on read. */
+    static int takePredictedT() { int t = predictedT; predictedT = -1; return t; }
     private static final java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before = new java.util.LinkedHashMap<>();
     /** The cells the plans edited that do not hold their state from before the first edit; forgets them. */
     static java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> takeUnrestored(Minecraft mc) {
@@ -116,7 +119,8 @@ final class ResidentRunner {
             Bot.reply(mc,"Native plan refused: observed start changed while planning at word " + changed + "."); return;
         }
         // T = 0: the body already touches the goal.
-        if (count == 0) { Bot.reply(mc,"Already there."); return; }
+        if (count == 0) { predictedT = 0; Bot.reply(mc,"Already there."); return; }
+        predictedT = count;
         corridor = new int[]{(int)answer[hullBase],(int)answer[hullBase+1],(int)answer[hullBase+2],(int)answer[hullBase+3]};
         actions = KitAction.read(answer,inputsEnd+1,kits); stalls = 0;
         // The world before the plan's edits (a door's other half moves with it): the mission is

@@ -157,7 +157,7 @@ impl KitSpec {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct KitCounts {
     pub blocks: u16,
     pub water_buckets: u8,
@@ -1142,4 +1142,411 @@ pub fn digest_edits(edits: &[(BlockPos, StateId)]) -> u64 {
     }
     let _ = codec::SCHEMA;
     h
+}
+
+// The kit's edits as edges of the field (representation.md sections 4 and 10). The search
+// names none of what follows: it asks the field's descent for an edge and this interface for
+// the hand action that makes it, so a new tool adds a verb here and no search code.
+
+/// What a field edge asks of the kit where the legs alone cannot enter a cell `n`: `Clear`
+/// opens the body's two cells at `n` (a click or a break each), `Floor` puts a block under
+/// `n`, `Cushion` resets a fall that lands in `n`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FieldEdit { Clear = 1, Floor = 2, Cushion = 3 }
+
+/// One hand action for the search to run on its delta while the body keeps its own word (a
+/// break holds the body still); `restore` when it closes an open obligation.
+#[derive(Clone, Copy, Debug)]
+pub struct HandStep { pub op: KitOp, pub ticks: u32, pub restore: bool, pub template: Option<crate::word_store::KitTemplate> }
+
+pub(crate) fn cell_box(p: BlockPos) -> law::Aabb {
+    law::Aabb::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]), f64::from(p[0] + 1), f64::from(p[1] + 1), f64::from(p[2] + 1))
+}
+
+fn in_reach(s: &PlayerState, p: BlockPos) -> bool {
+    let eye = law::interact::get_eye_position(s.position, s.pose.eye_height());
+    law::interact::is_within_block_interaction_range(eye, 4.5, p, 0.0)
+}
+
+/// A door's other half, set to the same openness as the half clicked (or toggled).
+fn door_partner(world: &impl World, pos: BlockPos, sid: StateId, open_to_same: Option<bool>) -> Option<(BlockPos, StateId)> {
+    let st = state_static(sid);
+    let partner_pos = if st.lower_half() {
+        [pos[0], pos[1] + 1, pos[2]]
+    } else if st.upper_half() {
+        [pos[0], pos[1] - 1, pos[2]]
+    } else {
+        return None;
+    };
+    let ps = world.state_id(partner_pos)?;
+    if ps.block() != sid.block() {
+        return None;
+    }
+    let after = match open_to_same {
+        Some(target_open) if (ps.get("open")? == "true") == target_open => ps,
+        _ => toggle_open_state(ps)?,
+    };
+    Some((partner_pos, after))
+}
+
+fn update_edits(edits: &mut Vec<(BlockPos, StateId)>, base: &impl World, pos: BlockPos, after: StateId) {
+    if base.state_id(pos) == Some(after) {
+        if let Some(i) = edits.iter().position(|&(p, _)| p == pos) {
+            edits.remove(i);
+        }
+        return;
+    }
+    if let Some(slot) = edits.iter_mut().find(|(p, _)| *p == pos) {
+        slot.1 = after;
+    } else {
+        edits.push((pos, after));
+        edits.sort_unstable_by_key(|&(p, _)| (p[2], p[1], p[0]));
+    }
+}
+
+impl KitOp {
+    /// A step that ends before its ticks: an emptied bucket once the fall it resets is spent.
+    pub fn settled(self, s: &PlayerState) -> bool {
+        matches!(self, Self::BucketEmpty { .. })
+            && s.fall_distance < 0.5
+            && (s.on_ground || s.in_water || s.velocity.y.abs() < 0.25)
+    }
+}
+
+impl KitView {
+    fn has(&self, k: VerbKind) -> bool {
+        self.verb_effects.iter().any(|v| v.kind == k)
+    }
+
+    /// Whether the kit can make `edit` with what it still carries.
+    pub fn makes(&self, edit: FieldEdit, counts: KitCounts) -> bool {
+        match edit {
+            FieldEdit::Clear => self.has(VerbKind::Interact) || self.has(VerbKind::Break),
+            FieldEdit::Floor => self.has(VerbKind::Place) && counts.blocks > 0,
+            FieldEdit::Cushion => {
+                self.has(VerbKind::BucketWater) && counts.water_buckets > 0 || self.has(VerbKind::BucketPowderSnow) && counts.powder_snow_buckets > 0
+            }
+        }
+    }
+
+    /// The marginal T of a field edge over the legs that carry the body through it (section 4,
+    /// `max(T_move, T_hand) - T_move`), for the `cells` the search's geometry names: the cells
+    /// blocking the body's way (`Clear`), the cell a floor fills (`Floor`), the landing a fall
+    /// reset fills (`Cushion`). A click and its undo ride the body's move inside reach (`0`); a
+    /// break holds the body still for its ticks, and so does a placed floor's undo; `None`
+    /// where the kit cannot, or the edit is irreversible under restoration.
+    pub fn edge(&self, world: &impl World, cells: &[BlockPos], edit: FieldEdit) -> Option<(f32, bool)> {
+        match edit {
+            FieldEdit::Clear => {
+                let mut ticks = 0u32;
+                for &c in cells {
+                    let sid = world.state_id(c)?;
+                    if self.has(VerbKind::Interact) && state_static(sid).interact_kind().is_hand_toggleable() {
+                        continue;
+                    }
+                    let row = self.breaking.get(sid.block(), sid);
+                    if !self.has(VerbKind::Break) || row.break_ticks_ground == u16::MAX
+                        || self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible
+                    {
+                        return None;
+                    }
+                    ticks += u32::from(row.break_ticks_ground.max(1));
+                }
+                (!cells.is_empty()).then_some((ticks as f32, true))
+            }
+            FieldEdit::Floor => {
+                if !self.has(VerbKind::Place) || self.spec.blocks == 0 {
+                    return None;
+                }
+                if !cells.iter().all(|&c| world.state_id(c).is_some_and(|sid| state_static(sid).replaceable())) {
+                    return None;
+                }
+                let anchored = cells.iter().all(|&c| place_faces(world, c).next().is_some());
+                if !self.spec.restore_required {
+                    return Some((0.0, anchored));
+                }
+                let undo = self.breaking.get(self.spec.place_block.block(), self.spec.place_block).break_ticks_ground;
+                (undo != u16::MAX).then_some((f32::from(undo.max(1)), anchored))
+            }
+            FieldEdit::Cushion => (self.has(VerbKind::BucketWater) || self.has(VerbKind::BucketPowderSnow)).then_some((0.0, true)),
+        }
+    }
+
+    /// The hand action that makes `edit` on the first of `cells` still to edit, from `s` on
+    /// `world`, or `None` when it is out of reach, already made (`edits`), or the kit has run out.
+    pub fn hand_step(
+        &self,
+        world: &impl World,
+        s: &PlayerState,
+        cells: &[BlockPos],
+        edit: FieldEdit,
+        counts: KitCounts,
+        ledger: &ObligationLedger,
+        edits: &[(BlockPos, StateId)],
+    ) -> Option<HandStep> {
+        let fresh = |p: BlockPos| !edits.iter().any(|&(e, _)| e == p) && !ledger.open.iter().any(|o| o.pos == p);
+        let step = |op: KitOp, ticks: u32| Some(HandStep { op, ticks, restore: false, template: None });
+        let &c = cells.iter().find(|&&c| fresh(c))?;
+        if !in_reach(s, c) {
+            return None;
+        }
+        let sid = world.state_id(c)?;
+        let st = state_static(sid);
+        match edit {
+            FieldEdit::Clear => {
+                if self.has(VerbKind::Interact) && st.interact_kind().is_hand_toggleable() {
+                    let after = toggle_open_state(sid)?;
+                    let partner = door_partner(world, c, sid, after.get("open").map(|v| v == "true"));
+                    return step(KitOp::Interact { pos: c, after, partner }, 1);
+                }
+                let row = self.breaking.get(sid.block(), sid);
+                let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+                if !self.has(VerbKind::Break) || bt == u16::MAX || self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible {
+                    return None;
+                }
+                let after = if st.waterlogged() { water_source_state() } else { air_state() };
+                step(KitOp::Break { pos: c, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)))
+            }
+            FieldEdit::Floor => {
+                if counts.blocks == 0 || !self.has(VerbKind::Place) || !world.block(c).never_collides()
+                    || !can_place_at(world, s, c, self.spec.place_block)
+                {
+                    return None;
+                }
+                step(KitOp::Place { pos: c, after: self.spec.place_block }, 1)
+            }
+            FieldEdit::Cushion => {
+                if !st.replaceable() {
+                    return None;
+                }
+                let after = if self.has(VerbKind::BucketWater) && counts.water_buckets > 0 {
+                    water_source_state()
+                } else if self.has(VerbKind::BucketPowderSnow) && counts.powder_snow_buckets > 0 {
+                    powder_snow_state()
+                } else {
+                    return None;
+                };
+                step(KitOp::BucketEmpty { pos: c, after }, 4)
+            }
+        }
+    }
+
+    /// The open obligations `s` can close now: each restore inside reach once the body is past
+    /// it (or at the goal), a bucket picked back up before its water spreads.
+    pub fn closures(&self, world: &impl World, base: &impl World, s: &PlayerState, goal: Goal, arrival: u64, ledger: &ObligationLedger) -> Vec<HandStep> {
+        let gc = goal.center();
+        let s_goal_d2 = (gc.x - s.position.x).powi(2) + (gc.z - s.position.z).powi(2);
+        let body = s.bounding_box();
+        let mut out = Vec::new();
+        for ob in &ledger.open {
+            if !in_reach(s, ob.pos) {
+                continue;
+            }
+            let Some(cur) = world.state_id(ob.pos) else { continue };
+            let st_orig = state_static(ob.original_state);
+            let ob_d2 = (gc.x - (f64::from(ob.pos[0]) + 0.5)).powi(2) + (gc.z - (f64::from(ob.pos[2]) + 0.5)).powi(2);
+            let past = goal.touched(s, s) || s_goal_d2 + 0.55 < ob_d2;
+            let cbox = cell_box(ob.pos);
+            let op = if cur == water_source_state() || cur == powder_snow_state() {
+                let age = arrival.saturating_sub(ob.opened_tick);
+                let can_pick = (s.on_ground && s.fall_distance < 0.5) || age >= 1;
+                (can_pick && (age <= 4 || cur == powder_snow_state())).then_some((KitOp::BucketPickup { pos: ob.pos, after: ob.original_state }, 1))
+            } else if st_orig.interact_kind().is_hand_toggleable() {
+                (!body.intersects(cbox) && past).then(|| {
+                    let pp = if st_orig.lower_half() { [ob.pos[0], ob.pos[1] + 1, ob.pos[2]] } else { [ob.pos[0], ob.pos[1] - 1, ob.pos[2]] };
+                    let partner = (st_orig.lower_half() || st_orig.upper_half())
+                        .then(|| base.state_id(pp).filter(|ps| ps.block() == ob.original_state.block()).map(|ps| (pp, ps)))
+                        .flatten();
+                    (KitOp::Interact { pos: ob.pos, after: ob.original_state, partner }, 1)
+                })
+            } else if ob.original_state == air_state() || st_orig.replaceable() {
+                let standing_on = (body.min.y - cbox.max.y).abs() < 0.08
+                    && body.max.x > cbox.min.x && body.min.x < cbox.max.x
+                    && body.max.z > cbox.min.z && body.min.z < cbox.max.z;
+                let row = self.breaking.get(cur.block(), cur);
+                let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+                (!standing_on && !body.intersects(cbox) && past && bt < u16::MAX && state_static(cur).interact_kind() == InteractKind::None)
+                    .then_some((KitOp::Break { pos: ob.pos, after: ob.original_state, break_ticks: bt.max(1) }, u32::from(bt.max(1))))
+            } else {
+                (!body.intersects(cbox) && past && can_place_at(world, s, ob.pos, ob.original_state))
+                    .then_some((KitOp::Place { pos: ob.pos, after: ob.original_state }, 1))
+            };
+            if let Some((op, ticks)) = op {
+                out.push(HandStep { op, ticks, restore: true, template: None });
+            }
+        }
+        out
+    }
+
+    /// If `aim` is a non-restore click targeting a blocking cell, return that cell so a moving
+    /// word in Phase A stops upon adjacent contact identically to Phase B's field trigger.
+    pub fn click_block_target(
+        &self,
+        world: &impl World,
+        s: &PlayerState,
+        goal: Goal,
+        aim: crate::word_store::AimRule,
+    ) -> Option<BlockPos> {
+        let crate::word_store::AimRule::Click(t) = aim else { return None };
+        if t.restore {
+            return None;
+        }
+        let pos = t.cell(s, goal);
+        (!world.block(pos).never_collides()).then_some(pos)
+    }
+
+    /// Instantiate `aim` if it is a learned click template (`None` otherwise or if refused).
+    pub fn instantiate_step(
+        &self,
+        aim: crate::word_store::AimRule,
+        world: &impl World,
+        s: &PlayerState,
+        goal: Goal,
+        ledger: &ObligationLedger,
+        counts: KitCounts,
+    ) -> Option<HandStep> {
+        let crate::word_store::AimRule::Click(t) = aim else { return None };
+        let mut h = self.instantiate(t, world, s, goal, ledger, counts)?;
+        h.template = Some(t);
+        Some(h)
+    }
+
+    /// A learned click template made concrete from `s`: its cell from the approach frame, its
+    /// after-state from the verb or the open obligation there; `None` where the live cell refuses it.
+    pub fn instantiate(
+        &self,
+        t: crate::word_store::KitTemplate,
+        world: &impl World,
+        s: &PlayerState,
+        goal: Goal,
+        ledger: &ObligationLedger,
+        counts: KitCounts,
+    ) -> Option<HandStep> {
+        use crate::word_store::KitVerb;
+        let pos = t.cell(s, goal);
+        let cur = world.state_id(pos)?;
+        let ob = ledger.open.iter().find(|o| o.pos == pos);
+        if t.restore != ob.is_some() {
+            return None;
+        }
+        let solid = !world.block(pos).never_collides();
+        let (op, ticks) = match t.verb {
+            KitVerb::Interact => {
+                if !self.has(VerbKind::Interact) || !state_static(cur).interact_kind().is_hand_toggleable() {
+                    return None;
+                }
+                let after = toggle_open_state(cur)?;
+                (KitOp::Interact { pos, after, partner: door_partner(world, pos, cur, after.get("open").map(|v| v == "true")) }, 1)
+            }
+            KitVerb::Break => {
+                let row = self.breaking.get(cur.block(), cur);
+                let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
+                let fresh_ok = self.has(VerbKind::Break) && !(self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible);
+                if !solid || bt == u16::MAX || ob.is_none() && !fresh_ok {
+                    return None;
+                }
+                let after = ob.map_or_else(|| if state_static(cur).waterlogged() { water_source_state() } else { air_state() }, |o| o.original_state);
+                (KitOp::Break { pos, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)))
+            }
+            KitVerb::Place => {
+                let after = ob.map_or(self.spec.place_block, |o| o.original_state);
+                if solid || ob.is_none() && (!self.has(VerbKind::Place) || counts.blocks == 0) || !can_place_at(world, s, pos, after) {
+                    return None;
+                }
+                (KitOp::Place { pos, after }, 1)
+            }
+            KitVerb::BucketWater | KitVerb::BucketPowderSnow => {
+                let (kind, n, after) = if t.verb == KitVerb::BucketWater {
+                    (VerbKind::BucketWater, counts.water_buckets, water_source_state())
+                } else {
+                    (VerbKind::BucketPowderSnow, counts.powder_snow_buckets, powder_snow_state())
+                };
+                if !self.has(kind) || n == 0 || !state_static(cur).replaceable() {
+                    return None;
+                }
+                (KitOp::BucketEmpty { pos, after }, 4)
+            }
+            KitVerb::BucketPickup => {
+                if cur != water_source_state() && cur != powder_snow_state() {
+                    return None;
+                }
+                (KitOp::BucketPickup { pos, after: ob?.original_state }, 1)
+            }
+        };
+        Some(HandStep { op, ticks, restore: t.restore, template: Some(t) })
+    }
+
+    /// What one hand action leaves behind: the edit journal, the restore ledger and the counts.
+    /// A restore (an edit at an open obligation's cell) gives back what its first edit took.
+    pub fn book(
+        &self,
+        base: &impl World,
+        before: StateId,
+        op: KitOp,
+        tick: u64,
+        edits: &mut Vec<(BlockPos, StateId)>,
+        ledger: &mut ObligationLedger,
+        counts: &mut KitCounts,
+    ) {
+        let pos = op.pos();
+        let restore = ledger.open.iter().any(|o| o.pos == pos);
+        let (after, undo) = match op {
+            KitOp::Interact { after, partner, .. } => {
+                if let Some((pp, pa)) = partner {
+                    update_edits(edits, base, pp, pa);
+                }
+                (after, 1)
+            }
+            KitOp::Break { after, .. } => {
+                if restore { counts.blocks = counts.blocks.saturating_add(1); }
+                (after, 1)
+            }
+            KitOp::Place { after, .. } => {
+                if !restore { counts.blocks = counts.blocks.saturating_sub(1); }
+                (after, self.breaking.get(after.block(), after).break_ticks_ground.max(1))
+            }
+            KitOp::BucketEmpty { after, .. } => {
+                if after == water_source_state() { counts.water_buckets = counts.water_buckets.saturating_sub(1); }
+                else { counts.powder_snow_buckets = counts.powder_snow_buckets.saturating_sub(1); }
+                (after, 1)
+            }
+            KitOp::BucketPickup { after, .. } => {
+                if before == water_source_state() { counts.water_buckets = counts.water_buckets.saturating_add(1); }
+                else { counts.powder_snow_buckets = counts.powder_snow_buckets.saturating_add(1); }
+                (after, 1)
+            }
+        };
+        update_edits(edits, base, pos, after);
+        if self.spec.restore_required || matches!(op, KitOp::BucketEmpty { .. } | KitOp::BucketPickup { .. }) {
+            ledger.record_edit(pos, before, after, tick, undo);
+        }
+    }
+
+    /// The kit's event exits for a moving word: a mid-air tick where a floor can go under or
+    /// ahead of the body, and the tick before a fall a cushion could reset lands.
+    pub fn window(&self, world: &impl World, s: &PlayerState, tick: u32, counts: KitCounts) -> bool {
+        let floor = self.writes_mask() & WRITE_SHAPE_SOLID != 0 && counts.blocks > 0;
+        let cushion = self.writes_mask() & WRITE_FALL_RESET != 0 && (counts.water_buckets > 0 || counts.powder_snow_buckets > 0);
+        if floor && !s.on_ground && tick >= 2 && s.velocity.y < 0.05 {
+            let fy = (s.position.y - 0.99).floor() as i32;
+            let fx = s.position.x.floor() as i32;
+            let fz = s.position.z.floor() as i32;
+            let sx = if s.velocity.x > 0.05 { 1 } else if s.velocity.x < -0.05 { -1 } else { 0 };
+            let sz = if s.velocity.z > 0.05 { 1 } else if s.velocity.z < -0.05 { -1 } else { 0 };
+            for cell in [[fx, fy, fz], [fx + sx, fy, fz + sz], [fx + sx, fy - 1, fz + sz], [fx, fy - 1, fz]] {
+                if world.block(cell).never_collides() && can_place_at(world, s, cell, self.spec.place_block) {
+                    return true;
+                }
+            }
+        }
+        if cushion && !s.on_ground && s.fall_distance > 2.2 && s.velocity.y < -0.15 {
+            let fx = s.position.x.floor() as i32;
+            let fz = s.position.z.floor() as i32;
+            let next_y = (s.position.y + s.velocity.y).floor() as i32;
+            let cur_y = s.position.y.floor() as i32;
+            return ((next_y - 1)..=cur_y).any(|y| !world.block([fx, y, fz]).never_collides());
+        }
+        false
+    }
 }
