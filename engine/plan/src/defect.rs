@@ -96,6 +96,66 @@ impl Legs {
         let reach = (cycle_advance(&jump.phases) + (body.max.x - body.min.x)).floor().clamp(0.0, f64::from(u8::MAX - 1)) as u8;
         Some(Self { h: h as f32, up: (up as f64 - h).max(0.0) as f32, down: (down as f64 - h).max(0.0) as f32, reach })
     }
+
+    /// The legs of a cell class (support, feet, eyes): the law ticked under each gait program in a
+    /// box of those three layers, repeated outward (the eyes' block upward), until the body's
+    /// motion repeats exactly. `h` is the fastest horizontal cycle; a cycle that rises or sinks
+    /// without touching a floor (swimming) gives `up` and `down` as its rates over `h`. `None`:
+    /// no program advances there (no tool applies).
+    pub(crate) fn learn(class: [&law::Block; 3], from: &PlayerState) -> Option<Self> {
+        struct Layers<'a>([&'a law::Block; 3]);
+        impl World for Layers<'_> {
+            fn block(&self, p: BlockPos) -> &law::Block { self.0[p[1].clamp(0, 2) as usize] }
+            fn difficulty(&self) -> u8 { 0 }
+        }
+        let w = Layers(class);
+        let floor = !class[0].never_collides();
+        let top = class[0].shape.coords[1].last().copied().filter(|_| floor).unwrap_or(1.0);
+        let start_y = if floor { top } else { 1.0 };
+        let rest = || {
+            let mut s = from.clone();
+            s.position = law::Vec3::new(0.5, start_y, 0.5);
+            s.velocity = law::Vec3::default();
+            s.on_ground = floor;
+            s.main_supporting_block = floor.then_some([0, 0, 0]);
+            s.no_jump_delay = 0;
+            s.yaw = 0.0;
+            s
+        };
+        let input = |program: u16| law::Input { forward: true, sprint: program != WALK, jump: program == SPRINT_JUMP, ..Default::default() };
+        let tick = |s: &mut PlayerState, program: u16| {
+            let ok = law::try_tick(s, &w, &input(program)).is_ok();
+            (s.food_level, s.saturation, s.exhaustion) = (from.food_level, from.saturation, from.exhaustion);
+            ok
+        };
+        // A contraction reaches its fixed point bit for bit within the float's 53 bits of memory.
+        const MEMORY: u32 = 4096;
+        let programs: &[u16] = if sprint_allowed(from) { &[WALK, SPRINT, SPRINT_JUMP] } else { &[WALK] };
+        let mut h = f64::INFINITY;
+        for &program in programs {
+            let mut s = rest();
+            let mut seen: HashMap<(u64, u64, u64, bool, u8, u8, bool, bool), (u32, f64)> = HashMap::new();
+            for t in 0..MEMORY {
+                let key = (s.velocity.x.to_bits(), s.velocity.y.to_bits(), s.velocity.z.to_bits(), s.on_ground, s.no_jump_delay as u8, s.pose as u8, s.in_water, s.eye_in_water);
+                if let Some(&(t0, z0)) = seen.get(&key) {
+                    let dz = s.position.z - z0;
+                    if dz > 0.0 { h = h.min(f64::from(t - t0) / dz); }
+                    break;
+                }
+                seen.insert(key, (t, s.position.z));
+                if !tick(&mut s, program) { break; }
+            }
+        }
+        if !h.is_finite() { return None; }
+        // A cell up or down: the ticks from rest until the body is a cell higher (rising) or lower
+        // (sinking), over the cell across it overlaps; never within memory, no such edge.
+        let cell = |program: u16, dy: f64| {
+            let mut s = rest();
+            (1..=MEMORY).find(|_| tick(&mut s, program) && (s.position.y - start_y) * dy.signum() >= dy.abs())
+                .map_or(f32::INFINITY, |t| (f64::from(t) - h).max(0.0) as f32)
+        };
+        Some(Self { h: h as f32, up: cell(SPRINT_JUMP, 1.0), down: cell(WALK, -1.0), reach: 0 })
+    }
 }
 
 const DIRS: [BlockPos; 10] = [
@@ -281,6 +341,7 @@ impl TopoField {
 
     fn get_or_build<S: World>(
         store: &GeneratorStore,
+        label: LabelId,
         provenance: [u8; 32],
         kit_key: u64,
         grid: &ObservedWorld<'_, S>,
@@ -313,7 +374,7 @@ impl TopoField {
             return field;
         }
         let (min, max) = (req_min, req_max);
-        let field = Arc::new(Self::build_box(grid, min, max, from, goal, kit, legs, true));
+        let field = Arc::new(Self::build_box(store, label, grid, min, max, from, goal, kit, legs, true));
         if !field.dist.is_empty() {
             let mut cache = store.topo.borrow_mut();
             cache.builds += 1;
@@ -334,6 +395,8 @@ impl TopoField {
     }
 
     fn build_box<S: World>(
+        store: &GeneratorStore,
+        label: LabelId,
         grid: &ObservedWorld<'_, S>,
         min: BlockPos,
         max: BlockPos,
@@ -405,6 +468,29 @@ impl TopoField {
         let mut edge_checked = vec![0u16; vol];
         let mut edge_open = vec![0u16; vol];
         let mut settled = vec![false; vol];
+        // The legs of the cell entered: the ground's, unless a body cell there is wet or stuck,
+        // where its class (support, feet, eyes) answers with its own learned legs.
+        let mut class_of = vec![0u8; vol];
+        let mut class_legs: Vec<Option<Legs>> = Vec::new();
+        let mut class_ids: HashMap<[*const law::Block; 3], u8> = HashMap::new();
+        let mut legs_at = |ci: usize, p: BlockPos| -> Option<Legs> {
+            if class_of[ci] == 0 {
+                let up = [p[0], p[1] + 1, p[2]];
+                let (feet, eyes) = (grid.block(p), grid.block(up));
+                class_of[ci] = if !feet.has_inside_effects() && !eyes.has_inside_effects() { 1 } else {
+                    let class = [grid.block(below(p)), feet, eyes];
+                    let ptrs = class.map(|b| b as *const law::Block);
+                    *class_ids.entry(ptrs).or_insert_with(|| {
+                        let key: Vec<u8> = class.iter().flat_map(|b| law::codec::legs_bytes(b, true, law::codec::LegsRole::BodyFeet).unwrap_or_default()).collect();
+                        let learned = *store.classes.borrow_mut().entry((label, key)).or_insert_with(|| Legs::learn(class, from));
+                        class_legs.push(learned);
+                        (class_legs.len() + 1).min(usize::from(u8::MAX)) as u8
+                    })
+                };
+                grid.reset_missing();
+            }
+            match class_of[ci] { 1 => Some(legs), k => class_legs[usize::from(k) - 2] }
+        };
         let mut pops = 0usize;
         while let Some(Reverse((bits, e, cur, rc))) = heap.pop() {
             let cur_d = f32::from_bits(bits);
@@ -435,12 +521,15 @@ impl TopoField {
             for (k, d) in DIRS.iter().enumerate() {
                 let n = [cur[0] + d[0], cur[1] + d[1], cur[2] + d[2]];
                 let Some(ni) = field.idx(n) else { continue };
+                // The move happens in the medium the body leaves: the class of `n` prices it, and
+                // a class where no tool applies is left by no edge.
+                let Some(lg) = legs_at(ni, n) else { continue };
                 // The body moves from `n` to `cur`: up when `n` is below. Its run there is 0 on a
                 // floor or after a jump up or a fall, and one more for each unsupported cell across.
                 let up = n[1] < cur[1];
                 let across = n[1] == cur[1];
                 let diag = k >= 6;
-                let leg = cur_d + if up { legs.up } else if diag { legs.h * std::f32::consts::SQRT_2 } else if across { legs.h } else { legs.down };
+                let leg = cur_d + if up { lg.up } else if diag { lg.h * std::f32::consts::SQRT_2 } else if across { lg.h } else { lg.down };
                 if (0..runs).all(|r| field.dist[ni * runs + r] < leg) {
                     continue;
                 }
@@ -1749,7 +1838,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     if best.is_none() || best_guessed {
         let topo = Legs::of(store, label, source, from).map_or_else(
             || Arc::new(TopoField::empty()),
-            |legs| TopoField::get_or_build(store, provenance, kit_key, &grid, bounds, from, goal, kit, legs),
+            |legs| TopoField::get_or_build(store, label, provenance, kit_key, &grid, bounds, from, goal, kit, legs),
         );
         let has_guess = best.is_some();
         let all_seeds_unreachable = !topo.dist.is_empty() && seeds.iter().all(|n| topo.query(&n.state).is_infinite());
@@ -2002,7 +2091,7 @@ pub(crate) fn prewarm_batch_topo<S: CorridorSource>(
         return true;
     }
     let grid = ObservedWorld::defect(source);
-    let field = Arc::new(TopoField::build_box(&grid, min, max, sample_from, goal, None, legs, false));
+    let field = Arc::new(TopoField::build_box(store, label, &grid, min, max, sample_from, goal, None, legs, false));
     if field.dist.is_empty() {
         return false;
     }

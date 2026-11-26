@@ -101,6 +101,8 @@ pub struct GeneratorStore {
     pub(crate) far: RefCell<crate::far_field::FarCache>,
     pub(crate) topo: RefCell<crate::defect::TopoCache>,
     gaits: RefCell<law::solve_meter::HashMap<(LabelId, u16), Arc<Gait>>>,
+    /// The legs of each wet or stuck cell class, learned once per body (`Legs::learn`).
+    pub(crate) classes: RefCell<std::collections::HashMap<(LabelId, Vec<u8>), Option<crate::defect::Legs>>>,
     ticks: Cell<u64>, codec_binding: OnceCell<Arc<()>>,
 }
 impl GeneratorStore {
