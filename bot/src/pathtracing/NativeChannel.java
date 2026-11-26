@@ -11,7 +11,8 @@ final class NativeChannel {
             String library = System.getenv("PATHTRACING_NATIVE");
             if (library == null || library.isBlank()) {
                 String root = System.getenv("PATHTRACING_ROOT");
-                if (root == null || root.isBlank()) throw new IllegalStateException("PATHTRACING_ROOT is not set");
+                if (root == null || root.isBlank()) root = System.getProperty("pathtracing.rig");
+                if (root == null || root.isBlank()) throw new IllegalStateException("PATHTRACING_ROOT or -Dpathtracing.rig is not set");
                 library = Path.of(root, "engine", "target", "release", "pathtracing_native.dll").toString();
             }
             System.load(Path.of(library).toAbsolutePath().toString());
