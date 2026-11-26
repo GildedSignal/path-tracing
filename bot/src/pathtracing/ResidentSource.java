@@ -11,12 +11,12 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /** New-section palettes and block edits, from actual packet application only. */
 public final class ResidentSource {
-    static long session, revision;
+    static long session, revision, lawRevision;
     public static void resetWorld() { join(Minecraft.getInstance()); }
     private static final Map<BlockPos,long[]> sections = new HashMap<>();
     static void join(Minecraft mc) {
         ResidentRunner.cancel(mc);
-        session++; revision = 1; sections.clear();
+        session++; revision = 1; lawRevision = 1; sections.clear();
         if (NativeChannel.loadFailure() != null) { Bot.reply(mc,"Native channel refused: " + NativeChannel.loadFailure()); return; }
         // Natural regeneration is not sent to a remote client; 2 means Unknown.
         sentDifficulty = mc.level.getDifficulty().getId();
@@ -32,8 +32,12 @@ public final class ResidentSource {
     private static void send(long[] data) { send(data, true); }
     private static void send(long[] data, boolean changed) {
         long[] answer = NativeChannel.PublishSourceDelta(data);
-        if (changed) ResidentRunner.sourceChanged(data);
         if (answer[0] == 3) throw new IllegalStateException("Source publication refused");
+        boolean lawChanged = changed && (answer.length < 2 || answer[1] != 0);
+        if (lawChanged) {
+            lawRevision++;
+            ResidentRunner.sourceChanged(data);
+        }
     }
     public static void chunk(int x, int z) {
         var mc = Minecraft.getInstance();
@@ -75,7 +79,9 @@ public final class ResidentSource {
         sections.put(address,new long[0]);
         ArrayList<Long> data = new ArrayList<>();
         for (long value : new long[]{2,session,++revision,p.getX(),p.getY(),p.getZ()}) data.add(value);
-        text(data,canonical(state)); send(data.stream().mapToLong(Long::longValue).toArray(), !state.equals(before));
+        text(data,canonical(state));
+        if (before != null) text(data,canonical(before));
+        send(data.stream().mapToLong(Long::longValue).toArray(), !state.equals(before));
     }
     public static void unload(int x,int z) {
         if (NativeChannel.loadFailure() != null) return;

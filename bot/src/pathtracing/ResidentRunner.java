@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 /** A-only legacy_sentence_adapter consumer; F owns the eventual word runner. */
 final class ResidentRunner {
     private static final long[] EMPTY = new long[0];
-    private static long version, issue;
+    private static long version, issue, requestedRevision, requestedLawRevision;
     private static BlockPos pending;
     // B's face as Direction.get3DDataValue(), or -1 for any face.
     private static int pendingFace = -1;
@@ -93,6 +93,8 @@ final class ResidentRunner {
             BlockPos goal = pending; pending = null;
             BlockPos at = mc.player.blockPosition();
             corridor = new int[]{Math.min(at.getX(),goal.getX())-2,Math.min(at.getZ(),goal.getZ())-2,Math.max(at.getX(),goal.getX())+2,Math.max(at.getZ(),goal.getZ())+2};
+            requestedRevision = ResidentSource.revision;
+            requestedLawRevision = ResidentSource.lawRevision;
             long[] answer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,
                 pendingFace < 0 ? new long[]{goal.getX(),goal.getY()-1,goal.getZ()} : new long[]{goal.getX(),goal.getY()-1,goal.getZ(),pendingFace},issue,version);
             HopCapture.hop("mod-request",version,issue,received,answer);
@@ -107,7 +109,7 @@ final class ResidentRunner {
         HopCapture.hop("rust-result-mod",version,issue,NativeChannel.clock()[0],answer);
         // 1 = WORD_PLAN; 4 = KIT_PLAN, the same with [a, a × 10 action words] between the inputs and the hull.
         if (answer[0] != 1 && answer[0] != 4) { refuse(mc,answer); return; }
-        if (answer.length < 9 || answer[5] != ResidentSource.revision) { Bot.reply(mc,"Native plan refused: source changed."); return; }
+        if (answer.length < 9 || answer[5] != requestedRevision || ResidentSource.lawRevision != requestedLawRevision) { Bot.reply(mc,"Native plan refused: source changed."); return; }
         int count = Math.toIntExact(answer[7]), n = Math.toIntExact(answer[8]);
         int inputsEnd = 9+n+count*3, kits = answer[0] == 4 && answer.length > inputsEnd ? Math.toIntExact(answer[inputsEnd]) : 0;
         int hullBase = answer[0] == 4 ? inputsEnd+1+kits*KitAction.WORDS : inputsEnd;

@@ -20,6 +20,7 @@ pub fn refusal(version: u64, reason: impl AsRef<str>) -> Vec<u64> {
 struct Source {
     session: u64,
     revision: u64,
+    law_revision: u64,
     difficulty: u8,
     regeneration: Option<bool>,
     // One versioned palette per received section; fine state bytes are retained.
@@ -81,6 +82,20 @@ fn model(text: &str) -> Result<StateId,String> {
     }
     world::state_id(&world::BlockState { name: name.to_owned(), properties })
 }
+fn law_same(a: &str, b: &str) -> bool {
+    if a == b { return true; }
+    let (Ok(sa), Ok(sb)) = (model(a), model(b)) else { return false; };
+    sa.block() == sb.block() && sa.model().is_some() && sa.model() == sb.model() && sa.rules() == sb.rules()
+}
+fn block_delta_changes_law(data: &[u64]) -> bool {
+    let mut c = Cursor { data, at: 3 };
+    let Ok(_) = c.pos() else { return true; };
+    let Ok(state) = c.text() else { return true; };
+    if c.at >= data.len() { return true; }
+    let Ok(before) = c.text() else { return true; };
+    if c.at != data.len() { return true; }
+    !law_same(&state, &before)
+}
 fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
     let mut c = Cursor { data, at: 0 };
     let kind = c.word()?; let session = c.word()?; let revision = c.word()?;
@@ -113,6 +128,7 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
             }
             2 => {
                 let name = c.text()?;
+                if c.at < data.len() { let _ = c.text()?; }
                 if c.at != data.len() { return Err("trailing delta words".into()); }
                 let section = source.sections.get_mut(&p.map(|v| v.div_euclid(16))).ok_or("block delta outside received section")?;
                 let id = match section.palette.iter().position(|(n,_)| n == &name) { Some(i) => i, None => { let answer = model(&name); section.palette.push((name,answer)); section.palette.len()-1 } };
@@ -128,26 +144,27 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
 }
 
 pub struct Request { pub state: PlayerState, pub meta: Vec<u64>, pub goal: Goal, pub issue: u64, pub version: u64 }
-enum Work { Delta(Vec<u64>), Goal(Request) }
-struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, source_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>> }
+enum Work { Delta(Vec<u64>, u64, bool), Goal(Request) }
+struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, law_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>> }
 fn resident() -> &'static Resident {
     static RESIDENT: OnceLock<Resident> = OnceLock::new();
     RESIDENT.get_or_init(|| {
         let (send, recv) = mpsc::channel(); let (done, results) = mpsc::channel();
-        let version = Arc::new(AtomicU64::new(0)); let source_revision = Arc::new(AtomicU64::new(0));
-        let (v, r) = (version.clone(), source_revision.clone());
+        let version = Arc::new(AtomicU64::new(0)); let law_revision = Arc::new(AtomicU64::new(0));
+        let (v, r) = (version.clone(), law_revision.clone());
         std::thread::Builder::new().name("pathtracing-F".into()).spawn(move || {
             // One living store for the bot's whole session: a gait learned once is never relearned (S230).
             let mut source = Source::default(); let mut store = plan::store::GeneratorStore::default(); let mut codec = law::codec::Interner::default();
             while let Ok(work) = recv.recv() {
                 match work {
-                    Work::Delta(data) => {
+                    Work::Delta(data, law_rev, law_changed) => {
                         let reset = data.first() == Some(&0);
                         let kind = data.first().copied().unwrap_or(0);
                         let p = if data.len() >= 6 && matches!(kind, 1 | 2 | 3) {
                             Some([data[3] as i32, data[4] as i32, data[5] as i32])
                         } else { None };
                         if let Err(why) = delta(&mut source, &data) { source.error = Some(why.clone()); let _ = done.send(refusal(0,why)); }
+                        source.law_revision = law_rev;
                         if reset {
                             store = plan::store::GeneratorStore::default();
                             codec = law::codec::Interner::default();
@@ -156,7 +173,7 @@ fn resident() -> &'static Resident {
                         } else if store.words.borrow().has_certificates() {
                             if let Some(cell) = p {
                                 if kind == 2 {
-                                    store.words.borrow_mut().edit(&mut codec, cell, &source);
+                                    if law_changed { store.words.borrow_mut().edit(&mut codec, cell, &source); }
                                 } else {
                                     for z in 0..16 { for y in 0..16 { for x in 0..16 {
                                         store.words.borrow_mut().edit(&mut codec, [cell[0]*16+x, cell[1]*16+y, cell[2]*16+z], &source);
@@ -174,14 +191,20 @@ fn resident() -> &'static Resident {
                 }
             }
         }).expect("resident worker");
-        Resident { send, results: Mutex::new(results), version, source_revision, observation: Mutex::new(Vec::new()) }
+        Resident { send, results: Mutex::new(results), version, law_revision, observation: Mutex::new(Vec::new()) }
     })
 }
 pub fn publish(data: Vec<u64>) -> Vec<u64> {
     if data.len() < 3 { return refusal(0,"delta header"); }
-    let r = resident(); r.source_revision.store(data[2],Ordering::Release);
+    let r = resident();
+    let law_changed = data[0] != 2 || block_delta_changes_law(&data);
+    let law_rev = if law_changed {
+        r.law_revision.fetch_add(1,Ordering::AcqRel) + 1
+    } else {
+        r.law_revision.load(Ordering::Acquire)
+    };
     if data[0] == 0 { r.observation.lock().unwrap().clear(); }
-    match r.send.send(Work::Delta(data)) { Ok(_) => vec![READY,0], Err(_) => refusal(0,"worker stopped") }
+    match r.send.send(Work::Delta(data, law_rev, law_changed)) { Ok(_) => vec![READY,u64::from(law_changed)], Err(_) => refusal(0,"worker stopped") }
 }
 pub fn request(request: Request) -> Vec<u64> {
     let r = resident(); let v = request.version;
@@ -227,7 +250,7 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     for _ in 0..8 {
         let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
         let result = plan::solve(&state, target, carried.kit, &corridor, store, codec, u64::MAX);
-        if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.revision { return refusal(requested,"cancelled or source changed while thinking"); }
+        if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.law_revision { return refusal(requested,"cancelled or source changed while thinking"); }
         match result.outcome {
             plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
             other => {
@@ -324,7 +347,7 @@ mod tests {
     }
     #[test]
     fn existing_f_uses_exact_observed_start_and_returns_memory_adapter() {
-        let mut source = Source { session:7,revision:1,difficulty:0,regeneration:Some(false),..Source::default() };
+        let mut source = Source { session:7,revision:1,law_revision:1,difficulty:0,regeneration:Some(false),..Source::default() };
         let air = model("minecraft:air"); let stone = model("minecraft:stone");
         for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
             let indices = (0..4096).map(|i|usize::from(y<0 || y==0 && i/256==0)).collect();
@@ -340,7 +363,7 @@ mod tests {
     /// A stone floor (top at y = 1) over nine 16³ sections, and a 2-high stone wall at z = `wall`
     /// across every received x when given.
     fn field(wall: Option<i32>) -> Source {
-        let mut source = Source { session:7,revision:1,difficulty:0,regeneration:Some(false),..Source::default() };
+        let mut source = Source { session:7,revision:1,law_revision:1,difficulty:0,regeneration:Some(false),..Source::default() };
         let palette = vec![("minecraft:air".into(),model("minecraft:air")),("minecraft:stone".into(),model("minecraft:stone"))];
         for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
             let indices = (0..4096).map(|i| { let (ly, lz) = (i/256, i/16%16); usize::from(y<0 || y==0 && (ly==0 || z==0 && Some(lz as i32)==wall && ly<=2)) }).collect();
@@ -407,5 +430,38 @@ mod tests {
             }
         }
         assert!(world.values().all(|&v| v == 0),"every edited cell is restored: {world:?}");
+    }
+    #[test]
+    fn pressure_plate_toggle_keeps_law_while_door_and_break_change_it() {
+        assert!(law_same("minecraft:oak_pressure_plate[powered=false]", "minecraft:oak_pressure_plate[powered=true]"));
+        assert!(law_same("minecraft:light_weighted_pressure_plate[power=0]", "minecraft:light_weighted_pressure_plate[power=3]"));
+        assert!(law_same("minecraft:oak_button[face=floor,facing=north,powered=false]", "minecraft:oak_button[face=floor,facing=north,powered=true]"));
+        assert!(!law_same("minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]", "minecraft:oak_door[facing=north,half=lower,hinge=left,open=true,powered=false]"));
+        assert!(!law_same("minecraft:sticky_piston[extended=false,facing=up]", "minecraft:sticky_piston[extended=true,facing=up]"));
+        assert!(!law_same("minecraft:oak_pressure_plate[powered=false]", "minecraft:air"));
+
+        let mut source = Source::default();
+        delta(&mut source, &[0, 7, 1, 0, 2]).unwrap();
+        let mut section = vec![1, 7, 2, 0, 0, 0, 2];
+        text(&mut section, "minecraft:air");
+        text(&mut section, "minecraft:oak_pressure_plate[powered=false]");
+        section.extend((0..4096).map(|i| u64::from(i == 0)));
+        delta(&mut source, &section).unwrap();
+
+        let mut flip = vec![2, 7, 3, 0, 0, 0];
+        text(&mut flip, "minecraft:oak_pressure_plate[powered=true]");
+        text(&mut flip, "minecraft:oak_pressure_plate[powered=false]");
+        assert!(!block_delta_changes_law(&flip));
+        delta(&mut source, &flip).unwrap();
+        assert_eq!(source.state_id([0, 0, 0]), StateId::parse("minecraft:oak_pressure_plate", |p| (p == "powered").then_some("true")).ok());
+
+        let mut without_before = vec![2, 7, 4, 0, 0, 0];
+        text(&mut without_before, "minecraft:oak_pressure_plate[powered=false]");
+        assert!(block_delta_changes_law(&without_before));
+
+        let mut door_flip = vec![2, 7, 5, 0, 0, 0];
+        text(&mut door_flip, "minecraft:oak_door[facing=north,half=lower,hinge=left,open=true,powered=false]");
+        text(&mut door_flip, "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]");
+        assert!(block_delta_changes_law(&door_flip));
     }
 }
