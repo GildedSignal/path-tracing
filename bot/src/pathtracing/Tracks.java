@@ -388,6 +388,8 @@ public final class Tracks {
         run.addProperty("wallNanos", sampleNanos - startNanos);
         run.add("itemsUsed", TrackStore.items(USED.counts()));
         if (botAttempt) {
+            int pred = ResidentRunner.takePredictedT();
+            if (pred >= 0) run.addProperty("predictedT", pred);
             // T ends when the cleanup ends: a run that touched B with edits still standing is not restored.
             unrestored.putAll(ResidentRunner.takeUnrestored(mc));
             run.addProperty("restored", unrestored.isEmpty());
@@ -496,6 +498,7 @@ public final class Tracks {
         if (!player.matches("[A-Za-z0-9_]{1,16}")) throw new IllegalArgumentException("Invalid bot player name.");
         cancel(mc, true);
         ResidentRunner.takeUnrestored(mc); // a track run judges only its own edits
+        ResidentRunner.takePredictedT();
         Bot.clearFollowPath();
         TickInput.release(mc);
         selected = track;
