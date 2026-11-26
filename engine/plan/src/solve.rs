@@ -560,10 +560,25 @@ pub fn solve_step<S: CorridorSource>(
 
                     let horiz_dist = (from.position.x - to.center().x).hypot(from.position.z - to.center().z);
                     let est_vol = {
-                        let depth = 24usize;
-                        let dx = (from.position.x.floor() as i32 - to.cell[0]).unsigned_abs() as usize + 42;
-                        let dy = (from.position.y.floor() as i32 - to.cell[1]).unsigned_abs() as usize + depth + 16;
-                        let dz = (from.position.z.floor() as i32 - to.cell[2]).unsigned_abs() as usize + 42;
+                        let mut lo = [
+                            from.position.x.floor().min(to.cell[0] as f64) as i32 - 20,
+                            from.position.y.floor().min(to.cell[1] as f64) as i32 - 24,
+                            from.position.z.floor().min(to.cell[2] as f64) as i32 - 20,
+                        ];
+                        let mut hi = [
+                            from.position.x.floor().max(to.cell[0] as f64) as i32 + 20,
+                            from.position.y.floor().max(to.cell[1] as f64) as i32 + 8,
+                            from.position.z.floor().max(to.cell[2] as f64) as i32 + 20,
+                        ];
+                        if let Some((bmin, bmax)) = source.bounds_box() {
+                            for a in 0..3 {
+                                lo[a] = lo[a].max(bmin[a]);
+                                hi[a] = hi[a].min(bmax[a]);
+                            }
+                        }
+                        let dx = (hi[0] - lo[0] + 1).max(1) as usize;
+                        let dy = (hi[1] - lo[1] + 1).max(1) as usize;
+                        let dz = (hi[2] - lo[2] + 1).max(1) as usize;
                         dx.saturating_mul(dy).saturating_mul(dz)
                     };
                     let trim_win = |anchor: &PlayerState, mid: Goal, w: cut::Window| -> cut::Window {
@@ -586,7 +601,7 @@ pub fn solve_step<S: CorridorSource>(
                     let mut rem_est = 0u64;
                     let mut far_cache = None;
                     let anchor = win.prefixes.first().and_then(|p| p.last()).map_or_else(|| from.clone(), |w| w.end.materialize());
-                    if horiz_dist > 26.0 || est_vol > 48_000 {
+                    if horiz_dist > 26.0 || est_vol > 96_000 {
                         let far = crate::far_field::FarField::get_or_build(store, source, label, from, to, kit_view.as_ref(), kit_key);
                         if let Some((mid, est)) = far.next_horizon(&anchor, to, 20.0) {
                             active_goal = mid;
@@ -596,14 +611,14 @@ pub fn solve_step<S: CorridorSource>(
                         far_cache = Some(far);
                     }
 
-                    let defect_res = match defect::solve_defect(from, active_goal, label, active_win, source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking) {
+                    let defect_res = match defect::solve_defect(from, active_goal, label, active_win, source, store, codec, kit_view.as_ref(), kit_key, &mut stages, &mut thinking) {
                         Ok(res) => Ok(res),
                         Err((ex_count, why)) => {
                             if active_goal != to {
                                 if let Some((mid2, est2)) = far_cache.as_ref().and_then(|f| f.next_horizon(&anchor, to, 12.0)).filter(|&(m, _)| m != active_goal) {
                                     active_goal = mid2;
                                     rem_est = est2;
-                                    defect::solve_defect(from, active_goal, label, trim_win(&anchor, mid2, win), source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking)
+                                    defect::solve_defect(from, active_goal, label, trim_win(&anchor, mid2, win), source, store, codec, kit_view.as_ref(), kit_key, &mut stages, &mut thinking)
                                 } else {
                                     Err((ex_count, why))
                                 }

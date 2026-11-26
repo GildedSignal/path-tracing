@@ -86,13 +86,20 @@ impl Gait {
 pub struct GeneratorStore {
     pub words: RefCell<crate::word_store::WordStore>,
     pub(crate) far: RefCell<crate::far_field::FarCache>,
+    pub(crate) topo: RefCell<crate::defect::TopoCache>,
     gaits: RefCell<law::solve_meter::HashMap<(LabelId, u16), Arc<Gait>>>,
     ticks: Cell<u64>, codec_binding: OnceCell<Arc<()>>,
 }
 impl GeneratorStore {
     pub fn preparation_ticks(&self) -> u64 { self.ticks.get() }
-    pub fn invalidate_far_section(&self, sec: BlockPos) { self.far.borrow_mut().invalidate_section(sec); }
-    pub fn clear_far(&self) { self.far.borrow_mut().clear(); }
+    pub fn invalidate_far_section(&self, sec: BlockPos) {
+        self.far.borrow_mut().invalidate_section(sec);
+        self.topo.borrow_mut().invalidate_section(sec);
+    }
+    pub fn clear_far(&self) {
+        self.far.borrow_mut().clear();
+        self.topo.borrow_mut().clear();
+    }
     pub fn bind_codec(&self, codec: &mut codec::Interner) -> bool {
         Arc::ptr_eq(self.codec_binding.get_or_init(|| codec.identity().clone()), codec.identity())
     }

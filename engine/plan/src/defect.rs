@@ -3,6 +3,7 @@
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
+    sync::Arc,
 };
 use law::{
     Aabb, BlockPos, CollisionContext, FluidKind, PlayerState, World,
@@ -180,13 +181,53 @@ pub(crate) fn below(c: BlockPos) -> BlockPos {
     [c[0], c[1] - 1, c[2]]
 }
 
+struct TopoCacheEntry {
+    provenance: [u8; 32],
+    goal: Goal,
+    kit_key: u64,
+    legs_bits: (u32, u32, u32, u8),
+    min: BlockPos,
+    max: BlockPos,
+    field: Arc<TopoField>,
+}
+
+/// Small LRU cache of built `TopoField` waves across adjacent windows and retries.
+#[derive(Default)]
+pub(crate) struct TopoCache {
+    entries: Vec<TopoCacheEntry>,
+}
+
+impl TopoCache {
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(crate) fn invalidate_section(&mut self, sec: BlockPos) {
+        let smin = [sec[0] * 16 - 1, sec[1] * 16 - 1, sec[2] * 16 - 1];
+        let smax = [sec[0] * 16 + 16, sec[1] * 16 + 16, sec[2] * 16 + 16];
+        self.entries.retain(|e| {
+            e.max[0] < smin[0] || e.min[0] > smax[0]
+                || e.max[1] < smin[1] || e.min[1] > smax[1]
+                || e.max[2] < smin[2] || e.min[2] > smax[2]
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Landing {
+    yaw: u16,
+    dist: f64,
+    dy: i32,
+    gap: bool,
+}
+
 impl TopoField {
     /// No field: every query is unknown and the search falls back on its distance bound.
     fn empty() -> Self {
         Self { min: [0; 3], max: [-1, 0, 0], dx: 0, dy: 0, runs: 1, dist: Vec::new(), next: Vec::new(), edit: Vec::new() }
     }
 
-    fn build<S: World>(grid: &ObservedWorld<'_, S>, bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>, legs: Legs) -> Self {
+    fn bounds_for(bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>) -> (BlockPos, BlockPos) {
         let min = [bounds.min.x, bounds.min.y, bounds.min.z].map(|v| v.floor() as i32 - 2);
         let max = [bounds.max.x, bounds.max.y, bounds.max.z].map(|v| v.ceil() as i32 + 2);
         let fx = from.position.x.floor() as i32;
@@ -206,6 +247,63 @@ impl TopoField {
             fy.max(goal.cell[1]).saturating_add(8).min(max[1]),
             fz.max(goal.cell[2]).saturating_add(20).min(max[2]),
         ];
+        (min, max)
+    }
+
+    fn get_or_build<S: World>(
+        store: &GeneratorStore,
+        provenance: [u8; 32],
+        kit_key: u64,
+        grid: &ObservedWorld<'_, S>,
+        bounds: Aabb,
+        from: &PlayerState,
+        goal: Goal,
+        kit: Option<&KitView>,
+        legs: Legs,
+    ) -> Arc<Self> {
+        let (req_min, req_max) = Self::bounds_for(bounds, from, goal, kit);
+        let legs_bits = (legs.h.to_bits(), legs.up.to_bits(), legs.down.to_bits(), legs.reach);
+        let hit_pos = store.topo.borrow().entries.iter().position(|e| {
+            e.provenance == provenance
+                && e.goal == goal
+                && e.kit_key == kit_key
+                && e.legs_bits == legs_bits
+                && e.min[0] <= req_min[0] && e.max[0] >= req_max[0]
+                && e.min[1] <= req_min[1] && e.max[1] >= req_max[1]
+                && e.min[2] <= req_min[2] && e.max[2] >= req_max[2]
+                && e.field.query(from).is_finite()
+        });
+        if let Some(pos) = hit_pos {
+            let mut cache = store.topo.borrow_mut();
+            let entry = cache.entries.remove(pos);
+            let field = Arc::clone(&entry.field);
+            cache.entries.push(entry);
+            return field;
+        }
+        let field = Arc::new(Self::build(grid, bounds, from, goal, kit, legs));
+        if !field.dist.is_empty() {
+            let mut cache = store.topo.borrow_mut();
+            if cache.entries.len() >= 4 {
+                cache.entries.remove(0);
+            }
+            cache.entries.push(TopoCacheEntry {
+                provenance,
+                goal,
+                kit_key,
+                legs_bits,
+                min: field.min,
+                max: field.max,
+                field: Arc::clone(&field),
+            });
+        }
+        field
+    }
+
+    fn build<S: World>(grid: &ObservedWorld<'_, S>, bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>, legs: Legs) -> Self {
+        let (min, max) = Self::bounds_for(bounds, from, goal, kit);
+        let fx = from.position.x.floor() as i32;
+        let fy = from.position.y.floor() as i32;
+        let fz = from.position.z.floor() as i32;
         let dx = (max[0] - min[0] + 1).max(1) as usize;
         let dy = (max[1] - min[1] + 1).max(1) as usize;
         let dz = (max[2] - min[2] + 1).max(1) as usize;
@@ -449,17 +547,21 @@ impl TopoField {
         })
     }
 
-    /// Bearing toward the next supported landing along the field's descent, if reachable.
-    fn aim(&self, grid: &impl World, s: &PlayerState) -> Option<u16> {
+    /// Landing bearing, horizontal distance, vertical delta, and gap flag along the field's descent.
+    fn landing(&self, grid: &impl World, s: &PlayerState) -> Option<Landing> {
         let mut si = self.state_of(s)?;
         let start = self.pos(si / self.runs);
         let mut target = None;
+        let mut saw_gap = false;
         for _ in 0..8 {
             let Some((_, next_pos)) = self.step(si) else { break };
             if next_pos[0] != start[0] || next_pos[2] != start[2] {
                 target = Some(next_pos);
             }
             let sup = has_step_support(grid, next_pos);
+            if !sup {
+                saw_gap = true;
+            }
             if sup && target.is_some() {
                 break;
             }
@@ -472,7 +574,13 @@ impl TopoField {
         }
         let t = target?;
         let (dx, dz) = (f64::from(t[0]) + 0.5 - s.position.x, f64::from(t[2]) + 0.5 - s.position.z);
-        (dx * dx + dz * dz > 1e-6).then(|| crate::lattice::bracket(dx, dz)[0])
+        let dist2 = dx * dx + dz * dz;
+        (dist2 > 1e-6).then(|| Landing {
+            yaw: crate::lattice::bracket(dx, dz)[0],
+            dist: dist2.sqrt(),
+            dy: t[1] - start[1],
+            gap: saw_gap,
+        })
     }
 
     /// Whether the way out of the body's state `i` is still blocked for an edit `kv` can make:
@@ -1036,7 +1144,7 @@ fn priority_key_topo(
     key.ceil() as u64
 }
 
-fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, topo_yaw: Option<u16>) -> List<AimRule, 12> {
+fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, landing: Option<Landing>) -> List<AimRule, 12> {
     const CORE: [AimRule; 8] = [
         AimRule::GoalOffset(0),
         AimRule::RelativeCardinal(0),
@@ -1062,15 +1170,16 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, to
         }
     };
     let mut far_from_goal = false;
-    if let Some(ty) = topo_yaw {
+    if let Some(l) = landing {
         let base = AimRule::GoalOffset(0).resolve(s, goal, rot);
-        let delta = ty.wrapping_sub(base) as i16;
+        let delta = l.yaw.wrapping_sub(base) as i16;
         far_from_goal = delta.unsigned_abs() > 8192;
         push_unique(AimRule::GoalOffset(delta));
         push_unique(AimRule::GoalOffset(delta.wrapping_add(4096)));
         push_unique(AimRule::GoalOffset(delta.wrapping_sub(4096)));
     }
-    for &rule in &CORE {
+    let tight = direct_blocked || far_from_goal || landing.is_none_or(|l| l.gap || l.dist <= 3.0);
+    for &rule in &CORE[..if tight { 8 } else { 6 }] {
         push_unique(rule);
     }
     if direct_blocked || far_from_goal {
@@ -1081,7 +1190,7 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, to
     out
 }
 
-fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal) -> List<u16, 8> {
+fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal, landing: Option<Landing>, direct_blocked: bool) -> List<u16, 8> {
     let mut out = List::new();
     if s.in_water || s.in_lava || s.on_climbable {
         for &p in &[P_FSJ, P_FJ, P_FS, P_F] {
@@ -1092,12 +1201,30 @@ fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal) -> List<u16, 8
         }
         return out;
     }
-    for &p in &[P_FSG, P_FS, P_FG, P_F] {
-        out.push(p);
-    }
+    let sprint_ok = sprint_allowed(s);
     let low_headroom = !can_clear_shift_y(world, s, 0.35);
     let on_ledge = s.on_ground && fast_can_fall(world, s);
-    if s.crouching || low_headroom || on_ledge {
+    let tight = direct_blocked || on_ledge || landing.is_none_or(|l| l.gap || l.dy > 0 || l.dist <= 4.2);
+    if !s.on_ground {
+        // Mid-air: OnGround jump never fires before `landed` breaks exec_atomic_raw, so FSG==FS and FG==F.
+        if sprint_ok {
+            out.push(P_FS);
+        }
+        out.push(P_F);
+    } else if sprint_ok {
+        out.push(P_FSG);
+        out.push(P_FS);
+        if tight {
+            out.push(P_FG);
+        }
+        if direct_blocked || on_ledge || goal.settle {
+            out.push(P_F);
+        }
+    } else {
+        out.push(P_FG);
+        out.push(P_F);
+    }
+    if s.crouching || low_headroom || (on_ledge && landing.is_some_and(|l| l.dy < 0 && !l.gap)) {
         out.push(P_FC);
     }
     if s.crouching {
@@ -1365,6 +1492,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
     store: &GeneratorStore,
     codec: &mut Interner,
     kit: Option<&KitView>,
+    kit_key: u64,
     stages: &mut List<Stage, 16>,
     thinking: &mut ThinkingCosts,
 ) -> Result<(Vec<WordStep>, Vec<ObservedStep>), (usize, String)> {
@@ -1543,7 +1671,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
     // Phase B: raw best-first learning guided by the field, when Phase A missed or its route is
     // a guess: then Phase A's T is the bound Phase B must beat.
     if best.is_none() || best_guessed {
-        let topo = Legs::of(store, label, source, from).map_or_else(TopoField::empty, |legs| TopoField::build(&grid, bounds, from, goal, kit, legs));
+        let topo = Legs::of(store, label, source, from).map_or_else(
+            || Arc::new(TopoField::empty()),
+            |legs| TopoField::get_or_build(store, provenance, kit_key, &grid, bounds, from, goal, kit, legs),
+        );
         let has_guess = best.is_some();
         let incumbent_at = None;
         let mut pb = PhaseB {
@@ -1676,10 +1807,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let eye_here = law::interact::get_eye_position(state_here.position, state_here.pose.eye_height());
             let has_far_open_ob = restore_obs.iter().any(|&op| !law::interact::is_within_block_interaction_range(eye_here, 4.4, op, 0.0));
             let direct_blocked = state_here.horizontal_collision || !can_clear_probe(&delta, &state_here, gx, gz, 0.75) || state_here.velocity.horizontal_sqr() < 0.01 || has_far_open_ob;
-            let topo_yaw = topo.aim(&delta, &state_here);
+            let landing = topo.landing(&delta, &state_here);
             grid.reset_missing();
-            let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked, topo_yaw);
-            let progs = programs_for(&delta, &state_here, goal);
+            let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked, landing);
+            let progs = programs_for(&delta, &state_here, goal, landing, direct_blocked);
             let sprint_ok = sprint_allowed(&state_here);
             let kit_edge_stop = kit.is_some_and(|kv| kv.makes(FieldEdit::Floor, cur_counts));
 
@@ -1687,7 +1818,13 @@ pub(super) fn solve_defect<S: CorridorSource>(
             for (progs_slice, max_t, secondary) in [(&progs[..], 96u32, false), (SECONDARY_STRAFE, 48u32, true)] {
                 if secondary && expanded > 0 { break; }
                 for &prog in progs_slice {
-                    let aim_cap = if secondary { aims.len().min(4) } else if prog == P_FSG || prog == P_FS || prog == P_FSJ || !sprint_ok { aims.len() } else { aims.len().min(6) };
+                    let aim_cap = if secondary {
+                        aims.len().min(4)
+                    } else if prog == P_FSG || prog == P_FS || prog == P_FSJ || !sprint_ok {
+                        aims.len()
+                    } else {
+                        aims.len().min(5)
+                    };
                     for &aim in &aims[..aim_cap] {
                         if raw_learn_ticks >= cold_cap { break; }
                         if let AtomicOutcome::Stopped { end, step, hit_goal, obs } = exec_atomic_raw(&delta, Some(&grid), &programs, &state_here, goal, prog, aim, max_t, bounds, label, provenance, sig, hand, &restore_obs, kit_edge_stop, &mut raw_learn_ticks) {
