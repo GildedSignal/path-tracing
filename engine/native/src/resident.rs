@@ -181,9 +181,7 @@ fn resident() -> &'static Resident {
                                 if kind == 2 {
                                     if law_changed { store.words.borrow_mut().edit(&mut codec, cell, &source); }
                                 } else {
-                                    for z in 0..16 { for y in 0..16 { for x in 0..16 {
-                                        store.words.borrow_mut().edit(&mut codec, [cell[0]*16+x, cell[1]*16+y, cell[2]*16+z], &source);
-                                    }}}
+                                    store.words.borrow_mut().edit_section(&mut codec, cell, &source);
                                 }
                             }
                         }

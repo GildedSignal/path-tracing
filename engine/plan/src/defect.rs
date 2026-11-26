@@ -254,23 +254,44 @@ impl TopoField {
             }
         }
         let priced = |cells: &[BlockPos], edit: FieldEdit| kit.and_then(|kv| kv.edge(grid, cells, edit));
-        // The wave settles at most as many cells as before runs existed, each counted once.
+        // Stop once the body's starting state is settled with a 25-tick margin; cache support & edge checks across runs.
+        let from_cell = if body_fits(grid, [fx, fy, fz]) { [fx, fy, fz] } else { [fx, fy + 1, fz] };
+        grid.reset_missing();
+        let from_ci = field.idx(from_cell);
+        let from_needs_r0 = has_step_support(grid, from_cell);
+        grid.reset_missing();
+        let mut from_settled_d: Option<f32> = None;
+        let mut sup_cache = vec![0u8; vol];
+        let mut edge_checked = vec![0u16; vol];
+        let mut edge_open = vec![0u16; vol];
         let mut settled = vec![false; vol];
         let mut pops = 0usize;
         while let Some(Reverse((bits, e, cur, rc))) = heap.pop() {
-            if pops >= 40_000 {
+            let cur_d = f32::from_bits(bits);
+            if pops >= 40_000 || from_settled_d.is_some_and(|fd| cur_d > fd + 25.0) {
                 break;
             }
             let Some(ci) = field.idx(cur) else { continue };
             let si = ci * runs + usize::from(rc);
-            let cur_d = f32::from_bits(bits);
             if cur_d != field.dist[si] || e != edits[si] {
                 continue;
             }
             if !std::mem::replace(&mut settled[ci], true) {
                 pops += 1;
             }
-            let cur_sup = has_step_support(grid, cur);
+            if Some(ci) == from_ci && (!from_needs_r0 || rc == 0) {
+                from_settled_d.get_or_insert(cur_d);
+            }
+            let cur_sup = match sup_cache[ci] {
+                1 => false,
+                2 => true,
+                _ => {
+                    let s = has_step_support(grid, cur);
+                    grid.reset_missing();
+                    sup_cache[ci] = if s { 2 } else { 1 };
+                    s
+                }
+            };
             for (k, d) in DIRS.iter().enumerate() {
                 let n = [cur[0] + d[0], cur[1] + d[1], cur[2] + d[2]];
                 let Some(ni) = field.idx(n) else { continue };
@@ -283,9 +304,26 @@ impl TopoField {
                 if (0..runs).all(|r| field.dist[ni * runs + r] < leg) {
                     continue;
                 }
-                let n_sup = has_step_support(grid, n);
-                let open = way_clear(grid, n, cur);
-                grid.reset_missing();
+                let n_sup = match sup_cache[ni] {
+                    1 => false,
+                    2 => true,
+                    _ => {
+                        let s = has_step_support(grid, n);
+                        grid.reset_missing();
+                        sup_cache[ni] = if s { 2 } else { 1 };
+                        s
+                    }
+                };
+                let bit = 1u16 << k;
+                let open = if (edge_checked[ni] & bit) != 0 {
+                    (edge_open[ni] & bit) != 0
+                } else {
+                    let o = way_clear(grid, n, cur);
+                    grid.reset_missing();
+                    edge_checked[ni] |= bit;
+                    if o { edge_open[ni] |= bit; }
+                    o
+                };
                 if diag && !open { continue; }
                 // The edit the way itself needs, and its price.
                 let clear = if open {
@@ -837,8 +875,14 @@ fn exec_atomic_raw<W: World>(
             }
         }
 
-        // Abort hopeless midair stall against a wall when descending with zero speed.
+        // Abort hopeless midair stall or uncushioned cliff fall past both start and goal.
         if !s.on_ground && s.horizontal_collision && s.velocity.horizontal_sqr() < 1e-6 && s.velocity.y < -0.1 && tick > 4 {
+            return AtomicOutcome::Failed;
+        }
+        if !s.on_ground && s.velocity.y < -0.5 && !s.in_water && !s.in_lava
+            && s.position.y < start.position.y - 4.0 && s.position.y < goal.zone().min.y - 2.0
+            && !hand.is_some_and(|h| h.kv.makes(FieldEdit::Cushion, h.counts))
+        {
             return AtomicOutcome::Failed;
         }
 
@@ -1370,8 +1414,11 @@ pub(super) fn solve_defect<S: CorridorSource>(
             heap.push(Reverse((p, s.arrival, idx)));
         }
         let mut pops = 0u32;
+        let mut saw_fine = false;
         while let Some(Reverse((_, _, idx))) = heap.pop() {
-            if prop_ticks >= propose_budget_ticks || pops >= 64 {
+            let cap = if saw_fine || best.is_some() { propose_budget_ticks } else { 800 };
+            let pop_cap = if saw_fine || best.is_some() { 64 } else { 16 };
+            if prop_ticks >= cap || pops >= pop_cap {
                 break;
             }
             let ub = best.as_ref().map_or(u64::MAX, |b| b.0);
@@ -1397,7 +1444,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let entry = EntryClass::of(&arena[idx].state);
             let wids = store.words.borrow().propose(sig, entry, kit.is_some());
             for (wid, known) in wids {
-                if prop_ticks >= propose_budget_ticks {
+                if known { saw_fine = true; }
+                let cap = if saw_fine || best.is_some() { propose_budget_ticks } else { 800 };
+                if prop_ticks >= cap {
                     break;
                 }
                 let child_guessed = guessed[idx] || !known;
@@ -1495,9 +1544,11 @@ pub(super) fn solve_defect<S: CorridorSource>(
     // a guess: then Phase A's T is the bound Phase B must beat.
     if best.is_none() || best_guessed {
         let topo = Legs::of(store, label, source, from).map_or_else(TopoField::empty, |legs| TopoField::build(&grid, bounds, from, goal, kit, legs));
+        let has_guess = best.is_some();
+        let incumbent_at = None;
         let mut pb = PhaseB {
             goal, topo: &topo, kit, arena: Vec::with_capacity(2048),
-            best_bucket: HashMap::with_capacity(2048), heap: BinaryHeap::new(), best: &mut best, incumbent_at: None,
+            best_bucket: HashMap::with_capacity(2048), heap: BinaryHeap::new(), best: &mut best, incumbent_at,
         };
         let all_seeds_unreachable = !topo.dist.is_empty() && seeds.iter().all(|n| topo.query(&n.state).is_infinite());
         let field_ticks = seeds.iter().map(|n| topo.query(&n.state)).filter(|d| d.is_finite()).fold(0.0f32, f32::max) as u64;
@@ -1511,7 +1562,13 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let base_cap = (96_000u64 + (win.exceptions as u64).min(80) * 1_800)
             .max(field_ticks.saturating_mul(1_200))
             .min(480_000);
-        let cold_cap = if all_seeds_unreachable { base_cap.min(8_000) } else { base_cap };
+        let cold_cap = if all_seeds_unreachable {
+            base_cap.min(8_000)
+        } else if has_guess {
+            base_cap.min(field_ticks.saturating_mul(900).clamp(40_000, 64_000))
+        } else {
+            base_cap
+        };
         let word_budget = cold_cap / 5;
         let mut phase_b_word_ticks = 0u64;
         let mut delta = WorldDelta::new(&grid);

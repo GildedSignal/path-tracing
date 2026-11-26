@@ -621,6 +621,47 @@ impl WordStore {
         removed
     }
 
+    /// Invalidate cached routes whose recorded reads inside `section` changed; skips non-overlapping sections in O(routes).
+    pub fn edit_section(&mut self, codec: &mut codec::Interner, section: BlockPos, world: &impl World) -> usize {
+        let _ = codec;
+        if self.routes.is_empty() {
+            return 0;
+        }
+        let sx0 = section[0] * 16; let sy0 = section[1] * 16; let sz0 = section[2] * 16;
+        let sx1 = sx0 + 15; let sy1 = sy0 + 15; let sz1 = sz0 + 15;
+        let mut removed = 0usize;
+        self.routes.retain(|_, list| {
+            let before = list.len();
+            list.retain(|entry| {
+                let overlaps = entry.lo[0] <= sx1 && entry.hi[0] >= sx0
+                    && entry.lo[1] <= sy1 && entry.hi[1] >= sy0
+                    && entry.lo[2] <= sz1 && entry.hi[2] >= sz0;
+                if !overlaps {
+                    return true;
+                }
+                let mut broken = false;
+                for &(cp, mask, digest) in &entry.reads {
+                    if cp[0] < sx0 || cp[0] > sx1 || cp[1] < sy0 || cp[1] > sy1 || cp[2] < sz0 || cp[2] > sz1 {
+                        continue;
+                    }
+                    let Ok(b) = world.known_block(cp) else { broken = true; break; };
+                    let cur = match codec::cell(b, world.loaded(cp), mask) {
+                        Ok(c) => codec::digest(c.bytes()),
+                        Err(_) => { broken = true; break; }
+                    };
+                    if cur != digest {
+                        broken = true;
+                        break;
+                    }
+                }
+                !broken
+            });
+            removed += before - list.len();
+            !list.is_empty()
+        });
+        removed
+    }
+
     pub fn environment_event(&mut self) -> usize {
         let count = self.routes.values().map(Vec::len).sum();
         self.routes.clear();
@@ -697,9 +738,9 @@ impl WordStore {
         out.into_iter().enumerate().filter(|&(_, w)| kit || !self.words[w.0].clicks).map(|(i, w)| (w, i < fine)).collect()
     }
 
-    /// Tight defect-local movement words for Phase B guidance (fine + coarse only, max 4, no general head).
+    /// Tight defect-local movement words for Phase B guidance (fine matches only, max 4).
     pub fn propose_local(&self, sig: DefectSig, entry: EntryClass) -> Vec<WordId> {
-        let (mut out, _) = self.collect_matching(sig, entry, 4, 4, 0, 4);
+        let (mut out, _) = self.collect_matching(sig, entry, 4, 0, 0, 4);
         out.retain(|&w| !self.words[w.0].clicks);
         out
     }
