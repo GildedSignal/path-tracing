@@ -100,6 +100,15 @@ impl GeneratorStore {
         self.far.borrow_mut().clear();
         self.topo.borrow_mut().clear();
     }
+    pub fn consolidate_idle(&self) -> usize {
+        self.words.borrow_mut().consolidate()
+    }
+    pub fn warm_far_section(&self, provenance: [u8; 32], w: &impl World, sec: BlockPos) -> bool {
+        self.far.borrow_mut().warm_section(provenance, w, sec)
+    }
+    pub fn cached_far_sections(&self) -> usize {
+        self.far.borrow().cached_section_count()
+    }
     pub fn bind_codec(&self, codec: &mut codec::Interner) -> bool {
         Arc::ptr_eq(self.codec_binding.get_or_init(|| codec.identity().clone()), codec.identity())
     }

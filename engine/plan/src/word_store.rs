@@ -419,6 +419,22 @@ pub enum WordBody {
     Compound(Vec<WordId>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EffectKey {
+    pub entry: EntryClass,
+    pub dy_band: i8,
+    pub reach_band: u8,
+}
+
+impl EffectKey {
+    #[inline]
+    pub fn of(entry: EntryClass, dy: i32, dist: f64) -> Self {
+        let dy_band = if dy > 0 { 1 } else if dy < 0 { -1 } else { 0 };
+        let reach_band = if dist <= 1.5 { 0 } else if dist <= 3.5 { 1 } else { 2 };
+        Self { entry, dy_band, reach_band }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Word {
     pub id: WordId,
@@ -437,14 +453,27 @@ pub struct Word {
     pub clicks: bool,
     pub hits: u64,
     pub ticks_served: u64,
+    pub tries: u64,
+    pub successes: u64,
+    pub ticks_spent: u64,
 }
 
 impl Word {
+    #[inline]
+    pub fn minton_allowed_guess(&self) -> bool {
+        self.tries < 6 || self.successes.saturating_mul(6) >= self.tries
+    }
+
     fn zipf_score(&self) -> u128 {
         let base = u128::from(self.hits).saturating_mul(u128::from(self.ticks_served.max(1)));
         let depth_bonus = if matches!(self.body, WordBody::Compound(_)) { 4 } else { 1 };
         let chain_bonus = if self.self_chains { 2 } else { 1 };
-        base * depth_bonus * chain_bonus
+        let raw = base * depth_bonus * chain_bonus;
+        if self.tries >= 4 {
+            (raw.saturating_mul(u128::from(self.successes.saturating_add(1))) / u128::from(self.tries.saturating_add(1))).max(1)
+        } else {
+            raw
+        }
     }
 }
 
@@ -513,6 +542,7 @@ pub struct WordStore {
     pair_counts: HashMap<(WordId, WordId), u32>,
     fine_index: HashMap<(u64, EntryClass), Vec<WordId>>,
     coarse_index: HashMap<(u64, EntryClass), Vec<WordId>>,
+    effect_index: HashMap<EffectKey, Vec<WordId>>,
     zipf_head: HashMap<EntryClass, Vec<WordId>>,
     routes: HashMap<BlockPos, Vec<CachedRoute>>,
 }
@@ -671,9 +701,11 @@ impl WordStore {
     }
 
     fn fill_stage<'a, F: Fn(EntryClass) -> Option<&'a Vec<WordId>>>(
+        &self,
         entries: &[EntryClass; 4],
         stage_cap: usize,
         total_cap: usize,
+        filter_minton: bool,
         out: &mut Vec<WordId>,
         seen: &mut HashSet<WordId>,
         lookup: F,
@@ -688,7 +720,7 @@ impl WordStore {
                     if out.len() - start >= stage_cap || out.len() >= total_cap {
                         break;
                     }
-                    if seen.insert(id) {
+                    if (!filter_minton || self.words[id.0].minton_allowed_guess()) && seen.insert(id) {
                         out.push(id);
                     }
                 }
@@ -700,8 +732,10 @@ impl WordStore {
         &self,
         sig: DefectSig,
         entry: EntryClass,
+        desired: Option<(i32, f64)>,
         fine_cap: usize,
         coarse_cap: usize,
+        effect_cap: usize,
         head_cap: usize,
         total_cap: usize,
     ) -> (Vec<WordId>, usize) {
@@ -717,34 +751,58 @@ impl WordStore {
         }
         let mut out = Vec::with_capacity(total_cap);
         let mut seen = HashSet::new();
-        Self::fill_stage(&entries, fine_cap, total_cap, &mut out, &mut seen, |e| {
+        self.fill_stage(&entries, fine_cap, total_cap, false, &mut out, &mut seen, |e| {
             self.fine_index.get(&(sig.fine, e))
         });
         let fine = out.len();
-        Self::fill_stage(&entries, coarse_cap, total_cap, &mut out, &mut seen, |e| {
-            self.coarse_index.get(&(sig.coarse, e))
-        });
+        if coarse_cap > 0 {
+            self.fill_stage(&entries, coarse_cap, total_cap, true, &mut out, &mut seen, |e| {
+                self.coarse_index.get(&(sig.coarse, e))
+            });
+        }
+        if effect_cap > 0 {
+            if let Some((dy, dist)) = desired {
+                self.fill_stage(&entries, effect_cap, total_cap, true, &mut out, &mut seen, |e| {
+                    self.effect_index.get(&EffectKey::of(e, dy, dist))
+                });
+            }
+        }
         if head_cap > 0 {
-            Self::fill_stage(&entries, head_cap, total_cap, &mut out, &mut seen, |e| {
+            self.fill_stage(&entries, head_cap, total_cap, true, &mut out, &mut seen, |e| {
                 self.zipf_head.get(&e)
             });
         }
         (out, fine)
     }
 
-    /// Top Zipf-ranked matching words (fine defect -> coarse defect -> general regime head),
-    /// capped at 14 words total; words with kit clicks only when a kit is carried. The count is
-    /// flag marks a word proposed because this exact defect was seen (`fine`); the rest are guesses.
-    pub fn propose(&self, sig: DefectSig, entry: EntryClass, kit: bool) -> Vec<(WordId, bool)> {
-        let (out, fine) = self.collect_matching(sig, entry, 8, 4, 4, 14);
+    /// Top Zipf/Pareto-ranked matching words filtered by the empirical Minton utility gate on
+    /// non-exact tiers (fine -> coarse -> desired effect -> general regime head).
+    pub fn propose_for_effect(&self, sig: DefectSig, entry: EntryClass, desired: Option<(i32, f64)>, kit: bool) -> Vec<(WordId, bool)> {
+        let (out, fine) = self.collect_matching(sig, entry, desired, 8, 3, 4, 2, 12);
         out.into_iter().enumerate().filter(|&(_, w)| kit || !self.words[w.0].clicks).map(|(i, w)| (w, i < fine)).collect()
+    }
+
+    /// Compatible wrapper delegating to `propose_for_effect` with no desired effect filter.
+    pub fn propose(&self, sig: DefectSig, entry: EntryClass, kit: bool) -> Vec<(WordId, bool)> {
+        self.propose_for_effect(sig, entry, None, kit)
     }
 
     /// Tight defect-local movement words for Phase B guidance (fine matches only, max 4).
     pub fn propose_local(&self, sig: DefectSig, entry: EntryClass) -> Vec<WordId> {
-        let (mut out, _) = self.collect_matching(sig, entry, 4, 0, 0, 4);
+        let (mut out, _) = self.collect_matching(sig, entry, None, 4, 0, 0, 0, 4);
         out.retain(|&w| !self.words[w.0].clicks);
         out
+    }
+
+    /// Update empirical Minton utility stats after attempting `id` in Phase A.
+    pub fn record_outcome(&mut self, id: WordId, succeeded: bool, ticks: u64) {
+        if let Some(w) = self.words.get_mut(id.0) {
+            w.tries = w.tries.saturating_add(1);
+            if succeeded {
+                w.successes = w.successes.saturating_add(1);
+            }
+            w.ticks_spent = w.ticks_spent.saturating_add(ticks);
+        }
     }
 
     /// Record a winning sequence, emerging compounds by frequency and pruning dominated / tail noise.
@@ -782,6 +840,9 @@ impl WordStore {
                     clicks: matches!(s.aim, AimRule::Click(_)),
                     hits: 1,
                     ticks_served: u64::from(s.ticks),
+                    tries: 0,
+                    successes: 0,
+                    ticks_spent: 0,
                 });
                 self.by_atomic.insert(key, id);
                 id
@@ -794,7 +855,7 @@ impl WordStore {
         // only to a carried kit, so movement-only proposals stay as they were.
         if seq.iter().any(|w| self.words[w.0].clicks) {
             let cid = self.intern(&seq);
-            self.rebuild_indexes(&[], &[cid]);
+            self.rebuild_indexes(&[], &[cid], &[]);
             self.work.words_total = self.words.len() as u64;
             self.work.compounds_total = self.words.iter().filter(|w| matches!(w.body, WordBody::Compound(_))).count() as u64;
             return;
@@ -839,8 +900,12 @@ impl WordStore {
             seq = folded;
         }
 
+        let mut fine_only = Vec::new();
+        if (2..=6).contains(&seq.len()) {
+            fine_only.push(self.intern(&seq));
+        }
         seq.extend(created);
-        self.rebuild_indexes(steps, &seq);
+        self.rebuild_indexes(steps, &seq, &fine_only);
         self.work.words_total = self.words.len() as u64;
         self.work.compounds_total = self.words.iter().filter(|w| matches!(w.body, WordBody::Compound(_))).count() as u64;
     }
@@ -884,13 +949,46 @@ impl WordStore {
             clicks,
             hits: 2,
             ticks_served: u64::from(ticks_min.max(1)) * 2,
+            tries: 0,
+            successes: 0,
+            ticks_spent: 0,
         });
         self.by_compound.insert(flat, cid);
         cid
     }
 
-    fn rebuild_indexes(&mut self, steps: &[ObservedStep], extra: &[WordId]) {
-        // Index all newly created or updated words and prune dominated / tail entries by Zipf rank.
+    fn prune_pareto_and_sort(words: &[Word], list: &mut Vec<WordId>, cap: usize, filter_minton: bool) -> usize {
+        let before = list.len();
+        let mut dominated = vec![false; list.len()];
+        for (i, &wi) in list.iter().enumerate() {
+            let a = &words[wi.0];
+            if filter_minton && !a.minton_allowed_guess() {
+                dominated[i] = true;
+                continue;
+            }
+            for (j, &wj) in list.iter().enumerate() {
+                if i == j { continue; }
+                let b = &words[wj.0];
+                if a.body == b.body { continue; }
+                if b.clicks == a.clicks
+                    && b.exit == a.exit
+                    && b.delta_y == a.delta_y
+                    && b.delta_along >= a.delta_along + 0.1
+                    && b.ticks_max <= a.ticks_min
+                {
+                    dominated[i] = true;
+                    break;
+                }
+            }
+        }
+        let mut idx = 0;
+        list.retain(|_| { let keep = !dominated[idx]; idx += 1; keep });
+        list.sort_by(|&a, &b| words[b.0].zipf_score().cmp(&words[a.0].zipf_score()));
+        list.truncate(cap);
+        before.saturating_sub(list.len())
+    }
+
+    fn rebuild_indexes(&mut self, steps: &[ObservedStep], extra: &[WordId], fine_only: &[WordId]) {
         let mut touched = Vec::with_capacity(steps.len() + extra.len());
         for s in steps {
             if let Some(&id) = self.by_atomic.get(&(s.entry, s.defect_coarse, s.program, s.aim)) {
@@ -898,44 +996,62 @@ impl WordStore {
             }
         }
         touched.extend_from_slice(extra);
+        let words = &self.words;
+        for &id in fine_only {
+            let w = &words[id.0];
+            let list = self.fine_index.entry((w.defect_fine, w.entry)).or_default();
+            if !list.contains(&id) { list.push(id); }
+            Self::prune_pareto_and_sort(words, list, 12, false);
+        }
         for id in touched {
-            let w = self.words[id.0].clone();
-            let insert_sorted = |map: &mut HashMap<(u64, EntryClass), Vec<WordId>>, key: (u64, EntryClass), cap: usize| {
-                let list = map.entry(key).or_default();
-                if !list.contains(&id) {
-                    list.push(id);
-                }
-                // Via negativa: remove entries strictly dominated on same defect + regime + delta_y.
-                let words = &self.words;
-                let mut dominated = vec![false; list.len()];
-                for (i, &wi) in list.iter().enumerate() {
-                    let a = &words[wi.0];
-                    for (j, &wj) in list.iter().enumerate() {
-                        if i == j { continue; }
-                        let b = &words[wj.0];
-                        if a.body == b.body { continue; }
-                        if b.exit == a.exit && b.delta_y == a.delta_y && b.delta_along >= a.delta_along + 0.1 && b.ticks_max <= a.ticks_min {
-                            dominated[i] = true;
-                            break;
-                        }
-                    }
-                }
-                let mut idx = 0;
-                list.retain(|_| { let keep = !dominated[idx]; idx += 1; keep });
-                list.sort_by(|&a, &b| words[b.0].zipf_score().cmp(&words[a.0].zipf_score()));
-                list.truncate(cap);
-            };
-            insert_sorted(&mut self.fine_index, (w.defect_fine, w.entry), 12);
-            insert_sorted(&mut self.coarse_index, (w.defect_coarse, w.entry), 10);
+            let w = &words[id.0];
+            let fine = self.fine_index.entry((w.defect_fine, w.entry)).or_default();
+            if !fine.contains(&id) { fine.push(id); }
+            Self::prune_pareto_and_sort(words, fine, 12, false);
+
+            let coarse = self.coarse_index.entry((w.defect_coarse, w.entry)).or_default();
+            if !coarse.contains(&id) { coarse.push(id); }
+            Self::prune_pareto_and_sort(words, coarse, 8, true);
+
+            if !w.clicks {
+                let eff_key = EffectKey::of(w.entry, i32::from(w.delta_y), f64::from(w.delta_along.max(0.0)));
+                let eff = self.effect_index.entry(eff_key).or_default();
+                if !eff.contains(&id) { eff.push(id); }
+                Self::prune_pareto_and_sort(words, eff, 8, true);
+            }
 
             let head = self.zipf_head.entry(w.entry).or_default();
-            if !head.contains(&id) {
-                head.push(id);
-            }
-            let words = &self.words;
-            head.sort_by(|&a, &b| words[b.0].zipf_score().cmp(&words[a.0].zipf_score()));
-            head.truncate(8);
+            if !head.contains(&id) { head.push(id); }
+            Self::prune_pareto_and_sort(words, head, 6, true);
         }
+    }
+
+    /// Background Pareto + Minton consolidation across all guess and fine indices.
+    pub fn consolidate(&mut self) -> usize {
+        let words = &self.words;
+        let mut pruned = 0usize;
+        for list in self.fine_index.values_mut() {
+            pruned += Self::prune_pareto_and_sort(words, list, 12, false);
+        }
+        self.fine_index.retain(|_, v| !v.is_empty());
+        for list in self.coarse_index.values_mut() {
+            pruned += Self::prune_pareto_and_sort(words, list, 8, true);
+        }
+        self.coarse_index.retain(|_, v| !v.is_empty());
+        for list in self.effect_index.values_mut() {
+            pruned += Self::prune_pareto_and_sort(words, list, 8, true);
+        }
+        self.effect_index.retain(|_, v| !v.is_empty());
+        for list in self.zipf_head.values_mut() {
+            pruned += Self::prune_pareto_and_sort(words, list, 6, true);
+        }
+        self.zipf_head.retain(|_, v| !v.is_empty());
+        if self.pair_counts.len() > 4096 {
+            let before = self.pair_counts.len();
+            self.pair_counts.retain(|_, c| *c >= 2);
+            pruned += before.saturating_sub(self.pair_counts.len());
+        }
+        pruned
     }
 
     pub fn flatten_atomic<'a>(&'a self, id: WordId, out: &mut Vec<(u16, AimRule, u16)>) {

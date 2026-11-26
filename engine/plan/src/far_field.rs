@@ -187,6 +187,20 @@ impl FarCache {
         self.sections.clear();
         self.fields.clear();
     }
+    pub(crate) fn warm_section(&mut self, provenance: [u8; 32], w: &impl World, sec: BlockPos) -> bool {
+        if self.sections.contains_key(&(provenance, sec)) {
+            return false;
+        }
+        if let Some(s) = SectionSummary::build(w, sec) {
+            self.sections.insert((provenance, sec), Arc::new(s));
+            true
+        } else {
+            false
+        }
+    }
+    pub(crate) fn cached_section_count(&self) -> usize {
+        self.sections.len()
+    }
 }
 
 pub(crate) struct FarField {

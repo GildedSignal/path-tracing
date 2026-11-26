@@ -1521,7 +1521,6 @@ pub(super) fn solve_defect<S: CorridorSource>(
     // A route stitched from guessed words (coarse or regime-head, not this defect's own) leaves
     // the bracket open: its T is not known to be the site's, so learning still runs under it.
     let mut best_guessed = false;
-    let propose_budget_ticks = 4_000u64;
     let mut prop_ticks = 0u64;
     let has_words = store.words.borrow().work.words_total > 0;
 
@@ -1529,6 +1528,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let mut heap: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
         let mut arena: Vec<ArenaNode> = Vec::new();
         let mut guessed: Vec<bool> = Vec::new();
+        let mut outcomes: Vec<(WordId, bool, u64)> = Vec::new();
         let mut best_bucket: HashMap<Bucket, u64> = HashMap::new();
         let mut delta = WorldDelta::new(&grid);
         let lb = |s: &PlayerState| u64::from(kit.map_or_else(|| goal.lower_bound(s), |kv| kv.cone.lower_bound(s, goal)));
@@ -1544,8 +1544,20 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let mut pops = 0u32;
         let mut saw_fine = false;
         while let Some(Reverse((_, _, idx))) = heap.pop() {
-            let cap = if saw_fine || best.is_some() { propose_budget_ticks } else { 800 };
-            let pop_cap = if saw_fine || best.is_some() { 64 } else { 16 };
+            let cap = if best.is_some() {
+                if !best_guessed { 1_500 } else { 1_000 }
+            } else if saw_fine {
+                900
+            } else {
+                360
+            };
+            let pop_cap = if best.is_some() {
+                if !best_guessed { 24 } else { 12 }
+            } else if saw_fine {
+                16
+            } else {
+                6
+            };
             if prop_ticks >= cap || pops >= pop_cap {
                 break;
             }
@@ -1570,15 +1582,26 @@ pub(super) fn solve_defect<S: CorridorSource>(
 
             let sig = defect_sig(&grid, &arena[idx].state, goal);
             let entry = EntryClass::of(&arena[idx].state);
-            let wids = store.words.borrow().propose(sig, entry, kit.is_some());
+            let desired_dy = goal.cell[1] - arena[idx].state.position.y.floor() as i32;
+            let desired_dist = (goal.center().x - arena[idx].state.position.x).hypot(goal.center().z - arena[idx].state.position.z);
+            let wids = store.words.borrow().propose_for_effect(sig, entry, Some((desired_dy, desired_dist)), kit.is_some());
+            let start_h = euclid_h(&arena[idx].state, goal);
             for (wid, known) in wids {
                 if known { saw_fine = true; }
-                let cap = if saw_fine || best.is_some() { propose_budget_ticks } else { 800 };
+                let cap = if best.is_some() {
+                    if !best_guessed { 1_500 } else { 1_000 }
+                } else if saw_fine {
+                    900
+                } else {
+                    360
+                };
                 if prop_ticks >= cap {
                     break;
                 }
                 let child_guessed = guessed[idx] || !known;
                 proposals_tried += 1;
+                let ticks_before = prop_ticks;
+                let mut progressed = false;
                 let ws = store.words.borrow();
                 let max_repeats = if ws.word(wid).self_chains { 16 } else { 1 };
                 let mut child = ArenaNode {
@@ -1623,6 +1646,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
                     if hit {
                         let (pl, full_s, full_o) = reconstruct(&arena, idx, child.edge_steps.clone(), child.edge_obs.clone());
                         proposal_hits += 1;
+                        progressed = true;
                         best = Some((child.arrival, pl, full_s, full_o));
                         best_guessed = child_guessed;
                         break;
@@ -1635,19 +1659,24 @@ pub(super) fn solve_defect<S: CorridorSource>(
                                 chain_steps.extend(tail);
                                 let (pl, full_s, full_o) = reconstruct(&arena, idx, chain_steps, child.edge_obs.clone());
                                 proposal_hits += 1;
+                                progressed = true;
                                 best = Some((tot, pl, full_s, full_o));
                                 best_guessed = child_guessed;
                             }
                             break;
                         }
                     }
-                    if rep >= 1 && euclid_h(&child.state, goal) > prev_h.saturating_add(6) {
+                    let ch = euclid_h(&child.state, goal);
+                    if ch + 2 <= start_h {
+                        progressed = true;
+                    }
+                    if rep >= 1 && ch > prev_h.saturating_add(6) {
                         break;
                     }
                     if best_bucket.get(&bucket(&child)).is_some_and(|&prev| prev <= child.arrival) {
                         continue;
                     }
-                    let p = child.arrival.saturating_add(euclid_h(&child.state, goal));
+                    let p = child.arrival.saturating_add(ch);
                     let nid = arena.len();
                     arena.push(ArenaNode {
                         state: child.state.clone(),
@@ -1664,7 +1693,12 @@ pub(super) fn solve_defect<S: CorridorSource>(
                     guessed.push(child_guessed);
                     heap.push(Reverse((p, child.arrival, nid)));
                 }
+                outcomes.push((wid, progressed, prop_ticks.saturating_sub(ticks_before)));
             }
+        }
+        let mut ws = store.words.borrow_mut();
+        for (wid, ok, spent) in outcomes {
+            ws.record_outcome(wid, ok, spent);
         }
     }
 
@@ -1676,13 +1710,14 @@ pub(super) fn solve_defect<S: CorridorSource>(
             |legs| TopoField::get_or_build(store, provenance, kit_key, &grid, bounds, from, goal, kit, legs),
         );
         let has_guess = best.is_some();
-        let incumbent_at = None;
+        let all_seeds_unreachable = !topo.dist.is_empty() && seeds.iter().all(|n| topo.query(&n.state).is_infinite());
+        let field_ticks = seeds.iter().map(|n| topo.query(&n.state)).filter(|d| d.is_finite()).fold(0.0f32, f32::max) as u64;
+        let tight_guess = has_guess && field_ticks > 0 && best.as_ref().is_some_and(|b| b.0 <= (field_ticks as f64 * 1.15).ceil() as u64 + 2);
+        let incumbent_at = tight_guess.then_some(0);
         let mut pb = PhaseB {
             goal, topo: &topo, kit, arena: Vec::with_capacity(2048),
             best_bucket: HashMap::with_capacity(2048), heap: BinaryHeap::new(), best: &mut best, incumbent_at,
         };
-        let all_seeds_unreachable = !topo.dist.is_empty() && seeds.iter().all(|n| topo.query(&n.state).is_infinite());
-        let field_ticks = seeds.iter().map(|n| topo.query(&n.state)).filter(|d| d.is_finite()).fold(0.0f32, f32::max) as u64;
         for s in seeds {
             let idx = pb.arena.len();
             let p = priority_key_topo(s.arrival, &s.state, goal, &topo, &s.ledger, kit);
@@ -1695,8 +1730,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
             .min(480_000);
         let cold_cap = if all_seeds_unreachable {
             base_cap.min(8_000)
-        } else if has_guess {
-            base_cap.min(field_ticks.saturating_mul(900).clamp(40_000, 64_000))
+        } else if has_guess && !tight_guess {
+            base_cap.min(field_ticks.saturating_mul(260).clamp(12_000, 36_000))
         } else {
             base_cap
         };
@@ -1706,7 +1741,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let has_words_b = store.words.borrow().work.words_total > 0;
 
         while let Some(Reverse((_, _, idx))) = pb.heap.pop() {
-            if raw_learn_ticks >= cold_cap || pb.incumbent_at.is_some_and(|t| raw_learn_ticks >= t.saturating_add(4_500)) {
+            let polish = if tight_guess && pb.incumbent_at == Some(0) { 3_500 } else { 4_500 };
+            if raw_learn_ticks >= cold_cap || pb.incumbent_at.is_some_and(|t| raw_learn_ticks >= t.saturating_add(polish)) {
                 break;
             }
             let ub = pb.best.as_ref().map_or(u64::MAX, |b| b.0);

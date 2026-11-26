@@ -331,8 +331,13 @@ fn resident() -> &'static Resident {
             let mut store = plan::store::GeneratorStore::default();
             let mut codec = law::codec::Interner::default();
             let mut active_cont: Option<ActiveContinuation> = None;
+            let mut idle_consolidate = false;
+            let mut idle_sections: Vec<BlockPos> = Vec::new();
+            let mut last_provenance: Option<[u8; 32]> = None;
             loop {
-                let msg = if active_cont.is_some() {
+                let can_idle_work = active_cont.is_none()
+                    && (idle_consolidate || (last_provenance.is_some() && !idle_sections.is_empty()));
+                let msg = if active_cont.is_some() || can_idle_work {
                     match recv.try_recv() {
                         Ok(w) => Some(w),
                         Err(mpsc::TryRecvError::Empty) => None,
@@ -363,13 +368,20 @@ fn resident() -> &'static Resident {
                                 store = plan::store::GeneratorStore::default();
                                 codec = law::codec::Interner::default();
                                 active_cont = None;
+                                idle_consolidate = false;
+                                idle_sections.clear();
+                                last_provenance = None;
                             } else if kind == 4 || (kind == 0 && !reset) {
                                 store.words.borrow_mut().environment_event();
                                 store.clear_far();
                                 active_cont = None;
+                                idle_sections.clear();
                             } else {
                                 if let Some(cell) = p {
                                     let sec = if kind == 2 { cell.map(|v| v.div_euclid(16)) } else { cell };
+                                    if kind == 1 && idle_sections.len() < 256 && !idle_sections.contains(&sec) {
+                                        idle_sections.push(sec);
+                                    }
                                     if kind != 2 || law_changed {
                                         store.invalidate_far_section(sec);
                                     }
@@ -386,10 +398,14 @@ fn resident() -> &'static Resident {
                         Work::Goal(request) => {
                             let req_version = request.version;
                             active_cont = None;
-                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan_step(&source, &store, &mut codec, request, &v, &r))) {
-                                Ok((answer, cont)) => {
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan_step_with_prov(&source, &store, &mut codec, request, &v, &r))) {
+                                Ok((answer, cont, prov)) => {
                                     let _ = done.send(answer);
                                     active_cont = cont;
+                                    if let Some(p) = prov {
+                                        last_provenance = Some(p);
+                                    }
+                                    idle_consolidate = true;
                                 }
                                 Err(p) => {
                                     let _ = done.send(refusal(req_version, format!("planner panic: {}", p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())));
@@ -407,6 +423,19 @@ fn resident() -> &'static Resident {
                                 active_cont = Some(cont);
                             }
                         }
+                    }
+                } else if idle_consolidate {
+                    store.consolidate_idle();
+                    idle_consolidate = false;
+                } else if let Some(prov) = last_provenance {
+                    let req_ver = v.load(Ordering::Acquire);
+                    let req_rev = r.load(Ordering::Acquire);
+                    for _ in 0..4 {
+                        if v.load(Ordering::Acquire) != req_ver || r.load(Ordering::Acquire) != req_rev {
+                            break;
+                        }
+                        let Some(sec) = idle_sections.pop() else { break; };
+                        store.warm_far_section(prov, &source, sec);
                     }
                 }
             }
@@ -729,26 +758,33 @@ fn plan_hull(words: &[plan::WordStep], fallback_lo: [i32; 2], fallback_hi: [i32;
     [i64::from(hx0) as u64, i64::from(hz0) as u64, i64::from(hx1) as u64, i64::from(hz1) as u64]
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn plan_step(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> (Vec<u64>, Option<ActiveContinuation>) {
+    let (pkt, cont, _) = plan_step_with_prov(source, store, codec, request, version, revision);
+    (pkt, cont)
+}
+
+fn plan_step_with_prov(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> (Vec<u64>, Option<ActiveContinuation>, Option<[u8; 32]>) {
     let Request { state, meta, goal: target, issue, version: requested } = request;
     let goal = target.cell;
     let entered = crate::qpc().0 as u64;
-    if let Some(why) = &source.error { return (refusal(requested,format!("source publication failed: {why}")), None); }
-    if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return (refusal(requested,"observation/source session or revision mismatch"), None); }
-    if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return (refusal(requested,"missing/invalid body-kit context"), None); }
-    if meta[2] != 0 { return (refusal(requested,"unsupported input phase"), None); }
+    if let Some(why) = &source.error { return (refusal(requested,format!("source publication failed: {why}")), None, None); }
+    if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return (refusal(requested,"observation/source session or revision mismatch"), None, None); }
+    if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return (refusal(requested,"missing/invalid body-kit context"), None, None); }
+    if meta[2] != 0 { return (refusal(requested,"unsupported input phase"), None, None); }
     let carried = kit_wire::read(&meta[7..]);
-    let Some((lo,hi)) = source.bounds() else { return (refusal(requested,"no received sections"), None); };
+    let Some((lo,hi)) = source.bounds() else { return (refusal(requested,"no received sections"), None, None); };
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
     let a = match find_support_below(source, p, lo[1], state.main_supporting_block) {
         Ok(s) => s,
-        Err(why) => return (refusal(requested, why), None),
+        Err(why) => return (refusal(requested, why), None, None),
     };
-    if (0..3).any(|i| goal[i] < lo[i] || goal[i] > hi[i]) { return (refusal(requested,"the goal is outside the chunks the bot has received"), None); }
-    let corridor = match ResidentCorridor::new(source, a, (lo, hi)) { Ok(c) => c, Err(why) => return (refusal(requested, why), None) };
+    if (0..3).any(|i| goal[i] < lo[i] || goal[i] > hi[i]) { return (refusal(requested,"the goal is outside the chunks the bot has received"), None, None); }
+    let corridor = match ResidentCorridor::new(source, a, (lo, hi)) { Ok(c) => c, Err(why) => return (refusal(requested, why), None, None) };
+    let prov = corridor.provenance_hash;
     let result = plan::solve_step(&state, target, carried.kit, &corridor, store, codec, u64::MAX);
     if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.law_revision {
-        return (refusal(requested,"cancelled or source changed while thinking"), None);
+        return (refusal(requested,"cancelled or source changed while thinking"), None, Some(prov));
     }
     let (found, eval_goal, cont) = match result.outcome {
         plan::PlanOutcome::Ready(plan) => (plan, target, None),
@@ -767,7 +803,7 @@ fn plan_step(source: &Source, store: &plan::store::GeneratorStore, codec: &mut l
             };
             (pref.plan, pref.target, Some(cont))
         }
-        other => return (refusal(requested, format!("{:?} {}", other, result.explanation.unwrap_or_default())), None),
+        other => return (refusal(requested, format!("{:?} {}", other, result.explanation.unwrap_or_default())), None, Some(prov)),
     };
     let programs = words::tiny_programs();
     match inputs(source, &programs, &state, &found.words, eval_goal, found.ticks, &carried) {
@@ -779,9 +815,9 @@ fn plan_step(source: &Source, store: &plan::store::GeneratorStore, codec: &mut l
             let fallback_lo = [p[0].min(goal[0]).saturating_sub(2).max(lo[0]), p[2].min(goal[2]).saturating_sub(2).max(lo[2])];
             let fallback_hi = [p[0].max(goal[0]).saturating_add(2).min(hi[0]), p[2].max(goal[2]).saturating_add(2).min(hi[2])];
             out.extend(plan_hull(&found.words, fallback_lo, fallback_hi));
-            (out, cont)
+            (out, cont, Some(prov))
         }
-        Err(why) => (refusal(requested,why), None),
+        Err(why) => (refusal(requested,why), None, Some(prov)),
     }
 }
 
@@ -1136,5 +1172,21 @@ mod tests {
             if target.reached_boxes(before, &sim) { hit.get_or_insert(idx + 1); }
         }
         assert_eq!(hit, Some(all_inputs.len()));
+    }
+
+    #[test]
+    fn idle_consolidate_and_far_section_prewarm_respect_invalidation() {
+        let source = field(None);
+        let store = plan::store::GeneratorStore::default();
+        let prov = ResidentCorridor::new(&source, [0, 0, 0], ([-16, -16, -16], [31, 31, 31])).unwrap().provenance_hash;
+        assert_eq!(store.cached_far_sections(), 0);
+        assert!(store.warm_far_section(prov, &source, [0, 0, 0]));
+        assert!(store.warm_far_section(prov, &source, [1, 0, 0]));
+        assert!(!store.warm_far_section(prov, &source, [0, 0, 0]), "duplicate prewarm must be a no-op");
+        assert_eq!(store.cached_far_sections(), 2);
+
+        store.invalidate_far_section([0, 0, 0]);
+        assert_eq!(store.cached_far_sections(), 1);
+        assert_eq!(store.consolidate_idle(), 0);
     }
 }
