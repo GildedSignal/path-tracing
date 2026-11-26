@@ -142,7 +142,7 @@ impl WorldSnapshot {
         let (origin, span, sections) = Self::sections(min, max, read)?;
         Ok(Self { min, max, origin, span, sections, difficulty: reader.difficulty, natural_regeneration, fluids, inside, unknown })
     }
-    /// The box `min..=max` holding `state(p)` at each cell, built in memory (normal difficulty,
+    /// The box `min..=max` holding `state(p)` at each cell, built in memory (peaceful,
     /// natural regeneration on): the same sections a saved world loads into.
     pub fn from_fn(min: BlockPos, max: BlockPos, mut state: impl FnMut(BlockPos) -> StateId) -> Self {
         let (mut fluids, mut inside) = (false, false);
@@ -153,7 +153,7 @@ impl WorldSnapshot {
             inside |= block.inside != Inside::None || block.stuck_multiplier.is_some();
             Ok(id)
         }).expect("a generator cannot fail");
-        Self { min, max, origin, span, sections, difficulty: 2, natural_regeneration: true, fluids, inside, unknown: BTreeMap::new() }
+        Self { min, max, origin, span, sections, difficulty: 0, natural_regeneration: true, fluids, inside, unknown: BTreeMap::new() }
     }
     fn sections(min: BlockPos, max: BlockPos, mut read: impl FnMut(BlockPos) -> Result<StateId, LoadError>) -> Result<(BlockPos, [usize; 3], Box<[Section]>), LoadError> {
         let origin = min.map(|v| v >> 4);
