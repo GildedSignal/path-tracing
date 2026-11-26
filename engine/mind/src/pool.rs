@@ -1773,6 +1773,24 @@ impl WorkerPool {
             let _ = w.rx.recv();
         }
     }
+
+    #[allow(dead_code)]
+    pub fn gpu_device_name() -> Option<&'static str> {
+        gpu::GpuContext::global().map(|c| c.device_info().name.as_str())
+    }
+
+    /// Crossover-gated dense `Knudsen ≈ 1` crowd push step (RX 7900 XTX GPU above 8,192 bots, CPU below).
+    #[allow(dead_code)]
+    pub fn dense_crowd_push_step(
+        state: &mut gpu::crowd_push::CrowdState,
+        origin_x: f64,
+        origin_z: f64,
+        grid_w: usize,
+        grid_h: usize,
+        ticks: usize,
+    ) -> Result<bool, String> {
+        gpu::crowd_push_auto(state, origin_x, origin_z, grid_w, grid_h, ticks)
+    }
 }
 
 impl Drop for WorkerPool {

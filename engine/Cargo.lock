@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpu"
+version = "0.1.0"
+dependencies = [
+ "law",
+]
+
+[[package]]
 name = "law"
 version = "0.1.0"
 dependencies = [
@@ -20,6 +27,7 @@ dependencies = [
 name = "mind"
 version = "0.1.0"
 dependencies = [
+ "gpu",
  "law",
  "plan",
  "words",

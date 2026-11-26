@@ -1,6 +1,11 @@
 const SIN: &[u8; 262144] = include_bytes!("sin.bin");
 const SIN_SCALE: f64 = 10430.378350470453;
 
+/// Raw 65,536-entry `f32` little-endian Mojang sine LUT bytes for GPU upload.
+pub fn sin_table_bytes() -> &'static [u8; 262144] {
+    SIN
+}
+
 // Mth.sin
 pub fn sin(value: f64) -> f32 {
     table(((value * SIN_SCALE) as i64 & 65535) as usize)

@@ -8,3 +8,4 @@ law = { path = "../law" }
 world = { path = "../world" }
 words = { path = "../words" }
 plan = { path = "../plan" }
+gpu = { path = "../gpu" }
