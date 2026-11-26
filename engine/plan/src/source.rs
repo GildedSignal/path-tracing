@@ -356,14 +356,17 @@ impl GeneratorSuperflatSource {
             .chain(self.scars.rows.iter().filter_map(|r|match r {Row::Known {model:Some(model),..}=>Some(model.at([0;3])),_=>None}))
     }
     fn covered(&self,p:BlockPos)->bool {(0..3).all(|a|p[a]>=self.loaded_min[a] && p[a]<=self.loaded_max[a])}
+    /// A read the planner needs: the first one outside the source is kept, so the caller can grow it.
+    fn reaches(&self,p:BlockPos)->bool {
+        let inside=self.covered(p);
+        if !inside && self.first_uncovered.get().is_none() { self.first_uncovered.set(Some(p)); }
+        inside
+    }
 }
 impl World for GeneratorSuperflatSource {
     #[inline]
     fn known_block(&self,p:BlockPos)->Result<&Block,&str> {
-        if !self.covered(p) {
-            if self.first_uncovered.get().is_none() { self.first_uncovered.set(Some(p)); }
-            return Err("outside the source");
-        }
+        if !self.reaches(p) {return Err("outside the source");}
         self.read(p)
     }
     fn block(&self,p:BlockPos)->&Block {self.read(p).unwrap_or_else(|_|self.base(p))}
@@ -466,7 +469,7 @@ impl CorridorSource for GeneratorSuperflatSource {
         label_roles(codec,self,feet,support)
     }
     fn corridor_query(&self,codec:&mut Interner,expected:LabelId,min:BlockPos,max:BlockPos)->CorridorResult {
-        if !self.covered(min) || !self.covered(max) {return CorridorResult::Unknown(Refusal::Loaded);}
+        if !self.reaches(min) || !self.reaches(max) {return CorridorResult::Unknown(Refusal::Loaded);}
         // Qualify the generator's role tuple, not its name. No cells along its length.
         let support=[min[0],self.floor_y,min[2]];
         // Read the immutable generator, separately from its sparse edit journal.
@@ -475,7 +478,7 @@ impl CorridorSource for GeneratorSuperflatSource {
         match label_roles(codec,&Base(self),[support[0],self.floor_y+1,support[2]],support) {Ok(id) if id==expected=>(),Ok(_)=>return CorridorResult::Exception {first_pos:support,exceptions:1},Err(r)=>return CorridorResult::Unknown(r)}
         // An unknown shape may extend beyond its own cell into the corridor.
         let halo_min=min.map(|v|v.saturating_sub(1)); let halo_max=max.map(|v|v.saturating_add(1));
-        if !self.covered(halo_min) || !self.covered(halo_max) {return CorridorResult::Unknown(Refusal::Coverage);}
+        if !self.reaches(halo_min) || !self.reaches(halo_max) {return CorridorResult::Unknown(Refusal::Coverage);}
         let inside=|p:BlockPos,lo:BlockPos,hi:BlockPos|(0..3).all(|i|lo[i]<=p[i] && p[i]<=hi[i]);
         let mut unknown=None;
         let mut first=None;

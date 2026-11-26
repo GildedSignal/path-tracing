@@ -115,15 +115,32 @@ abstract class ClientPacketListenerMixin {
         LandingClientTrace.unexpected("ClientboundRespawnPacket");
     }
 
+    // What the client held before a block packet: one that leaves it as it was (a resend, or the echo
+    // of the bot's own predicted click) is no change.
+    @org.spongepowered.asm.mixin.Unique
+    private static final java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.state.BlockState> ptBefore = new java.util.HashMap<>();
+
+    @Inject(method = "handleBlockUpdate", at = @At("HEAD"))
+    private void ptBlockBefore(ClientboundBlockUpdatePacket packet, CallbackInfo ci) {
+        var mc = Minecraft.getInstance();
+        if (mc.isSameThread() && mc.level != null) ptBefore.put(packet.getPos().immutable(), mc.level.getBlockState(packet.getPos()));
+    }
+
     @Inject(method = "handleBlockUpdate", at = @At("RETURN"))
     private void ptBlockUpdate(ClientboundBlockUpdatePacket packet, CallbackInfo ci) {
-        ResidentSource.block(packet.getPos(),packet.getBlockState());
+        ResidentSource.block(packet.getPos(),packet.getBlockState(),ptBefore.remove(packet.getPos()));
         if (LandingClientTrace.CORPUS) LandingClientTrace.blockUpdate(packet.getPos());
+    }
+
+    @Inject(method = "handleChunkBlocksUpdate", at = @At("HEAD"))
+    private void ptSectionBefore(ClientboundSectionBlocksUpdatePacket packet, CallbackInfo ci) {
+        var mc = Minecraft.getInstance();
+        if (mc.isSameThread() && mc.level != null) packet.runUpdates((pos, state) -> ptBefore.put(pos.immutable(), mc.level.getBlockState(pos)));
     }
 
     @Inject(method = "handleChunkBlocksUpdate", at = @At("RETURN"))
     private void ptSectionUpdate(ClientboundSectionBlocksUpdatePacket packet, CallbackInfo ci) {
-        packet.runUpdates(ResidentSource::block);
+        packet.runUpdates((pos, state) -> ResidentSource.block(pos, state, ptBefore.remove(pos)));
         if (LandingClientTrace.CORPUS) packet.runUpdates((pos, state) -> LandingClientTrace.blockUpdate(pos));
     }
 

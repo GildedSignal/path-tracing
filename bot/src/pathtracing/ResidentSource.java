@@ -3,7 +3,6 @@ package pathtracing;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -30,9 +29,10 @@ public final class ResidentSource {
         sentDifficulty = mc.level.getDifficulty().getId();
         send(new long[]{4,session,++revision,sentDifficulty});
     }
-    private static void send(long[] data) {
+    private static void send(long[] data) { send(data, true); }
+    private static void send(long[] data, boolean changed) {
         long[] answer = NativeChannel.PublishSourceDelta(data);
-        ResidentRunner.sourceChanged(data);
+        if (changed) ResidentRunner.sourceChanged(data);
         if (answer[0] == 3) throw new IllegalStateException("Source publication refused");
     }
     public static void chunk(int x, int z) {
@@ -42,25 +42,31 @@ public final class ResidentSource {
         var all = chunk.getSections();
         for (int s = 0; s < all.length; s++) {
             BlockPos address = new BlockPos(x,mc.level.getMinSectionY()+s,z);
-            LinkedHashMap<String,Integer> palette = new LinkedHashMap<>();
+            // A section holds a few distinct states (block states are shared instances): name each once.
+            java.util.IdentityHashMap<BlockState,Integer> palette = new java.util.IdentityHashMap<>();
+            ArrayList<Long> header = new ArrayList<>();
+            ArrayList<BlockState> order = new ArrayList<>();
             long[] indices = new long[4096];
             for (int y=0;y<16;y++) for (int bz=0;bz<16;bz++) for (int bx=0;bx<16;bx++) {
-                String state = canonical(all[s].getBlockState(bx,y,bz));
-                indices[(y*16+bz)*16+bx] = palette.computeIfAbsent(state,ignored -> palette.size());
+                BlockState state = all[s].getBlockState(bx,y,bz);
+                Integer index = palette.get(state);
+                if (index == null) { index = order.size(); palette.put(state,index); order.add(state); }
+                indices[(y*16+bz)*16+bx] = index;
             }
-            ArrayList<Long> data = new ArrayList<>();
-            data.add(1L); data.add(session); data.add(0L);
-            data.add((long)x); data.add((long)address.getY()); data.add((long)z); data.add((long)palette.size());
-            for (String state : palette.keySet()) text(data,state);
-            for (long index : indices) data.add(index);
-            long[] words = data.stream().mapToLong(Long::longValue).toArray();
+            header.add(1L); header.add(session); header.add(0L);
+            header.add((long)x); header.add((long)address.getY()); header.add((long)z); header.add((long)order.size());
+            for (BlockState state : order) text(header,canonical(state));
+            long[] words = new long[header.size() + 4096];
+            for (int i = 0; i < header.size(); i++) words[i] = header.get(i);
+            System.arraycopy(indices,0,words,header.size(),4096);
             long[] previous = sections.get(address);
             if (previous != null && previous.length > 2) words[2] = previous[2];
             if (java.util.Arrays.equals(previous,words)) continue;
             words[2] = ++revision; sections.put(address,words); send(words);
         }
     }
-    public static void block(BlockPos p, BlockState state) {
+    /** `before` is what the client held before the packet (null when unknown): an equal state is no change. */
+    public static void block(BlockPos p, BlockState state, BlockState before) {
         if (NativeChannel.loadFailure() != null || session == 0) return;
         BlockPos address = new BlockPos(p.getX()>>4,p.getY()>>4,p.getZ()>>4);
         if (!sections.containsKey(address)) return; // Not client-loaded: never grant a lease.
@@ -69,7 +75,7 @@ public final class ResidentSource {
         sections.put(address,new long[0]);
         ArrayList<Long> data = new ArrayList<>();
         for (long value : new long[]{2,session,++revision,p.getX(),p.getY(),p.getZ()}) data.add(value);
-        text(data,canonical(state)); send(data.stream().mapToLong(Long::longValue).toArray());
+        text(data,canonical(state)); send(data.stream().mapToLong(Long::longValue).toArray(), !state.equals(before));
     }
     public static void unload(int x,int z) {
         if (NativeChannel.loadFailure() != null) return;
@@ -77,7 +83,7 @@ public final class ResidentSource {
             sections.remove(p); send(new long[]{3,session,++revision,x,p.getY(),z});
         }
     }
-    private static String canonical(BlockState state) {
+    static String canonical(BlockState state) {
         String properties = state.getValues().map(Object::toString).sorted().collect(java.util.stream.Collectors.joining(","));
         return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString() + (properties.isEmpty()?"":"["+properties+"]");
     }

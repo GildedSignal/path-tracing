@@ -217,7 +217,8 @@ final class TrackMode {
             state = State.TARGET;
             deadline = now + 200;
             if (!port.mode().equals(targetMode)) port.command("gamemode " + targetMode);
-            advance();
+            // The next tick advances: a query sent from inside this answer's callback is dropped,
+            // because DebugQueryHandler clears its callback after running it.
         } catch (RuntimeException failure) { fail(failure.getMessage()); }
     }
 

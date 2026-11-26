@@ -35,7 +35,7 @@ Each row is shown beside its Fermi floor, with the gap in orders of magnitude.
 |---|---|---|---|
 | a new command on flat ground | ~1–10 µs | 12.75 µs standing, 13.90 µs moving (median, 0 B warm alloc); first on a ground 194.5 µs | ~0.11 order |
 | the same command asked again | ~1 µs | 5.10 µs (0 B alloc, 0 law ticks) | ~0.71 order |
-| a click to the bot's first input, in his game | ~1 tick | resident JNI channel on `main` (live `KIT_PLAN` flight pending; disk `plan-track` 1.8–2.3 s) | pending live re-measure |
+| a click to the bot's first input, in his game | ~1 tick | `track run` command to first input `8–15` ticks (`360–726 ms`, RCON preparation included; disk `plan-track` 2.4–3.4 s) | ~0.9–1.2 orders |
 | a law tick | 0.1–0.3 µs | 0.6–0.95 µs | ~0.5 order |
 | a new joint pattern | ~12 ms, once | 20.7–307 ms per track cold; 1.01 s across 11 shared-store tracks | ~0.2–1.4 orders |
 | 10⁴ bots deciding | ~0.03 core | — | — |

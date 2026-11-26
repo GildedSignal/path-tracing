@@ -31,12 +31,13 @@ His words are the source; each line names its turn (the register and the verbati
 19. **Fly early, then iterate by the bottleneck** (X4: the SpaceX loop; S20: cathedral for the law and the representation). Every step ends in a flight he can use.
 20. **Every meter works** (S241: GLM "waiting doing nothing for now which is bad"). The bottleneck on the goal comes first; idle companions take the next useful work.
 21. **Less code is better on every level** (S44, S49). Smaller kernels keep the hot loop in L1/L3 cache and let the whole law fit inside one agent's context window; any deletion that leaves every jar witness, replay, and flight unchanged is proven sound (ES method). Each step ends by deleting what it made dead, and is judged by how much cheaper it makes the next: fewer lines of code and of tests, so each pass is less work than the last (his words in `archive/turns/inbox.md`). **Checks never pin the implementation** (ES method §8): a witness is state in → state out at a boundary, so a deletion is judged by verdicts alone. **Every metric is an attractor, guarded** (ES method §9): lines are counted with the tests, and the witness rows, which are data, never fall.
-22. **Agency for the companions** (S237): a clear job, conditions and gate; how they reach it is theirs. Only what cannot be undone stays closed.
-23. **The right mind for the job; a smaller model never writes for a bigger one** (S10, S12, S174, S210).
-24. **Think together first, then build fast** (X1, S8). When he asks to explain, explain and do not act (S179).
-25. **His words and his vocabulary, never ours** (S75, S179); see [vocabulary.md](vocabulary.md).
-26. **No made-up numbers** (S67, S132): constants come from the law or the need.
-27. **Fun to make** (S36).
+22. **No bandaids; when unsure, ask him** (inbox 2026-11-25 13:47: "never ever do that again no bandaids if unsure just ask me don't plow with half assed solutions they compound badly"). A change that makes a case pass without making the mechanism the doc describes is a patch: a fallback path, a cap raised until a test passes, a special case. It is not written; the gap is named and he decides. The doc is the spec: code that contradicts a "Killed if" line is a defect, however green its tests.
+23. **Agency for the companions** (S237): a clear job, conditions and gate; how they reach it is theirs. Only what cannot be undone stays closed.
+24. **The right mind for the job; a smaller model never writes for a bigger one** (S10, S12, S174, S210).
+25. **Think together first, then build fast** (X1, S8). When he asks to explain, explain and do not act (S179).
+26. **His words and his vocabulary, never ours** (S75, S179); see [vocabulary.md](vocabulary.md).
+27. **No made-up numbers** (S67, S132): constants come from the law or the need.
+28. **Fun to make** (S36).
 
 ## From Emergent Space (ES, his engine)
 

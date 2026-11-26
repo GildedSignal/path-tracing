@@ -388,6 +388,13 @@ public final class Tracks {
         run.addProperty("wallNanos", sampleNanos - startNanos);
         run.add("itemsUsed", TrackStore.items(USED.counts()));
         if (botAttempt) {
+            // T ends when the cleanup ends: a run that touched B with edits still standing is not restored.
+            unrestored.putAll(ResidentRunner.takeUnrestored(mc));
+            run.addProperty("restored", unrestored.isEmpty());
+            if (!unrestored.isEmpty()) {
+                say(mc, "Not restored at B: " + unrestored.size() + " edited cell(s) differ from before the run; the harness puts them back.");
+                run.addProperty("unrestoredCells", unrestored.keySet().stream().map(p -> p.getX() + " " + p.getY() + " " + p.getZ()).toList().toString());
+            }
             if (latency != null) {
                 run.addProperty("commandToFirstInputTicks", latency);
                 run.addProperty("commandToFirstInputMs", latencyMs);
@@ -435,6 +442,7 @@ public final class Tracks {
             generation++;
             settling = false;
             boolean wasBot = botAttempt;
+            if (wasBot) restoreWorld(mc, selected);
             selected = null;
             run = null;
             USED.clear();
@@ -450,6 +458,24 @@ public final class Tracks {
                 }
             } finally { discardRecording(mc); }
         }
+    }
+
+    // Cells the bot's plans edited that still differ from before the run, kept from finish to cancel.
+    private static final Map<BlockPos, net.minecraft.world.level.block.state.BlockState> unrestored = new java.util.LinkedHashMap<>();
+
+    /** Every bot run, finished or stopped, leaves the track's world as it found it, so no run inherits another's edits. */
+    private static void restoreWorld(Minecraft mc, TrackStore.Track track) {
+        unrestored.putAll(ResidentRunner.takeUnrestored(mc));
+        // Outside a track run (a stick command), edits are the mission's own, not the harness's.
+        if (track == null) { unrestored.clear(); return; }
+        if (unrestored.isEmpty()) return;
+        List<String> commands = new ArrayList<>();
+        unrestored.forEach((p, s) -> commands.add("execute in " + track.dimension() + " run setblock " + p.getX() + " " + p.getY() + " " + p.getZ() + " " + ResidentSource.canonical(s)));
+        unrestored.clear();
+        CompletableFuture.runAsync(() -> {
+            try { TrackRcon.execute(STORE.rig, commands, () -> false); }
+            catch (IOException e) { mc.execute(() -> say(mc, "World restore failed: " + e.getMessage())); }
+        });
     }
 
     private static void startBot(Minecraft mc, String name, long receivedNanos, boolean play) throws IOException {
@@ -469,6 +495,7 @@ public final class Tracks {
         String player = mc.player.getName().getString();
         if (!player.matches("[A-Za-z0-9_]{1,16}")) throw new IllegalArgumentException("Invalid bot player name.");
         cancel(mc, true);
+        ResidentRunner.takeUnrestored(mc); // a track run judges only its own edits
         Bot.clearFollowPath();
         TickInput.release(mc);
         selected = track;

@@ -21,6 +21,14 @@ final class ResidentRunner {
     // The plan's own edits: their echoes from the server are expected, every other edit stops the flight.
     private static List<KitAction> actions = List.of();
     private static int stalls;
+    private static final java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before = new java.util.LinkedHashMap<>();
+    /** The cells the plans edited that do not hold their state from before the first edit; forgets them. */
+    static java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> takeUnrestored(Minecraft mc) {
+        var out = new java.util.LinkedHashMap<BlockPos, net.minecraft.world.level.block.state.BlockState>();
+        if (mc.level != null) before.forEach((p, s) -> { if (mc.level.getBlockState(p) != s) out.put(p, s); });
+        before.clear();
+        return out;
+    }
     static void sourceChanged(long[] data) {
         if (!executing || data[0] != 2 || data[3] < corridor[0] || data[3] > corridor[2] || data[5] < corridor[1] || data[5] > corridor[3]) return;
         if (KitAction.ours(actions, Recorder.planTick() - 1, (int) data[3], (int) data[4], (int) data[5])) return;
@@ -111,6 +119,12 @@ final class ResidentRunner {
         if (count == 0) { Bot.reply(mc,"Already there."); return; }
         corridor = new int[]{(int)answer[hullBase],(int)answer[hullBase+1],(int)answer[hullBase+2],(int)answer[hullBase+3]};
         actions = KitAction.read(answer,inputsEnd+1,kits); stalls = 0;
+        // The world before the plan's edits (a door's other half moves with it): the mission is
+        // over only when these cells hold it again.
+        for (KitAction a : actions) for (int dy = -1; dy <= 1; dy++) {
+            BlockPos p = new BlockPos(a.x(), a.y() + dy, a.z());
+            if (dy == 0 || a.opcode() == KitAction.INTERACT) before.putIfAbsent(p, mc.level.getBlockState(p));
+        }
         ArrayList<TickInput> inputs = new ArrayList<>(count);
         for (int i=9+n;i<inputsEnd;i+=3) {
             long keys=answer[i];
