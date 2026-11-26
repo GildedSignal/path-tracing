@@ -29,7 +29,7 @@ use crate::{
 };
 
 const MAX_STEPS: usize = 128;
-const MAX_TOPO_CELLS: usize = 48_000;
+const MAX_TOPO_CELLS: usize = 120_000;
 
 const P_FSJ: u16 = tiny_program_id(0, true, Always, Never);
 const P_FSG: u16 = tiny_program_id(0, true, OnGround, Never);
@@ -96,8 +96,11 @@ impl Legs {
     }
 }
 
-const DIRS: [BlockPos; 6] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
-const SEED: u8 = 6;
+const DIRS: [BlockPos; 10] = [
+    [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0],
+    [1, 0, 1], [1, 0, -1], [-1, 0, 1], [-1, 0, -1],
+];
+const SEED: u8 = 10;
 /// The descent's next transition needs the way cleared, a floor under the next cell (a gap
 /// longer than a jump), or a floor under this one (to jump up from where nothing holds the body).
 const CLEAR: u8 = 1;
@@ -199,7 +202,7 @@ impl TopoField {
         ];
         let max = [
             fx.max(goal.cell[0]).saturating_add(20).min(max[0]),
-            fy.max(goal.cell[1]).saturating_add(14).min(max[1]),
+            fy.max(goal.cell[1]).saturating_add(8).min(max[1]),
             fz.max(goal.cell[2]).saturating_add(20).min(max[2]),
         ];
         let dx = (max[0] - min[0] + 1).max(1) as usize;
@@ -254,7 +257,7 @@ impl TopoField {
         let mut settled = vec![false; vol];
         let mut pops = 0usize;
         while let Some(Reverse((bits, e, cur, rc))) = heap.pop() {
-            if pops >= 12_000 {
+            if pops >= 40_000 {
                 break;
             }
             let Some(ci) = field.idx(cur) else { continue };
@@ -274,13 +277,15 @@ impl TopoField {
                 // floor or after a jump up or a fall, and one more for each unsupported cell across.
                 let up = n[1] < cur[1];
                 let across = n[1] == cur[1];
-                let leg = cur_d + if up { legs.up } else if across { legs.h } else { legs.down };
+                let diag = k >= 6;
+                let leg = cur_d + if up { legs.up } else if diag { legs.h * std::f32::consts::SQRT_2 } else if across { legs.h } else { legs.down };
                 if (0..runs).all(|r| field.dist[ni * runs + r] < leg) {
                     continue;
                 }
                 let n_sup = has_step_support(grid, n);
                 let open = way_clear(grid, n, cur);
                 grid.reset_missing();
+                if diag && !open { continue; }
                 // The edit the way itself needs, and its price.
                 let clear = if open {
                     Some((0.0, 0))
@@ -298,13 +303,20 @@ impl TopoField {
                     if rc >= 1 && (!n_sup || rc == 1) {
                         options.push((usize::from(rc) - 1, 0.0, 0));
                     }
-                    if rc == 0 && !has_step_support(grid, below(cur)) {
+                    if !diag && rc == 0 && !has_step_support(grid, below(cur)) {
                         if let Some((t, anchored)) = priced(&[below(cur)], FieldEdit::Floor) {
                             let r_range = if anchored { all_runs.clone() } else { 0..1 };
                             r_range.for_each(|r| options.push((r, t, FLOOR_NEXT)));
                         }
                     }
                     grid.reset_missing();
+                } else if !up && !across && !cur_sup {
+                    // Falling through empty air never resets horizontal air run `rc`.
+                    if !n_sup {
+                        options.push((usize::from(rc), 0.0, 0));
+                    } else if rc == 0 {
+                        options.push((0, 0.0, 0));
+                    }
                 } else if rc == 0 {
                     if up && !n_sup {
                         if let Some((t, _)) = priced(&[below(n)], FieldEdit::Floor) {
@@ -396,6 +408,32 @@ impl TopoField {
             let d = DIRS[usize::from(k)];
             (n, [n[0] - d[0], n[1] - d[1], n[2] - d[2]])
         })
+    }
+
+    /// Bearing toward the next supported landing along the field's descent, if reachable.
+    fn aim(&self, grid: &impl World, s: &PlayerState) -> Option<u16> {
+        let mut si = self.state_of(s)?;
+        let start = self.pos(si / self.runs);
+        let mut target = None;
+        for _ in 0..8 {
+            let Some((_, next_pos)) = self.step(si) else { break };
+            if next_pos[0] != start[0] || next_pos[2] != start[2] {
+                target = Some(next_pos);
+            }
+            let sup = has_step_support(grid, next_pos);
+            if sup && target.is_some() {
+                break;
+            }
+            let Some(nci) = self.idx(next_pos) else { break };
+            let next_si = self.best(nci);
+            if self.dist[next_si] >= self.dist[si] {
+                break;
+            }
+            si = next_si;
+        }
+        let t = target?;
+        let (dx, dz) = (f64::from(t[0]) + 0.5 - s.position.x, f64::from(t[2]) + 0.5 - s.position.z);
+        (dx * dx + dz * dz > 1e-6).then(|| crate::lattice::bracket(dx, dz)[0])
     }
 
     /// Whether the way out of the body's state `i` is still blocked for an edit `kv` can make:
@@ -943,7 +981,7 @@ fn priority_key_topo(
     kit: Option<&KitView>,
 ) -> u64 {
     let d = topo.query(s);
-    let mut key = arrival as f64 + if d < f32::INFINITY { f64::from(d) } else { 500.0 + euclid_h(s, goal) as f64 };
+    let mut key = arrival as f64 + if d < f32::INFINITY { f64::from(d) * 1.35 } else { 500.0 + euclid_h(s, goal) as f64 };
     if let Some(kv) = kit {
         if !ledger.open.is_empty() {
             key += f64::from(ledger.open_debt_lb(s, goal, &kv.cone));
@@ -952,7 +990,7 @@ fn priority_key_topo(
     key.ceil() as u64
 }
 
-fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool) -> List<AimRule, 12> {
+fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, topo_yaw: Option<u16>) -> List<AimRule, 12> {
     const CORE: [AimRule; 8] = [
         AimRule::GoalOffset(0),
         AimRule::RelativeCardinal(0),
@@ -977,10 +1015,19 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool) ->
             out.push(rule);
         }
     };
+    let mut far_from_goal = false;
+    if let Some(ty) = topo_yaw {
+        let base = AimRule::GoalOffset(0).resolve(s, goal, rot);
+        let delta = ty.wrapping_sub(base) as i16;
+        far_from_goal = delta.unsigned_abs() > 8192;
+        push_unique(AimRule::GoalOffset(delta));
+        push_unique(AimRule::GoalOffset(delta.wrapping_add(4096)));
+        push_unique(AimRule::GoalOffset(delta.wrapping_sub(4096)));
+    }
     for &rule in &CORE {
         push_unique(rule);
     }
-    if direct_blocked {
+    if direct_blocked || far_from_goal {
         for &rule in &ESCAPE {
             push_unique(rule);
         }
@@ -1444,6 +1491,8 @@ pub(super) fn solve_defect<S: CorridorSource>(
             goal, topo: &topo, kit, arena: Vec::with_capacity(2048),
             best_bucket: HashMap::with_capacity(2048), heap: BinaryHeap::new(), best: &mut best, incumbent_at: None,
         };
+        let all_seeds_unreachable = !topo.dist.is_empty() && seeds.iter().all(|n| topo.query(&n.state).is_infinite());
+        let field_ticks = seeds.iter().map(|n| topo.query(&n.state)).filter(|d| d.is_finite()).fold(0.0f32, f32::max) as u64;
         for s in seeds {
             let idx = pb.arena.len();
             let p = priority_key_topo(s.arrival, &s.state, goal, &topo, &s.ledger, kit);
@@ -1451,7 +1500,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
             pb.arena.push(s);
         }
 
-        let cold_cap = (96_000u64 + (win.exceptions as u64).min(80) * 1_800).min(240_000);
+        let base_cap = (96_000u64 + (win.exceptions as u64).min(80) * 1_800)
+            .max(field_ticks.saturating_mul(1_200))
+            .min(480_000);
+        let cold_cap = if all_seeds_unreachable { base_cap.min(8_000) } else { base_cap };
         let word_budget = cold_cap / 5;
         let mut phase_b_word_ticks = 0u64;
         let mut delta = WorldDelta::new(&grid);
@@ -1559,7 +1611,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let eye_here = law::interact::get_eye_position(state_here.position, state_here.pose.eye_height());
             let has_far_open_ob = restore_obs.iter().any(|&op| !law::interact::is_within_block_interaction_range(eye_here, 4.4, op, 0.0));
             let direct_blocked = state_here.horizontal_collision || !can_clear_probe(&delta, &state_here, gx, gz, 0.75) || state_here.velocity.horizontal_sqr() < 0.01 || has_far_open_ob;
-            let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked);
+            let topo_yaw = topo.aim(&delta, &state_here);
+            grid.reset_missing();
+            let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked, topo_yaw);
             let progs = programs_for(&delta, &state_here);
             let sprint_ok = sprint_allowed(&state_here);
             let kit_edge_stop = kit.is_some_and(|kv| kv.makes(FieldEdit::Floor, cur_counts));

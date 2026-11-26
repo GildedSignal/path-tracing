@@ -1,6 +1,6 @@
 amertystcoral -3 -64 93 13 -58 101
 ametwoodbox 6 -64 -1 14 -58 18
-birchparkourmedium 18 -64 1 29 -45 22
+birchparkourmedium 15 -64 -15 34 -44 22
 butoonpressureplates -59 -63 5 -26 -57 13
 carpetwater -3 -64 22 5 -58 59
 doorcorridor 22 -64 64 39 -58 72

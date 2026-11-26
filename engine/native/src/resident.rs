@@ -254,12 +254,19 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
         match result.outcome {
             plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
             other => {
+                let prev = (cl, ch);
                 if let Some(unc) = corridor.first_uncovered() {
-                    let prev = (cl, ch);
                     for i in [0, 2] {
                         cl[i] = cl[i].min(unc[i] - 4).max(lo[i]);
                         ch[i] = ch[i].max(unc[i] + 4).min(hi[i]);
                     }
+                    if (cl, ch) != prev { continue; }
+                }
+                if matches!(other, plan::PlanOutcome::NeedsJoints { .. }) {
+                    cl[0] = cl[0].min(p[0].min(goal[0]) - 20).max(lo[0]);
+                    cl[2] = cl[2].min(p[2].min(goal[2]) - 20).max(lo[2]);
+                    ch[0] = ch[0].max(p[0].max(goal[0]) + 20).min(hi[0]);
+                    ch[2] = ch[2].max(p[2].max(goal[2]) + 20).min(hi[2]);
                     if (cl, ch) != prev { continue; }
                 }
                 return refusal(requested,format!("{:?} {}",other,result.explanation.unwrap_or_default()));
