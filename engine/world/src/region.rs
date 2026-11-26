@@ -8,6 +8,7 @@ const MAX_REGION_BYTES: u64 = (2 + 1024 * 255) * 4096;
 const MAX_NBT_BYTES: usize = 16 * 1024 * 1024;
 const MIN_SECTION: i8 = -4;
 const MAX_SECTION: i8 = 19;
+const COMPACT_STATE_VERSION: i32 = 5023;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockState {
@@ -32,7 +33,7 @@ impl fmt::Display for BlockState {
     }
 }
 struct Section { palette: Vec<BlockState>, indices: Option<Box<[u16; 4096]>> }
-/// Sections Y = -4..=19 in order: a full 26.2 overworld chunk saves every one.
+/// Sections Y = -4..=19 in order: a full overworld chunk saves every one.
 struct Chunk { sections: Vec<Section> }
 impl Chunk {
     /// `y` is within the build height; `WorldReader::block_state` answers outside it.
@@ -70,12 +71,14 @@ impl WorldReader {
     pub fn with_cache_limit(world_dir: impl AsRef<Path>, cache_limit: usize) -> Result<Self, LoadError> {
         let world_dir = world_dir.as_ref();
         let region_dir = world_dir.join("dimensions/minecraft/overworld/region");
-        if !region_dir.is_dir() { return Err(LoadError::Unsupported(format!("26.2 layout requires {}", region_dir.display()))); }
+        if !region_dir.is_dir() { return Err(LoadError::Unsupported(format!("overworld layout requires {}", region_dir.display()))); }
         let level = metadata(&world_dir.join("level.dat"))?;
         let data = nbt::root(&level)?.required("Data")?;
         let data_version = data.required("DataVersion")?.int()?;
         let version = data.required("Version")?.required("Name")?.string()?;
-        if version != "26.2" { return Err(LoadError::Unsupported(format!("level.dat version {version}; expected 26.2"))); }
+        if !matches!((version.as_str(), data_version), ("26.2", 4903) | ("26.3", COMPACT_STATE_VERSION)) {
+            return Err(LoadError::Unsupported(format!("level.dat version {version} (DataVersion {data_version}); expected 26.2 or 26.3")));
+        }
         let difficulty = match data.required("difficulty_settings")?.required("difficulty")?.string()?.as_str() {
             "peaceful" => 0, "easy" => 1, "normal" => 2, "hard" => 3,
             name => return Err(LoadError::Unsupported(format!("difficulty {name}"))),
@@ -167,10 +170,35 @@ fn chunk_payload(region: &[u8], coord: [i32;2]) -> Result<Vec<u8>, LoadError> {
         code => Err(LoadError::Unsupported(format!("chunk {coord:?} compression {code}{}", if code == 4 { " (LZ4)" } else { "" }))),
     }
 }
+fn palette_state(entry: nbt::Tag<'_>, compact: bool) -> Result<BlockState, LoadError> {
+    let (name, properties) = if !compact {
+        (entry.required("Name")?, entry.get("Properties")?)
+    } else if entry.kind() == 8 {
+        (entry, None)
+    } else if let Some(default) = entry.get("")? {
+        // NbtOps wraps the strings in a heterogeneous list with this empty key.
+        if entry.fields()?.len() != 1 {
+            return Err(LoadError::Invalid("wrapped block state has additional fields".into()));
+        }
+        (default, None)
+    } else {
+        (entry.required("id")?, entry.get("properties")?)
+    };
+    let mut properties = match properties {
+        Some(tag) => tag.fields()?.into_iter().map(|(key, value)| Ok((key, value.string()?)))
+            .collect::<Result<Vec<_>, LoadError>>()?,
+        None => Vec::new(),
+    };
+    properties.sort();
+    Ok(BlockState { name: name.string()?, properties })
+}
+
 fn parse_chunk(bytes: &[u8], coord: [i32;2], expected: i32) -> Result<Chunk, LoadError> {
     let root = nbt::root(bytes)?;
     let found = root.required("DataVersion")?.int()?;
     if found != expected { return Err(LoadError::VersionMismatch { chunk: coord, expected, found }); }
+    let compact = found == COMPACT_STATE_VERSION;
+    let palette_types: &[u8] = if compact { &[8, 10] } else { &[10] };
     if [root.required("xPos")?.int()?, root.required("zPos")?.int()?] != coord { return Err(LoadError::Invalid(format!("chunk coordinates differ from region slot {coord:?}"))); }
     let status = root.required("Status")?.string()?;
     if status != "minecraft:full" { return Err(LoadError::Unsupported(format!("chunk {coord:?} is {status}, not minecraft:full"))); }
@@ -188,14 +216,8 @@ fn parse_chunk(bytes: &[u8], coord: [i32;2], expected: i32) -> Result<Chunk, Loa
         }
         let states = states.ok_or_else(|| LoadError::Invalid(format!("section Y={y} has no block_states")))?;
         let mut palette = Vec::new();
-        for entry in states.required("palette")?.list(10)? {
-            let name = entry.required("Name")?.string()?;
-            let mut properties = match entry.get("Properties")? {
-                Some(p) => p.fields()?.into_iter().map(|(k,v)| Ok((k,v.string()?))).collect::<Result<Vec<_>,LoadError>>()?,
-                None => Vec::new(),
-            };
-            properties.sort();
-            let state = BlockState { name, properties };
+        for entry in states.required("palette")?.list_of(palette_types)? {
+            let state = palette_state(entry, compact)?;
             if palette.contains(&state) { return Err(LoadError::Invalid("duplicate palette entry".into())); }
             palette.push(state);
         }

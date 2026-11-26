@@ -24,9 +24,17 @@ SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` section
 - Their README's "~3 µs" is not reproduced on this CPU: their own bench gives 5.9 µs at its default version, and the number is mostly free fall.
 - `straight` (one player, plain stone, the `law` `bench` workload): 1.8–2.7 µs on our sections, against 0.85–0.98 µs on `BoxWorld`. The goal's law-tick row (0.6–0.95 µs) is the box world; on the sections the planner reads, a tick is 2–3× that, ~1 order above the 0.1–0.3 µs floor. Most of it is fixed per tick, not per block: removing the water changes nothing.
 - Each section holds a `collide` mask, the 4³ subcells holding a state that can collide; a sweep through the others is proven empty in one bit test. It took `exact` from 3.6 to 1.06–1.6 µs and `straight` from 3.0 to 1.8–2.7 µs.
-- Parkour Spiral 3.0.5, the only build Hielke publishes, is DataVersion 5023 (26.3); the law is 4903 (26.2). No 26.2 build exists on his site.
+- Parkour Spiral 3.0.5 has a 26.3 level (DataVersion 5023) with mixed-version chunks. The region reader decodes its compact palettes. Its enabled datapacks change food, damage, position and terrain, so a vanilla law snapshot refuses the map. [Spiral evidence](../../jobs/law-26.3/report.md)
 - MineOdyssey's 30 worlds (SHA-256 checked) are DataVersion 4671 (1.21.11), older than the law's: a 26.2 server's `--forceUpgrade` on copies brings them to 4903; its tasks name ordered waypoints by id (`tasks.json`).
 - Opponents and maps stay outside git: `D:\path-tracing-bench\opponents\` (SpectraPhysics, Baritone v1.19.0 for 26.2, SHA-1 checked), `D:\path-tracing-maps\` (Hielke, MineOdyssey).
+
+The migration comparison uses `bench-course`, seven repeats per course, with zero refused ticks on 26.2. Medians are in µs per player-tick. [Raw output](../../jobs/law-26.3/report.md)
+
+| Course | 26.2 | 26.3 |
+|---|---:|---:|
+| `exact` | 1.5255 | pending |
+| `floored` | 3.3267 | pending |
+| `straight` | 2.6348 | pending |
 
 Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence); Gazelka's hybrid A\* post and SwarmBot (no numbers); JumpCraft and parkour.gg maps (server-hosted, no world files); SoulFire, Botcraft, mineflayer-pathfinder (no published numbers, a later many-bots row).
 

@@ -63,6 +63,7 @@ pub(crate) fn root(bytes: &[u8]) -> Result<Tag<'_>, LoadError> {
     Ok(tag)
 }
 impl<'a> Tag<'a> {
+    pub fn kind(self) -> u8 { self.kind }
     pub fn fields(self) -> Result<Vec<(String, Tag<'a>)>, LoadError> {
         if self.kind != 10 { return Err(bad("expected compound")); }
         let mut c = Cursor { bytes: self.bytes, at: 0 };
@@ -107,11 +108,14 @@ impl<'a> Tag<'a> {
         mutf8(&self.bytes[2..])
     }
     pub fn list(self, expected_kind: u8) -> Result<Vec<Tag<'a>>, LoadError> {
+        self.list_of(&[expected_kind])
+    }
+    pub fn list_of(self, expected_kinds: &[u8]) -> Result<Vec<Tag<'a>>, LoadError> {
         if self.kind != 9 { return Err(bad("expected list")); }
         let mut c = Cursor { bytes: self.bytes, at: 0 };
         let kind = c.byte()?;
         let n = c.count()?;
-        if kind != expected_kind && !(kind == 0 && n == 0) { return Err(bad("unexpected list element type")); }
+        if !expected_kinds.contains(&kind) && !(kind == 0 && n == 0) { return Err(bad("unexpected list element type")); }
         (0..n).map(|_| c.tag(kind, 0)).collect()
     }
     pub fn longs(self) -> Result<&'a [u8], LoadError> {
