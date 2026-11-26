@@ -49,7 +49,7 @@ fn main() -> Result<(), String> {
                 let replay = solve_track(&track, &out.join(format!("{}.jsonl", f[0]))).map(|_| "replayed".to_string()).unwrap_or_else(|e| format!("replay-failed {e}"));
                 println!("{} T={} s={:.2} floor={} think_ms={:.1} a={:?} b={:?} {replay}", f[0], p.ticks, p.ticks as f64 / 20.0, floor, think_ms, a, b);
             }
-            other => println!("{} {:?} think_ms={:.1} a={:?} b={:?}", f[0], other, think_ms, a, b),
+            other => println!("{} {:?} think_ms={:.1} a={:?} b={:?} why={:?}", f[0], other, think_ms, a, b, r.explanation),
         }
     }
     Ok(())
