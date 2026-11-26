@@ -103,22 +103,22 @@ The law reads the world (blocks, fluids, entities) and the body (attributes, equ
 
 Consequences:
 - **Local and temporary:** a tool is released within reach (4.5 blocks) or on oneself, and lasts until undone, so restoration is an obligation tied to a place.
+- **Parallel body + hand channels:** the body (`WASD/jump/yaw`) and hand (`look/use/attack` inside 4.5 reach) run concurrently in the same tick, so an edit's marginal cost is `ΔT(move || edit) = max(T_move, T_hand) - T_move + T_coupling`: **`0` marginal toll** for single-tick overlapped clicks and `max(0, break_ticks - reach_overlap)` for breaks, never serial magic constants.
 - **Its value lies downstream:** a placement is judged by how much it lowers T where it is applied, never by distance to the goal. That is why a bucket placed upward looks good, not bad.
 - **It deforms the light cone:** water lets you go down at 78 m/s and up at swimming speed; pearls carry you 50 blocks in about 3 s.
 - **At a distance it's the same thing:** a tool in another bot's hand, or a feature in the world, is the same input at a price: zero in hand, the carrier's T, or the walk to it. Tools, cooperation, logistics and terrain are one concept.
 - No new search code per tool (AGENTS.md).
 
-*Killed if:* adding a tool needs search or geometry code.
+*Killed if:* adding a tool needs search or geometry code (enforced by a kill test/lint on planner search modules).
 
 ## 5. The math
 
 | Math | Its job here |
 |---|---|
-| (min, +), Bellman | routes and fields: composition where order matters, exact over whole ticks |
-| (max, +), Cuninghame-Green; Baccelli et al. | synchronization: a step starts when the last thing it waits for is done (cooperation, building) |
-| Footprints: Bernstein, trace monoids | what commutes: reuse, local repair, never trying every ordering of independent bots |
-| Merging: Nerode, Birkhoff | states with the same futures merge; motion settles onto attractors |
-| Bounds: A*; delete relaxation; the light cone | the medium is optimistic, words are feasible; refine only where the gap could change a decision; pruning only by proof |
+| Causal hypergraph (`(min, +)` choices over `(max, +)` hyperedges) | one mechanism for serial terrain, parallel body+hand edits, multi-chain 4D rendezvous (`arrow + redstone + piston + jump`), synchronization/building, and swarm handoffs, subject to serialized channel constraints (1 hand action/tick) |
+| Footprints: Bernstein, trace monoids | what commutes, emergent partial order (arrow of time), irreversible one-way sinks (`NoRegen`, `ObligationLedger`), local repair |
+| Merging: Nerode, Birkhoff; local dimension $d_{\text{loc}}$ / Knudsen number | states with the same futures merge; $d_{\text{loc}}(r) = \log |B(r)| / \log r$ (and events per cell per crossing) marks regime shifts from `O(1)` gait ($d_{\text{loc}} \le 1$) to medium field (`2..3`) to dense solver (`> 3`) |
+| Bounds: bracket gap `UB - LB_kit`, A*, the light cone | the medium is optimistic; localized `LB_kit` sensitivity (never `UB = ∞`) pulls targeted backward expansion only where the gap can lower `T`, with hard cutoff `elapsed_think >= UB - LB_kit` (no self-referential metareasoning) plus free compute on certified `UB` prefixes |
 | Events: kinetic data structures | time advances when a certificate breaks, not every tick |
 | Bit-parallel (min, +) (ES) | the light cone spreads by shift and OR over occupancy bitmaps: one step for 64 cells per operation |
 | The allocator: one queue ordered by slack (ES 12) | each bot's next decision deadline against the compute it needs; idle time precomputes words and recompresses; first-move latency at p99 is its measure |
@@ -127,7 +127,7 @@ Consequences:
 
 ## 6. Creativity, cheap and shared
 
-- **Pulled by need.** Discovery starts where the bracket is widest: the medium's T far above what the kit's light cone allows, where bots need to cross. A specific effect has few producers, so working backward branches about 5 ways per step ([scales.md](scales.md) 4.1, which holds how creativity arises, stays and compounds).
+- **Pulled by bracket gap (`UB - LB_kit`, never `UB = ∞`).** Discovery starts where the open gap `UB - LB_kit` is widest and its sensitivity spikes (not only when terrain looks blocked, since slow detours almost always keep `UB < ∞`). Because a specific effect (`+Δv`, floor, opening) has few producers (~5 in the local causal cone), working backward along hyperedges branches narrowly and composes multi-chain 4D rendezvous (`shoot -> trigger -> sprint-jump -> impulse`) under serialized hand-channel timing without forward combinatorial search. Free compute on a moving prefix pays for narrowing open gaps without delaying first move, and cached `WordStore` hits never close a bracket while `T_cached - LB_kit` stays wide. ([scales.md](scales.md) 4.1 holds how creativity arises, stays and compounds.)
 - **Found once, used by all.** A discovery becomes a word in the medium; every bot sees the road, and the pattern key shares it.
 - **Chains.** The relaxed medium (every tool effect available where it could apply, at its least cost) makes each preparatory step look downhill.
 - **R&D** (S46) is a barbell: most compute goes to demand, a small slice to cheap trials with rare large payoffs, kept for their option value.
@@ -180,7 +180,7 @@ Approved S165. It answers S40 ("we're not really doing x,y,z but something else 
 - **Joint / Site / Label / Field:** longer-range spatial boundaries, portal tables, goal-free hub distances, and shared T-to-go wavefronts built above converged local words and zones.
 
 **The kit, folded in** (section 4: no new search code per tool).
-- **Edits are tolls with a debt** (S32). Under a kit that can restore it, a wall is a slow medium: "a wall is a two second delay not a wall" (X4), plus the T to put the identical block back (S12). Routes bend at its interface by Fermat's rule. Edits whose undo closes inside the gait's period (place ahead, break behind) are gaits with their own speed; the rest are ledger debts (scales.md 4.9). Allowed on tracks whenever restoration before arrival is certified; elsewhere only with a kit given for it, until the ledger has flown. (S166.)
+- **Edits are parallel-overlapped hyperedges in the field** (S32). Under a kit that can restore it, a closed door or wall is a medium edge priced by `law` + `KitView` + `ObligationLedger`: single-tick overlapped reach clicks cost `0` marginal toll, breaks cost `max(0, break_ticks - reach_overlap)` plus any forced undo wait, and irreversible transitions cost `∞`. Phase B expands edits strictly along field descent / open-bracket sensitivity with zero per-verb enumeration. Edits whose undo closes inside the gait's period (place ahead, break behind) are gaits with their own speed; the rest are ledger debts (scales.md 4.9). Allowed on tracks whenever restoration before arrival is certified; elsewhere only with a kit given for it, until the ledger has flown. (S166.)
 - **Wormholes** (S132: "a nether portal is a manifold … as if it is always there but you need to do a weird path to access it"). A pearl is an edge not bounded by the legs' c, whose landing is a cone (its spread is random), with its item, 5 damage and a 20-tick cooldown. A portal is an edge that exists once built: 80 ticks of wait, an 8:1 chart, a debt on both sheets; the weird path is the compound word that builds it.
 - **The light cone is the kit's:** the least over legs at their c, each wormhole as (to its mouth) + toll + (from its exit), and each carried gait (boat, elytra) at its own c. A bound that assumes no item is false for a kit that holds one.
 - **Other players (two-regime singularity boundary).** Outside contact (where light cones separate), the crystal stays pure (`(word, count)`, `(min, +)` routing, `(max, +)` sync) and wins by choosing where and when contact happens. A certificate is checked against another player's cone once, at the earliest tick the cone can reach its worldtube (S121). Inside melee reach (~6 blocks), an autonomous rival is a **branching singularity**, not a static terrain defect: deterministic word certificates thrash over cooldown windows, so execution hands off across the singularity boundary to a short-horizon adversarial solver on the same `k = 1` tick generator face, anchored back to the surrounding crystal.
