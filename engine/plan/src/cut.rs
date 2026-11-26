@@ -12,6 +12,7 @@ use crate::{
 
 pub(super) type Cells = (BlockPos, BlockPos);
 
+#[derive(Clone)]
 pub(super) struct Window {
     pub first: BlockPos,
     pub exceptions: usize,

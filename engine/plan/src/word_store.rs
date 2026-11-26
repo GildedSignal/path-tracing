@@ -64,6 +64,8 @@ impl<W: World> World for NoRegen<'_, W> {
     fn difficulty(&self) -> u8 { self.0.difficulty() }
     fn has_fluid(&self) -> bool { self.0.has_fluid() }
     fn has_inside_effects(&self) -> bool { self.0.has_inside_effects() }
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.0.has_fluid_in(lo, hi) }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.0.has_inside_effects_in(lo, hi) }
     fn collision_cell_bounds(&self, b: law::Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
         self.0.collision_cell_bounds(b, lo, hi)
     }

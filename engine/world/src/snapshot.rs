@@ -23,7 +23,7 @@ pub fn model(state: &BlockState) -> Result<&'static Block, String> {
 /// models, each cell's palette index packed at a power-of-two width (none when the section is
 /// uniform), and a summary of its 4³ subcells (bit `(y/4 << 4) | (z/4 << 2) | x/4`): `mixed`
 /// marks those holding more than one state, `other` those holding a state unlike the first.
-struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64 }
+struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64, flags: u8 }
 impl Section {
     fn new(cells: &[StateId; 4096]) -> Self {
         let mut states = vec![cells[0]];
@@ -41,8 +41,19 @@ impl Section {
             if k != 0 { other |= bit; }
             if k != index[i & 0xccc] { mixed |= bit; }
         }
-        let models = states.iter().map(|&s| if s == UNKNOWN_STATE { UNKNOWN_MODEL } else { s.model().expect("a modeled state") }).collect();
-        Self { states: states.into(), models, width, data: data.into(), mixed, other }
+        let mut flags = 0u8;
+        let models = states.iter().map(|&s| {
+            if s == UNKNOWN_STATE {
+                flags |= 3;
+                UNKNOWN_MODEL
+            } else {
+                let b = s.model_block();
+                if b.fluid.kind != FluidKind::Empty { flags |= 1; }
+                if b.has_inside_effects() { flags |= 2; }
+                s.model().expect("a modeled state")
+            }
+        }).collect();
+        Self { states: states.into(), models, width, data: data.into(), mixed, other, flags }
     }
     #[inline]
     fn index(&self, i: usize) -> usize {
@@ -139,6 +150,20 @@ impl WorldSnapshot {
         Ok(Self { min, max, origin, span, sections, difficulty: reader.difficulty, natural_regeneration, fluids, inside, unknown })
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
+    fn section_flags_in(&self, lo: BlockPos, hi: BlockPos, mask: u8) -> bool {
+        for sz in lo[2] >> 4..=hi[2] >> 4 {
+            for sy in lo[1] >> 4..=hi[1] >> 4 {
+                for sx in lo[0] >> 4..=hi[0] >> 4 {
+                    let base = [sx * 16, sy * 16, sz * 16];
+                    let p = [0, 1, 2].map(|i| lo[i].max(base[i]));
+                    if !self.covers(p) || (self.section(p).flags & mask) != 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
     fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
     fn assert_covered(&self, p: BlockPos) {
         assert!(self.covers(p), "snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint",self.min,self.max);
@@ -210,6 +235,12 @@ impl World for WorldSnapshot {
     fn natural_regeneration(&self) -> bool { self.natural_regeneration }
     fn has_fluid(&self) -> bool { self.fluids }
     fn has_inside_effects(&self) -> bool { self.inside || self.fluids }
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        self.fluids && self.section_flags_in(lo, hi, 1)
+    }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        (self.inside || self.fluids) && self.section_flags_in(lo, hi, 2)
+    }
     /// The law's order (z, y, x), from the cells' own models: a cell that never collides
     /// is left out, and one whose collision stays in its cell is left out of the halo,
     /// where it cannot meet `bounds`. A cell outside the snapshot panics where the full scan

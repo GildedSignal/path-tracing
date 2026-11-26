@@ -73,7 +73,19 @@ pub struct Plan {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct ThinkingCosts { pub entry_ns: u128, pub bearing_ns: u128, pub inverse_ns: u128, pub output_ns: u128 }
 #[derive(Clone, Debug)]
-pub enum PlanOutcome { Ready(Plan), NeedsJoints { exception: BlockPos, exceptions: usize, bracket: Bracket }, Unknown(Refusal) }
+pub struct PrefixPlan {
+    pub plan: Plan,
+    pub target: Goal,
+    pub final_goal: Goal,
+    pub remaining_est_ticks: u64,
+}
+#[derive(Clone, Debug)]
+pub enum PlanOutcome {
+    Ready(Plan),
+    Prefix(Box<PrefixPlan>),
+    NeedsJoints { exception: BlockPos, exceptions: usize, bracket: Bracket },
+    Unknown(Refusal),
+}
 #[derive(Clone, Debug)]
 pub struct SolveResult { pub outcome: PlanOutcome, pub stages: List<Stage, 16>, pub explanation: Option<String> }
 
@@ -320,6 +332,79 @@ pub fn solve<S: CorridorSource>(
     codec: &mut Interner,
     deadline_ticks: u64,
 ) -> SolveResult {
+    let first = solve_step(from, to, kit, source, store, codec, deadline_ticks);
+    let PlanOutcome::Prefix(pref) = first.outcome else {
+        return first;
+    };
+    let lb = pref.plan.bracket.lb;
+    let label = pref.plan.label;
+    let mut thinking = pref.plan.thinking;
+    let mut all_words = pref.plan.words;
+    let mut total_ticks = pref.plan.ticks;
+    let mut cur_state = pref.plan.end.materialize();
+    let mut all_stages = first.stages;
+
+    for _ in 0..128 {
+        let step = solve_step(&cur_state, to, kit, source, store, codec, deadline_ticks);
+        for st in step.stages {
+            if all_stages.len() < 16 {
+                all_stages.push(st);
+            }
+        }
+        let last_note = step.explanation;
+        match step.outcome {
+            PlanOutcome::Ready(p) => {
+                all_words.extend(p.words);
+                total_ticks += p.ticks;
+                thinking.entry_ns += p.thinking.entry_ns;
+                thinking.bearing_ns += p.thinking.bearing_ns;
+                thinking.inverse_ns += p.thinking.inverse_ns;
+                thinking.output_ns += p.thinking.output_ns;
+                return SolveResult {
+                    outcome: PlanOutcome::Ready(Plan {
+                        ticks: total_ticks,
+                        words: all_words,
+                        end: p.end,
+                        bracket: Bracket { lb, ub: Some(total_ticks) },
+                        label,
+                        deadline: deadline_ticks,
+                        lattice_cost: Default::default(),
+                        thinking,
+                    }),
+                    stages: all_stages,
+                    explanation: last_note,
+                };
+            }
+            PlanOutcome::Prefix(np) => {
+                all_words.extend(np.plan.words);
+                total_ticks += np.plan.ticks;
+                cur_state = np.plan.end.materialize();
+                thinking.entry_ns += np.plan.thinking.entry_ns;
+                thinking.bearing_ns += np.plan.thinking.bearing_ns;
+                thinking.inverse_ns += np.plan.thinking.inverse_ns;
+                thinking.output_ns += np.plan.thinking.output_ns;
+            }
+            other => {
+                return SolveResult { outcome: other, stages: all_stages, explanation: last_note };
+            }
+        }
+    }
+    SolveResult {
+        outcome: PlanOutcome::NeedsJoints { exception: to.cell, exceptions: 0, bracket: Bracket { lb, ub: None } },
+        stages: all_stages,
+        explanation: Some("horizon window step limit exceeded".into()),
+    }
+}
+
+pub fn solve_step<S: CorridorSource>(
+    from: &PlayerState,
+    to: Goal,
+    kit: Kit,
+    source: &S,
+    store: &GeneratorStore,
+    codec: &mut Interner,
+    deadline_ticks: u64,
+) -> SolveResult {
     let kit_view = match kit {
         Kit::BareLegs => None,
         Kit::Carried(spec) => Some(KitView::for_spec(spec)),
@@ -349,6 +434,7 @@ pub fn solve<S: CorridorSource>(
             None => source.entry_label(codec, from).map_err(|e| format!("entry label: {e:?}"))?,
         };
         let mut thinking = ThinkingCosts::default();
+        let mut horizon_target: Option<(Goal, u64)> = None;
         let route = if at_goal {
             crate::word_store::Route { words: List::new(), ticks: 0, end: StateAt::point(from.clone()) }
         } else if let Some(r) = known {
@@ -412,8 +498,7 @@ pub fn solve<S: CorridorSource>(
             };
             let cut_outcome = match cut_outcome {
                 Ok(c) => c,
-                Err(_) if kit_view.is_some() => defect_window(),
-                Err(e) => return Err(e),
+                Err(_) => defect_window(),
             };
             let time = std::time::Instant::now();
             match cut_outcome {
@@ -433,7 +518,101 @@ pub fn solve<S: CorridorSource>(
                     stages.push(Stage::Cut);
                     let first_pos = win.first;
                     let exceptions = win.exceptions;
-                    let (raw_steps, obs) = match defect::solve_defect(from, to, label, win, source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking) {
+                    // Fast-path: if a long clear sprint-jump prefix lands >= 36 ticks before the defect and far from `to`, emit immediately.
+                    let pref_ticks: u32 = win.prefixes.first().map_or(0, |p| p.iter().map(|w| w.ticks).sum());
+                    if pref_ticks >= 36 {
+                        if let Some(first_pref) = win.prefixes.first() {
+                            if let Some(last_w) = first_pref.last() {
+                                if last_w.program == SPRINT_JUMP && last_w.ticks >= 12 {
+                                    let end_state = last_w.end.materialize();
+                                    let rem_dist = (end_state.position.x - to.center().x).hypot(end_state.position.z - to.center().z);
+                                    if end_state.on_ground && rem_dist > 20.0 {
+                                        let sup = end_state.main_supporting_block.unwrap_or([
+                                            end_state.position.x.floor() as i32,
+                                            end_state.position.y.floor() as i32 - 1,
+                                            end_state.position.z.floor() as i32,
+                                        ]);
+                                        let mid = Goal { cell: sup, face: Some(crate::Face::Up), settle: false };
+                                        let est_rem = to.lower_bound(&end_state) as u64;
+                                        stages.push(Stage::Compose);
+                                        let mut route = crate::word_store::compose_chain(from, mid, first_pref.clone(), &mut store.words.borrow_mut().work);
+                                        route.ticks = u64::from(pref_ticks);
+                                        return Ok(PlanOutcome::Prefix(Box::new(PrefixPlan {
+                                            plan: Plan {
+                                                ticks: route.ticks,
+                                                words: route.words,
+                                                end: route.end,
+                                                bracket: Bracket { lb: bracket.lb, ub: None },
+                                                label,
+                                                deadline: deadline_ticks,
+                                                lattice_cost: Default::default(),
+                                                thinking,
+                                            },
+                                            target: mid,
+                                            final_goal: to,
+                                            remaining_est_ticks: est_rem,
+                                        })));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let horiz_dist = (from.position.x - to.center().x).hypot(from.position.z - to.center().z);
+                    let est_vol = {
+                        let depth = 24usize;
+                        let dx = (from.position.x.floor() as i32 - to.cell[0]).unsigned_abs() as usize + 42;
+                        let dy = (from.position.y.floor() as i32 - to.cell[1]).unsigned_abs() as usize + depth + 16;
+                        let dz = (from.position.z.floor() as i32 - to.cell[2]).unsigned_abs() as usize + 42;
+                        dx.saturating_mul(dy).saturating_mul(dz)
+                    };
+                    let trim_win = |anchor: &PlayerState, mid: Goal, w: cut::Window| -> cut::Window {
+                        let fx = from.position.x.floor() as i32;
+                        let fy = from.position.y.floor() as i32;
+                        let fz = from.position.z.floor() as i32;
+                        let ap = [anchor.position.x.floor() as i32, anchor.position.y.floor() as i32, anchor.position.z.floor() as i32];
+                        cut::Window {
+                            first: w.first,
+                            exceptions: w.exceptions,
+                            bounds: (
+                                [fx.min(ap[0]).min(mid.cell[0]) - 2, fy.min(ap[1]).min(mid.cell[1]) - 4, fz.min(ap[2]).min(mid.cell[2]) - 2],
+                                [fx.max(ap[0]).max(mid.cell[0]) + 2, fy.max(ap[1]).max(mid.cell[1]) + 4, fz.max(ap[2]).max(mid.cell[2]) + 2],
+                            ),
+                            prefixes: w.prefixes,
+                        }
+                    };
+                    let mut active_goal = to;
+                    let mut active_win = win.clone();
+                    let mut rem_est = 0u64;
+                    let mut far_cache = None;
+                    let anchor = win.prefixes.first().and_then(|p| p.last()).map_or_else(|| from.clone(), |w| w.end.materialize());
+                    if horiz_dist > 26.0 || est_vol > 48_000 {
+                        let far = crate::far_field::FarField::get_or_build(store, source, label, from, to, kit_view.as_ref(), kit_key);
+                        if let Some((mid, est)) = far.next_horizon(&anchor, to, 20.0) {
+                            active_goal = mid;
+                            rem_est = est;
+                            active_win = trim_win(&anchor, mid, win.clone());
+                        }
+                        far_cache = Some(far);
+                    }
+
+                    let defect_res = match defect::solve_defect(from, active_goal, label, active_win, source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking) {
+                        Ok(res) => Ok(res),
+                        Err((ex_count, why)) => {
+                            if active_goal != to {
+                                if let Some((mid2, est2)) = far_cache.as_ref().and_then(|f| f.next_horizon(&anchor, to, 12.0)).filter(|&(m, _)| m != active_goal) {
+                                    active_goal = mid2;
+                                    rem_est = est2;
+                                    defect::solve_defect(from, active_goal, label, trim_win(&anchor, mid2, win), source, store, codec, kit_view.as_ref(), &mut stages, &mut thinking)
+                                } else {
+                                    Err((ex_count, why))
+                                }
+                            } else {
+                                Err((ex_count, why))
+                            }
+                        }
+                    };
+                    let (raw_steps, obs) = match defect_res {
                         Ok(res) => res,
                         Err((ex_count, why)) => {
                             note = Some(why);
@@ -442,7 +621,7 @@ pub fn solve<S: CorridorSource>(
                     };
                     let mut cert_ticks = 0u64;
                     let programs = words::tiny_programs();
-                    let (route, cached) = match certify::certify_route(from, to, label, source.provenance(), source, &programs, &raw_steps, kit_key, restore_required, &mut cert_ticks) {
+                    let (route, cached) = match certify::certify_route(from, active_goal, label, source.provenance(), source, &programs, &raw_steps, kit_key, restore_required, &mut cert_ticks) {
                         Ok(c) => c,
                         Err((Refusal::Coverage, why)) => {
                             note = Some(format!("certify:{why}"));
@@ -460,10 +639,13 @@ pub fn solve<S: CorridorSource>(
                         let mut ws = store.words.borrow_mut();
                         ws.work.certify_ticks += cert_ticks;
                         ws.work.law_ticks += cert_ticks;
-                        // Kit routes too: their clicks are frame-relative templates, so the word
-                        // generalizes to translated and rotated sites.
                         ws.promote_route(&obs);
-                        ws.file_route_for_kit(from, to, kit_key, cached);
+                        if active_goal == to {
+                            ws.file_route_for_kit(from, to, kit_key, cached);
+                        }
+                    }
+                    if active_goal != to {
+                        horizon_target = Some((active_goal, rem_est));
                     }
                     stages.push(Stage::Compose);
                     route
@@ -471,6 +653,23 @@ pub fn solve<S: CorridorSource>(
             }
         };
         stages.extend([Stage::ClosedCheck, Stage::Allocate]);
+        if let Some((mid, rem_est)) = horizon_target {
+            return Ok(PlanOutcome::Prefix(Box::new(PrefixPlan {
+                plan: Plan {
+                    ticks: route.ticks,
+                    words: route.words,
+                    end: route.end,
+                    bracket: Bracket { lb: bracket.lb, ub: None },
+                    label,
+                    deadline: deadline_ticks,
+                    lattice_cost: Default::default(),
+                    thinking,
+                },
+                target: mid,
+                final_goal: to,
+                remaining_est_ticks: rem_est,
+            })));
+        }
         Ok(PlanOutcome::Ready(Plan {
             ticks: route.ticks,
             words: route.words,

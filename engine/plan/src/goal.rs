@@ -24,7 +24,7 @@ pub fn face_named(name: &str) -> Result<Face, String> {
 /// B: closed on the face's plane, open on its two tangent axes, without epsilon. Standing
 /// exactly on B touches its top; an edge or a corner alone touches nothing. A selected face
 /// is the only face that counts; `None` is any face.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Goal { pub cell: BlockPos, pub face: Option<Face>, pub settle: bool }
 impl Goal {
     /// B, any face.

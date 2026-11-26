@@ -383,6 +383,9 @@ pub trait World {
     /// Conservative certificates: false proves these law hooks are absent.
     fn has_fluid(&self)->bool {true}
     fn has_inside_effects(&self)->bool {true}
+    /// Region-scoped certificates: false proves hooks are absent anywhere inside `lo..=hi`.
+    fn has_fluid_in(&self, _lo: BlockPos, _hi: BlockPos) -> bool { self.has_fluid() }
+    fn has_inside_effects_in(&self, _lo: BlockPos, _hi: BlockPos) -> bool { self.has_inside_effects() }
 
     fn collision_cell_bounds(&self, _bounds:Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> { Some((lo,hi)) }
 

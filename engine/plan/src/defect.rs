@@ -54,11 +54,11 @@ const SECONDARY_STRAFE: &[u16] = &[
 /// one jump arc carries the body across: the arc's advance at its fixed point plus the body's
 /// width.
 #[derive(Clone, Copy)]
-struct Legs {
-    h: f32,
-    up: f32,
-    down: f32,
-    reach: u8,
+pub(crate) struct Legs {
+    pub(crate) h: f32,
+    pub(crate) up: f32,
+    pub(crate) down: f32,
+    pub(crate) reach: u8,
 }
 
 /// One cycle of a gait is the affine contraction `v -> a v + b` (section 10): its advance from
@@ -79,7 +79,7 @@ fn cycle_advance(rows: &[crate::store::Phase]) -> f64 {
 }
 
 impl Legs {
-    fn of<S: CorridorSource>(store: &GeneratorStore, label: LabelId, source: &S, from: &PlayerState) -> Option<Self> {
+    pub(crate) fn of<S: CorridorSource>(store: &GeneratorStore, label: LabelId, source: &S, from: &PlayerState) -> Option<Self> {
         let fallback = Some(Self { h: 2.81, up: 6.19, down: 0.0, reach: 4 });
         let Ok(walk) = store.gait(label, source, from, if sprint_allowed(from) { SPRINT_JUMP } else { WALK }) else { return fallback; };
         let Ok(jump) = store.gait(label, source, from, SPRINT_JUMP) else { return fallback; };
@@ -134,18 +134,18 @@ fn way(a: BlockPos, b: BlockPos) -> Aabb {
 }
 
 #[inline]
-fn way_clear(w: &impl World, a: BlockPos, b: BlockPos) -> bool {
+pub(crate) fn way_clear(w: &impl World, a: BlockPos, b: BlockPos) -> bool {
     let feet_y = f64::from(a[1].min(b[1]));
     w.no_collision(way(a, b), CollisionContext { feet_y, descending: false, fall_distance: 0.0, leather_boots: false })
 }
 
 #[inline]
-fn body_fits(w: &impl World, p: BlockPos) -> bool {
+pub(crate) fn body_fits(w: &impl World, p: BlockPos) -> bool {
     way_clear(w, p, p)
 }
 
 /// The cells whose shapes block the way from `a` into `b` (the body's two cells in each).
-fn blockers(w: &impl World, a: BlockPos, b: BlockPos) -> List<BlockPos, 4> {
+pub(crate) fn blockers(w: &impl World, a: BlockPos, b: BlockPos) -> List<BlockPos, 4> {
     let hull = way(a, b);
     let feet_y = f64::from(a[1].min(b[1]));
     let mut out = List::new();
@@ -166,7 +166,7 @@ fn blockers(w: &impl World, a: BlockPos, b: BlockPos) -> List<BlockPos, 4> {
 }
 
 #[inline]
-fn has_step_support(w: &impl World, p: BlockPos) -> bool {
+pub(crate) fn has_step_support(w: &impl World, p: BlockPos) -> bool {
     let b = w.block(p);
     if !b.never_collides() || b.climbable || b.fluid.kind != FluidKind::Empty {
         return true;
@@ -176,7 +176,7 @@ fn has_step_support(w: &impl World, p: BlockPos) -> bool {
 }
 
 #[inline]
-fn below(c: BlockPos) -> BlockPos {
+pub(crate) fn below(c: BlockPos) -> BlockPos {
     [c[0], c[1] - 1, c[2]]
 }
 

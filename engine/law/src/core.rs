@@ -498,7 +498,7 @@ fn immerse(s: &mut PlayerState, world: &impl World) {
     let (lo, hi) = (block_pos(b.min), [b.max.x.ceil() as i32 - 1, b.max.y.ceil() as i32 - 1, b.max.z.ceil() as i32 - 1]);
     (s.water_height, s.lava_height, s.in_water, s.in_lava, s.eye_in_water, s.underwater) = (0.0, 0.0, false, false, false, false);
     world.observe_region(crate::footprint::Query::Fluid, lo, hi);
-    if !world.has_fluid() { return; }
+    if !world.has_fluid_in(lo, hi) { return; }
     // Level.hasChunksAt over the columns, asked cell by cell.
     if !(lo[2] - 1..=hi[2] + 1).all(|z| (lo[0] - 1..=hi[0] + 1).all(|x| world.loaded([x, lo[1], z]))) { return; }
     let (mut heights, mut eyes, mut currents, mut counts) = ([0.0f64; 2], [false; 2], [Vec3::default(); 2], [0; 2]);
@@ -613,7 +613,7 @@ fn cross(s: &mut PlayerState, world: &impl World, start: Vec3, wanted: Option<Ve
     let swept = s.bounding_box().expand(start.minus(s.position));
     world.observe_region(crate::footprint::Query::Hooks, block_pos(swept.min), block_pos(swept.max));
     let mut inside = None;
-    if world.has_inside_effects() {
+    if world.has_inside_effects_in(block_pos(swept.min), block_pos(swept.max)) {
         let delta = s.position.minus(start);
         let (mut seen, mut collector, mut budget, mut from) = (SeenBlocks::new(), Collector::default(), 16, start);
         if let Some(original) = wanted.filter(|_| delta.length_sqr() > 0.0) {

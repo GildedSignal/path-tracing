@@ -10,6 +10,10 @@ pub const REFUSAL: u64 = 3;
 /// A plan with world edits: `WORD_PLAN`'s layout with `[a, a × kit_wire::ACTION_WORDS]` between the
 /// inputs and the hull. A plan without edits stays `WORD_PLAN`, word for word.
 pub const KIT_PLAN: u64 = 4;
+/// Streaming continuation packets appended to an in-flight `WORD_PLAN` / `KIT_PLAN`.
+/// Layout: `[opcode, version, tick_offset, input_count, inputs (count*3)..., (if 6: k, k*10 actions...), hx0, hz0, hx1, hz1]`.
+pub const PLAN_APPEND: u64 = 5;
+pub const KIT_PLAN_APPEND: u64 = 6;
 pub fn refusal(version: u64, reason: impl AsRef<str>) -> Vec<u64> {
     let at = crate::qpc().0 as u64;
     let mut out = vec![REFUSAL, version, at, at];
@@ -27,7 +31,84 @@ struct Source {
     sections: BTreeMap<BlockPos, Section>,
     error: Option<String>,
 }
-struct Section { palette: Vec<(String, Result<StateId, String>)>, indices: Vec<usize> }
+struct Section {
+    palette: Vec<(String, Result<StateId, String>)>,
+    indices: Vec<usize>,
+    collision_bits: [[u16; 256]; 2],
+    uniform_state: Option<StateId>,
+    flags: u8, // bit 0: fluid, bit 1: inside, bit 2: unknown
+}
+#[inline]
+fn cell_reach(entry: &Result<StateId, String>, p: BlockPos) -> u8 {
+    let Ok(sid) = entry else { return 3; };
+    let b = sid.block_at(p);
+    let mut result = u8::from(b.inside == law::Inside::PowderSnow);
+    for shape in b.collision_shapes().filter(|s| !s.is_empty()) {
+        if !shape.is_block() && shape.coords.iter().any(|axis| axis[0] < 0.0 || axis[axis.len() - 1] > 1.0) {
+            return 3;
+        }
+        result = 1;
+    }
+    result
+}
+#[inline]
+fn entry_flags(entry: &Result<StateId, String>) -> u8 {
+    let Ok(sid) = entry else { return 7; };
+    let b = sid.model_block();
+    u8::from(b.fluid.kind != law::FluidKind::Empty) | (u8::from(b.has_inside_effects()) << 1)
+}
+impl Section {
+    fn new(palette: Vec<(String, Result<StateId, String>)>, indices: Vec<usize>) -> Self {
+        let mut s = Self { palette, indices, collision_bits: [[0; 256]; 2], uniform_state: None, flags: 0 };
+        s.recompute();
+        s
+    }
+    fn recompute(&mut self) {
+        self.collision_bits = [[0; 256]; 2];
+        self.flags = 0;
+        for (_, entry) in &self.palette {
+            self.flags |= entry_flags(entry);
+        }
+        let first_idx = self.indices[0];
+        let mut all_same = true;
+        let reach_pal: Vec<u8> = self.palette.iter().map(|(_, e)| cell_reach(e, [0; 3])).collect();
+        for (i, &idx) in self.indices.iter().enumerate() {
+            if idx != first_idx { all_same = false; }
+            let r = reach_pal[idx];
+            if r != 0 {
+                let row = i >> 4;
+                let bit = 1u16 << (i & 15);
+                if (r & 1) != 0 { self.collision_bits[0][row] |= bit; }
+                if (r & 2) != 0 { self.collision_bits[1][row] |= bit; }
+            }
+        }
+        self.uniform_state = if all_same {
+            self.palette[first_idx].1.as_ref().ok().copied().filter(|sid| sid.model().is_some_and(|m| m.fixed()))
+        } else {
+            None
+        };
+    }
+    fn set_cell(&mut self, i: usize, id: usize) {
+        let old_id = std::mem::replace(&mut self.indices[i], id);
+        let r = cell_reach(&self.palette[id].1, [0; 3]);
+        let row = i >> 4;
+        let bit = 1u16 << (i & 15);
+        self.collision_bits[0][row] = (self.collision_bits[0][row] & !bit) | if (r & 1) != 0 { bit } else { 0 };
+        self.collision_bits[1][row] = (self.collision_bits[1][row] & !bit) | if (r & 2) != 0 { bit } else { 0 };
+        let new_f = entry_flags(&self.palette[id].1);
+        let old_f = entry_flags(&self.palette[old_id].1);
+        if (old_f & !new_f) != 0 {
+            self.flags = self.indices.iter().fold(0u8, |acc, &idx| acc | entry_flags(&self.palette[idx].1));
+        } else {
+            self.flags |= new_f;
+        }
+        if self.uniform_state.is_some() && self.palette[id].1.as_ref().ok().copied() != self.uniform_state {
+            self.uniform_state = None;
+        }
+    }
+}
+#[inline]
+fn x_mask(lo: i32, hi: i32) -> u16 { (u16::MAX << lo) & (u16::MAX >> (15 - hi)) }
 impl Source {
     fn cell(&self, p: BlockPos) -> Option<&Result<StateId, String>> {
         let s = self.sections.get(&p.map(|v| v.div_euclid(16)))?;
@@ -38,6 +119,18 @@ impl Source {
         let mut lo = [i32::MAX;3]; let mut hi = [i32::MIN;3];
         for p in self.sections.keys() { for a in 0..3 { lo[a] = lo[a].min(p[a]*16); hi[a] = hi[a].max(p[a]*16+15); } }
         (!self.sections.is_empty()).then_some((lo, hi))
+    }
+    fn flags_in(&self, lo: BlockPos, hi: BlockPos, mask: u8) -> bool {
+        for sz in lo[2].div_euclid(16)..=hi[2].div_euclid(16) {
+            for sy in lo[1].div_euclid(16)..=hi[1].div_euclid(16) {
+                for sx in lo[0].div_euclid(16)..=hi[0].div_euclid(16) {
+                    if self.sections.get(&[sx, sy, sz]).is_none_or(|s| (s.flags & mask) != 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 impl World for Source {
@@ -52,12 +145,80 @@ impl World for Source {
         }
     }
     fn state_id(&self, p: BlockPos) -> Option<StateId> { self.cell(p)?.as_ref().ok().copied() }
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> {
+        if (0..3).any(|i| lo[i] > hi[i]) { return None; }
+        let mut found: Option<StateId> = None;
+        for sz in lo[2].div_euclid(16)..=hi[2].div_euclid(16) {
+            for sy in lo[1].div_euclid(16)..=hi[1].div_euclid(16) {
+                for sx in lo[0].div_euclid(16)..=hi[0].div_euclid(16) {
+                    let s = self.sections.get(&[sx, sy, sz])?;
+                    if let Some(u) = s.uniform_state {
+                        if *found.get_or_insert(u) != u { return None; }
+                        continue;
+                    }
+                    let base = [sx * 16, sy * 16, sz * 16];
+                    for z in lo[2].max(base[2])..=hi[2].min(base[2] + 15) {
+                        for y in lo[1].max(base[1])..=hi[1].min(base[1] + 15) {
+                            for x in lo[0].max(base[0])..=hi[0].min(base[0] + 15) {
+                                let i = ((y.rem_euclid(16) * 16 + z.rem_euclid(16)) * 16 + x.rem_euclid(16)) as usize;
+                                let sid = s.palette[s.indices[i]].1.as_ref().ok().copied()?;
+                                if !sid.model().is_some_and(|m| m.fixed()) { return None; }
+                                if *found.get_or_insert(sid) != sid { return None; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found.map(|sid| sid.block_at(lo))
+    }
     fn loaded(&self, p: BlockPos) -> bool { self.sections.contains_key(&p.map(|v| v.div_euclid(16))) }
     fn difficulty(&self) -> u8 { self.difficulty }
     // The rule is not sent to a remote client: projected as vanilla's default; it changes health, never a walk, and the server corrects it.
     fn natural_regeneration(&self) -> bool { self.regeneration.unwrap_or(true) }
-    fn has_fluid(&self) -> bool { true }
-    fn has_inside_effects(&self) -> bool { true }
+    fn has_fluid(&self) -> bool { self.sections.values().any(|s| (s.flags & 1) != 0) }
+    fn has_inside_effects(&self) -> bool { self.sections.values().any(|s| (s.flags & 2) != 0) }
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.flags_in(lo, hi, 1) }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.flags_in(lo, hi, 2) }
+    fn collision_cell_bounds(&self, bounds: law::Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
+        let mut result = None;
+        self.visit_collision_cells(bounds, lo, hi, |p| {
+            let (a, b) = result.get_or_insert((p, p));
+            for i in 0..3 { a[i] = a[i].min(p[i]); b[i] = b[i].max(p[i]); }
+            true
+        });
+        result
+    }
+    fn visit_collision_cells(&self, bounds: law::Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
+        let near_lo = [bounds.min.x, bounds.min.y, bounds.min.z].map(law::math::floor);
+        let near_hi = [bounds.max.x, bounds.max.y, bounds.max.z].map(law::math::floor);
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                let row = ((y.rem_euclid(16) * 16 + z.rem_euclid(16)) * 16) as usize >> 4;
+                for sx in lo[0].div_euclid(16)..=hi[0].div_euclid(16) {
+                    let bx = sx * 16;
+                    let (a, b) = (bx.max(lo[0]) & 15, (bx + 15).min(hi[0]) & 15);
+                    let Some(section) = self.sections.get(&[sx, y.div_euclid(16), z.div_euclid(16)]) else {
+                        for x in bx.max(lo[0])..=(bx + 15).min(hi[0]) {
+                            if !visit([x, y, z]) { return false; }
+                        }
+                        continue;
+                    };
+                    let mut candidates = section.collision_bits[1][row];
+                    let (start, end) = (near_lo[0].max(bx), near_hi[0].min(bx + 15));
+                    if start <= end && (near_lo[1]..=near_hi[1]).contains(&y) && (near_lo[2]..=near_hi[2]).contains(&z) {
+                        candidates |= section.collision_bits[0][row] & x_mask(start & 15, end & 15);
+                    }
+                    candidates &= x_mask(a, b);
+                    while candidates != 0 {
+                        if !visit([bx | candidates.trailing_zeros() as i32, y, z]) { return false; }
+                        candidates &= candidates - 1;
+                    }
+                }
+            }
+        }
+        true
+    }
 }
 struct Cursor<'a> { data: &'a [u64], at: usize }
 impl Cursor<'_> {
@@ -124,7 +285,7 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
                 let mut indices = Vec::with_capacity(4096);
                 for _ in 0..4096 { let i = usize::try_from(c.word()?).map_err(|_| "palette index")?; if i >= count { return Err("palette index".into()); } indices.push(i); }
                 if c.at != data.len() { return Err("trailing delta words".into()); }
-                source.sections.insert(p, Section { palette, indices });
+                source.sections.insert(p, Section::new(palette, indices));
             }
             2 => {
                 let name = c.text()?;
@@ -133,7 +294,7 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
                 if let Some(section) = source.sections.get_mut(&p.map(|v| v.div_euclid(16))) {
                     let id = match section.palette.iter().position(|(n,_)| n == &name) { Some(i) => i, None => { let answer = model(&name); section.palette.push((name,answer)); section.palette.len()-1 } };
                     let i = ((p[1].rem_euclid(16)*16+p[2].rem_euclid(16))*16+p[0].rem_euclid(16)) as usize;
-                    section.indices[i] = id;
+                    section.set_cell(i, id);
                 }
             }
             3 => { if c.at != data.len() { return Err("trailing delta words".into()); } source.sections.remove(&p); }
@@ -145,6 +306,17 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
 }
 
 pub struct Request { pub state: PlayerState, pub meta: Vec<u64>, pub goal: Goal, pub issue: u64, pub version: u64 }
+#[derive(Clone)]
+struct ActiveContinuation {
+    requested: u64,
+    law_revision: u64,
+    support: BlockPos,
+    final_goal: Goal,
+    carried: kit_wire::Carried,
+    state: PlayerState,
+    tick_offset: u64,
+    bounds: (BlockPos, BlockPos),
+}
 enum Work { Delta(Vec<u64>, u64, bool), Goal(Request) }
 struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, law_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>> }
 fn resident() -> &'static Resident {
@@ -155,42 +327,86 @@ fn resident() -> &'static Resident {
         let (v, r) = (version.clone(), law_revision.clone());
         std::thread::Builder::new().name("pathtracing-F".into()).spawn(move || {
             // One living store for the bot's whole session: a gait learned once is never relearned (S230).
-            let mut source = Source::default(); let mut store = plan::store::GeneratorStore::default(); let mut codec = law::codec::Interner::default();
-            while let Ok(work) = recv.recv() {
-                match work {
-                    Work::Delta(data, law_rev, law_changed) => {
-                        let reset = data.first() == Some(&0);
-                        let kind = data.first().copied().unwrap_or(0);
-                        let p = if data.len() >= 6 && matches!(kind, 1 | 2 | 3) {
-                            Some([data[3] as i32, data[4] as i32, data[5] as i32])
-                        } else { None };
-                        if let Err(why) = delta(&mut source, &data) {
-                            if why != "stale source session/revision" {
-                                source.error = Some(why.clone());
-                                let _ = done.send(refusal(0,why));
+            let mut source = Source::default();
+            let mut store = plan::store::GeneratorStore::default();
+            let mut codec = law::codec::Interner::default();
+            let mut active_cont: Option<ActiveContinuation> = None;
+            loop {
+                let msg = if active_cont.is_some() {
+                    match recv.try_recv() {
+                        Ok(w) => Some(w),
+                        Err(mpsc::TryRecvError::Empty) => None,
+                        Err(mpsc::TryRecvError::Disconnected) => break,
+                    }
+                } else {
+                    match recv.recv() {
+                        Ok(w) => Some(w),
+                        Err(_) => break,
+                    }
+                };
+                if let Some(work) = msg {
+                    match work {
+                        Work::Delta(data, law_rev, law_changed) => {
+                            let reset = data.first() == Some(&0);
+                            let kind = data.first().copied().unwrap_or(0);
+                            let p = if data.len() >= 6 && matches!(kind, 1 | 2 | 3) {
+                                Some([data[3] as i32, data[4] as i32, data[5] as i32])
+                            } else { None };
+                            if let Err(why) = delta(&mut source, &data) {
+                                if why != "stale source session/revision" {
+                                    source.error = Some(why.clone());
+                                    let _ = done.send(refusal(0,why));
+                                }
+                            }
+                            source.law_revision = law_rev;
+                            if reset {
+                                store = plan::store::GeneratorStore::default();
+                                codec = law::codec::Interner::default();
+                                active_cont = None;
+                            } else if kind == 4 || (kind == 0 && !reset) {
+                                store.words.borrow_mut().environment_event();
+                                store.clear_far();
+                                active_cont = None;
+                            } else {
+                                if let Some(cell) = p {
+                                    let sec = if kind == 2 { cell.map(|v| v.div_euclid(16)) } else { cell };
+                                    if kind != 2 || law_changed {
+                                        store.invalidate_far_section(sec);
+                                    }
+                                    if store.words.borrow().has_certificates() {
+                                        if kind == 2 {
+                                            if law_changed { store.words.borrow_mut().edit(&mut codec, cell, &source); }
+                                        } else {
+                                            store.words.borrow_mut().edit_section(&mut codec, cell, &source);
+                                        }
+                                    }
+                                }
                             }
                         }
-                        source.law_revision = law_rev;
-                        if reset {
-                            store = plan::store::GeneratorStore::default();
-                            codec = law::codec::Interner::default();
-                        } else if kind == 4 || (kind == 0 && !reset) {
-                            store.words.borrow_mut().environment_event();
-                        } else if store.words.borrow().has_certificates() {
-                            if let Some(cell) = p {
-                                if kind == 2 {
-                                    if law_changed { store.words.borrow_mut().edit(&mut codec, cell, &source); }
-                                } else {
-                                    store.words.borrow_mut().edit_section(&mut codec, cell, &source);
+                        Work::Goal(request) => {
+                            let req_version = request.version;
+                            active_cont = None;
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan_step(&source, &store, &mut codec, request, &v, &r))) {
+                                Ok((answer, cont)) => {
+                                    let _ = done.send(answer);
+                                    active_cont = cont;
+                                }
+                                Err(p) => {
+                                    let _ = done.send(refusal(req_version, format!("planner panic: {}", p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())));
                                 }
                             }
                         }
                     }
-                    Work::Goal(request) => {
-                        let version = request.version;
-                        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(&source, &store, &mut codec, request, &v, &r)))
-                            .unwrap_or_else(|p| refusal(version,format!("planner panic: {}",p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default())));
-                        let _ = done.send(answer);
+                    continue;
+                }
+                if let Some(mut cont) = active_cont.take() {
+                    if v.load(Ordering::Acquire) == cont.requested && r.load(Ordering::Acquire) == source.law_revision && cont.law_revision == source.law_revision {
+                        if let Ok(Some((pkt, more))) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| advance_continuation(&source, &store, &mut codec, &mut cont, &v, &r))) {
+                            let _ = done.send(pkt);
+                            if more {
+                                active_cont = Some(cont);
+                            }
+                        }
                     }
                 }
             }
@@ -228,79 +444,395 @@ pub fn observe(event: &[u64],bits: Vec<u64>,known: Vec<u64>,provenance: Vec<u64>
 }
 pub fn observation() -> Vec<u64> { resident().observation.lock().unwrap().clone() }
 
+struct ResidentCorridor<'a> {
+    source: &'a Source,
+    support: BlockPos,
+    floor_block: &'a Block,
+    air_block: &'static Block,
+    air_state: StateId,
+    bounds: (BlockPos, BlockPos),
+    first_uncovered: std::cell::Cell<Option<BlockPos>>,
+    provenance_hash: [u8; 32],
+}
+impl<'a> ResidentCorridor<'a> {
+    fn new(source: &'a Source, support: BlockPos, bounds: (BlockPos, BlockPos)) -> Result<Self, String> {
+        let floor_block = source.known_block(support).map_err(|e| format!("support {support:?}: {e}"))?;
+        law::codec::legs_presence(floor_block).map_err(|e| format!("support {support:?}: {e:?}"))?;
+        let air_state = StateId::parse("minecraft:air", |_| None)?;
+        let air_block = air_state.model_block();
+        let mut bytes = b"resident-corridor/1".to_vec();
+        bytes.extend(law::codec::SCHEMA);
+        bytes.extend(support[1].to_le_bytes());
+        for b in [floor_block, air_block] {
+            bytes.extend(law::codec::legs_presence(b).map_err(|e| format!("legs presence: {e:?}"))?.bytes());
+        }
+        let mut provenance_hash = [0; 32];
+        provenance_hash[..16].copy_from_slice(&law::codec::digest(&bytes).to_le_bytes());
+        bytes.push(1);
+        provenance_hash[16..].copy_from_slice(&law::codec::digest(&bytes).to_le_bytes());
+        Ok(Self {
+            source, support, floor_block, air_block, air_state, bounds,
+            first_uncovered: std::cell::Cell::new(None), provenance_hash,
+        })
+    }
+    #[inline]
+    fn covered(&self, p: BlockPos) -> bool {
+        (0..3).all(|a| p[a] >= self.bounds.0[a] && p[a] <= self.bounds.1[a])
+    }
+    #[inline]
+    fn reaches(&self, p: BlockPos) -> bool {
+        let inside = self.covered(p);
+        if !inside && self.first_uncovered.get().is_none() { self.first_uncovered.set(Some(p)); }
+        inside
+    }
+    #[inline]
+    fn base(&self, p: BlockPos) -> &Block {
+        if p[1] == self.support[1] { self.floor_block } else { self.air_block }
+    }
+}
+impl World for ResidentCorridor<'_> {
+    #[inline]
+    fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
+        if !self.reaches(p) { return Err("outside the source"); }
+        self.source.known_block(p)
+    }
+    #[inline]
+    fn block(&self, p: BlockPos) -> &Block {
+        if !self.covered(p) { return self.base(p); }
+        self.source.known_block(p).unwrap_or_else(|_| self.base(p))
+    }
+    #[inline]
+    fn state_id(&self, p: BlockPos) -> Option<StateId> {
+        self.covered(p).then(|| self.source.state_id(p)).flatten()
+    }
+    fn uniform(&self, lo: BlockPos, hi: BlockPos) -> Option<&Block> {
+        if !self.covered(lo) || !self.covered(hi) { return None; }
+        self.source.uniform(lo, hi)
+    }
+    #[inline]
+    fn loaded(&self, p: BlockPos) -> bool {
+        self.covered(p) && self.source.cell(p).is_some_and(Result::is_ok)
+    }
+    fn difficulty(&self) -> u8 { self.source.difficulty() }
+    fn natural_regeneration(&self) -> bool { self.source.natural_regeneration() }
+    fn min_y(&self) -> i32 { self.bounds.0[1] }
+    fn fast_lava(&self) -> bool { self.source.fast_lava() }
+    fn has_fluid(&self) -> bool { self.source.has_fluid() }
+    fn has_inside_effects(&self) -> bool { self.source.has_inside_effects() }
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.source.has_fluid_in(lo, hi) }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.source.has_inside_effects_in(lo, hi) }
+    fn collision_cell_bounds(&self, bounds: law::Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
+        if !self.covered(lo) || !self.covered(hi) { return Some((lo, hi)); }
+        self.source.collision_cell_bounds(bounds, lo, hi)
+    }
+    fn visit_collision_cells(&self, bounds: law::Aabb, lo: BlockPos, hi: BlockPos, visit: impl FnMut(BlockPos) -> bool) -> bool {
+        if !self.covered(lo) || !self.covered(hi) {
+            let mut visit = visit;
+            for z in lo[2]..=hi[2] {
+                for y in lo[1]..=hi[1] {
+                    for x in lo[0]..=hi[0] {
+                        let p = [x, y, z];
+                        if (self.known_block(p).is_err() || !self.block(p).never_collides()) && !visit(p) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+        self.source.visit_collision_cells(bounds, lo, hi, visit)
+    }
+}
+impl law::codec::proof::Source for ResidentCorridor<'_> {
+    fn cell(&self, _tick: u64, p: BlockPos, mask: u8) -> Result<law::codec::Canonical, law::codec::proof::Refusal> {
+        let block = self.known_block(p).map_err(|_| law::codec::proof::Refusal::Coverage)?;
+        law::codec::cell(block, self.loaded(p), mask).map_err(law::codec::proof::Refusal::Law)
+    }
+    fn environment(&self, _tick: u64, q: &law::footprint::EnvironmentRead) -> Result<law::codec::Canonical, law::codec::proof::Refusal> {
+        law::codec::environment(self, q).map_err(law::codec::proof::Refusal::Law)
+    }
+}
+impl plan::source::CorridorSource for ResidentCorridor<'_> {
+    fn indexed_collisions(&self) -> bool { true }
+    fn support_cell(&self, s: &PlayerState) -> BlockPos {
+        s.main_supporting_block.unwrap_or([s.position.x.floor() as i32, self.support[1], s.position.z.floor() as i32])
+    }
+    fn floor_y(&self, _: &PlayerState) -> i32 { self.support[1] }
+    fn provenance(&self) -> [u8; 32] { self.provenance_hash }
+    fn bounds_box(&self) -> Option<(BlockPos, BlockPos)> { Some(self.bounds) }
+    fn entry_label(&self, codec: &mut law::codec::Interner, state: &PlayerState) -> Result<law::codec::LabelId, law::codec::proof::Refusal> {
+        let feet = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
+        let support = state.main_supporting_block.unwrap_or([feet[0], self.support[1], feet[2]]);
+        let mut classes = [None; 4];
+        for (i, (p, role)) in [
+            (support, law::codec::LegsRole::Support02),
+            (support, law::codec::LegsRole::Support05),
+            (feet, law::codec::LegsRole::BodyFeet),
+            (feet, law::codec::LegsRole::Inside),
+        ].into_iter().enumerate() {
+            let loaded = self.loaded(p);
+            if !loaded { return Err(law::codec::proof::Refusal::Loaded); }
+            classes[i] = Some(codec.legs(self.block(p), loaded, role).map_err(law::codec::proof::Refusal::Law)?);
+        }
+        codec.bare_legs_label(classes.map(Option::unwrap)).ok_or(law::codec::proof::Refusal::Schema)
+    }
+    fn corridor_query(&self, codec: &mut law::codec::Interner, expected: law::codec::LabelId, min: BlockPos, max: BlockPos) -> plan::source::CorridorResult {
+        use law::codec::{self, LegsRole, proof::Refusal};
+        use plan::source::CorridorResult;
+        if !self.reaches(min) || !self.reaches(max) { return CorridorResult::Unknown(Refusal::Loaded); }
+        let check_pos = [min[0], self.support[1], min[2]];
+        {
+            let mut classes = [None; 4];
+            for (i, (blk, role)) in [
+                (self.floor_block, LegsRole::Support02),
+                (self.floor_block, LegsRole::Support05),
+                (self.air_block, LegsRole::BodyFeet),
+                (self.air_block, LegsRole::Inside),
+            ].into_iter().enumerate() {
+                match codec.legs(blk, true, role) {
+                    Ok(c) => classes[i] = Some(c),
+                    Err(e) => return CorridorResult::Unknown(Refusal::Law(e)),
+                }
+            }
+            match codec.bare_legs_label(classes.map(Option::unwrap)) {
+                Some(id) if id == expected => (),
+                Some(_) => return CorridorResult::Exception { first_pos: check_pos, exceptions: 1 },
+                None => return CorridorResult::Unknown(Refusal::Schema),
+            }
+        }
+        let halo_min = min.map(|v| v.saturating_sub(1));
+        let halo_max = max.map(|v| v.saturating_add(1));
+        if !self.reaches(halo_min) || !self.reaches(halo_max) { return CorridorResult::Unknown(Refusal::Coverage); }
+        let inside = |p: BlockPos| (0..3).all(|i| min[i] <= p[i] && p[i] <= max[i]);
+        let floor_bytes = match [LegsRole::Support02, LegsRole::Support05, LegsRole::BodyFeet, LegsRole::Inside].into_iter().map(|r| codec::legs_bytes(self.floor_block, true, r)).collect::<Result<Vec<_>, _>>() {
+            Ok(v) => v, Err(e) => return CorridorResult::Unknown(Refusal::Law(e)),
+        };
+        let air_bytes = match [LegsRole::Support02, LegsRole::Support05, LegsRole::BodyFeet, LegsRole::Inside].into_iter().map(|r| codec::legs_bytes(self.air_block, true, r)).collect::<Result<Vec<_>, _>>() {
+            Ok(v) => v, Err(e) => return CorridorResult::Unknown(Refusal::Law(e)),
+        };
+        let mut unknown: Option<BlockPos> = None;
+        let mut first: Option<BlockPos> = None;
+        let mut exceptions = 0usize;
+        let mut refusal = None;
+        let roles = [LegsRole::Support02, LegsRole::Support05, LegsRole::BodyFeet, LegsRole::Inside];
+        for sz in halo_min[2].div_euclid(16)..=halo_max[2].div_euclid(16) {
+            for sy in halo_min[1].div_euclid(16)..=halo_max[1].div_euclid(16) {
+                for sx in halo_min[0].div_euclid(16)..=halo_max[0].div_euclid(16) {
+                    let base = [sx * 16, sy * 16, sz * 16];
+                    let s_lo = [0, 1, 2].map(|i| halo_min[i].max(base[i]));
+                    let s_hi = [0, 1, 2].map(|i| halo_max[i].min(base[i] + 15));
+                    let Some(section) = self.source.sections.get(&[sx, sy, sz]) else {
+                        let count = (0..3).map(|i| (s_hi[i] - s_lo[i] + 1) as usize).product::<usize>();
+                        unknown = Some(unknown.map_or(s_lo, |old| old.min(s_lo)));
+                        exceptions += count;
+                        continue;
+                    };
+                    if let Some(u) = section.uniform_state {
+                        if u == self.air_state && !(s_lo[1]..=s_hi[1]).contains(&self.support[1]) && s_lo[1] >= min[1] {
+                            continue;
+                        }
+                    }
+                    // Preclassify fixed-model palette entries vs expected air_bytes & floor_bytes.
+                    let air_match: Vec<Option<bool>> = section.palette.iter().map(|(_, entry)| {
+                        let Ok(sid) = entry else { return None };
+                        if !sid.model().is_some_and(|m| m.fixed()) { return Some(false); }
+                        let b = sid.model_block();
+                        let same = roles.iter().zip(&air_bytes).try_fold(true, |ok, (&r, ab)| {
+                            Ok::<_, law::pattern::PatternError>(ok && codec::legs_bytes(b, true, r)? == *ab)
+                        });
+                        Some(same.unwrap_or(false))
+                    }).collect();
+                    let can_skip_air_band = !(s_lo[1]..=s_hi[1]).contains(&self.support[1]) && s_lo[1] >= min[1];
+                    if can_skip_air_band && air_match.iter().all(|&m| m == Some(true)) {
+                        continue;
+                    }
+                    for z in s_lo[2]..=s_hi[2] {
+                        for y in s_lo[1]..=s_hi[1] {
+                            let exp_bytes = if y == self.support[1] { &floor_bytes } else { &air_bytes };
+                            let exp_blk = if y == self.support[1] { self.floor_block } else { self.air_block };
+                            for x in s_lo[0]..=s_hi[0] {
+                                let p = [x, y, z];
+                                let idx = section.indices[((y.rem_euclid(16) * 16 + z.rem_euclid(16)) * 16 + x.rem_euclid(16)) as usize];
+                                if y != self.support[1] && air_match[idx] == Some(true) {
+                                    continue;
+                                }
+                                let b = match &section.palette[idx].1 {
+                                    Ok(sid) => sid.block_at(p),
+                                    Err(_) => {
+                                        unknown = Some(unknown.map_or(p, |old| old.min(p)));
+                                        exceptions += 1;
+                                        continue;
+                                    }
+                                };
+                                if !inside(p) {
+                                    let bl = std::array::from_fn::<_, 3, _>(|i| f64::from(min[i]) - f64::from(p[i]));
+                                    let bh = std::array::from_fn::<_, 3, _>(|i| f64::from(max[i]) + 1.0 - f64::from(p[i]));
+                                    let bounds = law::Aabb::new(bl[0], bl[1], bl[2], bh[0], bh[1], bh[2]);
+                                    if !b.collision_shapes().chain(exp_blk.collision_shapes()).any(|s| s.intersects(bounds)) {
+                                        continue;
+                                    }
+                                }
+                                match roles.iter().zip(exp_bytes).try_fold(false, |diff, (&r, eb)| {
+                                    Ok::<_, law::pattern::PatternError>(diff || codec::legs_bytes(b, true, r)? != *eb)
+                                }) {
+                                    Ok(true) => {
+                                        exceptions += 1;
+                                        first = Some(first.map_or(p, |old| old.min(p)));
+                                    }
+                                    Ok(false) => (),
+                                    Err(e) => refusal = Some(Refusal::Law(e)),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(r) = refusal { return CorridorResult::Unknown(r); }
+        if let Some(first_pos) = unknown.or(first) {
+            CorridorResult::Exception { first_pos, exceptions }
+        } else {
+            CorridorResult::Clear(plan::source::CorridorProof { label: expected, min, max, version: self.provenance_hash })
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> Vec<u64> {
+    plan_step(source, store, codec, request, version, revision).0
+}
+
+fn find_support_below(source: &Source, p: BlockPos, min_y: i32, current: Option<BlockPos>) -> Result<BlockPos, String> {
+    if let Some(s) = current { return Ok(s); }
+    for depth in 1..=32 {
+        let cell = [p[0], p[1] - depth, p[2]];
+        if cell[1] < min_y { break; }
+        match source.known_block(cell) {
+            Ok(block) if block.never_collides() => (),
+            Ok(_) => return Ok(cell),
+            Err(reason) => return Err(format!("support {cell:?}: {reason}")),
+        }
+    }
+    Ok([p[0], (p[1] - 1).max(min_y), p[2]])
+}
+
+fn plan_hull(words: &[plan::WordStep], fallback_lo: [i32; 2], fallback_hi: [i32; 2]) -> [u64; 4] {
+    let mut hx0 = i32::MAX; let mut hz0 = i32::MAX; let mut hx1 = i32::MIN; let mut hz1 = i32::MIN;
+    for w in words {
+        hx0 = hx0.min(w.certificate.min[0]); hz0 = hz0.min(w.certificate.min[2]);
+        hx1 = hx1.max(w.certificate.max[0]); hz1 = hz1.max(w.certificate.max[2]);
+    }
+    if hx0 > hx1 {
+        hx0 = fallback_lo[0]; hz0 = fallback_lo[1];
+        hx1 = fallback_hi[0]; hz1 = fallback_hi[1];
+    }
+    [i64::from(hx0) as u64, i64::from(hz0) as u64, i64::from(hx1) as u64, i64::from(hz1) as u64]
+}
+
+fn plan_step(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::codec::Interner, request: Request, version: &AtomicU64, revision: &AtomicU64) -> (Vec<u64>, Option<ActiveContinuation>) {
     let Request { state, meta, goal: target, issue, version: requested } = request;
     let goal = target.cell;
     let entered = crate::qpc().0 as u64;
-    if let Some(why) = &source.error { return refusal(requested,format!("source publication failed: {why}")); }
-    if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return refusal(requested,"observation/source session or revision mismatch"); }
-    if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return refusal(requested,"missing/invalid body-kit context"); }
-    if meta[2] != 0 { return refusal(requested,"unsupported input phase"); }
+    if let Some(why) = &source.error { return (refusal(requested,format!("source publication failed: {why}")), None); }
+    if meta.len() < 7 || meta[0] != source.session || meta[5] != source.revision { return (refusal(requested,"observation/source session or revision mismatch"), None); }
+    if meta[6] as usize != meta.len()-7 || meta[6] == 0 || meta[7..].iter().any(|&v|v>255) { return (refusal(requested,"missing/invalid body-kit context"), None); }
+    if meta[2] != 0 { return (refusal(requested,"unsupported input phase"), None); }
     let carried = kit_wire::read(&meta[7..]);
-    let Some((lo,hi)) = source.bounds() else { return refusal(requested,"no received sections"); };
-    // The corridor between the bot and the goal, from the bottom of the world to a little above both.
+    let Some((lo,hi)) = source.bounds() else { return (refusal(requested,"no received sections"), None); };
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
-    // The ground: the block it stands on, or mid-jump/in-water the first solid block below it.
-    let mut support = state.main_supporting_block;
-    if support.is_none() { for depth in 1..=32 {
-        let cell = [p[0], p[1] - depth, p[2]];
-        if cell[1] < lo[1] { break; }
-        match source.known_block(cell) {
-            Ok(block) if block.never_collides() => (),
-            Ok(_) => { support = Some(cell); break; }
-            Err(reason) => return refusal(requested, format!("support {cell:?}: {reason}")),
-        }
-    }}
-    let a = support.unwrap_or([p[0], (p[1] - 1).max(lo[1]), p[2]]);
-    let near = [p[0].min(goal[0])-4, lo[1], p[2].min(goal[2])-4]; let far = [p[0].max(goal[0])+4, p[1].max(goal[1])+8, p[2].max(goal[2])+4];
-    let (mut cl, mut ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
-    if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
-    let mut found = None;
-    for _ in 0..8 {
-        let corridor = match plan::source::GeneratorSuperflatSource::from_world(source,(cl,ch),a) { Ok(c) => c, Err(why) => return refusal(requested,why) };
-        let result = plan::solve(&state, target, carried.kit, &corridor, store, codec, u64::MAX);
-        if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.law_revision { return refusal(requested,"cancelled or source changed while thinking"); }
-        match result.outcome {
-            plan::PlanOutcome::Ready(plan) => { found = Some(plan); break; }
-            other => {
-                let prev = (cl, ch);
-                if let Some(unc) = corridor.first_uncovered() {
-                    for i in [0, 2] {
-                        cl[i] = cl[i].min(unc[i] - 4).max(lo[i]);
-                        ch[i] = ch[i].max(unc[i] + 4).min(hi[i]);
-                    }
-                    if (cl, ch) != prev { continue; }
-                }
-                if matches!(other, plan::PlanOutcome::NeedsJoints { .. }) {
-                    cl[0] = cl[0].min(p[0].min(goal[0]) - 20).max(lo[0]);
-                    cl[2] = cl[2].min(p[2].min(goal[2]) - 20).max(lo[2]);
-                    ch[0] = ch[0].max(p[0].max(goal[0]) + 20).min(hi[0]);
-                    ch[2] = ch[2].max(p[2].max(goal[2]) + 20).min(hi[2]);
-                    if (cl, ch) != prev { continue; }
-                }
-                return refusal(requested,format!("{:?} {}",other,result.explanation.unwrap_or_default()));
-            }
-        }
+    let a = match find_support_below(source, p, lo[1], state.main_supporting_block) {
+        Ok(s) => s,
+        Err(why) => return (refusal(requested, why), None),
+    };
+    if (0..3).any(|i| goal[i] < lo[i] || goal[i] > hi[i]) { return (refusal(requested,"the goal is outside the chunks the bot has received"), None); }
+    let corridor = match ResidentCorridor::new(source, a, (lo, hi)) { Ok(c) => c, Err(why) => return (refusal(requested, why), None) };
+    let result = plan::solve_step(&state, target, carried.kit, &corridor, store, codec, u64::MAX);
+    if version.load(Ordering::Acquire) != requested || revision.load(Ordering::Acquire) != source.law_revision {
+        return (refusal(requested,"cancelled or source changed while thinking"), None);
     }
-    let Some(found) = found else { return refusal(requested,"corridor growth exceeded pass cap"); };
+    let (found, eval_goal, cont) = match result.outcome {
+        plan::PlanOutcome::Ready(plan) => (plan, target, None),
+        plan::PlanOutcome::Prefix(pref) => {
+            let next_state = pref.plan.end.materialize();
+            let tick_offset = pref.plan.ticks;
+            let cont = ActiveContinuation {
+                requested,
+                law_revision: source.law_revision,
+                support: a,
+                final_goal: pref.final_goal,
+                carried: carried.clone(),
+                state: next_state,
+                tick_offset,
+                bounds: (lo, hi),
+            };
+            (pref.plan, pref.target, Some(cont))
+        }
+        other => return (refusal(requested, format!("{:?} {}", other, result.explanation.unwrap_or_default())), None),
+    };
     let programs = words::tiny_programs();
-    match inputs(source, &programs, &state, &found.words, target, found.ticks, &carried) {
+    match inputs(source, &programs, &state, &found.words, eval_goal, found.ticks, &carried) {
         Ok((inputs, actions)) => {
             let edits = !actions.is_empty();
             let mut out = vec![if edits { KIT_PLAN } else { WORD_PLAN },requested,issue,entered,crate::qpc().0 as u64,source.revision,state.t,inputs.len() as u64 / 3];
             let bits = state.bits(); out.push(bits.len() as u64); out.extend(bits); out.extend(inputs);
             if edits { out.push((actions.len() / kit_wire::ACTION_WORDS) as u64); out.extend(actions); }
-            let mut hx0 = i32::MAX; let mut hz0 = i32::MAX; let mut hx1 = i32::MIN; let mut hz1 = i32::MIN;
-            for w in &found.words {
-                hx0 = hx0.min(w.certificate.min[0]); hz0 = hz0.min(w.certificate.min[2]);
-                hx1 = hx1.max(w.certificate.max[0]); hz1 = hz1.max(w.certificate.max[2]);
-            }
-            if hx0 > hx1 { hx0 = cl[0]; hz0 = cl[2]; hx1 = ch[0]; hz1 = ch[2]; }
-            out.extend([i64::from(hx0) as u64, i64::from(hz0) as u64, i64::from(hx1) as u64, i64::from(hz1) as u64]);
-            out
+            let fallback_lo = [p[0].min(goal[0]).saturating_sub(2).max(lo[0]), p[2].min(goal[2]).saturating_sub(2).max(lo[2])];
+            let fallback_hi = [p[0].max(goal[0]).saturating_add(2).min(hi[0]), p[2].max(goal[2]).saturating_add(2).min(hi[2])];
+            out.extend(plan_hull(&found.words, fallback_lo, fallback_hi));
+            (out, cont)
         }
-        Err(why) => refusal(requested,why),
+        Err(why) => (refusal(requested,why), None),
     }
+}
+
+fn advance_continuation(
+    source: &Source,
+    store: &plan::store::GeneratorStore,
+    codec: &mut law::codec::Interner,
+    cont: &mut ActiveContinuation,
+    version: &AtomicU64,
+    revision: &AtomicU64,
+) -> Option<(Vec<u64>, bool)> {
+    let bounds = source.bounds().unwrap_or(cont.bounds);
+    let p = [cont.state.position.x.floor() as i32, cont.state.position.y.floor() as i32, cont.state.position.z.floor() as i32];
+    let support = find_support_below(source, p, bounds.0[1], cont.state.main_supporting_block).unwrap_or(cont.support);
+    let corridor = ResidentCorridor::new(source, support, bounds).ok()?;
+    let result = plan::solve_step(&cont.state, cont.final_goal, cont.carried.kit, &corridor, store, codec, u64::MAX);
+    if version.load(Ordering::Acquire) != cont.requested || revision.load(Ordering::Acquire) != source.law_revision {
+        return None;
+    }
+    let (found, eval_goal, more) = match result.outcome {
+        plan::PlanOutcome::Ready(plan) => (plan, cont.final_goal, false),
+        plan::PlanOutcome::Prefix(pref) => (pref.plan, pref.target, true),
+        _ => return None,
+    };
+    let programs = words::tiny_programs();
+    let (inputs, mut actions) = inputs(source, &programs, &cont.state, &found.words, eval_goal, found.ticks, &cont.carried).ok()?;
+    for chunk in actions.chunks_exact_mut(kit_wire::ACTION_WORDS) {
+        chunk[0] = chunk[0].saturating_add(cont.tick_offset);
+    }
+    let edits = !actions.is_empty();
+    let mut out = vec![
+        if edits { KIT_PLAN_APPEND } else { PLAN_APPEND },
+        cont.requested,
+        cont.tick_offset,
+        inputs.len() as u64 / 3,
+    ];
+    out.extend(inputs);
+    if edits {
+        out.push((actions.len() / kit_wire::ACTION_WORDS) as u64);
+        out.extend(actions);
+    }
+    let fallback_lo = [p[0].min(eval_goal.cell[0]).saturating_sub(2).max(bounds.0[0]), p[2].min(eval_goal.cell[2]).saturating_sub(2).max(bounds.0[2])];
+    let fallback_hi = [p[0].max(eval_goal.cell[0]).saturating_add(2).min(bounds.1[0]), p[2].max(eval_goal.cell[2]).saturating_add(2).min(bounds.1[2])];
+    out.extend(plan_hull(&found.words, fallback_lo, fallback_hi));
+    if more {
+        cont.state = found.end.materialize();
+        cont.tick_offset = cont.tick_offset.saturating_add(found.ticks);
+        cont.support = support;
+        cont.bounds = bounds;
+    }
+    Some((out, more))
 }
 /// The plan's words × counts as tick inputs, each tick's input from the word's program, run through
 /// the law with each edit landing where `KitOp::lands_at` puts it; and one action record per edit.
@@ -367,7 +899,7 @@ mod tests {
         let air = model("minecraft:air"); let stone = model("minecraft:stone");
         for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
             let indices = (0..4096).map(|i|usize::from(y<0 || y==0 && i/256==0)).collect();
-            source.sections.insert([x,y,z],Section { palette:vec![("minecraft:air".into(),air.clone()),("minecraft:stone".into(),stone.clone())],indices });
+            source.sections.insert([x,y,z],Section::new(vec![("minecraft:air".into(),air.clone()),("minecraft:stone".into(),stone.clone())], indices));
         } } }
         let state = PlayerState { t:77,position:law::Vec3::new(8.5,1.0,8.5),on_ground:true,main_supporting_block:Some([8,0,8]),food_level:11,saturation:2.5,exhaustion:1.25,..PlayerState::default() };
         let bits = state.bits();
@@ -383,7 +915,7 @@ mod tests {
         let palette = vec![("minecraft:air".into(),model("minecraft:air")),("minecraft:stone".into(),model("minecraft:stone"))];
         for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
             let indices = (0..4096).map(|i| { let (ly, lz) = (i/256, i/16%16); usize::from(y<0 || y==0 && (ly==0 || z==0 && Some(lz as i32)==wall && ly<=2)) }).collect();
-            source.sections.insert([x,y,z],Section { palette:palette.clone(),indices });
+            source.sections.insert([x,y,z],Section::new(palette.clone(), indices));
         } } }
         source
     }
@@ -499,7 +1031,7 @@ mod tests {
                 else if y == 0 && ly == 1 && (6..=10).contains(&wx) && wz == 12 { 3 }
                 else { 0 }
             }).collect();
-            source.sections.insert([x, y, z], Section { palette: palette.clone(), indices });
+            source.sections.insert([x, y, z], Section::new(palette.clone(), indices));
         }}}
         let hotbar = ["{}"; 9];
         let body = crate::kit_wire::tests::body("minecraft:overworld", "survival", hotbar, "{}", 0);
@@ -531,5 +1063,78 @@ mod tests {
         delta(&mut source, &oos).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.revision, 2);
+    }
+
+    #[test]
+    fn long_corridor_streams_prefix_and_append_without_from_world_copy() {
+        let mut source = Source { session: 7, revision: 1, law_revision: 1, difficulty: 0, regeneration: Some(false), ..Source::default() };
+        let palette = vec![
+            ("minecraft:air".into(), model("minecraft:air")),
+            ("minecraft:stone".into(), model("minecraft:stone")),
+            ("minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]".into(),
+                model("minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]")),
+        ];
+        // Build 96-block corridor along +x with a narrow 3-wide fence wall every 24 blocks so defects occur past 26 blocks.
+        for sx in 0..=6 {
+            for sy in -1..=1 {
+                for sz in 0..=1 {
+                    let indices = (0..4096).map(|i| {
+                        let (lx, ly, lz) = (i % 16, i / 256, (i / 16) % 16);
+                        let wx = sx * 16 + lx as i32;
+                        let wz = sz * 16 + lz as i32;
+                        if sy < 0 || (sy == 0 && ly == 0) { 1 }
+                        else if sy == 0 && (ly == 1 || ly == 2) && (wx == 24 || wx == 56) && (14..=18).contains(&wz) { 2 }
+                        else { 0 }
+                    }).collect();
+                    source.sections.insert([sx, sy, sz], Section::new(palette.clone(), indices));
+                }
+            }
+        }
+        let state = PlayerState {
+            t: 100, position: law::Vec3::new(4.5, 1.0, 16.5), on_ground: true,
+            main_supporting_block: Some([4, 0, 16]), food_level: 20, saturation: 5.0, health: 20.0, ..PlayerState::default()
+        };
+        let target = Goal { cell: [72, 0, 16], face: Some(plan::Face::Up), settle: false };
+        let body = crate::kit_wire::tests::body("minecraft:overworld", "survival", ["{}"; 9], "{}", 0);
+        let mut meta = vec![7, 1, 0, 0, 0, 1, body.len() as u64];
+        meta.extend(body);
+        let store = plan::store::GeneratorStore::default();
+        let mut codec = law::codec::Interner::default();
+        let ver = AtomicU64::new(3);
+        let rev = AtomicU64::new(1);
+
+        let (pkt1, mut cont_opt) = plan_step(&source, &store, &mut codec, Request { state: state.clone(), meta, goal: target, issue: 9, version: 3 }, &ver, &rev);
+        assert_eq!(pkt1[0], WORD_PLAN, "{}", String::from_utf8_lossy(&pkt1[4..].iter().map(|&b| b as u8).collect::<Vec<_>>()));
+        let n_bits = pkt1[8] as usize;
+        let count1 = pkt1[7] as usize;
+        let mut all_inputs: Vec<[u64; 3]> = pkt1[9 + n_bits..9 + n_bits + count1 * 3]
+            .chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+        let mut cont = cont_opt.take().expect("long defect corridor should stream Prefix continuation");
+        assert_eq!(cont.tick_offset as usize, all_inputs.len());
+
+        for _ in 0..16 {
+            let (app, more) = advance_continuation(&source, &store, &mut codec, &mut cont, &ver, &rev).expect("continuation packet");
+            assert_eq!(app[0], PLAN_APPEND);
+            assert_eq!(app[2] as usize, all_inputs.len());
+            let mc = app[3] as usize;
+            all_inputs.extend(app[4..4 + mc * 3].chunks_exact(3).map(|c| [c[0], c[1], c[2]]));
+            if !more { break; }
+        }
+        assert!(all_inputs.len() > count1);
+
+        let mut sim = state;
+        let mut hit = None;
+        for (idx, inp_words) in all_inputs.iter().enumerate() {
+            let before = sim.bounding_box();
+            let k = inp_words[0];
+            let inp = law::Input {
+                forward: (k & 1) != 0, back: (k & 2) != 0, left: (k & 4) != 0, right: (k & 8) != 0,
+                jump: (k & 16) != 0, sneak: (k & 32) != 0, sprint: (k & 64) != 0,
+                yaw: f32::from_bits(inp_words[1] as u32), pitch: f32::from_bits(inp_words[2] as u32),
+            };
+            law::try_tick(&mut sim, &source, &inp).unwrap();
+            if target.reached_boxes(before, &sim) { hit.get_or_insert(idx + 1); }
+        }
+        assert_eq!(hit, Some(all_inputs.len()));
     }
 }

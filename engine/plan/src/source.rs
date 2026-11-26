@@ -42,6 +42,8 @@ impl<W:World> World for ObservedWorld<'_,W> {
     fn fast_lava(&self)->bool {self.world.fast_lava()}
     fn has_fluid(&self)->bool {self.fluids}
     fn has_inside_effects(&self)->bool {self.inside}
+    fn has_fluid_in(&self,lo:BlockPos,hi:BlockPos)->bool {self.fluids && self.world.has_fluid_in(lo,hi)}
+    fn has_inside_effects_in(&self,lo:BlockPos,hi:BlockPos)->bool {self.inside && self.world.has_inside_effects_in(lo,hi)}
     fn collision_cell_bounds(&self,b:law::Aabb,lo:BlockPos,hi:BlockPos)->Option<(BlockPos,BlockPos)> {
         if self.indexed {self.world.collision_cell_bounds(b,lo,hi)} else {Some((lo,hi))}
     }
@@ -104,6 +106,8 @@ impl<W:World> World for MeteredWorld<'_,W> {
     fn fast_lava(&self)->bool {self.world.fast_lava()}
     fn has_fluid(&self)->bool {self.world.has_fluid()}
     fn has_inside_effects(&self)->bool {self.world.has_inside_effects()}
+    fn has_fluid_in(&self,lo:BlockPos,hi:BlockPos)->bool {self.world.has_fluid_in(lo,hi)}
+    fn has_inside_effects_in(&self,lo:BlockPos,hi:BlockPos)->bool {self.world.has_inside_effects_in(lo,hi)}
     fn state_footprint(&self,r:law::state_reads::StateReads,w:law::state_reads::StateReads) {self.world.state_footprint(r,w)}
     fn observe_region(&self,q:law::footprint::Query,lo:BlockPos,hi:BlockPos) {self.world.observe_region(q,lo,hi)}
     fn observe_sweep(&self,a:law::Aabb,b:law::Aabb) {self.world.observe_sweep(a,b)}
@@ -145,7 +149,10 @@ fn label_roles(codec:&mut Interner,world:&impl World,feet:BlockPos,support:Block
 
 // A section stores palette indices for cells that differ from the generator.
 // A mask skips 4³ boxes whose cells all use the generator.
-struct Section { cells:[u32;4096], altered:u64, collision_xor:[[u16;256];2] }
+struct Section { cells:[u32;4096], altered:u64, collision_xor:[[u16;256];2], flags:u8 }
+fn block_flags(block: &Block) -> u8 {
+    u8::from(block.fluid.kind != law::FluidKind::Empty) | (u8::from(block.has_inside_effects()) << 1)
+}
 fn local(p:BlockPos)->usize { (((p[1]&15)<<8)|((p[2]&15)<<4)|(p[0]&15)) as usize }
 fn x_mask(lo:i32,hi:i32)->u16 { (u16::MAX<<lo) & (u16::MAX>>(15-hi)) }
 fn cube(p:BlockPos)->u64 { 1 << (((p[1]&12)<<2)|(p[2]&12)|((p[0]&12)>>2)) }
@@ -201,10 +208,11 @@ impl Scars {
         let row=self.section(p)?.cells[local(p)];
         self.rows.get(row.wrapping_sub(1) as usize)
     }
-    fn paint(&mut self,lo:BlockPos,hi:BlockPos,row:u32,change:u8) {
+    fn paint(&mut self,lo:BlockPos,hi:BlockPos,row:u32,change:u8,flags:u8) {
         if row==0 {return;}
         let i=self.section_index(lo).unwrap();
-        let s=self.sections[i].get_or_insert_with(||Box::new(Section {cells:[0;4096],altered:0,collision_xor:[[0;256];2]}));
+        let s=self.sections[i].get_or_insert_with(||Box::new(Section {cells:[0;4096],altered:0,collision_xor:[[0;256];2],flags:0}));
+        s.flags |= flags;
         let mask=x_mask(lo[0]&15,hi[0]&15);
         for z in lo[2]..=hi[2] {
             let (a,b)=(local([lo[0],lo[1],z]),local([hi[0],lo[1],z]));
@@ -288,7 +296,7 @@ impl GeneratorSuperflatSource {
                     source.scars.has_unknown=true; source.scars.rows.push(Row::Missing(why.to_owned()));
                     source.scars.rows.len() as u32
                 });
-                source.scars.paint(lo,hi,row,3^reach(source.base(lo)));
+                source.scars.paint(lo,hi,row,3^reach(source.base(lo)),3);
                 return;
             };
             for y in lo[1]..=hi[1] {
@@ -311,12 +319,12 @@ impl GeneratorSuperflatSource {
                     source.scars.rows.push(row);
                     source.scars.rows.len() as u32
                 });
-                let collision_diff=match source.scars.rows.get(row.wrapping_sub(1) as usize) {
-                    Some(Row::Missing(_))=>3^reach(source.base(p)),
-                    Some(Row::Known {model:Some(_),..})=>reach(block)^reach(source.base(p)),
-                    _=>0,
+                let (collision_diff, row_flags)=match source.scars.rows.get(row.wrapping_sub(1) as usize) {
+                    Some(Row::Missing(_))=>(3^reach(source.base(p)), 3),
+                    Some(Row::Known {model:Some(_),..})=>(reach(block)^reach(source.base(p)), block_flags(block)),
+                    _=> (0, 0),
                 };
-                source.scars.paint(p,[hi[0],y,hi[2]],row,collision_diff);
+                source.scars.paint(p,[hi[0],y,hi[2]],row,collision_diff,row_flags);
             }
         };
         fn visit<'a>(
@@ -361,6 +369,33 @@ impl GeneratorSuperflatSource {
         let inside=self.covered(p);
         if !inside && self.first_uncovered.get().is_none() { self.first_uncovered.set(Some(p)); }
         inside
+    }
+    fn flags_in(&self, lo: BlockPos, hi: BlockPos, mask: u8) -> bool {
+        if (lo[1]..=hi[1]).contains(&self.floor_y) && (block_flags(&self.floor_block) & mask) != 0 {
+            return true;
+        }
+        if self.layers.range(lo[1]..=hi[1]).any(|(_, b)| (block_flags(b) & mask) != 0) {
+            return true;
+        }
+        if (block_flags(&self.air_block) & mask) != 0 {
+            return true;
+        }
+        if self.scars.edits.iter().any(|(p, b)| (0..3).all(|a| lo[a] <= p[a] && p[a] <= hi[a]) && (block_flags(b) & mask) != 0) {
+            return true;
+        }
+        if self.scars.sections.is_empty() {
+            return false;
+        }
+        for sz in lo[2] >> 4..=hi[2] >> 4 {
+            for sy in lo[1] >> 4..=hi[1] >> 4 {
+                for sx in lo[0] >> 4..=hi[0] >> 4 {
+                    if self.scars.section([sx << 4, sy << 4, sz << 4]).is_some_and(|s| (s.flags & mask) != 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 impl World for GeneratorSuperflatSource {
@@ -445,7 +480,9 @@ impl World for GeneratorSuperflatSource {
         true
     }
     fn has_fluid(&self)->bool {self.blocks().any(|b|b.fluid.kind!=law::FluidKind::Empty)}
-    fn has_inside_effects(&self)->bool {self.blocks().any(|b|b.inside!=law::Inside::None || b.stuck_multiplier.is_some() || b.fluid.kind!=law::FluidKind::Empty)}
+    fn has_inside_effects(&self)->bool {self.blocks().any(Block::has_inside_effects)}
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.flags_in(lo, hi, 1) }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool { self.flags_in(lo, hi, 2) }
 }
 impl Source for GeneratorSuperflatSource {
     fn cell(&self,_tick:u64,p:BlockPos,mask:u8)->Result<Canonical,Refusal> {
@@ -456,7 +493,7 @@ impl Source for GeneratorSuperflatSource {
 }
 impl CorridorSource for GeneratorSuperflatSource {
     fn indexed_collisions(&self)->bool {true}
-    fn support_cell(&self,s:&PlayerState)->BlockPos {[s.position.x.floor() as i32,self.floor_y,s.position.z.floor() as i32]}
+    fn support_cell(&self,s:&PlayerState)->BlockPos {s.main_supporting_block.unwrap_or([s.position.x.floor() as i32,self.floor_y,s.position.z.floor() as i32])}
     fn floor_y(&self, _: &PlayerState) -> i32 { self.floor_y }
     fn provenance(&self) -> [u8; 32] { self.provenance_hash }
     fn bounds_box(&self) -> Option<(BlockPos, BlockPos)> { Some((self.loaded_min, self.loaded_max)) }

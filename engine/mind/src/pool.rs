@@ -2080,6 +2080,7 @@ fn solve_slot(
                 msg: format!("NeedsJoints at {exception:?}"),
             }
         }
+        PlanOutcome::Prefix(_) => unreachable!("plan::solve chains prefixes into Ready"),
         PlanOutcome::Unknown(refusal) => {
             bot.phase = BotPhase::Idle;
             let why = result

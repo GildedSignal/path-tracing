@@ -43,7 +43,11 @@ public final class Recorder {
         if (active() || planInputs != null) throw new IllegalStateException("Recording or playback already active");
         TickInput.holdSettings(mc);
         if (inputs.isEmpty()) throw new IllegalArgumentException("Empty native sentence");
-        planInputs = List.copyOf(inputs); planTick = 0;
+        planInputs = new ArrayList<>(inputs); planTick = 0;
+    }
+
+    static void appendPlan(List<TickInput> more) {
+        if (planInputs != null && !more.isEmpty()) planInputs.addAll(more);
     }
 
     static int playPlan(Minecraft mc, Path path, Path directory, String track) throws IOException {

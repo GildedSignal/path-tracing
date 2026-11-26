@@ -16,9 +16,10 @@ pub mod store;
 pub mod word_store;
 mod cut;
 mod defect;
+mod far_field;
 mod certify;
 pub mod solve;
-pub use solve::{solve, Bracket, Kit, Plan, PlanOutcome, Stage, WordStep};
+pub use solve::{solve, solve_step, Bracket, Kit, Plan, PlanOutcome, PrefixPlan, Stage, WordStep};
 
 pub mod inline;
 pub mod kit;

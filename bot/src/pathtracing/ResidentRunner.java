@@ -18,11 +18,12 @@ final class ResidentRunner {
     private static boolean pendingSettle, activeSettle;
     private static boolean waiting;
     private static boolean executing;
-    static void playbackEnded() { executing=false; actions=List.of(); activeGoal=null; }
+    private static int scheduledTicks;
+    static void playbackEnded() { executing=false; actions.clear(); activeGoal=null; scheduledTicks=0; }
     // The plan's corridor in x and z, as the planner reads it: a block edit inside it can change the plan; new chunks cannot.
     private static int[] corridor = new int[4];
     // The plan's own edits: their echoes from the server are expected, every other edit stops the flight.
-    private static List<KitAction> actions = List.of();
+    private static final List<KitAction> actions = new ArrayList<>();
     private static int stalls;
     private static int predictedT = -1;
     /** Predicted ticks T from the last accepted native plan; clears on read. */
@@ -100,7 +101,7 @@ final class ResidentRunner {
         cancelInternal(mc);
     }
     private static void cancelInternal(Minecraft mc) {
-        version++; pending = null; pendingSettle = false; waiting = false; executing = false; actions = List.of();
+        version++; pending = null; pendingSettle = false; waiting = false; executing = false; actions.clear(); scheduledTicks = 0;
         if (NativeChannel.loadFailure() == null) NativeChannel.Cancel(version);
         Recorder.cancelPlan(mc);
     }
@@ -134,6 +135,46 @@ final class ResidentRunner {
                 try { Thread.sleep(1); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
             }
         }
+        if (executing) {
+            for (int n = 0; n < 8; n++) {
+                long[] app = NativeChannel.ObserveEvent(new long[]{0, version}, EMPTY, EMPTY, EMPTY);
+                if (app[0] == 0) break;
+                if ((app[0] == 5 || app[0] == 6) && app[1] == version && app.length >= 8) {
+                    if (ResidentSource.lawRevision != requestedLawRevision) { cancel(mc); return; }
+                    int tickOffset = Math.toIntExact(app[2]);
+                    int moreCount = Math.toIntExact(app[3]);
+                    int inEnd = 4 + moreCount * 3;
+                    int moreKits = app[0] == 6 && app.length > inEnd ? Math.toIntExact(app[inEnd]) : 0;
+                    int hullAt = app[0] == 6 ? inEnd + 1 + moreKits * KitAction.WORDS : inEnd;
+                    if (tickOffset != scheduledTicks || app.length != hullAt + 4) {
+                        if (retryActive(mc)) return;
+                        cancel(mc); return;
+                    }
+                    ArrayList<TickInput> more = new ArrayList<>(moreCount);
+                    for (int i = 4; i < inEnd; i += 3) {
+                        long keys = app[i];
+                        more.add(new TickInput((keys&1)!=0,(keys&2)!=0,(keys&4)!=0,(keys&8)!=0,(keys&16)!=0,(keys&32)!=0,(keys&64)!=0,
+                            Float.intBitsToFloat((int)app[i+1]),Float.intBitsToFloat((int)app[i+2])));
+                    }
+                    Recorder.appendPlan(more);
+                    if (moreKits > 0) {
+                        List<KitAction> added = KitAction.read(app, inEnd + 1, moreKits);
+                        for (KitAction a : added) for (int dy = -1; dy <= 1; dy++) {
+                            BlockPos p = new BlockPos(a.x(), a.y() + dy, a.z());
+                            if (dy == 0 || a.opcode() == KitAction.INTERACT) before.putIfAbsent(p, mc.level.getBlockState(p));
+                        }
+                        actions.addAll(added);
+                    }
+                    scheduledTicks += moreCount;
+                    predictedT = scheduledTicks;
+                    corridor[0] = Math.min(corridor[0], (int)app[hullAt]);
+                    corridor[1] = Math.min(corridor[1], (int)app[hullAt+1]);
+                    corridor[2] = Math.max(corridor[2], (int)app[hullAt+2]);
+                    corridor[3] = Math.max(corridor[3], (int)app[hullAt+3]);
+                }
+            }
+            return;
+        }
         if (!waiting) return;
         if (answer == null) answer = NativeChannel.ObserveEvent(new long[]{0,version},EMPTY,EMPTY,EMPTY);
         if (answer[0] == 0) return;
@@ -162,9 +203,11 @@ final class ResidentRunner {
         }
         // T = 0: the body already touches the goal.
         if (count == 0) { activeGoal = null; predictedT = 0; Bot.reply(mc,"Already there."); return; }
+        scheduledTicks = count;
         predictedT = count;
         corridor = new int[]{(int)answer[hullBase],(int)answer[hullBase+1],(int)answer[hullBase+2],(int)answer[hullBase+3]};
-        actions = KitAction.read(answer,inputsEnd+1,kits); stalls = 0;
+        actions.clear();
+        actions.addAll(KitAction.read(answer,inputsEnd+1,kits)); stalls = 0;
         // The world before the plan's edits (a door's other half moves with it): the mission is
         // over only when these cells hold it again.
         for (KitAction a : actions) for (int dy = -1; dy <= 1; dy++) {

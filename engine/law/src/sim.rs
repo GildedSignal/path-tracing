@@ -165,6 +165,12 @@ impl<W: World> World for WorldDelta<'_, W> {
     }
     fn has_fluid(&self) -> bool { self.hooks[1] > 0 || self.base.has_fluid() }
     fn has_inside_effects(&self) -> bool { self.hooks[2] > 0 || self.base.has_inside_effects() }
+    fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        self.hooks[1] > 0 || self.base.has_fluid_in(lo, hi)
+    }
+    fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
+        self.hooks[2] > 0 || self.base.has_inside_effects_in(lo, hi)
+    }
     fn loaded(&self, p: BlockPos) -> bool { self.base.loaded(p) }
     fn min_y(&self) -> i32 { self.base.min_y() }
     fn fast_lava(&self) -> bool { self.base.fast_lava() }
