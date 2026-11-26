@@ -29,6 +29,8 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Next, in order
 
+0. **Outside references and modes** (`wt/bench-dig`, `wt/law-26.3`): [handoff](../jobs/beat-the-references/report.md).
+
 1. **Remaining live gaps:** live verification of empty-hotbar `ametwoodbox` pickup restore and a face-track flight (B on a wall or ceiling face).
 2. **Further law compression & gaps:** close remaining law behavior toward the `7,920`-line Fermi floor plus client 5-tick break cooldown in the law.
 3. **Far map & ES-native `10⁹` bots (`scales.md`, `server.md`):** shared goals, `Wheel`, `(max, +)` building, and melee singularity handoff ([pvp-strategy-2026-11-22.txt](../archive/research/pvp-strategy-2026-11-22.txt)).
