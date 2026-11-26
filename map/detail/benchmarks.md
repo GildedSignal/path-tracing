@@ -24,6 +24,15 @@ SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` section
 - Their README's "~3 µs" is not reproduced on this CPU: their own bench gives 5.9 µs at its default version, and the number is mostly free fall.
 - `straight` (one player, plain stone, the `law` `bench` workload): 1.8–2.7 µs on our sections, against 0.85–0.98 µs on `BoxWorld`. The goal's law-tick row (0.6–0.95 µs) is the box world; on the sections the planner reads, a tick is 2–3× that, ~1 order above the 0.1–0.3 µs floor. Most of it is fixed per tick, not per block: removing the water changes nothing.
 - Each section holds a `collide` mask, the 4³ subcells holding a state that can collide; a sweep through the others is proven empty in one bit test. It took `exact` from 3.6 to 1.06–1.6 µs and `straight` from 3.0 to 1.8–2.7 µs.
+- **BlockStep's protocol, offline on 26.2** (`engine/plan/src/bin/blockstep.rs`; evidence `D:\path-tracing-evidence\blockstep-20261126\`): one seed (`1162026`), each biome's interior found by `locate biome` grids (desert, windswept forest, snowy plains, snowy slopes, swamp, forest), goals at (±d, ±d), bare legs, cold store per task, every plan replayed through `law::try_tick`. Predicted, not yet flown; the terrain is not the thesis's.
+
+| d | solved | mean T (s) | with thinking | BlockStep | Baritone | floor |
+|---|---|---|---|---|---|---|
+| 20 | 24/24 | 4.79 | 4.96 | 6.6 | 8.4 | 3.97 |
+| 50 | 21/24 | 11.94 | 12.41 | 16.2 | 18.8 | 9.93 |
+| 100 | 20/24 | 25.27 | 26.88 | 35.1 | 37.0 | 19.9 |
+
+  Per biome at 20 and 50 blocks, ours is below BlockStep everywhere except the desert (5.80 against 5.1; 12.50 against 12.0), where `desert-20-ne` takes 187 ticks against a floor of 80 and `desert-100-sw` 792 against 398. Seven of 72 return `NeedsJoints` (3 at 50, 4 at 100). Thinking, cold: p50 0.40 s, p90 1.48 s, max 3.57 s, 1–2 orders above the new-joint floor.
 - Every Hielke map ships only for 26.3; Parkour Spiral 3.0.5 is DataVersion 5023, the law is 4903 (26.2), and a 26.2 game cannot open a newer world. Spiral is dropped (Julien, 2026-11-26); the other ten open only once the law is 26.3.
 - Few other parkour maps have a human board on speedrun.com: Run Swim Fly Parkour (Noxcrew, Full Course 4:58.95) and Unusual Parkour Map (8:08, 2021); their download versions are not yet checked.
 - MineOdyssey's 30 worlds (SHA-256 checked) are DataVersion 4671 (1.21.11), older than the law's: a 26.2 server's `--forceUpgrade` on copies brings them to 4903; its tasks name ordered waypoints by id (`tasks.json`).

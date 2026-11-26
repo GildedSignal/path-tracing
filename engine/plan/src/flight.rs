@@ -55,7 +55,7 @@ pub fn track_at(line: &str, tracks: &std::path::Path, world: &std::path::Path) -
 impl Track {
     /// B with the face its definition selects.
     pub fn goal(&self) -> Goal { Goal { cell: self.b, face: self.b_face, settle: false } }
-    fn settled_start(&self) -> Result<law::PlayerState,String> {
+    pub fn settled_start(&self) -> Result<law::PlayerState,String> {
         let context = CollisionContext { feet_y: self.a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
         let world=source::ObservedWorld::new(&self.world);
         let shape=world.collision_shape(self.a,context);
