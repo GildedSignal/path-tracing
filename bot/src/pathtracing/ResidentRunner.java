@@ -9,13 +9,16 @@ import net.minecraft.core.BlockPos;
 /** A-only legacy_sentence_adapter consumer; F owns the eventual word runner. */
 final class ResidentRunner {
     private static final long[] EMPTY = new long[0];
-    private static long version, issue, requestedRevision, requestedLawRevision;
-    private static BlockPos pending;
+    private static final List<String> FACES = List.of("down","up","north","south","west","east");
+    private static long version, issue, activeIssue, requestedRevision, requestedLawRevision;
+    private static BlockPos pending, activeGoal;
+    private static String activeFace;
     // B's face as Direction.get3DDataValue(), or -1 for any face.
-    private static int pendingFace = -1;
+    private static int pendingFace = -1, retries;
+    private static boolean pendingSettle, activeSettle;
     private static boolean waiting;
     private static boolean executing;
-    static void playbackEnded() { executing=false; actions=List.of(); }
+    static void playbackEnded() { executing=false; actions=List.of(); activeGoal=null; }
     // The plan's corridor in x and z, as the planner reads it: a block edit inside it can change the plan; new chunks cannot.
     private static int[] corridor = new int[4];
     // The plan's own edits: their echoes from the server are expected, every other edit stops the flight.
@@ -63,24 +66,47 @@ final class ResidentRunner {
         HopCapture.hop("observation-provenance-"+kind,version,issue,at,observation.provenance());
         // Only events that move the body stop playback; data echoes (entity data, attributes, health and food) are recorded above.
         if (executing && java.util.Set.of("explosion","motion","position","rotation").contains(kind)) {
+            if (retryActive(mc)) { TickInput.release(mc); return; }
             cancel(mc); TickInput.release(mc);
             Bot.reply(mc,"Native legacy playback stopped on observed "+kind+"; event comparison belongs to F.");
         }
     }
     static void request(Minecraft mc, BlockPos goal, String face, long issuance) {
-        cancel(mc); issue = issuance; pending = goal.immutable();
-        pendingFace = face == null ? -1 : List.of("down","up","north","south","west","east").indexOf(face);
+        request(mc, goal, face, issuance, false);
+    }
+    static void request(Minecraft mc, BlockPos goal, String face, long issuance, boolean settle) {
+        int faceIndex = -1;
+        if (face != null) {
+            faceIndex = FACES.indexOf(face);
+            if (faceIndex < 0) { cancel(mc); Bot.reply(mc,"Invalid goal face: " + face); return; }
+        }
+        cancelInternal(mc); retries = 0;
+        activeGoal = goal.immutable(); activeFace = face; activeSettle = settle; activeIssue = issuance;
+        pending = activeGoal; pendingFace = faceIndex; pendingSettle = settle; issue = issuance;
         if (NativeChannel.loadFailure() != null) {
-            pending = null; Bot.reply(mc,"Native channel refused: " + NativeChannel.loadFailure());
+            pending = null; activeGoal = null; Bot.reply(mc,"Native channel refused: " + NativeChannel.loadFailure());
         }
     }
+    private static boolean retryActive(Minecraft mc) {
+        if (activeGoal == null || retries >= 6) return false;
+        int faceIndex = activeFace == null ? -1 : FACES.indexOf(activeFace);
+        retries++;
+        cancelInternal(mc);
+        pending = activeGoal; pendingFace = faceIndex; pendingSettle = activeSettle; issue = activeIssue;
+        return true;
+    }
     static void cancel(Minecraft mc) {
-        version++; pending = null; waiting = false; executing = false; actions = List.of();
+        activeGoal = null; activeFace = null; activeSettle = false; retries = 0;
+        cancelInternal(mc);
+    }
+    private static void cancelInternal(Minecraft mc) {
+        version++; pending = null; pendingSettle = false; waiting = false; executing = false; actions = List.of();
         if (NativeChannel.loadFailure() == null) NativeChannel.Cancel(version);
         Recorder.cancelPlan(mc);
     }
     static void tick(Minecraft mc) {
         if (mc.player == null || mc.level == null || NativeChannel.loadFailure() != null) return;
+        long[] answer = null;
         if (pending != null) {
             ResidentSource.difficulty(mc);
             long received = NativeChannel.clock()[0];
@@ -95,33 +121,47 @@ final class ResidentRunner {
             corridor = new int[]{Math.min(at.getX(),goal.getX())-2,Math.min(at.getZ(),goal.getZ())-2,Math.max(at.getX(),goal.getX())+2,Math.max(at.getZ(),goal.getZ())+2};
             requestedRevision = ResidentSource.revision;
             requestedLawRevision = ResidentSource.lawRevision;
-            long[] answer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,
-                pendingFace < 0 ? new long[]{goal.getX(),goal.getY()-1,goal.getZ()} : new long[]{goal.getX(),goal.getY()-1,goal.getZ(),pendingFace},issue,version);
-            HopCapture.hop("mod-request",version,issue,received,answer);
-            waiting = answer[0] == 0;
-            if (!waiting) refuse(mc,answer);
+            long[] goalWire = pendingSettle
+                ? new long[]{goal.getX(), goal.getY(), goal.getZ(), pendingFace < 0 ? 6 : pendingFace, 1}
+                : (pendingFace < 0 ? new long[]{goal.getX(), goal.getY(), goal.getZ()} : new long[]{goal.getX(), goal.getY(), goal.getZ(), pendingFace});
+            long[] reqAnswer = NativeChannel.RequestGoal(observation.bits(),observation.known(),observation.provenance(),meta,goalWire,issue,version);
+            HopCapture.hop("mod-request",version,issue,received,reqAnswer);
+            waiting = reqAnswer[0] == 0;
+            if (!waiting) { activeGoal = null; refuse(mc,reqAnswer); return; }
+            for (int wait = 0; wait < 12; wait++) {
+                long[] quick = NativeChannel.ObserveEvent(new long[]{0,version},EMPTY,EMPTY,EMPTY);
+                if (quick[0] != 0) { answer = quick; break; }
+                try { Thread.sleep(1); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }
+            }
         }
         if (!waiting) return;
-        long[] answer = NativeChannel.ObserveEvent(new long[]{0,version},EMPTY,EMPTY,EMPTY);
+        if (answer == null) answer = NativeChannel.ObserveEvent(new long[]{0,version},EMPTY,EMPTY,EMPTY);
         if (answer[0] == 0) return;
         if (answer[1] != version && answer[1] != 0) return;
         waiting = false;
         HopCapture.hop("rust-result-mod",version,issue,NativeChannel.clock()[0],answer);
         // 1 = WORD_PLAN; 4 = KIT_PLAN, the same with [a, a × 10 action words] between the inputs and the hull.
-        if (answer[0] != 1 && answer[0] != 4) { refuse(mc,answer); return; }
-        if (answer.length < 9 || answer[5] != requestedRevision || ResidentSource.lawRevision != requestedLawRevision) { Bot.reply(mc,"Native plan refused: source changed."); return; }
+        if (answer[0] != 1 && answer[0] != 4) { activeGoal = null; refuse(mc,answer); return; }
+        if (answer.length < 9 || answer[5] != requestedRevision || ResidentSource.lawRevision != requestedLawRevision) { activeGoal = null; Bot.reply(mc,"Native plan refused: source changed."); return; }
         int count = Math.toIntExact(answer[7]), n = Math.toIntExact(answer[8]);
         int inputsEnd = 9+n+count*3, kits = answer[0] == 4 && answer.length > inputsEnd ? Math.toIntExact(answer[inputsEnd]) : 0;
         int hullBase = answer[0] == 4 ? inputsEnd+1+kits*KitAction.WORDS : inputsEnd;
         StateBits.Observation now = PlayerSnapshot.observed(mc);
         // Word 0 is the tick counter, which moves while the plan is thought; every other word must still hold.
-        int changed = answer.length != hullBase+4 || now.bits().length != n ? 0 : -1;
-        for (int i = 1; changed < 0 && i < n; i++) if (answer[9+i] != now.bits()[i]) changed = i;
+        if (answer.length != hullBase+4 || now.bits().length != n) {
+            if (retryActive(mc)) return;
+            activeGoal = null;
+            Bot.reply(mc,"Native plan refused: observed start length changed while planning (" + n + " -> " + now.bits().length + ")."); return;
+        }
+        int changed = -1;
+        for (int i = 1; i < n; i++) if (answer[9+i] != now.bits()[i]) { changed = i; break; }
         if (changed >= 0) {
+            if (retryActive(mc)) return;
+            activeGoal = null;
             Bot.reply(mc,"Native plan refused: observed start changed while planning at word " + changed + "."); return;
         }
         // T = 0: the body already touches the goal.
-        if (count == 0) { predictedT = 0; Bot.reply(mc,"Already there."); return; }
+        if (count == 0) { activeGoal = null; predictedT = 0; Bot.reply(mc,"Already there."); return; }
         predictedT = count;
         corridor = new int[]{(int)answer[hullBase],(int)answer[hullBase+1],(int)answer[hullBase+2],(int)answer[hullBase+3]};
         actions = KitAction.read(answer,inputsEnd+1,kits); stalls = 0;

@@ -153,6 +153,8 @@ pub enum HeldPredicate {Never,Always,OnGround}
 pub const fn tiny_program_id(strafe:i8,sprint:bool,jump:HeldPredicate,sneak:HeldPredicate)->u16 {
     ((strafe+1) as u16*2+sprint as u16)*9+jump as u16*3+sneak as u16
 }
+/// Brake to a stop by holding sneak with no movement keys; appended after the 54 tiny programs.
+pub const P_BRAKE: u16 = 54;
 pub fn tiny_programs() -> Vec<Program> {
     let predicates = [Predicate::Not(Box::new(Predicate::Always)), Predicate::Always, Predicate::OnGround];
     let mut programs = Vec::new();
@@ -171,5 +173,6 @@ pub fn tiny_programs() -> Vec<Program> {
             }
         }
     }
+    programs.push(Program { rows: vec![Row { when: Predicate::Always, input: Input { sneak: true, ..Input::default() } }] });
     programs
 }

@@ -80,8 +80,9 @@ fn cycle_advance(rows: &[crate::store::Phase]) -> f64 {
 
 impl Legs {
     fn of<S: CorridorSource>(store: &GeneratorStore, label: LabelId, source: &S, from: &PlayerState) -> Option<Self> {
-        let walk = store.gait(label, source, from, if sprint_allowed(from) { SPRINT_JUMP } else { WALK }).ok()?;
-        let jump = store.gait(label, source, from, SPRINT_JUMP).ok()?;
+        let fallback = Some(Self { h: 2.81, up: 6.19, down: 0.0, reach: 4 });
+        let Ok(walk) = store.gait(label, source, from, if sprint_allowed(from) { SPRINT_JUMP } else { WALK }) else { return fallback; };
+        let Ok(jump) = store.gait(label, source, from, SPRINT_JUMP) else { return fallback; };
         let advance = cycle_advance(&walk.phases);
         if !(advance > 0.0) { return None; }
         let h = walk.phases.len() as f64 / advance;
@@ -743,7 +744,7 @@ fn exec_atomic_raw<W: World>(
         if s.health <= 0.0 || !s.bounding_box().intersects(bounds) {
             return AtomicOutcome::Failed;
         }
-        if goal.touched_boxes(prev_box, s.bounding_box()) {
+        if goal.reached_boxes(prev_box, &s) {
             hit_goal = true;
             break;
         }
@@ -841,7 +842,8 @@ fn exec_atomic_raw<W: World>(
             return AtomicOutcome::Failed;
         }
 
-        if landed || stepped || hit_wall || stalled || stuck_on_ground || support_ends || medium_changed || opening_cleared || kit_window {
+        let braked = program_id == words::program::P_BRAKE && s.on_ground && s.velocity.horizontal_sqr() <= 0.01;
+        if landed || stepped || hit_wall || stalled || stuck_on_ground || support_ends || medium_changed || opening_cleared || kit_window || braked {
             break;
         }
     }
@@ -894,7 +896,7 @@ fn try_tail_extend<S: CorridorSource>(
     store: &GeneratorStore,
     codec: &mut Interner,
 ) -> Option<Vec<WordStep>> {
-    if state.crouching || state.pose != PlayerState::default().pose || !state.on_ground || goal.cell[1] != source.floor_y(state) {
+    if state.crouching || state.in_water || state.in_lava || goal.settle || state.pose != PlayerState::default().pose || !state.on_ground || goal.cell[1] != source.floor_y(state) {
         return None;
     }
     if !state.main_supporting_block.is_some_and(|p| p[1] == goal.cell[1]) {
@@ -1035,11 +1037,14 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, to
     out
 }
 
-fn programs_for<W: World>(world: &W, s: &PlayerState) -> List<u16, 8> {
+fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal) -> List<u16, 8> {
     let mut out = List::new();
     if s.in_water || s.in_lava || s.on_climbable {
         for &p in &[P_FSJ, P_FJ, P_FS, P_F] {
             out.push(p);
+        }
+        if goal.settle && s.on_ground && goal.gap(s) <= 2.5 {
+            out.push(words::program::P_BRAKE);
         }
         return out;
     }
@@ -1053,6 +1058,9 @@ fn programs_for<W: World>(world: &W, s: &PlayerState) -> List<u16, 8> {
     }
     if s.crouching {
         out.push(P_FCJ);
+    }
+    if goal.settle && s.on_ground && goal.gap(s) <= 2.5 {
+        out.push(words::program::P_BRAKE);
     }
     out
 }
@@ -1111,7 +1119,7 @@ fn step_kit_node<S: World>(
             delta.rollback(mark);
             return None;
         }
-        if !still && goal.touched_boxes(prev, s.bounding_box()) {
+        if !still && goal.reached_boxes(prev, &s) {
             hit_goal = true;
             break;
         }
@@ -1119,7 +1127,7 @@ fn step_kit_node<S: World>(
             break;
         }
     }
-    if still && goal.touched(&s, &s) {
+    if still && goal.reached(&s, &s) {
         hit_goal = true;
     }
     delta.rollback(mark);
@@ -1377,7 +1385,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
             best_bucket.insert(b, arena[idx].arrival);
             pops += 1;
 
-            if goal.touched(&arena[idx].state, &arena[idx].state) && clear(&arena[idx]) {
+            if goal.reached(&arena[idx].state, &arena[idx].state) && clear(&arena[idx]) {
                 let (pl, steps, obs) = reconstruct(&arena, idx, Vec::new(), Vec::new());
                 best = Some((arena[idx].arrival, pl, steps, obs));
                 best_guessed = guessed[idx];
@@ -1529,7 +1537,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
             }
             pb.best_bucket.insert(b, pb.arena[idx].arrival);
 
-            if goal.touched(&pb.arena[idx].state, &pb.arena[idx].state) && (!restore_required || pb.arena[idx].ledger.open.is_empty()) {
+            if goal.reached(&pb.arena[idx].state, &pb.arena[idx].state) && (!restore_required || pb.arena[idx].ledger.open.is_empty()) {
                 if pb.arena[idx].arrival < ub {
                     let (pl, steps, obs) = reconstruct(&pb.arena, idx, Vec::new(), Vec::new());
                     *pb.best = Some((pb.arena[idx].arrival, pl, steps, obs));
@@ -1614,7 +1622,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let topo_yaw = topo.aim(&delta, &state_here);
             grid.reset_missing();
             let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked, topo_yaw);
-            let progs = programs_for(&delta, &state_here);
+            let progs = programs_for(&delta, &state_here, goal);
             let sprint_ok = sprint_allowed(&state_here);
             let kit_edge_stop = kit.is_some_and(|kv| kv.makes(FieldEdit::Floor, cur_counts));
 

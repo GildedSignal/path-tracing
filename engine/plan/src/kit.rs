@@ -95,6 +95,7 @@ pub struct KitSpec {
     pub elytra: bool,
     pub dimension_flags: u8,
     pub restore_required: bool,
+    pub restore_blocks: Option<[Option<BlockId>; 9]>,
 }
 
 impl KitSpec {
@@ -113,7 +114,12 @@ impl KitSpec {
             elytra: false,
             dimension_flags: 0,
             restore_required: true,
+            restore_blocks: None,
         }
+    }
+
+    pub fn can_restore_break(&self, block: BlockId, mode: RestoreMode) -> bool {
+        !self.restore_required || (mode != RestoreMode::Irreversible && self.restore_blocks.is_none_or(|held| held.contains(&Some(block))))
     }
 
     pub fn interact_only() -> Self {
@@ -153,6 +159,7 @@ impl KitSpec {
         self.place_block.hash(&mut h);
         self.dimension_flags.hash(&mut h);
         self.restore_required.hash(&mut h);
+        self.restore_blocks.hash(&mut h);
         h.finish()
     }
 }
@@ -1247,7 +1254,7 @@ impl KitView {
                     }
                     let row = self.breaking.get(sid.block(), sid);
                     if !self.has(VerbKind::Break) || row.break_ticks_ground == u16::MAX
-                        || self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible
+                        || !self.spec.can_restore_break(sid.block(), row.restore_mode)
                     {
                         return None;
                     }
@@ -1302,7 +1309,7 @@ impl KitView {
                 }
                 let row = self.breaking.get(sid.block(), sid);
                 let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
-                if !self.has(VerbKind::Break) || bt == u16::MAX || self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible {
+                if !self.has(VerbKind::Break) || bt == u16::MAX || !self.spec.can_restore_break(sid.block(), row.restore_mode) {
                     return None;
                 }
                 let after = if st.waterlogged() { water_source_state() } else { air_state() };
@@ -1442,7 +1449,7 @@ impl KitView {
             KitVerb::Break => {
                 let row = self.breaking.get(cur.block(), cur);
                 let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
-                let fresh_ok = self.has(VerbKind::Break) && !(self.spec.restore_required && row.restore_mode == RestoreMode::Irreversible);
+                let fresh_ok = self.has(VerbKind::Break) && self.spec.can_restore_break(cur.block(), row.restore_mode);
                 if !solid || bt == u16::MAX || ob.is_none() && !fresh_ok {
                     return None;
                 }

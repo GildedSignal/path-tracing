@@ -37,15 +37,19 @@ abstract class ClientPacketListenerMixin {
     private void ptHealth(ClientboundSetHealthPacket packet, CallbackInfo ci) { ResidentEvents.observe("health-food"); }
     @Inject(method = "handleUpdateAttributes", at = @At("RETURN"))
     private void ptSprintAttributes(ClientboundUpdateAttributesPacket packet, CallbackInfo ci) {
-        ResidentEvents.observe("attributes");
         var p = Minecraft.getInstance().player;
-        if (SprintDiagnostic.ENABLED && p != null && packet.getEntityId() == p.getId()) SprintDiagnostic.observe("attributes-packet-return", p);
+        if (p != null && packet.getEntityId() == p.getId()) {
+            ResidentEvents.observe("attributes");
+            if (SprintDiagnostic.ENABLED) SprintDiagnostic.observe("attributes-packet-return", p);
+        }
     }
     @Inject(method = "handleSetEntityData", at = @At("RETURN"))
     private void ptSprintEntityData(ClientboundSetEntityDataPacket packet, CallbackInfo ci) {
-        ResidentEvents.observe("entity-data");
         var p = Minecraft.getInstance().player;
-        if (SprintDiagnostic.ENABLED && p != null && packet.id() == p.getId()) SprintDiagnostic.observe("entity-data-packet-return", p);
+        if (p != null && packet.id() == p.getId()) {
+            ResidentEvents.observe("entity-data");
+            if (SprintDiagnostic.ENABLED) SprintDiagnostic.observe("entity-data-packet-return", p);
+        }
     }
     @Inject(method = "handleRemoveMobEffect", at = @At("RETURN"))
     private void pathtracing$refilled(ClientboundRemoveMobEffectPacket packet, CallbackInfo ci) {
@@ -62,7 +66,8 @@ abstract class ClientPacketListenerMixin {
 
     @Inject(method = "handleSetEntityMotion", at = @At("RETURN"))
     private void pathtracing$motion(ClientboundSetEntityMotionPacket packet, CallbackInfo ci) {
-        ResidentEvents.observe("motion");
+        var p = Minecraft.getInstance().player;
+        if (p != null && packet.id() == p.getId()) ResidentEvents.observe("motion");
         Recorder.motionPacket(packet);
     }
 

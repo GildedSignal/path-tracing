@@ -163,6 +163,19 @@ pub fn read(body: &[u64]) -> Carried {
             haste: 0,
         };
         spec.can_break = true;
+        let mut restorable = [None; 9];
+        let mut rcount = 0usize;
+        for item in hotbar.iter().flatten() {
+            if let Ok(sid) = StateId::parse(&item.id, |_| None) {
+                let blk = sid.block();
+                if !restorable[..rcount].contains(&Some(blk)) {
+                    restorable[rcount] = Some(blk);
+                    rcount += 1;
+                }
+            }
+        }
+        restorable[..rcount].sort();
+        spec.restore_blocks = Some(restorable);
         if let Some((sid, n)) = hotbar.iter().flatten().filter_map(|i| Some((placeable(&i.id)?, i.count))).max_by_key(|p| p.1) {
             spec.place_block = sid;
             spec.blocks = n.min(u32::from(u16::MAX)) as u16;

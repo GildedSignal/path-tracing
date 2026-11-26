@@ -54,6 +54,9 @@ impl Gait {
         s.position = Vec3::new(0.5, top, 0.5);
         s.velocity = Vec3::default(); s.main_supporting_block = Some([0, p[1], 0]); s.on_ground = true;
         s.no_jump_delay = 0;
+        s.in_water = false; s.in_lava = false; s.water_height = 0.0; s.lava_height = 0.0;
+        s.eye_in_water = false; s.was_eye_in_water = false; s.underwater = false; s.swimming = false;
+        s.crouching = false; s.shift_key_down = false; s.pose = law::Pose::Standing;
         let keys = Input { forward: true, sprint: program != WALK, ..Default::default() };
         law::try_tick(&mut s, &w, &Input::default()).map_err(|e| e.0)?;
         law::try_tick(&mut s, &w, &Input::default()).map_err(|e| e.0)?;

@@ -45,7 +45,7 @@ pub(crate) fn certify_route<W: World>(
     let mut applied_ops: Vec<(usize, KitOp)> = Vec::new();
     let mut state = from.clone();
     let mut certified_steps: List<WordStep, 12> = List::new();
-    let mut touch: Option<u64> = (!has_edits && goal.touched(from, from)).then_some(0);
+    let mut touch: Option<u64> = (!has_edits && goal.reached(from, from)).then_some(0);
     let mut reads_map: BTreeMap<(BlockPos, u8), u128> = BTreeMap::new();
     let mut lo = [i32::MAX; 3];
     let mut hi = [i32::MIN; 3];
@@ -98,7 +98,7 @@ pub(crate) fn certify_route<W: World>(
                     if state.health <= 0.0 {
                         return Err((Refusal::StateOrContext, "dead-delta"));
                     }
-                    if goal.touched_boxes(before_box, state.bounding_box()) {
+                    if goal.reached_boxes(before_box, &state) {
                         touched_during_step = true;
                         if is_last_step && !is_break {
                             touch.get_or_insert(state.t - from.t);
@@ -132,14 +132,14 @@ pub(crate) fn certify_route<W: World>(
                 if state.health <= 0.0 {
                     return Err((Refusal::StateOrContext, "dead-obs"));
                 }
-                if goal.touched_boxes(before_box, state.bounding_box()) {
+                if goal.reached_boxes(before_box, &state) {
                     touch.get_or_insert(state.t - from.t);
                     break;
                 }
             }
             rec.take()
         };
-        if is_break && is_last_step && (touched_during_step || goal.touched(&state, &state)) {
+        if is_break && is_last_step && (touched_during_step || goal.reached(&state, &state)) {
             touch.get_or_insert(state.t - from.t);
         }
 

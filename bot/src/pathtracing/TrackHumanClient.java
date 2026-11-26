@@ -60,7 +60,7 @@ final class TrackHumanClient implements TrackMode.Port {
 
     @Override public void query(Consumer<TrackMode.Observation> response, Consumer<String> failure) {
         var connection = mc.player.connection;
-        mc.player.connection.getDebugQueryHandler().queryEntityTag(mc.player.getId(), tag -> {
+        mc.player.connection.getDebugQueryHandler().queryEntityTag(mc.player.getId(), tag -> mc.execute(() -> {
             if (!connected || mc.player == null || mc.level == null || mc.player.connection != connection) return;
             try {
                 if (tag == null) throw new IllegalArgumentException("Server refused player data query.");
@@ -69,6 +69,6 @@ final class TrackHumanClient implements TrackMode.Port {
                     && tag.getInt("foodLevel").orElseThrow() == 20 && tag.getFloat("foodSaturationLevel").orElseThrow() == 20.0f;
                 response.accept(new TrackMode.Observation(TrackInventoryCodec.server(tag, mc.level.registryAccess()), gameMode, full));
             } catch (RuntimeException error) { failure.accept("Server verification: " + error.getMessage()); }
-        });
+        }));
     }
 }

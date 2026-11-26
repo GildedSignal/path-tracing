@@ -293,6 +293,7 @@ fn full_survival_kit() -> KitSpec {
         elytra: false,
         dimension_flags: 0,
         restore_required: true,
+        restore_blocks: None,
     }
 }
 
@@ -372,6 +373,7 @@ fn e2_kit_combo_memory_and_swap() {
             elytra: false,
             dimension_flags: if (i % 13) == 0 { DIM_WATER_EVAPORATES } else { 0 },
             restore_required: (i % 17) != 0,
+            restore_blocks: None,
         };
         let v = KitView::for_spec(spec);
         keys.insert(spec.capability_key() ^ u64::from(spec.blocks) ^ ((spec.place_block.0 as u64) << 40));

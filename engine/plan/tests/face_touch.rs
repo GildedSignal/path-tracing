@@ -11,7 +11,7 @@ fn shared_face_vectors() {
         let b = Aabb::new(n[6], n[7], n[8], n[9], n[10], n[11]);
         let cell = [v[12].parse().unwrap(), v[13].parse().unwrap(), v[14].parse().unwrap()];
         let face = if v[15] == "any" { None } else { Some(face_named(v[15]).unwrap()) };
-        assert_eq!(Goal { cell, face }.touched_boxes(a, b), v[16].parse::<bool>().unwrap(), "{line}");
+        assert_eq!(Goal { cell, face, settle: false }.touched_boxes(a, b), v[16].parse::<bool>().unwrap(), "{line}");
     }
 }
 
@@ -19,7 +19,7 @@ fn shared_face_vectors() {
 fn distance_is_to_the_selected_square() {
     let state = law::PlayerState { position: law::Vec3::new(2.0, 3.0, 0.5), ..Default::default() };
     let body = state.bounding_box();
-    let west = Goal { cell: [0, 0, 0], face: Some(Face::West) };
+    let west = Goal { cell: [0, 0, 0], face: Some(Face::West), settle: false };
     let east = Goal { face: Some(Face::East), ..west };
     assert_eq!(west.gap(&state), body.min.x);
     assert_eq!(east.gap(&state), body.min.x - 1.0);

@@ -50,9 +50,9 @@ final class Pointer {
                 continue;
             }
             if (Tracks.startAtClickedA(mc, block.getBlockPos())) continue;
-            // The cell in front of the face you pointed at: on a floor, the air cell the bot should stand in.
-            BlockPos goal = block.getBlockPos().relative(block.getDirection());
-            send(mc, "goto " + goal.getX() + " " + goal.getY() + " " + goal.getZ() + " " + issuance[0] + " " + issuance[1]);
+            // The clicked block and face directly (the planner uses Goal { cell, face, settle }).
+            BlockPos pos = block.getBlockPos();
+            send(mc, "goto " + pos.getX() + " " + pos.getY() + " " + pos.getZ() + " " + block.getDirection().getName() + " " + issuance[0] + " " + issuance[1]);
         }
     }
 

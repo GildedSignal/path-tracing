@@ -130,10 +130,11 @@ fn delta(source: &mut Source, data: &[u64]) -> Result<(),String> {
                 let name = c.text()?;
                 if c.at < data.len() { let _ = c.text()?; }
                 if c.at != data.len() { return Err("trailing delta words".into()); }
-                let section = source.sections.get_mut(&p.map(|v| v.div_euclid(16))).ok_or("block delta outside received section")?;
-                let id = match section.palette.iter().position(|(n,_)| n == &name) { Some(i) => i, None => { let answer = model(&name); section.palette.push((name,answer)); section.palette.len()-1 } };
-                let i = ((p[1].rem_euclid(16)*16+p[2].rem_euclid(16))*16+p[0].rem_euclid(16)) as usize;
-                section.indices[i] = id;
+                if let Some(section) = source.sections.get_mut(&p.map(|v| v.div_euclid(16))) {
+                    let id = match section.palette.iter().position(|(n,_)| n == &name) { Some(i) => i, None => { let answer = model(&name); section.palette.push((name,answer)); section.palette.len()-1 } };
+                    let i = ((p[1].rem_euclid(16)*16+p[2].rem_euclid(16))*16+p[0].rem_euclid(16)) as usize;
+                    section.indices[i] = id;
+                }
             }
             3 => { if c.at != data.len() { return Err("trailing delta words".into()); } source.sections.remove(&p); }
             _ => return Err("delta kind".into()),
@@ -163,7 +164,12 @@ fn resident() -> &'static Resident {
                         let p = if data.len() >= 6 && matches!(kind, 1 | 2 | 3) {
                             Some([data[3] as i32, data[4] as i32, data[5] as i32])
                         } else { None };
-                        if let Err(why) = delta(&mut source, &data) { source.error = Some(why.clone()); let _ = done.send(refusal(0,why)); }
+                        if let Err(why) = delta(&mut source, &data) {
+                            if why != "stale source session/revision" {
+                                source.error = Some(why.clone());
+                                let _ = done.send(refusal(0,why));
+                            }
+                        }
                         source.law_revision = law_rev;
                         if reset {
                             store = plan::store::GeneratorStore::default();
@@ -236,13 +242,18 @@ fn plan(source: &Source, store: &plan::store::GeneratorStore, codec: &mut law::c
     let Some((lo,hi)) = source.bounds() else { return refusal(requested,"no received sections"); };
     // The corridor between the bot and the goal, from the bottom of the world to a little above both.
     let p = [state.position.x.floor() as i32, state.position.y.floor() as i32, state.position.z.floor() as i32];
-    // The ground: the block it stands on, or mid-jump the first solid block below it.
+    // The ground: the block it stands on, or mid-jump/in-water the first solid block below it.
     let mut support = state.main_supporting_block;
-    if support.is_none() { for depth in 1..=8 {
-        let cell=[p[0],p[1]-depth,p[2]];
-        match source.known_block(cell) {Ok(block) if block.air=>(),Ok(_)=>{support=Some(cell);break;},Err(reason)=>return refusal(requested,format!("support {cell:?}: {reason}"))}
+    if support.is_none() { for depth in 1..=32 {
+        let cell = [p[0], p[1] - depth, p[2]];
+        if cell[1] < lo[1] { break; }
+        match source.known_block(cell) {
+            Ok(block) if block.never_collides() => (),
+            Ok(_) => { support = Some(cell); break; }
+            Err(reason) => return refusal(requested, format!("support {cell:?}: {reason}")),
+        }
     }}
-    let Some(a) = support else { return refusal(requested,"no ground under the bot within 8 blocks"); };
+    let a = support.unwrap_or([p[0], (p[1] - 1).max(lo[1]), p[2]]);
     let near = [p[0].min(goal[0])-4, lo[1], p[2].min(goal[2])-4]; let far = [p[0].max(goal[0])+4, p[1].max(goal[1])+8, p[2].max(goal[2])+4];
     let (mut cl, mut ch) = ([near[0].max(lo[0]),lo[1],near[2].max(lo[2])], [far[0].min(hi[0]),far[1].min(hi[1]),far[2].min(hi[2])]);
     if (0..3).any(|i| goal[i] < cl[i] || goal[i] > ch[i]) { return refusal(requested,"the goal is outside the chunks the bot has received"); }
@@ -310,7 +321,7 @@ fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, wor
     let edits = words.iter().any(|w| w.edit.is_some());
     let mut delta = WorldDelta::new(source);
     let (mut state, mut inputs, mut actions, mut emptied) = (start.clone(), Vec::new(), Vec::new(), None);
-    let mut first_touch = (!edits && goal.touched(start, start)).then_some(0u64);
+    let mut first_touch = (!edits && goal.reached(start, start)).then_some(0u64);
     for (i, w) in words.iter().enumerate() {
         let counts = !edits || i + 1 == words.len();
         let mut still = None;
@@ -325,10 +336,10 @@ fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, wor
             let before = state.bounding_box();
             let program = &programs[w.program as usize];
             inputs.extend(if edits { tick(&delta,program,&mut state,elapsed,w.args,still)? } else { tick(source,program,&mut state,elapsed,w.args,None)? });
-            touched |= goal.touched_boxes(before, state.bounding_box());
+            touched |= goal.reached_boxes(before, &state);
             if touched && counts && still.is_none() { first_touch.get_or_insert(state.t - start.t); }
         }
-        if counts && still.is_some() && (touched || goal.touched(&state, &state)) { first_touch.get_or_insert(state.t - start.t); }
+        if counts && still.is_some() && (touched || goal.reached(&state, &state)) { first_touch.get_or_insert(state.t - start.t); }
     }
     if predicted_ticks > 0 && first_touch != Some(predicted_ticks) {
         return Err(format!("replay deviates: first touch {:?} predicted {}", first_touch, predicted_ticks));
@@ -470,5 +481,57 @@ mod tests {
         text(&mut door_flip, "minecraft:oak_door[facing=north,half=lower,hinge=left,open=true,powered=false]");
         text(&mut door_flip, "minecraft:oak_door[facing=north,half=lower,hinge=left,open=false,powered=false]");
         assert!(block_delta_changes_law(&door_flip));
+    }
+    #[test]
+    fn water_start_cherry_barrier_and_settle_arrival_all_solve() {
+        let mut source = Source { session: 7, revision: 1, law_revision: 1, difficulty: 0, regeneration: Some(false), ..Source::default() };
+        let palette = vec![
+            ("minecraft:air".into(), model("minecraft:air")),
+            ("minecraft:stone".into(), model("minecraft:stone")),
+            ("minecraft:water[level=0]".into(), model("minecraft:water[level=0]")),
+            ("minecraft:cherry_fence[east=false,north=false,south=false,waterlogged=false,west=false]".into(),
+                model("minecraft:cherry_fence[east=false,north=false,south=false,waterlogged=false,west=false]")),
+        ];
+        for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
+            let indices = (0..4096).map(|i| {
+                let (lx, ly, lz) = (i % 16, i / 256, i / 16 % 16);
+                let wx = x * 16 + lx as i32; let wz = z * 16 + lz as i32;
+                if y < 0 || (y == 0 && ly == 0) { 1 }
+                else if y == 0 && ly == 1 && (7..=9).contains(&wx) && (7..=9).contains(&wz) { 2 }
+                else if y == 0 && ly == 1 && (6..=10).contains(&wx) && wz == 12 { 3 }
+                else { 0 }
+            }).collect();
+            source.sections.insert([x, y, z], Section { palette: palette.clone(), indices });
+        }}}
+        let hotbar = ["{}"; 9];
+        let body = crate::kit_wire::tests::body("minecraft:overworld", "survival", hotbar, "{}", 0);
+        let mut meta = vec![7, 1, 0, 0, 0, 1, body.len() as u64]; meta.extend(body);
+
+        // (a) Starting inside water + (d) un-restorable cherry_fence barrier -> routes around fence.
+        let water_start = PlayerState {
+            t: 77, position: law::Vec3::new(8.5, 1.0, 8.5), in_water: true, water_height: 0.9,
+            food_level: 20, saturation: 5.0, health: 20.0, ..PlayerState::default()
+        };
+        let mut water_req = plan(&source, &plan::store::GeneratorStore::default(), &mut law::codec::Interner::default(),
+            Request { state: water_start, meta: meta.clone(), goal: Goal::of([8, 0, 14]), issue: 5, version: 3 },
+            &AtomicU64::new(3), &AtomicU64::new(1));
+        assert!(water_req[0] == WORD_PLAN || water_req[0] == KIT_PLAN, "{}", String::from_utf8_lossy(&water_req[4..].iter().map(|&b| b as u8).collect::<Vec<_>>()));
+
+        // (c) settle = true slows down cleanly on goal.
+        let land_start = PlayerState {
+            t: 77, position: law::Vec3::new(8.5, 1.0, 4.5), on_ground: true, main_supporting_block: Some([8, 0, 4]),
+            food_level: 20, saturation: 5.0, health: 20.0, ..PlayerState::default()
+        };
+        water_req = plan(&source, &plan::store::GeneratorStore::default(), &mut law::codec::Interner::default(),
+            Request { state: land_start, meta, goal: Goal { cell: [8, 0, 6], face: Some(plan::Face::Up), settle: true }, issue: 6, version: 3 },
+            &AtomicU64::new(3), &AtomicU64::new(1));
+        assert_eq!(water_req[0], WORD_PLAN, "{}", String::from_utf8_lossy(&water_req[4..].iter().map(|&b| b as u8).collect::<Vec<_>>()));
+
+        // (d) Out-of-section delta does not poison source.
+        let mut oos = vec![2, 7, 2, 1000, 0, 1000];
+        text(&mut oos, "minecraft:stone");
+        delta(&mut source, &oos).unwrap();
+        assert!(source.error.is_none());
+        assert_eq!(source.revision, 2);
     }
 }

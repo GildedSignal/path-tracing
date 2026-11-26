@@ -342,7 +342,7 @@ pub fn solve<S: CorridorSource>(
     let mut note: Option<String> = None;
     let work = (|| -> Result<PlanOutcome, String> {
         if !store.bind_codec(codec) { return Ok(PlanOutcome::Unknown(Refusal::Schema)); }
-        let at_goal = to.touched(from, from);
+        let at_goal = to.reached(from, from);
         let known = if at_goal { None } else { store.words.borrow().route_for_kit_in_world(from, to, kit_key, source) };
         let label = match known.as_ref().and_then(|route| route.words.first()) {
             Some(word) => word.certificate.label,
@@ -363,54 +363,56 @@ pub fn solve<S: CorridorSource>(
                 ("fall_flying", from.fall_flying),
                 ("flying", from.flying),
                 ("using_item", from.profile.using_item),
-                ("in_lava", from.in_lava),
-                ("in_water", from.in_water),
-                ("crouching", from.crouching),
             ];
             if let Some((name, _)) = blocked.iter().find(|(_, b)| *b) {
                 return Err(format!("word needs bare legs and invariant resource guards: {name}"));
             }
             stages.push(Stage::Extend);
-            let cut_outcome = (|| -> Result<cut::Cut, String> {
-                let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
-                let ticks = store.preparation_ticks();
-                let g = store.gait(label, source, from, program)?;
-                thinking.entry_ns = clock.elapsed().as_nanos();
-                if store.preparation_ticks() != ticks {
-                    stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
-                }
-                let support = source.support_cell(from);
-                let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
-                let top = f64::from(support[1]) + height;
-                let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
-                let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
-                let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
-                let mut crossing = Crossing {
-                    gait: &g,
-                    from,
-                    goal: to,
-                    top,
-                    radius,
-                    min: m.p,
-                    max: m.p,
-                    words: List::new(),
-                    proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
-                    bearing_ns: 0,
-                };
-                let time = std::time::Instant::now();
-                let arrival = crossing.run(m);
-                thinking.bearing_ns = crossing.bearing_ns;
-                thinking.inverse_ns = time.elapsed().as_nanos() - thinking.bearing_ns;
-                cut::cut(crossing, arrival, source, codec)
-            })();
+            let defect_window = || {
+                let p = [from.position.x.floor() as i32, from.position.y.floor() as i32, from.position.z.floor() as i32];
+                let lo = [p[0].min(to.cell[0]) - 2, p[1].min(to.cell[1]) - 4, p[2].min(to.cell[2]) - 2];
+                let hi = [p[0].max(to.cell[0]) + 2, p[1].max(to.cell[1]) + 4, p[2].max(to.cell[2]) + 2];
+                cut::Cut::Defect(cut::Window { first: p, exceptions: 1, bounds: (lo, hi), prefixes: Vec::new() })
+            };
+            let cut_outcome = if from.in_water || from.in_lava || from.crouching || to.settle {
+                Ok(defect_window())
+            } else {
+                (|| -> Result<cut::Cut, String> {
+                    let program = if sprint_allowed(from) { SPRINT_JUMP } else { WALK };
+                    let ticks = store.preparation_ticks();
+                    let g = store.gait(label, source, from, program)?;
+                    thinking.entry_ns = clock.elapsed().as_nanos();
+                    if store.preparation_ticks() != ticks {
+                        stages.push(Stage::Learn { program, ticks: store.preparation_ticks() - ticks, nanos: thinking.entry_ns });
+                    }
+                    let support = source.support_cell(from);
+                    let height = source.block(support).shape.coords[1].last().copied().ok_or("support is empty")?;
+                    let top = f64::from(support[1]) + height;
+                    let phase = g.entry(from, top).ok_or("vertical phase outside this word")?;
+                    let m = Motion { p: from.position, v: from.velocity, phase, t: from.t, wanted: from.movement_this_tick.unwrap_or_default() };
+                    let radius = Aabb::player(Vec3::default(), from.pose.height()).max.x;
+                    let mut crossing = Crossing {
+                        gait: &g,
+                        from,
+                        goal: to,
+                        top,
+                        radius,
+                        min: m.p,
+                        max: m.p,
+                        words: List::new(),
+                        proof: CorridorProof { label, min: support, max: support, version: law::LAW_HASH },
+                        bearing_ns: 0,
+                    };
+                    let time = std::time::Instant::now();
+                    let arrival = crossing.run(m);
+                    thinking.bearing_ns = crossing.bearing_ns;
+                    thinking.inverse_ns = time.elapsed().as_nanos() - thinking.bearing_ns;
+                    cut::cut(crossing, arrival, source, codec)
+                })()
+            };
             let cut_outcome = match cut_outcome {
                 Ok(c) => c,
-                Err(_) if kit_view.is_some() => {
-                    let p = [from.position.x.floor() as i32, from.position.y.floor() as i32, from.position.z.floor() as i32];
-                    let lo = [p[0].min(to.cell[0]) - 2, p[1].min(to.cell[1]) - 4, p[2].min(to.cell[2]) - 2];
-                    let hi = [p[0].max(to.cell[0]) + 2, p[1].max(to.cell[1]) + 4, p[2].max(to.cell[2]) + 2];
-                    cut::Cut::Defect(cut::Window { first: p, exceptions: 1, bounds: (lo, hi), prefixes: Vec::new() })
-                }
+                Err(_) if kit_view.is_some() => defect_window(),
                 Err(e) => return Err(e),
             };
             let time = std::time::Instant::now();

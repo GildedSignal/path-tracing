@@ -75,14 +75,18 @@ final class Bot {
             }
             case "goto" -> {
                 try {
-                    if (w.length == 6) {
-                        if (Long.parseLong(w[5]) != issueClock[1]) throw new IllegalArgumentException("QPC frequency mismatch");
-                        commandIssue = Long.parseLong(w[4]);
+                    String face = null;
+                    int next = 4;
+                    if (w.length == 5 || w.length == 7) face = w[next++];
+                    else if (w.length != 4 && w.length != 6) throw new IllegalArgumentException();
+                    if (w.length >= 6) {
+                        if (Long.parseLong(w[next + 1]) != issueClock[1]) throw new IllegalArgumentException("QPC frequency mismatch");
+                        commandIssue = Long.parseLong(w[next]);
                     }
                     Tracks.cancel(mc, true);
-                    goTo(mc, new BlockPos(Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])));
+                    goTo(mc, new BlockPos(Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])), face);
                 } catch (RuntimeException e) {
-                    reply(mc, "Usage: goto <x> <y> <z>");
+                    reply(mc, "Usage: goto <x> <y> <z> [face]");
                 }
             }
             case "come" -> {
@@ -90,7 +94,7 @@ final class Bot {
                 mc.level.players().stream()
                     .filter(p -> p.getName().getString().equals(PathTracingMod.OWNER))
                     .findFirst()
-                    .ifPresentOrElse(p -> goTo(mc, p.blockPosition()), () -> reply(mc, "I can't see you."));
+                    .ifPresentOrElse(p -> goTo(mc, p.blockPosition().below(), null), () -> reply(mc, "I can't see you."));
             }
             case "stop" -> {
                 Tracks.cancel(mc, true);
@@ -101,14 +105,14 @@ final class Bot {
         }
     }
 
-    static void goTo(Minecraft mc, BlockPos goal) {
-        ResidentRunner.request(mc,goal,null,commandIssue);
+    static void goTo(Minecraft mc, BlockPos goal, String face) {
+        ResidentRunner.request(mc,goal,face,commandIssue,true);
     }
 
     /** B with the face its definition selects: the planner's goal is the detector's rule. */
     static void goToTrack(Minecraft mc, TrackStore.Track track) {
         var b = track.b();
-        ResidentRunner.request(mc,new BlockPos(b.x(), b.y() + 1, b.z()),track.bFace(),commandIssue);
+        ResidentRunner.request(mc,new BlockPos(b.x(), b.y(), b.z()),track.bFace(),commandIssue,false);
     }
 
     private static void tick(Minecraft mc) {

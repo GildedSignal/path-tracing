@@ -25,10 +25,21 @@ pub fn face_named(name: &str) -> Result<Face, String> {
 /// exactly on B touches its top; an edge or a corner alone touches nothing. A selected face
 /// is the only face that counts; `None` is any face.
 #[derive(Clone, Copy, Debug)]
-pub struct Goal { pub cell: BlockPos, pub face: Option<Face> }
+pub struct Goal { pub cell: BlockPos, pub face: Option<Face>, pub settle: bool }
 impl Goal {
     /// B, any face.
-    pub const fn of(cell: BlockPos) -> Self { Self { cell, face: None } }
+    pub const fn of(cell: BlockPos) -> Self { Self { cell, face: None, settle: false } }
+    /// Completion check: earliest touch when `!self.settle`, or grounded & slow on target when `self.settle`.
+    pub fn reached(&self, before: &impl crate::state_view::StateSource, after: &impl crate::state_view::StateSource) -> bool {
+        if !self.settle { return self.touched(before, after); }
+        let a = after.view();
+        a.phase.on_ground && a.phase.velocity.horizontal_sqr() <= 0.01 && self.touched(after, after)
+    }
+    pub fn reached_boxes(&self, before: Aabb, after: &law::PlayerState) -> bool {
+        if !self.settle { return self.touched_boxes(before, after.bounding_box()); }
+        let b = after.bounding_box();
+        after.on_ground && after.velocity.horizontal_sqr() <= 0.01 && self.touched_boxes(b, b)
+    }
     /// The region to reach: B's cell, or the selected face's square.
     pub fn zone(&self) -> Aabb {
         let [x, y, z] = self.cell.map(|v| v as f64);
