@@ -13,6 +13,9 @@ import pathtracing.mixin.LivingStateAccess;
 
 /** Actual client snapshot; each caller identifies its input boundary. */
 final class PlayerSnapshot {
+    /** Mojang's effects whose classes act on nothing the law observes for a player (drawing, mobs, raids, loot). */
+    private static final java.util.Set<String> INERT_EFFECTS = java.util.Set.of("night_vision", "glowing", "invisibility",
+        "luck", "unluck", "bad_omen", "trial_omen", "raid_omen", "hero_of_the_village", "nausea", "darkness");
     static long[] context(Minecraft mc,long at) {
         JsonObject facts = new JsonObject();
         facts.addProperty("dimension",mc.level.dimension().identifier().toString());
@@ -39,7 +42,10 @@ final class PlayerSnapshot {
         out.addProperty("fallFlying",p.isFallFlying());
         out.addProperty("riding",p.isPassenger());
         out.addProperty("boat",p.getVehicle() instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat);
-        out.addProperty("effects",!p.getActiveEffects().isEmpty());
+        // Effects the law observes: these change nothing about the body, its resources or its
+        // breaking, only what is drawn or how mobs and villagers treat it, so they are no effect.
+        out.addProperty("effects",p.getActiveEffects().stream().anyMatch(e -> !INERT_EFFECTS.contains(
+            e.getEffect().unwrapKey().map(k -> k.identifier().getPath()).orElse(""))));
         out.addProperty("flying",p.getAbilities().flying);
         out.addProperty("mainSupportingBlockKnown",true);
         // try_tick overwrites movement_this_tick before its first read.
