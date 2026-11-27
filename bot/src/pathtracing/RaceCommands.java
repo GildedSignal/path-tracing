@@ -37,6 +37,7 @@ final class RaceCommands {
                 .suggests((c, b) -> {
                     var names = new TreeSet<String>();
                     names.add("overworld");
+                    names.addAll(Maps.worlds().keySet());
                     try { names.addAll(MapRegistry.read(registry).keySet()); }
                     catch (IOException failure) { return NameSuggestions.suggest(b, names); }
                     return NameSuggestions.suggest(b, names);

@@ -8,7 +8,11 @@
 param(
   [Parameter(Mandatory)][ValidatePattern('\A[a-z0-9_-]+\z', Options=0)][string]$Name,
   [string]$Source,
-  [string]$McVersion
+  [string]$McVersion,
+  # From the game's /map: -Player starts that version's player client (and its bot) when the map
+  # is on another version than the client -From runs.
+  [switch]$Player,
+  [string]$From
 )
 $ErrorActionPreference = 'Stop'
 $versions = Get-Content (Join-Path $PSScriptRoot 'versions.json') -Raw | ConvertFrom-Json
@@ -83,5 +87,7 @@ Start-Process -FilePath "$Jdk\java.exe" -ArgumentList '-Xms2G', '-Xmx4G', '-jar'
 $deadline = (Get-Date).AddSeconds(180)
 while (-not (Test-Port $ServerHost $ServerPort) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
 if (-not (Test-Port $ServerHost $ServerPort)) { throw "The server did not open port $ServerPort; see $server\logs\latest.log." }
-if ($bots) { $null = & "$PSScriptRoot\launch-client.ps1" -Role bot -McVersion $McVersion }
+$otherVersion = $Player -and $From -and $From -ne $McVersion
+if ($bots -or $otherVersion) { $null = & "$PSScriptRoot\launch-client.ps1" -Role bot -McVersion $McVersion }
+if ($otherVersion) { $null = & "$PSScriptRoot\launch-client.ps1" -Role player -McVersion $McVersion }
 Write-Host "Serving $Name on Minecraft $McVersion at ${ServerHost}:$ServerPort. Its tracks: $(if ($Name -eq 'world') { 'lab\tracks' } else { "lab\maps\$Name" })."

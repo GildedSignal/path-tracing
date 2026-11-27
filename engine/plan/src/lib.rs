@@ -29,3 +29,4 @@ pub mod state_view;
 
 #[cfg(feature = "solve-counters")]
 pub mod solve_meter;
+pub mod supersede;

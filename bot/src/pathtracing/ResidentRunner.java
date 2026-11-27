@@ -17,6 +17,7 @@ final class ResidentRunner {
     private static int pendingFace = -1, retries;
     private static boolean pendingSettle, activeSettle;
     private static boolean waiting;
+    private static long thinkingSince, thinkingSaid;
     private static boolean executing;
     private static int scheduledTicks;
     static void playbackEnded() { executing=false; actions.clear(); activeGoal=null; scheduledTicks=0; }
@@ -69,9 +70,9 @@ final class ResidentRunner {
         HopCapture.hop("observation-provenance-"+kind,version,issue,at,observation.provenance());
         // Only events that move the body stop playback; data echoes (entity data, attributes, health and food) are recorded above.
         if (executing && java.util.Set.of("explosion","motion","position","rotation").contains(kind)) {
-            if (retryActive(mc)) { TickInput.release(mc); return; }
+            if (retryActive(mc)) { TickInput.release(mc); Bot.reply(mc, "Replanning: moved by " + kind + " (" + retries + ")."); return; }
             cancel(mc); TickInput.release(mc);
-            Bot.reply(mc,"Native legacy playback stopped on observed "+kind+"; event comparison belongs to F.");
+            Bot.reply(mc, "Stopped: moved by " + kind + " " + retries + " times; replanning did not hold.");
         }
     }
     static void request(Minecraft mc, BlockPos goal, String face, long issuance) {
@@ -141,16 +142,17 @@ final class ResidentRunner {
             for (int n = 0; n < 8; n++) {
                 long[] app = NativeChannel.ObserveEvent(new long[]{0, version}, EMPTY, EMPTY, EMPTY);
                 if (app[0] == 0) break;
+                // The next part could not be planned: the part in hand plays out, and the reason is said.
+                if (app[0] == 3 && app[1] == version) { refuse(mc, app); continue; }
                 if ((app[0] == 5 || app[0] == 6) && app[1] == version && app.length >= 8) {
-                    if (ResidentSource.lawRevision != requestedLawRevision) { cancel(mc); return; }
                     int tickOffset = Math.toIntExact(app[2]);
                     int moreCount = Math.toIntExact(app[3]);
                     int inEnd = 4 + moreCount * 3;
                     int moreKits = app[0] == 6 && app.length > inEnd ? Math.toIntExact(app[inEnd]) : 0;
                     int hullAt = app[0] == 6 ? inEnd + 1 + moreKits * KitAction.WORDS : inEnd;
                     if (tickOffset != scheduledTicks || app.length != hullAt + 4) {
-                        if (retryActive(mc)) return;
-                        cancel(mc); return;
+                        if (retryActive(mc)) { Bot.reply(mc, "Replanning: a plan part did not line up (" + retries + ")."); return; }
+                        cancel(mc); TickInput.release(mc); Bot.reply(mc, "Stopped: plan parts kept not lining up."); return;
                     }
                     ArrayList<TickInput> more = new ArrayList<>(moreCount);
                     for (int i = 4; i < inEnd; i += 3) {
@@ -177,15 +179,26 @@ final class ResidentRunner {
             }
             return;
         }
-        if (!waiting) return;
+        if (!waiting) { thinkingSince = 0; return; }
         if (answer == null) answer = NativeChannel.ObserveEvent(new long[]{0,version},EMPTY,EMPTY,EMPTY);
-        if (answer[0] == 0) return;
+        if (answer[0] == 0) {
+            // Never think in silence: every 5 s without a plan, say so.
+            long now = System.nanoTime();
+            if (thinkingSince == 0) thinkingSince = now;
+            else if (now - thinkingSince >= (thinkingSaid + 1) * 5_000_000_000L) { thinkingSaid++; Bot.reply(mc, "Thinking (" + thinkingSaid * 5 + " s)..."); }
+            return;
+        }
+        thinkingSince = 0; thinkingSaid = 0;
         if (answer[1] != version && answer[1] != 0) return;
         waiting = false;
         HopCapture.hop("rust-result-mod",version,issue,NativeChannel.clock()[0],answer);
         // 1 = WORD_PLAN; 4 = KIT_PLAN, the same with [a, a × 10 action words] between the inputs and the hull.
         if (answer[0] != 1 && answer[0] != 4) { activeGoal = null; refuse(mc,answer); return; }
-        if (answer.length < 9 || answer[5] != requestedRevision || ResidentSource.lawRevision != requestedLawRevision) { activeGoal = null; Bot.reply(mc,"Native plan refused: source changed."); return; }
+        if (answer.length < 9 || answer[5] != requestedRevision || ResidentSource.lawRevision != requestedLawRevision) {
+            // The world changed while thinking (a chunk arriving is enough): think again from where the body is.
+            if (retryActive(mc)) { Bot.reply(mc, "Replanning: the world changed while thinking (" + retries + ")."); return; }
+            activeGoal = null; Bot.reply(mc, "Stopped: the world kept changing while thinking."); return;
+        }
         int count = Math.toIntExact(answer[7]), n = Math.toIntExact(answer[8]);
         int inputsEnd = 9+n+count*3, kits = answer[0] == 4 && answer.length > inputsEnd ? Math.toIntExact(answer[inputsEnd]) : 0;
         int hullBase = answer[0] == 4 ? inputsEnd+1+kits*KitAction.WORDS : inputsEnd;

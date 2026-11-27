@@ -309,7 +309,6 @@ pub struct Request { pub state: PlayerState, pub meta: Vec<u64>, pub goal: Goal,
 #[derive(Clone)]
 struct ActiveContinuation {
     requested: u64,
-    law_revision: u64,
     support: BlockPos,
     final_goal: Goal,
     carried: kit_wire::Carried,
@@ -398,7 +397,9 @@ fn resident() -> &'static Resident {
                         Work::Goal(request) => {
                             let req_version = request.version;
                             active_cont = None;
-                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan_step_with_prov(&source, &store, &mut codec, request, &v, &r))) {
+                            let latest = v.clone();
+                            let stale = move || latest.load(Ordering::Acquire) != req_version;
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan::supersede::while_current(stale, || plan_step_with_prov(&source, &store, &mut codec, request, &v, &r)))) {
                                 Ok((answer, cont, prov)) => {
                                     let _ = done.send(answer);
                                     active_cont = cont;
@@ -416,12 +417,20 @@ fn resident() -> &'static Resident {
                     continue;
                 }
                 if let Some(mut cont) = active_cont.take() {
-                    if v.load(Ordering::Acquire) == cont.requested && r.load(Ordering::Acquire) == source.law_revision && cont.law_revision == source.law_revision {
-                        if let Ok(Some((pkt, more))) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| advance_continuation(&source, &store, &mut codec, &mut cont, &v, &r))) {
-                            let _ = done.send(pkt);
-                            if more {
-                                active_cont = Some(cont);
+                    // Only a newer command ends it. A world change outside the plan's corridor does not
+                    // touch the plan; one inside stops the bot in the mod (`sourceChanged`).
+                    if v.load(Ordering::Acquire) == cont.requested {
+                        let (latest, want) = (v.clone(), cont.requested);
+                        let stale = move || latest.load(Ordering::Acquire) != want;
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan::supersede::while_current(stale, || advance_continuation(&source, &store, &mut codec, &mut cont, &v, &r)))) {
+                            Ok(Some((pkt, more))) => {
+                                let _ = done.send(pkt);
+                                if more {
+                                    active_cont = Some(cont);
+                                }
                             }
+                            Ok(None) => {}
+                            Err(_) => { let _ = done.send(refusal(want, "next part: planner panic")); }
                         }
                     }
                 } else if idle_consolidate {
@@ -793,7 +802,6 @@ fn plan_step_with_prov(source: &Source, store: &plan::store::GeneratorStore, cod
             let tick_offset = pref.plan.ticks;
             let cont = ActiveContinuation {
                 requested,
-                law_revision: source.law_revision,
                 support: a,
                 final_goal: pref.final_goal,
                 carried: carried.clone(),
@@ -832,15 +840,21 @@ fn advance_continuation(
     let bounds = source.bounds().unwrap_or(cont.bounds);
     let p = [cont.state.position.x.floor() as i32, cont.state.position.y.floor() as i32, cont.state.position.z.floor() as i32];
     let support = find_support_below(source, p, bounds.0[1], cont.state.main_supporting_block).unwrap_or(cont.support);
-    let corridor = ResidentCorridor::new(source, support, bounds).ok()?;
+    // The next part is planned on the world as it is now. A newer command drops it silently; a
+    // part that cannot be planned says why, so the bot never stands still without a word.
+    let _ = revision;
+    let corridor = match ResidentCorridor::new(source, support, bounds) {
+        Ok(c) => c,
+        Err(why) => return Some((refusal(cont.requested, format!("next part: {why}")), false)),
+    };
     let result = plan::solve_step(&cont.state, cont.final_goal, cont.carried.kit, &corridor, store, codec, u64::MAX);
-    if version.load(Ordering::Acquire) != cont.requested || revision.load(Ordering::Acquire) != source.law_revision {
+    if version.load(Ordering::Acquire) != cont.requested {
         return None;
     }
     let (found, eval_goal, more) = match result.outcome {
         plan::PlanOutcome::Ready(plan) => (plan, cont.final_goal, false),
         plan::PlanOutcome::Prefix(pref) => (pref.plan, pref.target, true),
-        _ => return None,
+        other => return Some((refusal(cont.requested, format!("next part: {other:?} {}", result.explanation.unwrap_or_default())), false)),
     };
     let programs = words::tiny_programs();
     let (inputs, mut actions) = inputs(source, &programs, &cont.state, &found.words, eval_goal, found.ticks, &cont.carried).ok()?;

@@ -1944,7 +1944,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
 
         while let Some(Reverse((_, _, idx))) = pb.heap.pop() {
             let polish = if tight_guess && pb.incumbent_at == Some(0) { 3_500 } else { 4_500 };
-            if raw_learn_ticks >= cold_cap || pb.incumbent_at.is_some_and(|t| raw_learn_ticks >= t.saturating_add(polish)) {
+            if raw_learn_ticks >= cold_cap || pb.incumbent_at.is_some_and(|t| raw_learn_ticks >= t.saturating_add(polish)) || crate::supersede::superseded() {
                 break;
             }
             let ub = pb.best.as_ref().map_or(u64::MAX, |b| b.0);
