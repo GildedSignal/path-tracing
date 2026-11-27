@@ -44,18 +44,64 @@ record KitAction(int tick, int slot, int opcode, int x, int y, int z, int face, 
      *  The look turns to the clicked face for the click and back, so the movement keeps its yaw;
      *  a break's ticks hold still and already look at the block. Returns false while a break's
      *  last tick passes with the block still standing (the client's 5-tick destroy delay or a
-     *  float rounding), so the runner holds that tick instead of moving on. */
+     *  float rounding), or while waiting for a broken block's drop to finish its 10t pickup delay
+     *  before restoring it, so the runner holds that tick instead of moving on. */
     boolean perform(Minecraft mc, int k) {
+        return perform(mc, k, java.util.Map.of());
+    }
+
+    boolean perform(Minecraft mc, int k, java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before) {
         var player = mc.player;
-        player.getInventory().setSelectedSlot(slot);
+        int useSlot = slot;
         Direction side = Direction.from3DDataValue(face);
         BlockPos target = clicked();
         if (opcode == BREAK_HOLD) {
+            player.getInventory().setSelectedSlot(useSlot);
             if (k == 0) mc.gameMode.startDestroyBlock(target, side);
             mc.gameMode.continueDestroyBlock(target, side);
             player.swing(InteractionHand.MAIN_HAND);
             return k < hold - 1 || mc.level.getBlockState(target).canBeReplaced();
         }
+        if (opcode == PLACE) {
+            var prev = before.get(new BlockPos(x, y, z));
+            net.minecraft.world.item.Item want = (prev != null && !prev.isAir()) ? prev.getBlock().asItem() : null;
+            var held = player.getInventory().getItem(useSlot);
+            boolean haveMatch = want != null ? held.is(want) : (!held.isEmpty() && held.getItem() instanceof net.minecraft.world.item.BlockItem);
+            if (!haveMatch) {
+                for (int i = 0; i < 9; i++) {
+                    var st = player.getInventory().getItem(i);
+                    boolean match = want != null ? st.is(want) : (!st.isEmpty() && st.getItem() instanceof net.minecraft.world.item.BlockItem);
+                    if (match) {
+                        useSlot = i;
+                        haveMatch = true;
+                        break;
+                    }
+                }
+            }
+            if (!haveMatch) {
+                var drops = mc.level.getEntitiesOfClass(
+                    net.minecraft.world.entity.item.ItemEntity.class,
+                    player.getBoundingBox().inflate(5.0),
+                    e -> e.isAlive() && !e.getItem().isEmpty()
+                        && (want == null ? (e.getItem().getItem() instanceof net.minecraft.world.item.BlockItem) : e.getItem().is(want))
+                );
+                if (!drops.isEmpty()) {
+                    var best = drops.get(0);
+                    double bestD2 = best.distanceToSqr(player);
+                    for (int i = 1; i < drops.size(); i++) {
+                        double d2 = drops.get(i).distanceToSqr(player);
+                        if (d2 < bestD2) { best = drops.get(i); bestD2 = d2; }
+                    }
+                    if (!player.getBoundingBox().inflate(1.0, 0.5, 1.0).intersects(best.getBoundingBox())) {
+                        float yawTo = (float) Math.toDegrees(Math.atan2(best.getZ() - player.getZ(), best.getX() - player.getX())) - 90.0f;
+                        player.setYRot(yawTo);
+                        mc.options.keyUp.setDown(true);
+                    }
+                }
+                return false;
+            }
+        }
+        player.getInventory().setSelectedSlot(useSlot);
         float moveYaw = player.getYRot(), movePitch = player.getXRot();
         player.setYRot(yaw); player.setXRot(pitch);
         Vec3 hit = Vec3.atCenterOf(target).add(side.getStepX() * 0.5, side.getStepY() * 0.5, side.getStepZ() * 0.5);

@@ -224,7 +224,18 @@ fn replay_and_verify(
             law::try_tick(&mut s, &delta, &inp).expect("law::try_tick succeeds during replay");
             obs.check().expect("replay stayed inside loaded world");
             assert!(s.health > 0.0, "player died during replay at tick {}", s.t);
-            if goal.touched_boxes(before, s.bounding_box()) && (is_last || edited.is_empty()) {
+            if goal.touched_boxes(before, s.bounding_box()) {
+                if restore_required {
+                    for &p in &edited {
+                        assert_eq!(
+                            delta.state_id(p),
+                            world.state_id(p),
+                            "touched goal at tick {} while edited cell {:?} was still unrestored",
+                            s.t - start.t,
+                            p
+                        );
+                    }
+                }
                 touched = true;
             }
         }
@@ -294,6 +305,7 @@ fn full_survival_kit() -> KitSpec {
         dimension_flags: 0,
         restore_required: true,
         restore_blocks: None,
+        free_hotbar_slots: 0,
     }
 }
 
@@ -374,6 +386,7 @@ fn e2_kit_combo_memory_and_swap() {
             dimension_flags: if (i % 13) == 0 { DIM_WATER_EVAPORATES } else { 0 },
             restore_required: (i % 17) != 0,
             restore_blocks: None,
+            free_hotbar_slots: 0,
         };
         let v = KitView::for_spec(spec);
         keys.insert(spec.capability_key() ^ u64::from(spec.blocks) ^ ((spec.place_block.0 as u64) << 40));
@@ -794,4 +807,97 @@ fn g_kit_translated_rotated_sites_reuse_door_and_breach_words() {
             assert!(!served(&w), "and it is no longer served");
         }
     }
+}
+
+#[test]
+fn ametwoodbox_empty_hotbar_pickup_and_restore() {
+    let tracks_txt = include_str!("../../world/tests/fixtures/tracks.txt");
+    let line = tracks_txt
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some("ametwoodbox"))
+        .expect("ametwoodbox in tracks.txt");
+    let t = track(line).expect("load ametwoodbox");
+    let src = GeneratorSuperflatSource::snapshot(&t.world, t.a).unwrap();
+    let start = settled_on(&t.world, t.a);
+
+    // Exact live ametwoodbox.kit.json hotbar: 4 armor pieces in slots 0..4, 5 empty slots (4..9),
+    // bare hand (ToolProfileKey::default()), 0 blocks already held, restore_required: true.
+    let spec = KitSpec {
+        interact: true,
+        can_break: true,
+        restore_required: true,
+        restore_blocks: Some([None; 9]),
+        free_hotbar_slots: 5,
+        ..KitSpec::empty()
+    };
+    let (p, learn) = solve_ready(&t.world, &src, &start, t.goal(), Kit::Carried(spec), &GeneratorStore::default(), &mut Interner::default());
+    let (end_s, ops) = replay_and_verify(&t.world, &start, &p, t.goal(), true);
+
+    let mut breaks: Vec<(law::BlockPos, u64)> = Vec::new();
+    let mut places: Vec<(law::BlockPos, u64)> = Vec::new();
+    for (pos, op_start_t, op) in ops {
+        match op {
+            KitOp::Break { .. } => {
+                let bname = t.world.state_id(pos).expect("orig").block().name();
+                assert_ne!(bname, "amethyst_block", "bare hand must not break requires_correct amethyst_block at {pos:?}");
+                assert!(matches!(bname, "oak_planks" | "oak_log"), "expected oak_planks or oak_log breach, got {bname} at {pos:?}");
+                breaks.push((pos, op_start_t + u64::from(op.lands_at(match op { KitOp::Break { break_ticks, .. } => u32::from(break_ticks), _ => 1 })) + 1));
+            }
+            KitOp::Place { .. } => places.push((pos, op_start_t)),
+            _ => {}
+        }
+    }
+    assert!(!breaks.is_empty() && breaks.len() == places.len(), "expected matching break/restore pairs: breaks={breaks:?} places={places:?}");
+
+    // Verify 26.2 pickup delay (>= 10t after drop spawn) + pickup_box contact at some tick before restore Place.
+    let programs = words::tiny_programs();
+    let obs = ObservedWorld::new(&t.world);
+    let mut delta = WorldDelta::new(&obs);
+    let mut sim = start.clone();
+    let mut box_history: Vec<(u64, law::Aabb)> = Vec::with_capacity(p.ticks as usize + 1);
+    box_history.push((0, sim.bounding_box()));
+    for step in &p.words {
+        let still = step.edit.is_some_and(KitOp::holds_still);
+        for elapsed in 0..step.ticks {
+            if let Some(op) = step.edit.filter(|op| op.lands_at(step.ticks) == elapsed) {
+                op.apply(&mut delta);
+            }
+            let inp = if still {
+                Default::default()
+            } else {
+                programs[step.program as usize].select(&delta, &sim, elapsed, step.args).unwrap().1
+            };
+            law::try_tick(&mut sim, &delta, &inp).unwrap();
+            box_history.push((sim.t - start.t, sim.bounding_box()));
+        }
+    }
+    assert_eq!(sim.position, end_s.position);
+    for (bpos, ready_from_break) in &breaks {
+        let place_t = places.iter().find(|&&(ppos, _)| ppos == *bpos).expect("restore place").1;
+        let ready_t = ready_from_break + law::items::DEFAULT_PICKUP_DELAY as u64;
+        assert!(place_t >= ready_t, "restore at t={place_t} happened before 10t pickupReady={ready_t} for {bpos:?}");
+        let picked = box_history
+            .iter()
+            .any(|&(tick, pbox)| tick >= ready_t && tick <= place_t && law::items::can_pickup(pbox, None, law::items::block_drop_center(*bpos), 0));
+        assert!(picked, "player never intersected pickup_box for {bpos:?} between t={ready_t} and t={place_t}");
+    }
+    println!("AMETWOODBOX_EMPTY_HOTBAR_PICKUP T={} learn_ticks={learn} edits={}", p.ticks, breaks.len() + places.len());
+
+    // Exact live Tracks.java ametwoodbox toolkit: {"minecraft:oak_log": 1} + 8 free hotbar slots.
+    let oak_log = sid("oak_log");
+    let mut held = [None; 9];
+    held[0] = Some(oak_log.block());
+    let live_spec = KitSpec {
+        interact: true,
+        can_break: true,
+        blocks: 1,
+        place_block: oak_log,
+        restore_required: true,
+        restore_blocks: Some(held),
+        free_hotbar_slots: 8,
+        ..KitSpec::empty()
+    };
+    let (lp, llearn) = solve_ready(&t.world, &src, &start, t.goal(), Kit::Carried(live_spec), &GeneratorStore::default(), &mut Interner::default());
+    let (_, lops) = replay_and_verify(&t.world, &start, &lp, t.goal(), true);
+    println!("AMETWOODBOX_LIVE_TOOLKIT T={} learn_ticks={llearn} edits={} ops={lops:?}", lp.ticks, lops.len());
 }

@@ -887,6 +887,7 @@ fn inputs(source: &Source, programs: &[words::Program], start: &PlayerState, wor
     }
     let edits = words.iter().any(|w| w.edit.is_some());
     let mut delta = WorldDelta::new(source);
+    let mut carried = carried.clone();
     let (mut state, mut inputs, mut actions, mut emptied) = (start.clone(), Vec::new(), Vec::new(), None);
     let mut first_touch = (!edits && goal.reached(start, start)).then_some(0u64);
     for (i, w) in words.iter().enumerate() {
@@ -1189,5 +1190,58 @@ mod tests {
         store.invalidate_far_section([0, 0, 0]);
         assert_eq!(store.cached_far_sections(), 1);
         assert_eq!(store.consolidate_idle(), 0);
+    }
+
+    #[test]
+    fn empty_hotbar_planks_wall_emits_break_pickup_delay_and_place() {
+        let mut source = Source { session: 7, revision: 1, law_revision: 1, difficulty: 0, regeneration: Some(false), ..Source::default() };
+        let palette = vec![
+            ("minecraft:air".into(), model("minecraft:air")),
+            ("minecraft:stone".into(), model("minecraft:stone")),
+            ("minecraft:oak_planks".into(), model("minecraft:oak_planks")),
+        ];
+        for x in -1..=1 { for z in -1..=1 { for y in -1..=1 {
+            let indices = (0..4096).map(|i| {
+                let (ly, lz) = (i / 256, i / 16 % 16);
+                if y < 0 || (y == 0 && ly == 0) { 1 }
+                else if y == 0 && z == 0 && lz == 12 && (1..=2).contains(&ly) { 2 }
+                else { 0 }
+            }).collect();
+            source.sections.insert([x, y, z], Section::new(palette.clone(), indices));
+        }}}
+        // 4 non-block items + 5 free hotbar slots (same shape as ametwoodbox.kit.json).
+        let hotbar = [
+            "{count:1,id:\"minecraft:turtle_helmet\"}",
+            "{count:1,id:\"minecraft:golden_chestplate\"}",
+            "{count:1,id:\"minecraft:diamond_leggings\"}",
+            "{count:1,id:\"minecraft:iron_boots\"}",
+            "{}", "{}", "{}", "{}", "{}",
+        ];
+        let (a, n) = ask(&source, crate::kit_wire::tests::body("minecraft:overworld", "survival", hotbar, "{}", 0), [8, 0, 14]);
+        assert_eq!(a[0], KIT_PLAN, "{}", String::from_utf8_lossy(&a[4..].iter().map(|&b| b as u8).collect::<Vec<_>>()));
+        let count = a[7] as usize;
+        let at = 9 + n + count * 3;
+        let k = a[at] as usize;
+        assert!(k >= 2, "expected break + restore place, got {k}");
+        let mut break_ends: std::collections::HashMap<BlockPos, u64> = std::collections::HashMap::new();
+        let mut places = 0usize;
+        for r in a[at + 1..at + 1 + k * crate::kit_wire::ACTION_WORDS].chunks(crate::kit_wire::ACTION_WORDS) {
+            let (tick, slot, op, hold) = (r[0], r[1], r[2], r[9]);
+            let pos = [r[3] as i64 as i32, r[4] as i64 as i32, r[5] as i64 as i32];
+            match op {
+                crate::kit_wire::OP_BREAK_HOLD => {
+                    assert_eq!(slot, 4, "bare hand picks first free hotbar slot");
+                    break_ends.insert(pos, tick + hold);
+                }
+                crate::kit_wire::OP_PLACE => {
+                    assert_eq!(slot, 4, "restored drop landed in first free hotbar slot");
+                    let bend = *break_ends.get(&pos).expect("break before restore");
+                    assert!(tick >= bend + law::items::DEFAULT_PICKUP_DELAY as u64, "place tick {tick} < ready {}", bend + 10);
+                    places += 1;
+                }
+                other => panic!("unexpected opcode {other}"),
+            }
+        }
+        assert_eq!(places, break_ends.len(), "every broken planks cell is restored");
     }
 }

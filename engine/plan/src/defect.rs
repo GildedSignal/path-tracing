@@ -183,6 +183,7 @@ struct TopoField {
     dist: Vec<f32>,
     next: Vec<u8>,
     edit: Vec<u8>,
+    fits: Vec<u8>,
 }
 
 /// The body's way from cell `a` into its neighbour `b`: the hull of its probe in each, so a
@@ -313,7 +314,7 @@ struct Landing {
 impl TopoField {
     /// No field: every query is unknown and the search falls back on its distance bound.
     fn empty() -> Self {
-        Self { min: [0; 3], max: [-1, 0, 0], dx: 0, dy: 0, runs: 1, dist: Vec::new(), next: Vec::new(), edit: Vec::new() }
+        Self { min: [0; 3], max: [-1, 0, 0], dx: 0, dy: 0, runs: 1, dist: Vec::new(), next: Vec::new(), edit: Vec::new(), fits: Vec::new() }
     }
 
     fn bounds_for(bounds: Aabb, from: &PlayerState, goal: Goal, kit: Option<&KitView>) -> (BlockPos, BlockPos) {
@@ -418,7 +419,7 @@ impl TopoField {
         }
         let runs = usize::from(legs.reach) + 1;
         let states = vol * runs;
-        let mut field = Self { min, max, dx, dy, runs, dist: vec![f32::INFINITY; states], next: vec![SEED; states], edit: vec![0; states] };
+        let mut field = Self { min, max, dx, dy, runs, dist: vec![f32::INFINITY; states], next: vec![SEED; states], edit: vec![0; states], fits: vec![0u8; vol] };
         // Edits on the best path: of two equal T, the wave keeps the one with fewer.
         let mut edits = vec![0u8; states];
         let mut heap: BinaryHeap<Reverse<(u32, u8, BlockPos, u8)>> = BinaryHeap::new();
@@ -430,6 +431,7 @@ impl TopoField {
             let fits = body_fits(grid, p);
             grid.reset_missing();
             if fits {
+                field.fits[ci] = 2;
                 for r in 0..runs {
                     field.dist[ci * runs + r] = 0.0;
                     heap.push(Reverse((0, 0, p, r as u8)));
@@ -564,6 +566,12 @@ impl TopoField {
                     t.map(|(t, _)| (t, CLEAR))
                 };
                 let Some((clear_t, clear_mark)) = clear else { continue };
+                if open {
+                    field.fits[ni] = 2;
+                } else if field.fits[ni] == 0 {
+                    field.fits[ni] = if body_fits(grid, n) { 2 } else { 1 };
+                    grid.reset_missing();
+                }
                 // The runs at `n` that lead to (cur, rc), each with what the legs alone cannot do.
                 let mut options: List<(usize, f32, u8), 6> = List::new();
                 let all_runs = if n_sup { 0..1 } else { 0..runs };
@@ -644,7 +652,8 @@ impl TopoField {
         (ci * self.runs..(ci + 1) * self.runs).min_by(|&a, &b| self.dist[a].total_cmp(&self.dist[b])).unwrap_or(ci * self.runs)
     }
 
-    /// The field state the body is in: its feet cell or the one above, else a corner's.
+    /// The field state the body is in: its feet cell when the body fits there, else the cell
+    /// above (partial-block feet cell like slab/fence or unreachable `fy`), else a corner's.
     fn state_of(&self, s: &PlayerState) -> Option<usize> {
         if self.dist.is_empty() {
             return None;
@@ -652,20 +661,101 @@ impl TopoField {
         let fx = s.position.x.floor() as i32;
         let fy = (s.position.y + 0.05).floor() as i32;
         let fz = s.position.z.floor() as i32;
+        let at = |p: BlockPos| {
+            let ci = self.idx(p)?;
+            let i = self.best(ci);
+            (self.dist[i] < f32::INFINITY).then_some((ci, i))
+        };
+        if let Some((ci, i)) = at([fx, fy, fz]) {
+            if self.fits[ci] == 2 {
+                return Some(i);
+            }
+        }
+        if let Some((_, i)) = at([fx, fy + 1, fz]) {
+            return Some(i);
+        }
+        if let Some((_, i)) = at([fx, fy, fz]) {
+            return Some(i);
+        }
         let best = |cells: &mut dyn Iterator<Item = BlockPos>| {
             cells.filter_map(|p| self.idx(p)).map(|ci| self.best(ci)).filter(|&i| self.dist[i] < f32::INFINITY)
                 .min_by(|&a, &b| self.dist[a].total_cmp(&self.dist[b]))
         };
-        best(&mut (0..=1).map(|dy| [fx, fy + dy, fz])).or_else(|| {
-            best(&mut [-0.24, 0.24].into_iter().flat_map(|ox| {
-                [-0.24, 0.24].into_iter().map(move |oz| [(s.position.x + ox).floor() as i32, fy, (s.position.z + oz).floor() as i32])
-            }))
-        })
+        best(&mut [-0.24, 0.24].into_iter().flat_map(|ox| {
+            [-0.24, 0.24].into_iter().map(move |oz| [(s.position.x + ox).floor() as i32, fy, (s.position.z + oz).floor() as i32])
+        }))
     }
 
     #[inline]
     fn query(&self, s: &PlayerState) -> f32 {
         self.state_of(s).map_or(f32::INFINITY, |i| self.dist[i])
+    }
+
+    fn query_with_edits(&self, s: &PlayerState, edits: &[(BlockPos, StateId)], ledger: &ObligationLedger) -> f32 {
+        if edits.is_empty() || ledger.open.is_empty() {
+            return self.query(s);
+        }
+        let Some(mut si) = self.state_of(s) else { return f32::INFINITY };
+        let base_d = self.dist[si];
+        if !base_d.is_finite() {
+            return f32::INFINITY;
+        }
+        let mut credit = 0.0f32;
+        for _ in 0..6 {
+            let Some((n, next)) = self.step(si) else { break };
+            let Some(nci) = self.idx(next) else { break };
+            let next_si = self.best(nci);
+            let edge_drop = (self.dist[si] - self.dist[next_si] - 3.5).max(0.0);
+            if self.edit[si] == CLEAR {
+                let in_passage = |p: BlockPos| {
+                    (p[0] == next[0] && p[2] == next[2] && (p[1] == next[1] || p[1] == next[1] + 1))
+                        || (next[1] > n[1] && p == [n[0], next[1] + 1, n[2]])
+                        || (next[1] < n[1] && p == [next[0], n[1] + 1, next[2]])
+                };
+                let step_credit: f32 = ledger
+                    .open
+                    .iter()
+                    .filter(|o| {
+                        o.clear_ticks_paid >= 10
+                            && in_passage(o.pos)
+                            && edits.iter().any(|&(ep, es)| ep == o.pos && es.model_block().never_collides())
+                    })
+                    .map(|o| f32::from(o.clear_ticks_paid))
+                    .sum();
+                credit += step_credit.min(edge_drop);
+            } else if self.edit[si] == FLOOR_HERE || self.edit[si] == FLOOR_NEXT {
+                let fcell = if self.edit[si] == FLOOR_HERE { below(n) } else { below(next) };
+                if ledger.open.iter().any(|o| o.pos == fcell && o.undo_ticks_lb >= 10)
+                    && edits.iter().any(|&(ep, es)| ep == fcell && !es.model_block().never_collides())
+                {
+                    credit += edge_drop;
+                }
+            }
+            if self.dist[next_si] >= self.dist[si] {
+                break;
+            }
+            si = next_si;
+        }
+        let mut best_d = (base_d - credit).max(0.0);
+        let fx = s.position.x.floor() as i32;
+        let fz = s.position.z.floor() as i32;
+        for o in &ledger.open {
+            if o.clear_ticks_paid >= 10
+                && (o.pos[0] - fx).abs() <= 1
+                && (o.pos[2] - fz).abs() <= 1
+                && edits.iter().any(|&(ep, es)| ep == o.pos && es.model_block().never_collides())
+            {
+                for cand in [o.pos, [o.pos[0], o.pos[1] - 1, o.pos[2]]] {
+                    if let Some(ci) = self.idx(cand) {
+                        let cd = self.dist[self.best(ci)];
+                        if cd.is_finite() {
+                            best_d = best_d.min(cd + 6.0);
+                        }
+                    }
+                }
+            }
+        }
+        best_d
     }
 
     /// The cell of state `i` and the cell its descent enters next.
@@ -775,6 +865,20 @@ impl TopoField {
             _ => None,
         };
         out.extend(hand.filter(|h| !out.iter().any(|o| o.op.pos() == h.op.pos())));
+        if self.edit[i] != CLEAR && kv.makes(FieldEdit::Clear, node.counts) {
+            let (_, fwd, _) = approach_frame(s, goal);
+            for ahead in [[n[0] + fwd[0], n[1], n[2] + fwd[1]], [n[0] + fwd[0], n[1] + 1, n[2] + fwd[1]]] {
+                if !way_clear(delta, n, ahead) {
+                    let cells = blockers(delta, n, ahead);
+                    grid.reset_missing();
+                    if let Some(h) = step(&cells, FieldEdit::Clear) {
+                        if !out.iter().any(|o| o.op.pos() == h.op.pos()) && out.len() < 4 {
+                            out.push(h);
+                        }
+                    }
+                }
+            }
+        }
         out
     }
 }
@@ -793,11 +897,12 @@ struct Bucket {
     edits_hash: u64,
     open_ob: u16,
     has_blocks: bool,
+    pending_drops: u16,
 }
 
 impl Bucket {
     #[inline]
-    fn of(s: &PlayerState, edits_hash: u64, open_ob: u16, has_blocks: bool) -> Self {
+    fn of(s: &PlayerState, edits_hash: u64, open_ob: u16, has_blocks: bool, pending_drops: u16) -> Self {
         let h2 = s.velocity.horizontal_sqr();
         let fast = h2 >= 0.04;
         let quad = if h2 < 0.01 {
@@ -819,6 +924,7 @@ impl Bucket {
             edits_hash,
             open_ob,
             has_blocks,
+            pending_drops,
         }
     }
 }
@@ -945,6 +1051,7 @@ enum AtomicOutcome {
     Failed,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn exec_atomic_raw<W: World>(
     world: &W,
     grid_missing: Option<&ObservedWorld<'_, impl World>>,
@@ -961,6 +1068,9 @@ fn exec_atomic_raw<W: World>(
     hand: Option<Hand<'_>>,
     restore_obs: &[BlockPos],
     kit_edge_stop: bool,
+    arrival: u64,
+    mut ledger: Option<&mut ObligationLedger>,
+    drop_wait_ticks: u32,
     raw_ticks: &mut u64,
 ) -> AtomicOutcome {
     let yaw_idx = aim.resolve(start, goal, sig.rot);
@@ -992,9 +1102,12 @@ fn exec_atomic_raw<W: World>(
     let cell_of = |p: &PlayerState| [p.position.x.floor() as i32, (p.position.y + 0.05).floor() as i32, p.position.z.floor() as i32];
     let mut last_pos_cell = cell_of(start);
 
-    let cap = max_ticks.min(if steering && s.on_ground && !s.on_climbable && !s.in_water { 24 } else { 80 });
+    let cap = max_ticks
+        .min(if steering && s.on_ground && !s.on_climbable && !s.in_water { 24 } else { 80 })
+        .max(drop_wait_ticks);
     let mut ticks = 0u32;
     let mut hit_goal = false;
+    let mut any_drop_collected = false;
 
     for tick in 1..=cap {
         let prev_box = s.bounding_box();
@@ -1021,6 +1134,13 @@ fn exec_atomic_raw<W: World>(
         if s.health <= 0.0 || !s.bounding_box().intersects(bounds) {
             return AtomicOutcome::Failed;
         }
+        let holding_for_drop = program_id == words::program::P_BRAKE && drop_wait_ticks > 0 && tick < drop_wait_ticks;
+        let collected_now = ledger
+            .as_deref_mut()
+            .is_some_and(|l| l.observe_pickup(&s, arrival.saturating_add(u64::from(tick))));
+        if collected_now {
+            any_drop_collected = true;
+        }
         if goal.reached_boxes(prev_box, &s) {
             hit_goal = true;
             break;
@@ -1028,8 +1148,9 @@ fn exec_atomic_raw<W: World>(
         let landed = !prev_ground && s.on_ground;
         let stepped = prev_ground && s.on_ground && s.position.y != prev_pos.y;
         let hit_wall = s.on_ground && s.horizontal_collision && !prev_hcoll;
-        let stalled = s.on_ground && s.movement_this_tick.is_none();
-        let stuck_on_ground = s.on_ground
+        let stalled = !holding_for_drop && s.on_ground && s.movement_this_tick.is_none();
+        let stuck_on_ground = !holding_for_drop
+            && s.on_ground
             && prev_ground
             && (s.position.y - prev_pos.y).abs() < 1e-6
             && s.position.minus(prev_pos).horizontal_sqr() < 1e-6
@@ -1039,7 +1160,7 @@ fn exec_atomic_raw<W: World>(
         prev_can_fall = cur_can_fall;
         let medium_changed = s.on_climbable != prev_climbable || s.in_water != prev_in_water;
 
-        let mut kit_window = hand.is_some_and(|h| h.kv.window(world, &s, tick, h.counts));
+        let mut kit_window = hand.is_some_and(|h| h.kv.window(world, &s, tick, h.counts)) || collected_now;
         if let Some((h, f)) = hand.and_then(|h| h.field.map(|f| (h, f))) {
             let c = f.state_of(&s);
             if c != last_cell {
@@ -1125,7 +1246,7 @@ fn exec_atomic_raw<W: World>(
             return AtomicOutcome::Failed;
         }
 
-        let braked = program_id == words::program::P_BRAKE && s.on_ground && s.velocity.horizontal_sqr() <= 0.01;
+        let braked = !holding_for_drop && program_id == words::program::P_BRAKE && s.on_ground && s.velocity.horizontal_sqr() <= 0.01;
         if landed || stepped || hit_wall || stalled || stuck_on_ground || support_ends || medium_changed || opening_cleared || kit_window || braked {
             break;
         }
@@ -1134,7 +1255,7 @@ fn exec_atomic_raw<W: World>(
     if ticks == 0 {
         return AtomicOutcome::Failed;
     }
-    if s.position == start.position && s.velocity == start.velocity && s.pose == start.pose && !hit_goal {
+    if s.position == start.position && s.velocity == start.velocity && s.pose == start.pose && !hit_goal && !any_drop_collected {
         return AtomicOutcome::Failed;
     }
 
@@ -1231,6 +1352,9 @@ fn exec_word_chain<S: CorridorSource, W: World>(
             hand,
             &[],
             false,
+            0,
+            None,
+            0,
             raw_ticks,
         ) {
             AtomicOutcome::Failed => return None,
@@ -1262,14 +1386,15 @@ fn priority_key_topo(
     s: &PlayerState,
     goal: Goal,
     topo: &TopoField,
+    edits: &[(BlockPos, StateId)],
     ledger: &ObligationLedger,
     kit: Option<&KitView>,
 ) -> u64 {
-    let d = topo.query(s);
+    let d = topo.query_with_edits(s, edits, ledger);
     let mut key = arrival as f64 + if d < f32::INFINITY { f64::from(d) * 1.35 } else { 500.0 + euclid_h(s, goal) as f64 };
     if let Some(kv) = kit {
         if !ledger.open.is_empty() {
-            key += f64::from(ledger.open_debt_lb(s, goal, &kv.cone));
+            key += f64::from(ledger.open_debt_lb(s, goal, arrival, &kv.cone));
         }
     }
     key.ceil() as u64
@@ -1321,13 +1446,13 @@ fn candidate_aims(s: &PlayerState, goal: Goal, rot: u8, direct_blocked: bool, la
     out
 }
 
-fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal, landing: Option<Landing>, direct_blocked: bool) -> List<u16, 8> {
+fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal, landing: Option<Landing>, direct_blocked: bool, wait_for_drop: bool) -> List<u16, 8> {
     let mut out = List::new();
     if s.in_water || s.in_lava || s.on_climbable {
         for &p in &[P_FSJ, P_FJ, P_FS, P_F] {
             out.push(p);
         }
-        if goal.settle && s.on_ground && goal.gap(s) <= 2.5 {
+        if (goal.settle && s.on_ground && goal.gap(s) <= 2.5) || (wait_for_drop && s.on_ground) {
             out.push(words::program::P_BRAKE);
         }
         return out;
@@ -1361,12 +1486,13 @@ fn programs_for<W: World>(world: &W, s: &PlayerState, goal: Goal, landing: Optio
     if s.crouching {
         out.push(P_FCJ);
     }
-    if goal.settle && s.on_ground && goal.gap(s) <= 2.5 {
+    if (goal.settle && s.on_ground && goal.gap(s) <= 2.5) || (wait_for_drop && s.on_ground) {
         out.push(words::program::P_BRAKE);
     }
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_kit_node<S: World>(
     delta: &mut WorldDelta<'_, ObservedWorld<'_, S>>,
     grid: &ObservedWorld<'_, S>,
@@ -1380,6 +1506,9 @@ fn step_kit_node<S: World>(
     bounds: Aabb,
     label: LabelId,
     provenance: [u8; 32],
+    start_arrival: u64,
+    ledger: &mut ObligationLedger,
+    restore_required: bool,
     raw_ticks: &mut u64,
 ) -> Option<(PlayerState, WordStep, bool)> {
     let mark = delta.checkpoint();
@@ -1417,13 +1546,23 @@ fn step_kit_node<S: World>(
         }
         *raw_ticks += 1;
         actual += 1;
+        ledger.observe_pickup(&s, start_arrival.saturating_add(u64::from(actual)));
         if s.health <= 0.0 || !s.bounding_box().intersects(bounds) {
             delta.rollback(mark);
             return None;
         }
-        if !still && goal.reached_boxes(prev, &s) {
-            hit_goal = true;
-            break;
+        if goal.reached_boxes(prev, &s) {
+            if t < land {
+                if restore_required {
+                    delta.rollback(mark);
+                    return None;
+                }
+            } else {
+                hit_goal = true;
+                if !still {
+                    break;
+                }
+            }
         }
         if op.settled(&s) {
             break;
@@ -1488,15 +1627,18 @@ impl PhaseB<'_> {
         learn_ticks: u64,
     ) -> bool {
         if arr >= self.best.as_ref().map_or(u64::MAX, |b| b.0) { return false; }
-        if hit && ledger_clear {
-            let (pl, fs, fo) = reconstruct(&self.arena, parent, steps, obs);
-            *self.best = Some((arr, pl, fs, fo));
-            self.incumbent_at.get_or_insert(learn_ticks);
-            return true;
+        if hit {
+            if ledger_clear {
+                let (pl, fs, fo) = reconstruct(&self.arena, parent, steps, obs);
+                *self.best = Some((arr, pl, fs, fo));
+                self.incumbent_at.get_or_insert(learn_ticks);
+                return true;
+            }
+            return false;
         }
-        let b = Bucket::of(&end, ehash, ledger.open.len() as u16, counts.blocks > 0);
+        let b = Bucket::of(&end, ehash, ledger.open.len() as u16, counts.blocks > 0, ledger.pending_drops());
         if self.best_bucket.get(&b).is_some_and(|&prev| prev <= arr) { return false; }
-        let p = priority_key_topo(arr, &end, self.goal, self.topo, &ledger, self.kit);
+        let p = priority_key_topo(arr, &end, self.goal, self.topo, &edits, &ledger, self.kit);
         let nid = self.arena.len();
         self.arena.push(ArenaNode {
             state: end, arrival: arr, depth, prefix_len: self.arena[parent].prefix_len, parent: Some(parent),
@@ -1525,14 +1667,14 @@ fn push_hand<S: World>(
 ) -> bool {
     let (prog, yaw) = carried(&pb.arena[idx], pb.goal);
     let s = pb.arena[idx].state.clone();
-    let Some((end_s, step, hit_goal)) = step_kit_node(delta, grid, programs, &s, pb.goal, prog, yaw, h.ticks, h.op, bounds, label, provenance, raw_learn_ticks) else {
+    let (mut edits, mut ledger, mut counts) = (pb.arena[idx].edits.clone(), pb.arena[idx].ledger.clone(), pb.arena[idx].counts);
+    let Some((end_s, step, hit_goal)) = step_kit_node(delta, grid, programs, &s, pb.goal, prog, yaw, h.ticks, h.op, bounds, label, provenance, pb.arena[idx].arrival, &mut ledger, kv.spec.restore_required, raw_learn_ticks) else {
         return false;
     };
     let Some(before) = delta.state_id(h.op.pos()) else { return false };
     let obs = kit_obs(&s, &end_s, pb.goal, prog, crate::word_store::KitTemplate::of(h.op, &s, pb.goal, yaw, h.restore), step.ticks);
     let (arr, depth) = (pb.arena[idx].arrival.saturating_add(u64::from(step.ticks)), pb.arena[idx].depth + 1);
-    let (mut edits, mut ledger, mut counts) = (pb.arena[idx].edits.clone(), pb.arena[idx].ledger.clone(), pb.arena[idx].counts);
-    kv.book(grid, before, h.op, pb.arena[idx].arrival, &mut edits, &mut ledger, &mut counts);
+    kv.book(grid, before, h.op, pb.arena[idx].arrival, step.ticks, &mut edits, &mut ledger, &mut counts);
     let ehash = digest_edits(&edits);
     let clear = !kv.spec.restore_required || ledger.open.is_empty();
     pb.push_or_win(end_s, arr, depth, idx, vec![step], vec![obs], edits, counts, ledger, ehash, hit_goal, clear, *raw_learn_ticks)
@@ -1582,10 +1724,10 @@ fn exec_kit_chain<S: World>(
         let s = node.state.clone();
         let (end, step, obs, hit) = if let Some(h) = kv.instantiate_step(aim, &*delta, &s, goal, &node.ledger, node.counts) {
             let yaw = aim.resolve(&s, goal, 0);
-            let (end, step, hit) = step_kit_node(delta, grid, programs, &s, goal, prog, yaw, h.ticks, h.op, bounds, label, provenance, raw_ticks)?;
+            let (end, step, hit) = step_kit_node(delta, grid, programs, &s, goal, prog, yaw, h.ticks, h.op, bounds, label, provenance, node.arrival, &mut node.ledger, restore_required, raw_ticks)?;
             let before = delta.state_id(h.op.pos())?;
             h.op.apply(delta);
-            kv.book(grid, before, h.op, node.arrival, &mut node.edits, &mut node.ledger, &mut node.counts);
+            kv.book(grid, before, h.op, node.arrival, step.ticks, &mut node.edits, &mut node.ledger, &mut node.counts);
             let obs = kit_obs(&s, &end, goal, prog, h.template, step.ticks);
             (end, step, obs, hit)
         } else {
@@ -1595,7 +1737,8 @@ fn exec_kit_chain<S: World>(
             let restore_obs: Vec<BlockPos> = if restore_required { node.ledger.open.iter().map(|o| o.pos).collect() } else { Vec::new() };
             let sig = defect_sig(grid, &s, goal);
             let next_aim = seq.get(si + 1).map(|&(_, a, _)| a);
-            match exec_atomic_raw(&*delta, Some(grid), programs, &s, goal, prog, aim, u32::from(max_t), bounds, label, provenance, sig, Some(Hand { kv, counts: node.counts, field: None, next_aim }), &restore_obs, kv.makes(FieldEdit::Floor, node.counts), raw_ticks) {
+            let drop_wait = node.ledger.wait_ticks_here(&s, node.arrival).unwrap_or(0);
+            match exec_atomic_raw(&*delta, Some(grid), programs, &s, goal, prog, aim, u32::from(max_t), bounds, label, provenance, sig, Some(Hand { kv, counts: node.counts, field: None, next_aim }), &restore_obs, kv.makes(FieldEdit::Floor, node.counts), node.arrival, Some(&mut node.ledger), drop_wait, raw_ticks) {
                 AtomicOutcome::Failed => return None,
                 AtomicOutcome::Stopped { end, step, hit_goal, obs } => (end, step, obs, hit_goal),
             }
@@ -1605,8 +1748,11 @@ fn exec_kit_chain<S: World>(
         node.state = end;
         node.edge_steps.push(step);
         node.edge_obs.push(obs);
-        if hit && (!restore_required || node.ledger.open.is_empty()) {
-            return Some(true);
+        if hit {
+            if !restore_required || node.ledger.open.is_empty() {
+                return Some(true);
+            }
+            return None;
         }
     }
     Some(false)
@@ -1664,7 +1810,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
         let mut delta = WorldDelta::new(&grid);
         let lb = |s: &PlayerState| u64::from(kit.map_or_else(|| goal.lower_bound(s), |kv| kv.cone.lower_bound(s, goal)));
         let clear = |n: &ArenaNode| !restore_required || n.ledger.open.is_empty();
-        let bucket = |n: &ArenaNode| Bucket::of(&n.state, digest_edits(&n.edits), n.ledger.open.len() as u16, n.counts.blocks > 0);
+        let bucket = |n: &ArenaNode| Bucket::of(&n.state, digest_edits(&n.edits), n.ledger.open.len() as u16, n.counts.blocks > 0, n.ledger.pending_drops());
         for s in &seeds {
             let idx = arena.len();
             let p = s.arrival.saturating_add(euclid_h(&s.state, goal));
@@ -1851,7 +1997,7 @@ pub(super) fn solve_defect<S: CorridorSource>(
         };
         for s in seeds {
             let idx = pb.arena.len();
-            let p = priority_key_topo(s.arrival, &s.state, goal, &topo, &s.ledger, kit);
+            let p = priority_key_topo(s.arrival, &s.state, goal, &topo, &s.edits, &s.ledger, kit);
             pb.heap.push(Reverse((p, u64::MAX - s.arrival, idx)));
             pb.arena.push(s);
         }
@@ -1880,13 +2026,13 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let node_lb = kit.map_or_else(
                 || u64::from(goal.lower_bound(&pb.arena[idx].state)),
                 |kv| u64::from(kv.cone.lower_bound(&pb.arena[idx].state, goal))
-                    .max(if restore_required { u64::from(pb.arena[idx].ledger.open_debt_lb(&pb.arena[idx].state, goal, &kv.cone)) } else { 0 }),
+                    .max(if restore_required { u64::from(pb.arena[idx].ledger.open_debt_lb(&pb.arena[idx].state, goal, pb.arena[idx].arrival, &kv.cone)) } else { 0 }),
             );
             if pb.arena[idx].arrival.saturating_add(node_lb) >= ub || pb.arena[idx].depth >= MAX_STEPS {
                 continue;
             }
             let node_ehash = digest_edits(&pb.arena[idx].edits);
-            let b = Bucket::of(&pb.arena[idx].state, node_ehash, pb.arena[idx].ledger.open.len() as u16, pb.arena[idx].counts.blocks > 0);
+            let b = Bucket::of(&pb.arena[idx].state, node_ehash, pb.arena[idx].ledger.open.len() as u16, pb.arena[idx].counts.blocks > 0, pb.arena[idx].ledger.pending_drops());
             if pb.best_bucket.get(&b).is_some_and(|&prev| prev <= pb.arena[idx].arrival) {
                 continue;
             }
@@ -1976,8 +2122,9 @@ pub(super) fn solve_defect<S: CorridorSource>(
             let direct_blocked = state_here.horizontal_collision || !can_clear_probe(&delta, &state_here, gx, gz, 0.75) || state_here.velocity.horizontal_sqr() < 0.01 || has_far_open_ob;
             let landing = topo.landing(&delta, &state_here);
             grid.reset_missing();
+            let drop_wait = if restore_required { cur_ledger.wait_ticks_here(&state_here, arr_here).unwrap_or(0) } else { 0 };
             let aims = candidate_aims(&state_here, goal, sig.rot, direct_blocked, landing);
-            let progs = programs_for(&delta, &state_here, goal, landing, direct_blocked);
+            let progs = programs_for(&delta, &state_here, goal, landing, direct_blocked, drop_wait > 0);
             let sprint_ok = sprint_allowed(&state_here);
             let kit_edge_stop = kit.is_some_and(|kv| kv.makes(FieldEdit::Floor, cur_counts));
 
@@ -1985,7 +2132,10 @@ pub(super) fn solve_defect<S: CorridorSource>(
             for (progs_slice, max_t, secondary) in [(&progs[..], 96u32, false), (SECONDARY_STRAFE, 48u32, true)] {
                 if secondary && expanded > 0 { break; }
                 for &prog in progs_slice {
-                    let aim_cap = if secondary {
+                    let wait_for_drop_prog = drop_wait > 0 && prog == words::program::P_BRAKE;
+                    let aim_cap = if wait_for_drop_prog {
+                        1
+                    } else if secondary {
                         aims.len().min(4)
                     } else if prog == P_FSG || prog == P_FS || prog == P_FSJ || !sprint_ok {
                         aims.len()
@@ -1994,9 +2144,11 @@ pub(super) fn solve_defect<S: CorridorSource>(
                     };
                     for &aim in &aims[..aim_cap] {
                         if raw_learn_ticks >= cold_cap { break; }
-                        if let AtomicOutcome::Stopped { end, step, hit_goal, obs } = exec_atomic_raw(&delta, Some(&grid), &programs, &state_here, goal, prog, aim, max_t, bounds, label, provenance, sig, hand, &restore_obs, kit_edge_stop, &mut raw_learn_ticks) {
+                        let mut next_ledger = cur_ledger.clone();
+                        let ledger_arg = (restore_required && !next_ledger.open.is_empty()).then_some(&mut next_ledger);
+                        if let AtomicOutcome::Stopped { end, step, hit_goal, obs } = exec_atomic_raw(&delta, Some(&grid), &programs, &state_here, goal, prog, aim, max_t, bounds, label, provenance, sig, hand, &restore_obs, kit_edge_stop, arr_here, ledger_arg, if wait_for_drop_prog { drop_wait } else { 0 }, &mut raw_learn_ticks) {
                             expanded += usize::from(!secondary);
-                            pb.push_or_win(end, arr_here.saturating_add(u64::from(step.ticks)), depth_here + 1, idx, vec![step], vec![obs], cur_edits.clone(), cur_counts, cur_ledger.clone(), node_ehash, hit_goal, ledger_clear, raw_learn_ticks);
+                            pb.push_or_win(end, arr_here.saturating_add(u64::from(step.ticks)), depth_here + 1, idx, vec![step], vec![obs], cur_edits.clone(), cur_counts, next_ledger, node_ehash, hit_goal, ledger_clear, raw_learn_ticks);
                         }
                     }
                 }

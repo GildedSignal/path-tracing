@@ -11,7 +11,7 @@
 //! - `Player.startAutoSpinAttack`, `Player.getDesiredPose`, `Avatar.POSES`
 //! - `LivingEntity.aiStep` (`@789-813`), `LivingEntity.checkAutoSpinAttack` (`@0-152`)
 
-use crate::{math, Aabb, Vec3};
+use crate::{math, Aabb, BlockPos, Vec3};
 
 // ============================================================================
 // 1. Food & potion consumption
@@ -675,6 +675,83 @@ pub fn durability_change(is_damageable: bool, amount: i32, unbreaking_level: i32
     remove_binomial(chance, amount, rng)
 }
 
+// ---- Item-drop pickup timing & AABB (`Block.popResource`, `ItemEntity`, `Player.aiStep`) ----
+
+/// `ItemEntity.DEFAULT_PICK_UP_DELAY` (`setDefaultPickUpDelay`): 10 ticks on block drops.
+pub const DEFAULT_PICKUP_DELAY: i32 = 10;
+/// `Player.drop` throw delay: 40 ticks before anyone can pick up the tossed stack.
+pub const PLAYER_THROW_PICKUP_DELAY: i32 = 40;
+/// `EntityType.ITEM` dimensions (`0.25 x 0.25 x 0.25`).
+pub const ITEM_BOX_WIDTH: f64 = 0.25;
+pub const ITEM_BOX_HEIGHT: f64 = 0.25;
+/// `Player.aiStep @138-143`: standing/unmounted pickup box inflates `player.getBoundingBox()` by `(1.0, 0.5, 1.0)`.
+pub const PICKUP_INFLATE_XZ: f64 = 1.0;
+pub const PICKUP_INFLATE_Y: f64 = 0.5;
+
+/// Expected mean spawn position of a block's item drop (`Block.popResource`: center `pos + 0.5` with `y - 0.125`).
+#[inline]
+pub fn block_drop_center(pos: BlockPos) -> Vec3 {
+    Vec3::new(
+        f64::from(pos[0]) + 0.5,
+        f64::from(pos[1]) + 0.5 - ITEM_BOX_HEIGHT * 0.5,
+        f64::from(pos[2]) + 0.5,
+    )
+}
+
+/// `Block.popResource` exact spawn point given uniform draws `rx, ry, rz in [-0.25, 0.25)`.
+#[inline]
+pub fn pop_resource_origin(pos: BlockPos, rx: f64, ry: f64, rz: f64) -> Vec3 {
+    Vec3::new(
+        f64::from(pos[0]) + 0.5 + rx,
+        f64::from(pos[1]) + 0.5 + ry - ITEM_BOX_HEIGHT * 0.5,
+        f64::from(pos[2]) + 0.5 + rz,
+    )
+}
+
+/// `EntityType.ITEM` axis-aligned bounding box centered horizontally at `pos` with bottom at `pos.y`.
+#[inline]
+pub fn item_aabb(pos: Vec3) -> Aabb {
+    let half = ITEM_BOX_WIDTH * 0.5;
+    Aabb::new(
+        pos.x - half,
+        pos.y,
+        pos.z - half,
+        pos.x + half,
+        pos.y + ITEM_BOX_HEIGHT,
+        pos.z + half,
+    )
+}
+
+/// `Player.aiStep @115-146`: pickup search box around `player_aabb` (or `minmax(vehicle_aabb)` when mounted).
+#[inline]
+pub fn pickup_box(player_aabb: Aabb, vehicle_aabb: Option<Aabb>) -> Aabb {
+    if let Some(v) = vehicle_aabb {
+        Aabb::new(
+            player_aabb.min.x.min(v.min.x) - PICKUP_INFLATE_XZ,
+            player_aabb.min.y.min(v.min.y),
+            player_aabb.min.z.min(v.min.z) - PICKUP_INFLATE_XZ,
+            player_aabb.max.x.max(v.max.x) + PICKUP_INFLATE_XZ,
+            player_aabb.max.y.max(v.max.y),
+            player_aabb.max.z.max(v.max.z) + PICKUP_INFLATE_XZ,
+        )
+    } else {
+        Aabb::new(
+            player_aabb.min.x - PICKUP_INFLATE_XZ,
+            player_aabb.min.y - PICKUP_INFLATE_Y,
+            player_aabb.min.z - PICKUP_INFLATE_XZ,
+            player_aabb.max.x + PICKUP_INFLATE_XZ,
+            player_aabb.max.y + PICKUP_INFLATE_Y,
+            player_aabb.max.z + PICKUP_INFLATE_XZ,
+        )
+    }
+}
+
+/// True iff `pickup_delay == 0` and `pickup_box(player_aabb, vehicle_aabb)` intersects `item_aabb(item_pos)`.
+#[inline]
+pub fn can_pickup(player_aabb: Aabb, vehicle_aabb: Option<Aabb>, item_pos: Vec3, pickup_delay: i32) -> bool {
+    pickup_delay == 0 && pickup_box(player_aabb, vehicle_aabb).intersects(item_aabb(item_pos))
+}
+
 #[cfg(test)]
 mod item_entity_tests {
     use super::*;
@@ -840,5 +917,37 @@ mod item_entity_tests {
         let t = drop_velocity_toss(&mut rng);
         assert_eq!((bits_d(t.x), bits_d(t.y), bits_d(t.z)), (0x3FC7B09D60000000, 0x3FC999999999999A, 0x3FC87396E0000000));
         assert_eq!(bits_d(drop_origin(1.62).1 - 1.62), 0xBFD3333340000000); // -0.3f as f64
+    }
+
+    #[test]
+    fn pickup_box_and_delay_match_26_2_jar_witness() {
+        // Player.aiStep @134-146 (server-26.2.jar, Vibe dossier local-20261126-213601-33276):
+        // standing box (0.6x1.8x0.6) at (0.5, 64.0, 0.5) -> inflate(1.0, 0.5, 1.0) -> 2.6x2.8x2.6.
+        let pbox = Aabb::new(0.2, 64.0, 0.2, 0.8, 65.8, 0.8);
+        let box_out = pickup_box(pbox, None);
+        assert!((box_out.min.x - (-0.8)).abs() < 1e-12);
+        assert!((box_out.min.y - 63.5).abs() < 1e-12);
+        assert!((box_out.min.z - (-0.8)).abs() < 1e-12);
+        assert!((box_out.max.x - 1.8).abs() < 1e-12);
+        assert!((box_out.max.y - 66.3).abs() < 1e-12);
+        assert!((box_out.max.z - 1.8).abs() < 1e-12);
+
+        for dx in [0.0, 0.8, 1.0, 1.3] {
+            let item = Vec3::new(0.5 + dx, 64.0, 0.5);
+            assert!(can_pickup(pbox, None, item, 0), "dx={dx} must pick at delay=0");
+            for d in 1..=DEFAULT_PICKUP_DELAY {
+                assert!(!can_pickup(pbox, None, item, d), "dx={dx} must wait at delay={d}");
+            }
+        }
+        // Horizontal boundary: 0.3 (half player) + 1.0 (inflate) + 0.125 (half item) = 1.425.
+        assert!(!can_pickup(pbox, None, Vec3::new(0.5 + 1.5, 64.0, 0.5), 0));
+
+        // Mounted branch: player.minmax(vehicle).inflate(1.0, 0.0, 1.0)
+        let vehicle = Aabb::new(0.0, 63.8, 0.0, 1.5, 64.4, 1.5);
+        let mbox = pickup_box(pbox, Some(vehicle));
+        assert!((mbox.min.x - (-1.0)).abs() < 1e-12);
+        assert!((mbox.min.y - 63.8).abs() < 1e-12);
+        assert!((mbox.max.x - 2.5).abs() < 1e-12);
+        assert!((mbox.max.y - 65.8).abs() < 1e-12);
     }
 }

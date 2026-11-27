@@ -46,10 +46,12 @@ final class ResidentRunner {
     static boolean act(Minecraft mc, int t) {
         for (KitAction a : actions) {
             if (t < a.tick() || t >= a.tick() + a.hold()) continue;
-            if (a.perform(mc, t - a.tick())) { stalls = 0; continue; }
-            if (++stalls > 8) {
+            if (a.perform(mc, t - a.tick(), before)) { stalls = 0; continue; }
+            int maxStalls = a.opcode() == KitAction.PLACE ? 35 : 8;
+            if (++stalls > maxStalls) {
                 cancel(mc); TickInput.release(mc);
-                Bot.reply(mc, "Stopped: the block at " + a.x() + " " + a.y() + " " + a.z() + " did not break in time.");
+                String what = a.opcode() == KitAction.PLACE ? " did not place in time." : " did not break in time.";
+                Bot.reply(mc, "Stopped: the block at " + a.x() + " " + a.y() + " " + a.z() + what);
             }
             return false;
         }
