@@ -17,7 +17,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 - **Bot mod wire on `main`:** [resident.rs](../engine/native/src/resident.rs), `ResidentRunner.java`, and `Recorder.java` stream horizons directly over zero-copy `ResidentCorridor` (`WORD_PLAN = 1`, `KIT_PLAN = 4`, `PLAN_APPEND = 5`, `KIT_PLAN_APPEND = 6`) with a 4-word corridor hull, `store.words` + `store.invalidate_far_section` delta invalidation, preemptible idle `consolidate_idle` + `warm_far_section` background pre-warming, and `pathtracing_native` `14/14` (`12` unit + `2` `state_schema`).
 - **26.2 Law & `16³` `StateId` world spine on `main` (`Flying` offline):**
   - Full 26.2 law (`core.rs`, `face.rs`, `sim.rs`, `dismount.rs`, `cell_rule_index.tsv`, fluids, mining, placement, redstone, doors, boats, portals, pistons, combat) sits at `17,266` raw / `22,211` rustfmt lines (`-1,472` raw / `-1,206` rustfmt via canonical `StateId` rules and shared box, body, dismount, and signal primitives; `9/9` suites, `<= 1.00089` paired hot-path ratio with identical benchmark `.text`; [yarn-cold-fold report](../jobs/yarn-cold-fold/report.md)) over canonical `StateId(u16)` `16³` sections with `WorldDelta` rollback.
-  - **Companions:** Mistral Vibe (`jobs/mistral-chain.txt`) runs `vibe-gen-item-drop-pickup-timing-live` and `vibe-gen-face-touch-wall-ceiling-live`.
+  - **Companions:** GLM & Vibe 26.2 jar dossiers landed in `lab/results/` (boat, swim/shore, shulker/climb, item pickup, face touch; [handoff](../jobs/handoff-2026-11-27/report.md)).
   - **RX 7900 XTX GPU backend ([engine/gpu](../engine/gpu/src/lib.rs)):** zero-dependency OpenCL 2.1 (`gfx1100`, 48 CUs, `20.39 GB`, `cl_khr_fp64`, `72.9 µs` med round-trip), crossover-gated (`>= 8,192` dense crowd / `250k` min-plus / `1M` rollout ticks), wired into `WorkerPool::dense_crowd_push_step`. `gpu` `4/4` + `gpu-bench`: `min_plus` (`32×64×8×64`, `18.77×` vs 1T / `3.28×` vs 8T, `0.00e0`), dense `crowd_push` (`32k×20t`, `27.32×` vs 1T / `5.40×` vs 8T, `2.47e-8`), `sin.bin`-exact `rollout` (`131k×64t`, `75.80×` vs 1T / `13.24×` vs 8T, `2.84e-14`).
   - **ES 1B-bot probe ([es-1b-probe](../jobs/es-1b-probe/report.md)):** passes 5/5 checks and 3/3 mutants offline (`10⁹` bots / `10⁶` scars in `4.28 MB`, `172 µs` edit split, `129.8 µs` max observer frame, `0.418 ms/tick` 500-bot `Battle`).
 
@@ -29,7 +29,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Next, in order
 
-0. **Outside references and modes** (`wt/bench-dig`, `wt/law-26.3`): [handoff](../jobs/beat-the-references/report.md).
+0. **Session handoff & active branches** (`wt/gpu-mind-speed`, `wt/law-26.3`, `wt/bench-dig`): [handoff](../jobs/handoff-2026-11-27/report.md).
 
 1. **Remaining live gaps:** empty-hotbar (`blocks=0`) `ametwoodbox` live check and a face-track flight (B on a wall or ceiling face).
 2. **Further law compression & gaps:** close remaining law behavior toward the `7,920`-line Fermi floor plus client 5-tick break cooldown in the law.
@@ -51,5 +51,5 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Branches and open notes
 
-- Only `main` / `origin/main` exist (`D:\path-tracing-wt\` is empty; `lab/fixtures/flat-ground-replay/` lives on `main`).
+- Branches & worktrees (`D:\path-tracing-wt\`): `main` (`f9e6b35c`+ unpushed), `wt/gpu-mind-speed` (`6bde5c7a`), `wt/law-26.3` (Sol edits), `wt/bench-dig` (`8dfb7022`).
 - Untrimmed region files `r.0.0.mca` / `r.0.-1.mca` stay uncommitted on `main` (`*.bak-20261114` backups beside them).

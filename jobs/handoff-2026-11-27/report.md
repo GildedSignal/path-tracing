@@ -1,0 +1,51 @@
+# Session Handoff (2026-11-27, 11:36 CET)
+
+What changed, what is verified on disk across branches/worktrees, and the exact order to pick up next. All work below is committed or saved locally; **nothing has been pushed to `origin/main`** (`AGENTS.md`).
+
+---
+
+## 1. Branch & Worktree Map
+
+| Branch / Location | State | What is in it | Next action |
+|---|---|---|---|
+| **`main`** (`c:\Users\PASCAL\Desktop\path tracing`, `f9e6b35c`) | **Clean local commits ahead of `origin/main`** (pre-existing dirty `.mca`, `archive/turns/inbox.md`, `lab/tracks/runs/*.jsonl`, `jobs/*` logs untouched) | - `80793ad5`: `TopoField::state_of` `fits` disambiguation (`ametwoodbox` live toolkit `T=113` offline vs stalled before) + live restore-before-touch law across `defect.rs`, `certify.rs`, and `replay_and_verify` (`ametwoodbox` live `T=115`, `pred 113`, **`restored: true`**; `doorcorridor` `29` `pred 31`; `stonesimple` `85` `pred 85`; evidence `D:\path-tracing-evidence\flight-20261126\item-drop-live.txt`).<br>- `f9e6b35c`: 4 new 26.2 jar-witness prompts (`gen-water-entry-shore-exit-gait-rows`, `gen-boat-ice-water-gait-rows`, `vibe-gen-water-shore-and-swim-pose-live`, `vibe-gen-shulker-box-and-ladder-vine-climb-live`). | Push only via integrator when ready; merge the 3 branches below in order. |
+| **`wt/gpu-mind-speed`** (`D:\path-tracing-wt\gpu-mind-speed`, committed at **`6bde5c7a`**) | **Complete & green — ready to merge first** (`builder` `97a7a787`) | - **16³ section speed cut ~2.9× (bit-exact):** `PaletteSlot`, split `collide`/`collide_beyond` `4³` subcell masks, SSE2 inline `floor`/`ceil`, `InlineColliders`, per-tick reuse -> `straight` `1,754.8 -> 616.1 ns` median (`2.85×`, beats `BoxWorld` `0.85 µs`), `floored` `3,177.8 -> 1,089.6 ns` (`2.92×`), `exact` `1,340.6 -> 1,159.0 ns`.<br>- **RX 7900 XTX (`gfx1100`) `gpu::min_plus` & `gpu::rollout` wired into `engine/mind/src/pool.rs`:** host + VRAM caches keyed by `WorldMirror::provenance_version()` (`UploadedTopoGrid`, `UploadedVoxelBox`), crossover gates (`>= 250k` cell-goal updates, `>= 1M` bot-ticks), CPU/GPU parity tests.<br>- **Gates (`CARGO_TARGET_DIR='D:\path-tracing-target\job-gpu-mind-speed'`):** `world` `21/21`, `law` `96 + 21 + 31 + 2`, `gpu` `4/4`, `mind` `20/20`, `kit_field_edges` `4/4`, `pathtracing-server.jar` built. Includes `verify-stage2/3` live-flight readiness audit (`-ExecutionPolicy Bypass`, fresh `-Evidence`, deploy binaries to `D:\path-tracing-target\server-mind\release\`, `verify-stage2.ps1` Flight 4 expects `joints:1` on a single fence while solver detours with `joints:0`). | Fast-forward / merge `wt/gpu-mind-speed` onto `main`, re-run `kit_unfold` + `kit_field_edges`, then run `verify-stage2.ps1` & `verify-stage3.ps1`. |
+| **`wt/law-26.3`** (`D:\path-tracing-wt\law-26.3`, base `bf7d5c6f` + **verified uncommitted edits on disk**) | **Verified offline — needs outside-sandbox `git commit`** (`Sol` `gpt-6.2-sol`, session `01a21c56-071f-7ab0-ba9b-5fbdedac0a49`) | - **Single-manifest multi-version switch:** `scripts/versions.json` (`26.2` = `4903` default, `26.3` = `5023`) + `-McVersion` / `PATHTRACING_MC_VERSION` across `common.ps1`, `models.ps1`, `bot/build.ps1`, `server-mod/build.ps1`, `preview.ps1`, keeping **one shared Rust engine** selecting version tables at compile time (`state_id` registry match).<br>- **26.3 port & tables:** `engine/world/data/26.3/` (`1,286` blocks, `35,723` states, `1,658` items), `PearlMomentum.java` (`0` momentum on 26.3), fluid tags, `AbstractBedBlock` / `StrawBedBlock`, spectator portal admission, `damageCooldownTime`, `PushReaction`, `bot`/`server-mod` adapter splits (`-1,153` net lines across tracked files from pruning duplicated TSV/build scripts).<br>- **Gates:** Serial `world`, `law`, `plan`, `pathtracing_native`, `build` = **256 passed, 0 failed, 11 ignored on BOTH `26.2` and `26.3`**; `bot/build.ps1` (`52` capture audits), `server-mod/build.ps1`, `preview.ps1 -Fixture` **PASS on both**; `mind --bin mind` `13/14` (only pre-existing `fence_delta_is_crossed_around` `Y=-65`, already fixed on `main` at `e8b25756`). Spiral clears `DataVersion 5023` to datapack refusal; optional `server-mod/build-client.ps1` on `26.3` needs LWJGL `3.4.3` natives + `RenderPearl` port. Full evidence: `D:\path-tracing-wt\law-26.3\jobs\law-26.3\{report.md,diff.md}`. | Commit Sol's verified edits on `wt/law-26.3` from outside Codex sandbox, merge `main` (`e8b25756` + `6bde5c7a`), verify `14/14` `mind`, and fly the 11-track 26.3 instance (`report.md` commands). |
+| **`wt/bench-dig`** (`D:\path-tracing-wt\bench-dig`, `8dfb7022` + **WIP edits on disk**) | **In flight** (`builder` `8d2a7d98` still running at 11:36) | Synced with `main` (`f9e6b35c` at `8dfb7022`); active edits across `engine/{law/src/codec.rs, mind/src/world_mirror.rs, plan/src/{cut.rs,defect.rs,solve.rs,source.rs,store.rs,bin/strip-probe.rs}}`. | Inspect `git -C D:\path-tracing-wt\bench-dig diff` & transcript `C:\Users\PASCAL\.gemini\antigravity\brain\8d2a7d98-3bab-40f8-b2a1-3b5788eb0906\.system_generated\logs\transcript.jsonl`, finish BlockStep `> 65/72` & `certify:touch-mismatch == 0`, commit on `wt/bench-dig`, merge to `main`. |
+
+---
+
+## 2. Staged External Archives & Evidence (Never in Git)
+
+- **Official Mojang `26.3` & Fabric API (`D:\path-tracing-deps\versions\26.3\`):**
+  - `26.3.json` (from `https://piston-meta.mojang.com/mc/game/version_manifest_v2.json`)
+  - `client.jar` (+ `D:\path-tracing-deps\minecraft-26.3-client.jar`): `41,483,720 B`, SHA-1 `e877b6a07acd633fb3bb475002175cec036e7b87`, SHA-256 `4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d`
+  - `server.jar` (+ `D:\path-tracing-deps\minecraft-26.3-server.jar`): `62,294,556 B`, SHA-1 `33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`, SHA-256 `d052f14d7a173734fba553711e5b570162e2f2a313267ee31a21b975a679be64`
+  - `fabric-api-0.167.0+26.3.jar`: `1,849,354 B` (`54` entries), SHA-256 `ec6c9dbd884d68ae071fdc96cbdd91f2a5256bf3085a3b457e475827b31cad19`
+
+- **GLM 5.4 & Mistral Vibe `26.2` jar-witness dossiers (`lab/results/`):**
+  - `local-20261127-095732-12232-1-0-gen-boat-ice-water-gait-rows` (GLM): `7400/7400` bit-exact boat ticks across water, stone, packed ice (`6/9`-cell `getGroundFriction()`), blue ice (`0.988736`), `1.0E-7` move threshold, dismount onto roof toward water.
+  - `local-20261127-095740-12876-1-0-vibe-gen-water-shore-and-swim-pose-live` (Vibe): 1-`baseTick` lag on `wasEyeInWater`, steady sprint-swim `(vx + 0.02f) * 0.9f` (`5` ticks/block) with zero sprint gravity, `jumpOutOfFluid` `+0.3` (`horizontalCollision && isFree(..., vy+0.6, ...)`), `SWIMMING` `0.6x0.6` (`eye=0.4`).
+  - `local-20261127-095742-21892-1-0-vibe-gen-shulker-box-and-ladder-vine-climb-live` (Vibe): closed shulker box `[0,0,0,1,1,1]`, lid expansion `0.5 * progress` along `FACING`, ladder/vine climb (`+0.2` climb override -> `0.1176` b/t up, `-0.15` b/t down, 0 mismatches).
+  - `gen-water-entry-shore-exit-gait-rows` (GLM): queued in `jobs/glm-chain.txt`, paused on `zai 5h: 100%` cooldown until `11:41`.
+
+- **MineOdyssey & Baritone v1.19.0 prep (`builder` `ac57128b`):**
+  - Upgraded scratch copies of `buckingham-palace` (`64` regions, `26.2 s`), `chain-bridge` (`133` regions, `76,968` chunks, `--safeMode --forceUpgrade`, `60.8 s`), and `cape-town` (`246` overworld regions, `140,511` chunks, `104.0 s`) to DataVersion `4903` in `D:\path-tracing-run\mineodyssey-scratch\`.
+  - **0 unmodeled blocks** across `686` (`buckingham-palace`), `445` (`chain-bridge`), and `1,230` (`cape-town`) sampled states.
+  - **Three `engine/world` loader gaps found:** (1) `--forceUpgrade` leaves `data/minecraft/game_rules.dat` at `DataVersion 4772` vs `level.dat 4903` (bumping `game_rules.dat` to `4903` makes `WorldSnapshot::load_for_plan` succeed on `buckingham-palace`), (2) empty air sections at `Y > 19` in extended-height worlds reject at `region.rs:185-187`, (3) duplicate palette entries (`region.rs:199`) & partial perimeter chunks reject on some edge chunks. Also `tasks.json` holds `{ id, name, caption }` only (no XYZ coords).
+  - **Ready live flight harness:** `D:\path-tracing-evidence\flight-20261126\baritone-vs-us-plan.md` (Baritone v1.19.0 vs `PathBot` on `D:\path-tracing-run\blockstep\server` ports `25600`/`25610`, plus empty-hotbar `ametwoodbox` and `facewall_west`/`faceceil_down` clicked-face tracks).
+
+---
+
+## 3. Exact Next-Session Order
+
+1. Commit `D:\path-tracing-wt\law-26.3` outside sandbox (`wt/law-26.3`, keeping pre-existing fixture `.mca` files unstaged).
+2. Inspect `D:\path-tracing-wt\bench-dig` (`8d2a7d98`), finish `blockstep > 65/72` (`0` `touch-mismatch`), and commit on `wt/bench-dig`.
+3. Re-collect `gen-water-entry-shore-exit-gait-rows` from `lab/results/` once Z.ai cooldown clears (`>= 11:41`).
+4. Merge onto `main` in order: (a) `wt/gpu-mind-speed` (`6bde5c7a`), (b) `wt/law-26.3`, (c) `wt/bench-dig`; resolve any `now.md` conflict in present tense (`<= 40 KB`) and re-run serial verification across both `26.2` and `26.3`.
+5. Run live flights:
+   - Empty-hotbar (`blocks=0`) `ametwoodbox` + clicked-face wall/ceiling tracks (`baritone-vs-us-plan.md` Part 2).
+   - Baritone v1.19.0 vs `PathBot` BlockStep head-to-head (`25600`/`25610`, `baritone-vs-us-plan.md` Part 1).
+   - `server-mod/verify-stage2.ps1` and `verify-stage3.ps1` with fresh `-Evidence`.
+   - 11-track `26.3` regression flight (`D:\path-tracing-wt\law-26.3\jobs\law-26.3\report.md`).
+6. Address the 3 MineOdyssey `engine/world` loader gaps (`game_rules.dat` 4772, empty air sections `Y > 19`, duplicate palette entries) + waypoint XYZ resolver, and design Hielke datapack event injection for `26.3` Spiral.
