@@ -13,9 +13,12 @@ import pathtracing.mixin.LivingStateAccess;
 
 /** Actual client snapshot; each caller identifies its input boundary. */
 final class PlayerSnapshot {
-    /** Mojang's effects whose classes act on nothing the law observes for a player (drawing, mobs, raids, loot). */
+    /** Effects a plan may ignore. The first line acts on nothing the law observes for a player (drawing,
+     *  mobs, raids, loot). The second only adds margin, food, health or less damage, so no certified move
+     *  is lost under it (precision only where a decision can flip); the server keeps the real counts. */
     private static final java.util.Set<String> INERT_EFFECTS = java.util.Set.of("night_vision", "glowing", "invisibility",
-        "luck", "unluck", "bad_omen", "trial_omen", "raid_omen", "hero_of_the_village", "nausea", "darkness");
+        "luck", "unluck", "bad_omen", "trial_omen", "raid_omen", "hero_of_the_village", "nausea", "darkness",
+        "saturation", "regeneration", "instant_health", "absorption", "health_boost", "resistance", "fire_resistance", "water_breathing");
     static long[] context(Minecraft mc,long at) {
         JsonObject facts = new JsonObject();
         facts.addProperty("dimension",mc.level.dimension().identifier().toString());
