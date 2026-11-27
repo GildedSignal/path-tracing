@@ -317,7 +317,7 @@ struct ActiveContinuation {
     bounds: (BlockPos, BlockPos),
 }
 enum Work { Delta(Vec<u64>, u64, bool), Goal(Request) }
-struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, law_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>> }
+struct Resident { send: mpsc::Sender<Work>, results: Mutex<mpsc::Receiver<Vec<u64>>>, version: Arc<AtomicU64>, law_revision: Arc<AtomicU64>, observation: Mutex<Vec<u64>>, known: Mutex<std::collections::HashMap<[u64; 3], u64>> }
 fn resident() -> &'static Resident {
     static RESIDENT: OnceLock<Resident> = OnceLock::new();
     RESIDENT.get_or_init(|| {
@@ -449,13 +449,30 @@ fn resident() -> &'static Resident {
                 }
             }
         }).expect("resident worker");
-        Resident { send, results: Mutex::new(results), version, law_revision, observation: Mutex::new(Vec::new()) }
+        Resident { send, results: Mutex::new(results), version, law_revision, observation: Mutex::new(Vec::new()), known: Mutex::new(std::collections::HashMap::new()) }
     })
 }
 pub fn publish(data: Vec<u64>) -> Vec<u64> {
     if data.len() < 3 { return refusal(0,"delta header"); }
     let r = resident();
-    let law_changed = data[0] != 2 || block_delta_changes_law(&data);
+    // The world changes only by an edit. A section arriving is the bot learning what is already
+    // there, and an unload is forgetting it: neither moves the law under a plan. A section sent
+    // again with other content is an edit (Julien 2026-11-27: "the world doesn't change").
+    let law_changed = match data[0] {
+        2 => block_delta_changes_law(&data),
+        1 | 3 if data.len() >= 6 => {
+            use std::hash::{Hash, Hasher};
+            let key = [data[3], data[4], data[5]];
+            let mut known = r.known.lock().unwrap();
+            if data[0] == 3 { known.remove(&key); false } else {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                data[6..].hash(&mut h);
+                known.insert(key, h.finish()).is_some_and(|before| before != h.finish())
+            }
+        }
+        0 => { r.known.lock().unwrap().clear(); true }
+        _ => true,
+    };
     let law_rev = if law_changed {
         r.law_revision.fetch_add(1,Ordering::AcqRel) + 1
     } else {
