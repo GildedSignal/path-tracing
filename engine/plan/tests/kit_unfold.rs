@@ -224,7 +224,18 @@ fn replay_and_verify(
             law::try_tick(&mut s, &delta, &inp).expect("law::try_tick succeeds during replay");
             obs.check().expect("replay stayed inside loaded world");
             assert!(s.health > 0.0, "player died during replay at tick {}", s.t);
-            if goal.touched_boxes(before, s.bounding_box()) && (is_last || edited.is_empty()) {
+            if goal.touched_boxes(before, s.bounding_box()) {
+                if restore_required {
+                    for &p in &edited {
+                        assert_eq!(
+                            delta.state_id(p),
+                            world.state_id(p),
+                            "touched goal at tick {} while edited cell {:?} was still unrestored",
+                            s.t - start.t,
+                            p
+                        );
+                    }
+                }
                 touched = true;
             }
         }
@@ -871,4 +882,22 @@ fn ametwoodbox_empty_hotbar_pickup_and_restore() {
         assert!(picked, "player never intersected pickup_box for {bpos:?} between t={ready_t} and t={place_t}");
     }
     println!("AMETWOODBOX_EMPTY_HOTBAR_PICKUP T={} learn_ticks={learn} edits={}", p.ticks, breaks.len() + places.len());
+
+    // Exact live Tracks.java ametwoodbox toolkit: {"minecraft:oak_log": 1} + 8 free hotbar slots.
+    let oak_log = sid("oak_log");
+    let mut held = [None; 9];
+    held[0] = Some(oak_log.block());
+    let live_spec = KitSpec {
+        interact: true,
+        can_break: true,
+        blocks: 1,
+        place_block: oak_log,
+        restore_required: true,
+        restore_blocks: Some(held),
+        free_hotbar_slots: 8,
+        ..KitSpec::empty()
+    };
+    let (lp, llearn) = solve_ready(&t.world, &src, &start, t.goal(), Kit::Carried(live_spec), &GeneratorStore::default(), &mut Interner::default());
+    let (_, lops) = replay_and_verify(&t.world, &start, &lp, t.goal(), true);
+    println!("AMETWOODBOX_LIVE_TOOLKIT T={} learn_ticks={llearn} edits={} ops={lops:?}", lp.ticks, lops.len());
 }

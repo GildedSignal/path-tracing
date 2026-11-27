@@ -99,6 +99,10 @@ pub(crate) fn certify_route<W: World>(
                         return Err((Refusal::StateOrContext, "dead-delta"));
                     }
                     if goal.reached_boxes(before_box, &state) {
+                        let clean = !restore_required || edited_positions.iter().all(|&p| d.state_id(p) == obs.state_id(p));
+                        if !clean {
+                            return Err((Refusal::StateOrContext, "touched-unrestored"));
+                        }
                         touched_during_step = true;
                         if is_last_step && !is_break {
                             touch.get_or_insert(state.t - from.t);

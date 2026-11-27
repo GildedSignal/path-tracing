@@ -1361,14 +1361,13 @@ impl KitView {
     ) -> Option<HandStep> {
         let fresh = |p: BlockPos| !edits.iter().any(|&(e, _)| e == p) && !ledger.open.iter().any(|o| o.pos == p);
         let step = |op: KitOp, ticks: u32| Some(HandStep { op, ticks, restore: false, template: None });
-        let &c = cells.iter().find(|&&c| fresh(c))?;
-        if !in_reach(s, c) {
-            return None;
-        }
-        let sid = world.state_id(c)?;
-        let st = state_static(sid);
-        match edit {
-            FieldEdit::Clear => {
+        if edit == FieldEdit::Clear {
+            for &c in cells {
+                if !fresh(c) || !in_reach(s, c) {
+                    continue;
+                }
+                let Some(sid) = world.state_id(c) else { continue };
+                let st = state_static(sid);
                 if self.has(VerbKind::Interact) && st.interact_kind().is_hand_toggleable() {
                     let after = toggle_open_state(sid)?;
                     let partner = door_partner(world, c, sid, after.get("open").map(|v| v == "true"));
@@ -1376,12 +1375,21 @@ impl KitView {
                 }
                 let row = self.breaking.get(sid.block(), sid);
                 let bt = if s.on_ground { row.break_ticks_ground } else { row.break_ticks_air };
-                if !self.has(VerbKind::Break) || bt == u16::MAX || !self.spec.can_restore_break(sid.block(), row.restore_mode) {
-                    return None;
+                if self.has(VerbKind::Break) && bt != u16::MAX && self.spec.can_restore_break(sid.block(), row.restore_mode) {
+                    let after = if st.waterlogged() { water_source_state() } else { air_state() };
+                    return step(KitOp::Break { pos: c, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)));
                 }
-                let after = if st.waterlogged() { water_source_state() } else { air_state() };
-                step(KitOp::Break { pos: c, after, break_ticks: bt.max(1) }, u32::from(bt.max(1)))
             }
+            return None;
+        }
+        let &c = cells.iter().find(|&&c| fresh(c))?;
+        if !in_reach(s, c) {
+            return None;
+        }
+        let sid = world.state_id(c)?;
+        let st = state_static(sid);
+        match edit {
+            FieldEdit::Clear => unreachable!(),
             FieldEdit::Floor => {
                 if counts.blocks == 0 || !self.has(VerbKind::Place) || !world.block(c).never_collides()
                     || !can_place_at(world, s, c, self.spec.place_block)
