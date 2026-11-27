@@ -76,7 +76,13 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     s.input = *input;
     if !s.profile.no_physics {
         let d = 0.6f32 as f64 * 0.35;
-        for (x, z) in [(-d, d), (-d, -d), (d, -d), (d, d)] { push_out(s, world, s.position.x + x, s.position.z + z); }
+        let body = s.bounding_box();
+        let context = CollisionContext::of(s);
+        let mut safe = [[0i32; 3]; 3];
+        let mut n_safe = 0usize;
+        for (x, z) in [(-d, d), (-d, -d), (d, -d), (d, d)] {
+            push_out_cached(s, world, body, context, &mut safe, &mut n_safe, s.position.x + x, s.position.z + z);
+        }
     }
     let slowly = s.crouching || s.pose == Pose::Swimming && !s.in_water;
     sprint(s, input, slowly, was_shift, was_forward);
@@ -96,7 +102,8 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     if s.velocity.horizontal_sqr() < 9.0e-6 { (s.velocity.x, s.velocity.z) = (0.0, 0.0); }
     if s.velocity.y.abs() < 0.003 { s.velocity.y = 0.0; }
     let mut movement = steer(input, slowly, s);
-    s.on_climbable = climbable(s, world);
+    let mut climb_cache = (block_pos(s.position), climbable(s, world));
+    s.on_climbable = climb_cache.1;
     if input.jump && !s.flying && s.health > 0.0 {
         let height = if s.in_lava { s.lava_height } else { s.water_height };
         let water = s.in_water && height > 0.0;
@@ -115,17 +122,17 @@ pub fn step(s: &mut PlayerState, world: &impl World, input: &Input) -> Result<Ef
     }
     if s.profile.slow_falling || s.profile.levitation.is_some() { s.fall_distance = 0.0; }
     // Cause: the move (the body generator, then the sweep).
-    let collision = travel(s, world, movement)?;
+    let (collision, land_block) = travel(s, world, movement, &mut climb_cache)?;
     world.observe_sweep(start_box, s.bounding_box());
     // Cause: the cells the move crossed.
-    let contact = burn.or(cross(s, world, start, collision.map(|(wanted, _)| wanted))?);
+    let contact = burn.or(cross(s, world, start, collision.map(|(wanted, _)| wanted), land_block)?);
     let before_pose = s.bounding_box();
     s.position.x = s.position.x.clamp(-29999999.0, 29999999.0);
     s.position.z = s.position.z.clamp(-29999999.0, 29999999.0);
     if s.on_ground && s.flying && s.profile.game_mode != GameType::Spectator { s.flying = false; }
     pose(s, world);
     world.observe_sweep(before_pose, s.bounding_box());
-    s.on_climbable = climbable(s, world);
+    s.on_climbable = climbable_cached(s, world, &mut climb_cache);
     // Cause: the distance walked, then the food clock.
     walked(s, s.position.minus(start));
     food(s, world);
@@ -165,12 +172,34 @@ pub fn sprint(s: &mut PlayerState, input: &Input, slowly: bool, was_shift: bool,
 }
 
 // LocalPlayer.suffocatesAt; LocalPlayer.moveTowardsClosestSpace
+#[cfg(test)]
 fn push_out(s: &mut PlayerState, world: &impl World, x: f64, z: f64) {
-    let body = s.bounding_box();
-    let suffocates = |p: BlockPos| world.collides_with_suffocating_block(
-        Aabb::new(p[0] as f64, body.min.y, p[2] as f64, p[0] as f64 + 1.0, body.max.y, p[2] as f64 + 1.0).deflate(1.0e-7), CollisionContext::of(s));
+    let mut safe = [[0i32; 3]; 3];
+    let mut n_safe = 0;
+    push_out_cached(s, world, s.bounding_box(), CollisionContext::of(s), &mut safe, &mut n_safe, x, z);
+}
+#[inline]
+fn push_out_cached(
+    s: &mut PlayerState,
+    world: &impl World,
+    body: Aabb,
+    context: CollisionContext,
+    safe: &mut [[i32; 3]; 3],
+    n_safe: &mut usize,
+    x: f64,
+    z: f64,
+) {
     let p = block_pos(Vec3::new(x, s.position.y, z));
-    if !suffocates(p) { return; }
+    if safe[..*n_safe].contains(&p) { return; }
+    let suffocates = |p: BlockPos| world.collides_with_suffocating_block(
+        Aabb::new(p[0] as f64, body.min.y, p[2] as f64, p[0] as f64 + 1.0, body.max.y, p[2] as f64 + 1.0).deflate(1.0e-7), context);
+    if !suffocates(p) {
+        if *n_safe < safe.len() {
+            safe[*n_safe] = p;
+            *n_safe += 1;
+        }
+        return;
+    }
     let (dx, dz) = (x - p[0] as f64, z - p[2] as f64);
     let mut best = (f64::MAX, None);
     for (axis, step, distance) in [(Axis::X, -1, dx), (Axis::X, 1, 1.0 - dx), (Axis::Z, -1, dz), (Axis::Z, 1, 1.0 - dz)] {
@@ -202,21 +231,30 @@ fn steer(i: &Input, slowly: bool, s: &PlayerState) -> Vec3 {
 }
 
 // Entity.getOnPos
-fn on_pos(s: &PlayerState, world: &impl World, offset: f32) -> BlockPos {
-    let Some(p) = s.main_supporting_block else { return block_pos(Vec3::new(s.position.x, s.position.y - offset as f64, s.position.z)) };
-    if offset <= 1.0e-5f32 { return p; }
+#[inline]
+fn on_pos_block<'w>(s: &PlayerState, world: &'w impl World, offset: f32) -> (BlockPos, &'w Block) {
+    let Some(p) = s.main_supporting_block else {
+        let q = block_pos(Vec3::new(s.position.x, s.position.y - offset as f64, s.position.z));
+        return (q, world.hook_block(q));
+    };
+    if offset <= 1.0e-5f32 { return (p, world.hook_block(p)); }
     let b = world.hook_block(p);
-    if offset as f64 <= 0.5 && b.fence || b.wall_or_gate { p } else { [p[0], math::floor(s.position.y - offset as f64), p[2]] }
+    if offset as f64 <= 0.5 && b.fence || b.wall_or_gate {
+        (p, b)
+    } else {
+        let q = [p[0], math::floor(s.position.y - offset as f64), p[2]];
+        (q, if q == p { b } else { world.hook_block(q) })
+    }
 }
 
 // Entity.getBlockJumpFactor (both cells read); Entity.getBlockSpeedFactor (water stops at the feet)
 fn jump_factor(s: &PlayerState, world: &impl World) -> f32 {
-    let (here, below) = (world.hook_block(block_pos(s.position)).jump_factor, world.hook_block(on_pos(s, world, 0.500001)).jump_factor);
+    let (here, below) = (world.hook_block(block_pos(s.position)).jump_factor, on_pos_block(s, world, 0.500001).1.jump_factor);
     if here as f64 == 1.0 { below } else { here }
 }
 fn speed_factor(s: &PlayerState, world: &impl World) -> f32 {
     let here = world.hook_block(block_pos(s.position));
-    if !here.water_block && here.speed_factor as f64 == 1.0 { world.hook_block(on_pos(s, world, 0.500001)).speed_factor } else { here.speed_factor }
+    if !here.water_block && here.speed_factor as f64 == 1.0 { on_pos_block(s, world, 0.500001).1.speed_factor } else { here.speed_factor }
 }
 
 // LivingEntity.jumpFromGround; ServerPlayer.jumpFromGround
@@ -239,6 +277,15 @@ fn climbable(s: &PlayerState, world: &impl World) -> bool {
     let b = world.hook_block(p);
     b.climbable || b.open_trapdoor_facing.is_some_and(|f| world.hook_block([p[0], p[1] - 1, p[2]]).ladder_facing == Some(f))
 }
+#[inline]
+fn climbable_cached(s: &PlayerState, world: &impl World, cache: &mut (BlockPos, bool)) -> bool {
+    let p = block_pos(s.position);
+    if p == cache.0 { return cache.1; }
+    let b = world.hook_block(p);
+    let c = b.climbable || b.open_trapdoor_facing.is_some_and(|f| world.hook_block([p[0], p[1] - 1, p[2]]).ladder_facing == Some(f));
+    *cache = (p, c);
+    c
+}
 
 // LivingEntity.getEffectiveGravity
 fn gravity(s: &PlayerState, vy: f64) -> f64 {
@@ -246,7 +293,12 @@ fn gravity(s: &PlayerState, vy: f64) -> f64 {
 }
 
 // Player.travel; LivingEntity.travel
-fn travel(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
+fn travel<'w>(
+    s: &mut PlayerState,
+    world: &'w impl World,
+    movement: Vec3,
+    climb_cache: &mut (BlockPos, bool),
+) -> Result<(Option<(Vec3, Vec3)>, Option<&'w Block>), Refusal> {
     if s.swimming {
         let look_y = -math::sin((s.input.pitch * 0.017453292f32) as f64) as f64;
         let factor = if look_y < -0.2 { 0.085 } else { 0.06 };
@@ -255,27 +307,27 @@ fn travel(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Opt
         }
     }
     let flying_vy = s.flying.then_some(s.velocity.y);
-    let collision = if !s.flying && (s.in_water || s.in_lava) { travel_fluid(s, world, movement)? }
-        else if s.fall_flying && !climbable(s, world) { glide(s, world)? }
+    let result = if !s.flying && (s.in_water || s.in_lava) { travel_fluid(s, world, movement, climb_cache)? }
+        else if s.fall_flying && !climbable_cached(s, world, climb_cache) { glide(s, world)? }
         else {
-            let collision = travel_air(s, world, movement)?;
+            let result = travel_air(s, world, movement, climb_cache)?;
             if s.fall_flying { s.fall_flying = false; }
-            collision
+            result
         };
     if let Some(vy) = flying_vy { s.velocity.y = vy * 0.6; }
-    Ok(collision)
+    Ok(result)
 }
 
 // LivingEntity.travelFallFlying: the elytra kernel, then the wall's hit.
-fn glide(s: &mut PlayerState, world: &impl World) -> Result<Option<(Vec3, Vec3)>, Refusal> {
+fn glide<'w>(s: &mut PlayerState, world: &'w impl World) -> Result<(Option<(Vec3, Vec3)>, Option<&'w Block>), Refusal> {
     let pre_h = s.velocity.horizontal_sqr().sqrt();
     let look = math::calculate_view_vector(s.input.yaw, s.input.pitch);
     s.velocity = crate::elytra::update_fall_flying_movement(s.velocity, look, s.input.pitch, gravity(s, s.velocity.y));
-    let collision = move_body(s, world, s.velocity)?;
+    let result = move_body(s, world, s.velocity)?;
     if let Some(amount) = crate::elytra::fly_into_wall_damage(s.horizontal_collision, pre_h, s.velocity.horizontal_sqr().sqrt()) {
         hurt(s, Hit { amount, fall: false, ..Hit::FALL });
     }
-    Ok(collision)
+    Ok(result)
 }
 
 /// Player.getFlyingSpeed: the acceleration off the ground.
@@ -284,22 +336,30 @@ pub fn air_speed(s: &PlayerState) -> f32 {
 }
 
 // LivingEntity.travelInAir; handleRelativeFrictionAndCalculateMovement; handleOnClimbable
-fn travel_air(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
-    let below = on_pos(s, world, 0.500001);
-    let f = if s.on_ground { math::modified_friction(world.hook_block(below).friction, s.profile.friction_modifier) } else { 1.0 };
+fn travel_air<'w>(
+    s: &mut PlayerState,
+    world: &'w impl World,
+    movement: Vec3,
+    climb_cache: &mut (BlockPos, bool),
+) -> Result<(Option<(Vec3, Vec3)>, Option<&'w Block>), Refusal> {
+    let f = if s.on_ground {
+        math::modified_friction(on_pos_block(s, world, 0.500001).1.friction, s.profile.friction_modifier)
+    } else {
+        1.0
+    };
     let acceleration = if !s.on_ground { air_speed(s) } else if f as f64 > 0.6 { s.speed * (0.21600002f32 / (f * f * f)) } else { s.speed };
     s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.input.yaw));
-    if climbable(s, world) {
+    if climbable_cached(s, world, climb_cache) {
         s.fall_distance = 0.0;
         let c = 0.15f32 as f64;
         let v = &mut s.velocity;
         (v.x, v.z, v.y) = (v.x.clamp(-c, c), v.z.clamp(-c, c), v.y.max(-c));
         if v.y < 0.0 && !world.hook_block(block_pos(s.position)).scaffolding && s.shift_key_down { s.velocity.y = 0.0; }
     }
-    let collision = move_body(s, world, s.velocity)?;
+    let result = move_body(s, world, s.velocity)?;
     let mut v = s.velocity;
     let pre_bump_vy = v.y;
-    if (s.horizontal_collision || s.input.jump) && (climbable(s, world) || s.was_in_powder_snow && s.profile.leather_boots) { v.y = 0.2; }
+    if (s.horizontal_collision || s.input.jump) && (climbable_cached(s, world, climb_cache) || s.was_in_powder_snow && s.profile.leather_boots) { v.y = 0.2; }
     // The unloaded-chunk fallback of travelInAir is client-only: the server goes to gravity.
     let vy = match s.profile.levitation {
         Some(amp) => v.y + (0.05 * ((amp as i32 + 1) as f64) - v.y) * 0.2,
@@ -309,11 +369,16 @@ fn travel_air(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result
     let row = AffineBody { air_drag: math::modified_friction(LIVING.air_drag, m), drag_y: math::modified_friction(LIVING.drag_y, m), ..LIVING };
     world.observe_air_travel(movement.z * acceleration as f64, f * row.air_drag);
     s.velocity = row.friction_drag(v, vy, f);
-    Ok(collision)
+    Ok(result)
 }
 
 // LivingEntity.travelInFluid; travelInWater; travelInLava; getFluidFallingAdjustedMovement
-fn travel_fluid(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
+fn travel_fluid<'w>(
+    s: &mut PlayerState,
+    world: &'w impl World,
+    movement: Vec3,
+    climb_cache: &mut (BlockPos, bool),
+) -> Result<(Option<(Vec3, Vec3)>, Option<&'w Block>), Refusal> {
     let falling = s.velocity.y <= 0.0;
     let g = gravity(s, s.velocity.y);
     let old_y = s.position.y;
@@ -321,29 +386,29 @@ fn travel_fluid(s: &mut PlayerState, world: &impl World, movement: Vec3) -> Resu
         let y = s.velocity.y - g / 16.0;
         s.velocity.y = if falling && (s.velocity.y - 0.005).abs() >= 0.003 && y.abs() < 0.003 { -0.003 } else { y };
     };
-    let collision = if s.in_water {
+    let result = if s.in_water {
         let (mut drag, mut acceleration) = (if s.sprinting { 0.9f32 } else { 0.8f32 }, 0.02f32);
         let efficiency = s.profile.water_movement_efficiency * if s.on_ground { 1.0 } else { 0.5 };
         if efficiency > 0.0 { drag += (0.54600006f32 - drag) * efficiency; acceleration += (s.speed - acceleration) * efficiency; }
         if s.profile.dolphins_grace { drag = 0.96f32; }
         s.velocity = s.velocity.plus(input_vector(movement, acceleration, s.input.yaw));
-        let collision = move_body(s, world, s.velocity)?;
-        if s.horizontal_collision && climbable(s, world) { s.velocity.y = 0.2; }
+        let result = move_body(s, world, s.velocity)?;
+        if s.horizontal_collision && climbable_cached(s, world, climb_cache) { s.velocity.y = 0.2; }
         s.velocity = s.velocity.multiply(Vec3::new(drag as f64, 0.8f32 as f64, drag as f64));
         fall_adjust(s);
-        collision
+        result
     } else {
         s.velocity = s.velocity.plus(input_vector(movement, 0.02, s.input.yaw));
-        let collision = move_body(s, world, s.velocity)?;
+        let result = move_body(s, world, s.velocity)?;
         if s.lava_height <= 0.4 { s.velocity = s.velocity.multiply(Vec3::new(0.5, 0.8f32 as f64, 0.5)); fall_adjust(s); }
         else { s.velocity = s.velocity.scale(0.5); }
         if g != 0.0 { s.velocity.y += -g / 4.0; }
-        collision
+        result
     };
     let v = s.velocity;
     let lifted = s.bounding_box().moved(Vec3::new(v.x, v.y + 0.6f32 as f64 - s.position.y + old_y, v.z));
     if s.horizontal_collision && world.no_collision(lifted, CollisionContext::of(s)) && !any_fluid(world, lifted) { s.velocity.y = 0.3f32 as f64; }
-    Ok(collision)
+    Ok(result)
 }
 
 // CollisionGetter.containsAnyLiquid
@@ -390,13 +455,14 @@ fn back_off(s: &PlayerState, world: &impl World, mut v: Vec3) -> Vec3 {
 pub(crate) fn support(s: &mut PlayerState, world: &impl World, moved: Vec3) {
     if !s.on_ground { (s.on_ground_no_blocks, s.main_supporting_block) = (false, None); return; }
     let b = s.bounding_box();
+    let context = CollisionContext::of(s);
     let foot = Aabb::new(b.min.x, b.min.y - 1.0e-6, b.min.z, b.max.x, b.min.y, b.max.z);
     let find = |bounds: Aabb| {
         let (lo, hi) = world.collision_cell_bounds(bounds, block_pos(bounds.min).map(|v| v - 1), block_pos(bounds.max).map(|v| v + 1))?;
         let mut best: Option<(f64, BlockPos)> = None;
         for x in lo[0]..=hi[0] { for y in lo[1]..=hi[1] { for z in lo[2]..=hi[2] {
             let o = Vec3::new(x as f64, y as f64, z as f64);
-            if !world.collision_shape([x, y, z], CollisionContext::of(s)).at(o).intersects(bounds) { continue; }
+            if !world.collision_shape([x, y, z], context).at(o).intersects(bounds) { continue; }
             let d = o.plus(Vec3::new(0.5, 0.5, 0.5)).minus(s.position).length_sqr();
             if best.is_none_or(|(old, q)| d < old || d == old && (y, z, x) > (q[1], q[2], q[0])) { best = Some((d, [x, y, z])); }
         } } }
@@ -408,8 +474,8 @@ pub(crate) fn support(s: &mut PlayerState, world: &impl World, moved: Vec3) {
 }
 
 // Entity.move; Entity.collide; Entity.restituteMovementAfterCollisions
-fn move_body(s: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Result<Option<(Vec3, Vec3)>, Refusal> {
-    if s.profile.no_physics { s.position = s.position.plus(wanted); return Ok(None); }
+fn move_body<'w>(s: &mut PlayerState, world: &'w impl World, mut wanted: Vec3) -> Result<(Option<(Vec3, Vec3)>, Option<&'w Block>), Refusal> {
+    if s.profile.no_physics { s.position = s.position.plus(wanted); return Ok((None, None)); }
     if s.stuck_speed_multiplier.length_sqr() > 1.0e-7 {
         wanted = wanted.multiply(std::mem::take(&mut s.stuck_speed_multiplier));
         s.velocity = Vec3::default();
@@ -431,7 +497,7 @@ fn move_body(s: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Resul
     support(s, world, moved);
     s.minor_horizontal_collision = minor_collision(s, moved);
     if !s.in_water { immerse(s, world); }
-    let block = world.hook_block(on_pos(s, world, 0.2));
+    let (_, block) = on_pos_block(s, world, 0.2);
     land(s, block, moved.y)?;
     if m.wanted.y.abs() > 0.0 && m.y || m.horizontal() {
         let shift = s.shift_key_down;
@@ -445,7 +511,7 @@ fn move_body(s: &mut PlayerState, world: &impl World, mut wanted: Vec3) -> Resul
     let factor = (factor + s.profile.movement_efficiency * (1.0f32 - factor)) as f64;
     world.observe_speed_factor(factor);
     s.velocity = s.velocity.multiply(Vec3::new(factor, 1.0, factor));
-    Ok(Some((wanted, moved)))
+    Ok((Some((wanted, moved)), Some(block)))
 }
 
 // LocalPlayer.isHorizontalCollisionMinor
@@ -538,11 +604,11 @@ fn stuck(s: &mut PlayerState, multiplier: Vec3) {
 /// damping and magma's request (resolved on the server's timeline).
 pub fn apply_grounded_step(s: &mut PlayerState, world: &impl World) -> Option<ContactDamage> {
     world.state_footprint(crate::state_reads::StateReads::ALL, crate::state_reads::StateReads(0));
-    step_on(s, world)
-}
-fn step_on(s: &mut PlayerState, world: &impl World) -> Option<ContactDamage> {
     if s.profile.no_physics || !s.on_ground { return None; }
-    let block = world.hook_block(on_pos(s, world, 0.2));
+    step_on_block(s, on_pos_block(s, world, 0.2).1)
+}
+#[inline]
+fn step_on_block(s: &mut PlayerState, block: &Block) -> Option<ContactDamage> {
     if block.slime && s.velocity.y.abs() < 0.1 && !s.shift_key_down {
         let f = 0.4 + s.velocity.y.abs() * 0.2;
         s.velocity = s.velocity.multiply(Vec3::new(f, 1.0, f));
@@ -606,9 +672,21 @@ impl Collector {
 }
 
 // Entity.applyEffectsFromBlocks; Entity.checkInsideBlocks; the fire grace tail
-fn cross(s: &mut PlayerState, world: &impl World, start: Vec3, wanted: Option<Vec3>) -> Result<Option<ContactDamage>, Refusal> {
+fn cross(
+    s: &mut PlayerState,
+    world: &impl World,
+    start: Vec3,
+    wanted: Option<Vec3>,
+    land_block: Option<&Block>,
+) -> Result<Option<ContactDamage>, Refusal> {
     if s.profile.no_physics { return Ok(None); }
-    let contact = apply_grounded_step(s, world);
+    let contact = if s.on_ground {
+        world.state_footprint(crate::state_reads::StateReads::ALL, crate::state_reads::StateReads(0));
+        let block = land_block.unwrap_or_else(|| on_pos_block(s, world, 0.2).1);
+        step_on_block(s, block)
+    } else {
+        None
+    };
     let fire_before = s.remaining_fire_ticks;
     let swept = s.bounding_box().expand(start.minus(s.position));
     world.observe_region(crate::footprint::Query::Hooks, block_pos(swept.min), block_pos(swept.max));

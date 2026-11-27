@@ -357,6 +357,7 @@ pub trait World {
     /// A partial observation may contain a palette entry whose law is unknown.
     fn known_block(&self, position: BlockPos) -> Result<&Block, &str> { Ok(self.block(position)) }
 
+    #[inline(always)]
     fn hook_block(&self, position: BlockPos) -> &Block { self.block(position) }
     /// The cell's canonical 26.2 block state, when the world holds states.
     fn state_id(&self, _position: BlockPos) -> Option<StateId> { None }
@@ -366,6 +367,7 @@ pub trait World {
     /// `Some(block)` proves every cell of the box `lo..=hi` is loaded and answers every query as
     /// one cell holding `block` (the same reference); `None` proves nothing.
     fn uniform(&self, _lo: BlockPos, _hi: BlockPos) -> Option<&Block> { None }
+    #[inline(always)]
     fn fluid_block(&self, position: BlockPos) -> &Block { self.block(position) }
 
     /// Observation only. These cells remain dependencies when a fast path skips them.
@@ -499,38 +501,9 @@ pub trait World {
     // BlockState.getCollisionShape; PowderSnowBlock.getCollisionShape
     // Overrides must depend only on the block at position and context. Neighbor
     // state belongs in explicit World reads so recorders can see dependencies.
+    #[inline]
     fn collision_shape(&self, position: BlockPos, context: CollisionContext) -> &VoxelShape {
-        let block = self.block(position);
-        let above = context.feet_y > position[1] as f64 + 1.0 - 1.0e-5f32 as f64;
-        if block.inside == Inside::PowderSnow {
-            if context.fall_distance > 2.5 {
-                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
-                return SHAPE.get_or_init(|| VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]));
-            }
-            if context.leather_boots && above && !context.descending {
-                static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
-                return SHAPE.get_or_init(|| Block::full().shape);
-            }
-            static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
-            return SHAPE.get_or_init(VoxelShape::default);
-        }
-        if above && context.descending {
-            if let Some(state) = &block.sneak_shape {
-                return state;
-            }
-        }
-        if !above && context.feet_y > position[1] as f64 - 1.0e-5f32 as f64 {
-            if let Some(state) = &block.inside_cell_shape { return state; }
-        }
-        if let Some(state) = if above {
-            &block.above_shape
-        } else {
-            &block.below_shape
-        }
-        {
-            return state;
-        }
-        &block.shape
+        block_collision_shape(self.block(position), position[1], context)
     }
 
     // Entity.collectCollidersIgnoringWorldBorder: the owned form of `visit_collisions`.
@@ -541,6 +514,7 @@ pub trait World {
     }
 
     // CollisionGetter.noCollision
+    #[inline]
     fn no_collision(&self, bounds: Aabb, context: CollisionContext) -> bool {
         self.visit_collisions(bounds, context, |_| false)
     }
@@ -709,6 +683,36 @@ impl World for BoxWorld {
 }
 
 // BlockPos.containing
+#[inline(always)]
 pub fn block_pos(p: Vec3) -> BlockPos {
     [math::floor(p.x), math::floor(p.y), math::floor(p.z)]
+}
+
+#[inline]
+pub fn block_collision_shape(block: &Block, pos_y: i32, context: CollisionContext) -> &VoxelShape {
+    let above = context.feet_y > pos_y as f64 + 1.0 - 1.0e-5f32 as f64;
+    if block.inside == Inside::PowderSnow {
+        if context.fall_distance > 2.5 {
+            static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+            return SHAPE.get_or_init(|| VoxelShape::boxes(&[Aabb::new(0.0, 0.0, 0.0, 1.0, 0.9f32 as f64, 1.0)]));
+        }
+        if context.leather_boots && above && !context.descending {
+            static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+            return SHAPE.get_or_init(|| Block::full().shape);
+        }
+        static SHAPE: std::sync::OnceLock<VoxelShape> = std::sync::OnceLock::new();
+        return SHAPE.get_or_init(VoxelShape::default);
+    }
+    if above && context.descending {
+        if let Some(state) = &block.sneak_shape {
+            return state;
+        }
+    }
+    if !above && context.feet_y > pos_y as f64 - 1.0e-5f32 as f64 {
+        if let Some(state) = &block.inside_cell_shape { return state; }
+    }
+    if let Some(state) = if above { &block.above_shape } else { &block.below_shape } {
+        return state;
+    }
+    &block.shape
 }

@@ -8,9 +8,11 @@ pub mod rollout;
 use std::sync::OnceLock;
 
 use crowd_push::{CrowdPushGpuProgram, CrowdState, step_crowd_cpu};
-use min_plus::MinPlusGpuProgram;
+use min_plus::{LegsCost, MinPlusGpuProgram, PackedTopoGrid, UploadedTopoGrid, solve_min_plus_cpu};
 use opencl::{GpuDevice, GpuDeviceInfo};
-use rollout::RolloutGpuProgram;
+use rollout::{
+    RolloutGpuProgram, RolloutOut, RolloutReq, SolidVoxelBox, UploadedVoxelBox, run_rollouts_cpu,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CrossoverPolicy {
@@ -39,7 +41,11 @@ impl CrossoverPolicy {
     }
 
     pub fn should_use_rollout(&self, candidates: usize, ticks: usize) -> bool {
-        candidates.saturating_mul(ticks) >= self.rollout_min_bot_ticks
+        self.should_use_rollout_total(candidates.saturating_mul(ticks))
+    }
+
+    pub fn should_use_rollout_total(&self, total_bot_ticks: usize) -> bool {
+        total_bot_ticks >= self.rollout_min_bot_ticks
     }
 }
 
@@ -77,6 +83,82 @@ impl GpuContext {
     pub fn device_info(&self) -> &GpuDeviceInfo {
         self.device.info()
     }
+}
+
+/// Crossover-gated batched 3D `(min, +)` `TopoField` wavefront solver: runs on RX 7900 XTX
+/// when `goals * vol >= 250_000`, else CPU `BinaryHeap` reference.
+/// Returns `Ok((dist, true))` if executed on GPU, `Ok((dist, false))` if executed on CPU.
+pub fn min_plus_auto(
+    grid: &PackedTopoGrid,
+    goal_cells: &[usize],
+    legs: LegsCost,
+    max_sweeps: usize,
+) -> Result<(Vec<f32>, bool), String> {
+    min_plus_auto_uploaded(grid, None, goal_cells, legs, max_sweeps)
+}
+
+/// Same as `min_plus_auto`, reusing a pre-uploaded VRAM grid buffer when available.
+pub fn min_plus_auto_uploaded(
+    grid: &PackedTopoGrid,
+    uploaded: Option<&UploadedTopoGrid>,
+    goal_cells: &[usize],
+    legs: LegsCost,
+    max_sweeps: usize,
+) -> Result<(Vec<f32>, bool), String> {
+    if goal_cells.is_empty() || grid.vol() == 0 {
+        return Ok((Vec::new(), false));
+    }
+    if let Some(ctx) = GpuContext::global()
+        && ctx.policy.should_use_min_plus(goal_cells.len(), grid.vol())
+    {
+        let sweeps = if max_sweeps == 0 {
+            (grid.dx + grid.dy + grid.dz) * 2
+        } else {
+            max_sweeps
+        };
+        let (dist, _, _) = match uploaded {
+            Some(up) => ctx
+                .min_plus
+                .solve_batch_uploaded(up, goal_cells, legs, sweeps)?,
+            None => ctx.min_plus.solve_batch(grid, goal_cells, legs, sweeps)?,
+        };
+        return Ok((dist, true));
+    }
+    Ok((solve_min_plus_cpu(grid, goal_cells, legs, 8), false))
+}
+
+/// Crossover-gated batched `sin.bin`-exact kinematic rollouts: runs on RX 7900 XTX
+/// when `candidates * ticks >= 1_000_000`, else CPU reference.
+/// Returns `Ok((outs, true))` if executed on GPU, `Ok((outs, false))` if executed on CPU.
+pub fn rollout_auto(
+    reqs: &[RolloutReq],
+    voxels: &SolidVoxelBox,
+) -> Result<(Vec<RolloutOut>, bool), String> {
+    rollout_auto_uploaded(reqs, voxels, None)
+}
+
+/// Same as `rollout_auto`, reusing a pre-uploaded VRAM voxel buffer when available.
+pub fn rollout_auto_uploaded(
+    reqs: &[RolloutReq],
+    voxels: &SolidVoxelBox,
+    uploaded: Option<&UploadedVoxelBox>,
+) -> Result<(Vec<RolloutOut>, bool), String> {
+    if reqs.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+    let total_bot_ticks = reqs
+        .iter()
+        .fold(0usize, |acc, r| acc.saturating_add(r.ticks as usize));
+    if let Some(ctx) = GpuContext::global()
+        && ctx.policy.should_use_rollout_total(total_bot_ticks)
+    {
+        let (outs, _) = match uploaded {
+            Some(up) => ctx.rollout.run_batch_uploaded(reqs, up)?,
+            None => ctx.rollout.run_batch(reqs, voxels)?,
+        };
+        return Ok((outs, true));
+    }
+    Ok((run_rollouts_cpu(reqs, voxels, 8), false))
 }
 
 /// Crossover-gated dense `Entity.push` step: runs on RX 7900 XTX above crossover, else CPU reference.

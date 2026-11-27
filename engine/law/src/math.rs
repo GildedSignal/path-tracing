@@ -7,38 +7,56 @@ pub fn sin_table_bytes() -> &'static [u8; 262144] {
 }
 
 // Mth.sin
+#[inline(always)]
 pub fn sin(value: f64) -> f32 {
     table(((value * SIN_SCALE) as i64 & 65535) as usize)
 }
 
 // Mth.cos
+#[inline(always)]
 pub fn cos(value: f64) -> f32 {
     table(((value * SIN_SCALE + 16384.0) as i64 & 65535) as usize)
 }
 
 // Mth.lambda$static$0
+#[inline(always)]
 fn table(index: usize) -> f32 {
-    f32::from_le_bytes(SIN[index * 4..index * 4 + 4].try_into().unwrap())
+    let base = (index & 65535) * 4;
+    f32::from_le_bytes([SIN[base], SIN[base + 1], SIN[base + 2], SIN[base + 3]])
 }
 
 // Mth.floor
+#[inline(always)]
 pub fn floor(value: f64) -> i32 {
-    value.floor() as i32
+    if value >= -2147483648.0 && value < 2147483648.0 {
+        let i = value as i32;
+        i - i32::from(value < i as f64)
+    } else {
+        value.floor() as i32
+    }
 }
 
 // Mth.lfloor
+#[inline(always)]
 pub fn lfloor(value: f64) -> i64 {
     value.floor() as i64
 }
 
 // Mth.ceil
+#[inline(always)]
 pub fn ceil(value: f64) -> i32 {
-    value.ceil() as i32
+    if value > -2147483648.0 && value <= 2147483647.0 {
+        let i = value as i32;
+        i + i32::from(value > i as f64)
+    } else {
+        value.ceil() as i32
+    }
 }
 
 // Mth.floor(float): f2d, Math.floor, d2i
+#[inline(always)]
 pub fn floor_f32(value: f32) -> i32 {
-    (value as f64).floor() as i32
+    floor(value as f64)
 }
 
 // Mth.lerp(DDD): start + delta * (end - start)

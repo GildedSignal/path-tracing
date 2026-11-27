@@ -18,12 +18,12 @@ SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` section
 
 | Course | SpectraPhysics 1.21.4 | SpectraPhysics 26.1 | the law, 26.2 | ratio against 26.1 |
 |---|---|---|---|---|
-| `exact`: their `tick.js` (49 of 50 players fall off the ±30 floor, to y ≈ −7,967) | 5.9–7.2 | 11.0–11.1 | 1.06–1.6 | ~7–10× |
-| `floored`: the same obstacles, stone to ±128, all 50 stay on the ground | 21.7–23.2 | 31.1–34.8 | 2.5–3.3 | ~10–13× |
+| `exact`: their `tick.js` (49 of 50 players fall off the ±30 floor, to y ≈ −7,967) | 5.9–7.2 | 11.0–11.1 | 0.93–1.16 | ~9–12× |
+| `floored`: the same obstacles, stone to ±128, all 50 stay on the ground | 21.7–23.2 | 31.1–34.8 | 0.89–1.09 | ~28–39× |
 
 - Their README's "~3 µs" is not reproduced on this CPU: their own bench gives 5.9 µs at its default version, and the number is mostly free fall.
-- `straight` (one player, plain stone, the `law` `bench` workload): 1.8–2.7 µs on our sections, against 0.85–0.98 µs on `BoxWorld`. The goal's law-tick row (0.6–0.95 µs) is the box world; on the sections the planner reads, a tick is 2–3× that, ~1 order above the 0.1–0.3 µs floor. Most of it is fixed per tick, not per block: removing the water changes nothing.
-- Each section holds a `collide` mask, the 4³ subcells holding a state that can collide; a sweep through the others is proven empty in one bit test. It took `exact` from 3.6 to 1.06–1.6 µs and `straight` from 3.0 to 1.8–2.7 µs.
+- `straight` (one player, plain stone, the `law` `bench` workload): `0.62 µs` median (`0.61–0.63 µs`) on our sections, matching `BoxWorld` (`0.57–0.98 µs`) and near the `0.1–0.3 µs` floor.
+- Each section holds split 4³ collision masks (`collide` and `collide_beyond`), shift-packed `PaletteSlot` entries (direct `&'static Block`, reach, offset/unknown flags), and `WorldSnapshot` `visit_collisions` / `collides_with_suffocating_block` / `collision_cell_bounds` overrides paired with SSE2 inline `math::floor`/`ceil` and single-tick `core` hook/climb/push-out deduplication so halo-free floor and air queries resolve in bitmask checks.
 - **BlockStep's protocol, offline on 26.2** (`engine/plan/src/bin/blockstep.rs`; evidence `D:\path-tracing-evidence\blockstep-20261126\`): one seed (`1162026`), each biome's interior found by `locate biome` grids (desert, windswept forest, snowy plains, snowy slopes, swamp, forest), goals at (±d, ±d), bare legs, cold store per task, every plan replayed through `law::try_tick`. Predicted, not yet flown; the terrain is not the thesis's.
 
 | d | solved | mean T (s) | with thinking | BlockStep | Baritone | floor |

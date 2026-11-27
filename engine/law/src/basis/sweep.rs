@@ -39,9 +39,41 @@ pub fn axis_order(v: Vec3) -> [Axis; 3] {
 /// A box set, visited in its fixed order; false when the visitor stopped.
 trait Boxes { fn each(&self, f: impl FnMut(ShapeView<'_>) -> bool) -> bool; }
 impl Boxes for [VoxelShape] { fn each(&self, mut f: impl FnMut(ShapeView<'_>) -> bool) -> bool { self.iter().all(|s| f(s.view())) } }
-impl Boxes for [Option<SharedCollider>] { fn each(&self, mut f: impl FnMut(ShapeView<'_>) -> bool) -> bool { self.iter().flatten().all(|s| f(s.view())) } }
+impl Boxes for [SharedCollider] { fn each(&self, mut f: impl FnMut(ShapeView<'_>) -> bool) -> bool { self.iter().all(|s| f(s.view())) } }
 struct InWorld<'a, W>(&'a W, Aabb, CollisionContext);
 impl<W: World> Boxes for InWorld<'_, W> { fn each(&self, f: impl FnMut(ShapeView<'_>) -> bool) -> bool { self.0.visit_collisions(self.1, self.2, f) } }
+
+struct InlineColliders {
+    buf: [std::mem::MaybeUninit<SharedCollider>; 32],
+    len: usize,
+}
+impl InlineColliders {
+    #[inline(always)]
+    fn new() -> Self {
+        Self { buf: [const { std::mem::MaybeUninit::uninit() }; 32], len: 0 }
+    }
+    #[inline(always)]
+    fn push(&mut self, c: SharedCollider) -> bool {
+        if self.len == self.buf.len() { return false; }
+        self.buf[self.len].write(c);
+        self.len += 1;
+        true
+    }
+    #[inline(always)]
+    fn as_slice(&self) -> &[SharedCollider] {
+        // SAFETY: `0..self.len` are initialized by `push`.
+        unsafe { std::slice::from_raw_parts(self.buf.as_ptr().cast(), self.len) }
+    }
+}
+impl Drop for InlineColliders {
+    #[inline(always)]
+    fn drop(&mut self) {
+        for slot in &mut self.buf[..self.len] {
+            // SAFETY: `0..self.len` were initialized by `push`.
+            unsafe { slot.assume_init_drop(); }
+        }
+    }
+}
 
 /// The kernel: `b` moved by `wanted` through a non-empty box set, Y then the larger
 /// horizontal axis; each axis stops at the first box that holds it under `1e-7`.
@@ -76,17 +108,11 @@ pub fn shapes(wanted: Vec3, b: Aabb, shapes: &[VoxelShape]) -> Vec3 {
 /// inline; past that the world is streamed again per axis, in the same order.
 #[inline]
 pub(crate) fn world(world: &impl World, bounds: Aabb, context: CollisionContext, wanted: Vec3, b: Aabb) -> Pass {
-    let mut inline: [Option<SharedCollider>; 32] = std::array::from_fn(|_| None);
-    let mut len = 0;
-    let complete = world.visit_collisions(bounds, context, |shape| {
-        if len == inline.len() { return false; }
-        inline[len] = Some(shape.shared());
-        len += 1;
-        true
-    });
+    let mut inline = InlineColliders::new();
+    let complete = world.visit_collisions(bounds, context, |shape| inline.push(shape.shared()));
     if !complete { axes(&InWorld(world, bounds, context), bounds, b, wanted) }
-    else if len == 0 { Pass::free(bounds, b, wanted) }
-    else { axes(&inline[..len], bounds, b, wanted) }
+    else if inline.len == 0 { Pass::free(bounds, b, wanted) }
+    else { axes(inline.as_slice(), bounds, b, wanted) }
 }
 
 /// `Entity.collide`: the sweep, then, when it stopped a horizontal axis on or onto the

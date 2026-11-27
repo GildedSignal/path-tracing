@@ -1,9 +1,11 @@
 use crate::{ BlockState, LoadError, WorldReader, nbt, region::metadata};
 use law::{
     basis::cell::{self, models, ModelId, StateId, BEYOND, OWN_CELL},
-    Aabb, Block, BlockPos, FluidKind, Inside, World,
+    shapes::ShapeView,
+    block_collision_shape, block_pos,
+    Aabb, Block, BlockPos, CollisionContext, FluidKind, Inside, Vec3, World,
 };
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 
 const SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 const UNKNOWN_STATE: StateId = StateId(u16::MAX);
@@ -19,11 +21,34 @@ pub fn model(state: &BlockState) -> Result<&'static Block, String> {
     state_id(state).map(StateId::model_block)
 }
 
+const FLAG_FLUID: u8 = 1;
+const FLAG_INSIDE: u8 = 2;
+const FLAG_OFFSET: u8 = 4;
+const FLAG_UNKNOWN: u8 = 8;
+
+#[derive(Clone, Copy)]
+struct PaletteSlot {
+    block: &'static Block,
+    state: StateId,
+    model: ModelId,
+    reach: u8,
+}
+
 /// One 16³ section, its cells at `(y << 8) | (z << 4) | x`: a palette of states with their
 /// models, each cell's palette index packed at a power-of-two width (none when the section is
 /// uniform), and a summary of its 4³ subcells (bit `(y/4 << 4) | (z/4 << 2) | x/4`): `mixed`
 /// marks those holding more than one state, `other` those holding a state unlike the first.
-struct Section { states: Box<[StateId]>, models: Box<[ModelId]>, width: u32, data: Box<[u64]>, mixed: u64, other: u64, collide: u64, flags: u8 }
+struct Section {
+    slots: Box<[PaletteSlot]>,
+    width: u32,
+    shift: u8,
+    data: Box<[u64]>,
+    mixed: u64,
+    other: u64,
+    collide: u64,
+    collide_beyond: u64,
+    flags: u8,
+}
 impl Section {
     fn new(cells: &[StateId; 4096]) -> Self {
         let mut states = vec![cells[0]];
@@ -33,6 +58,7 @@ impl Section {
         }).collect();
         // The width in bits: none for one state, else the power of two that holds every index.
         let width = if states.len() == 1 { 0 } else { (u16::BITS - (states.len() as u16 - 1).leading_zeros()).next_power_of_two() };
+        let shift = if width == 0 { 0 } else { width.trailing_zeros() as u8 };
         let mut data = vec![0u64; width as usize * 64];
         let (mut mixed, mut other) = (0, 0);
         for (i, &k) in index.iter().enumerate() {
@@ -42,29 +68,59 @@ impl Section {
             if k != index[i & 0xccc] { mixed |= bit; }
         }
         let mut flags = 0u8;
-        let models = states.iter().map(|&s| {
-            if s == UNKNOWN_STATE {
-                flags |= 3;
-                UNKNOWN_MODEL
-            } else {
-                let b = s.model_block();
-                if b.fluid.kind != FluidKind::Empty { flags |= 1; }
-                if b.has_inside_effects() { flags |= 2; }
-                s.model().expect("a modeled state")
-            }
-        }).collect::<Box<[ModelId]>>();
-        // The 4³ subcells holding a state that can collide: a sweep through the others meets nothing.
         let reach = &cell::models().reach;
-        let collides: Vec<bool> = models.iter().map(|&m| m == UNKNOWN_MODEL || reach[m.0 as usize] != 0).collect();
-        let collide = index.iter().enumerate().filter(|&(_, &k)| collides[k as usize])
-            .fold(0u64, |c, (i, _)| c | 1u64 << (((i >> 10) << 4) | (((i >> 6) & 3) << 2) | ((i >> 2) & 3)));
-        Self { states: states.into(), models, width, data: data.into(), mixed, other, collide, flags }
+        static FULL_FALLBACK: OnceLock<Block> = OnceLock::new();
+        let slots = states.iter().map(|&s| {
+            if s == UNKNOWN_STATE {
+                flags |= FLAG_FLUID | FLAG_INSIDE | FLAG_UNKNOWN;
+                PaletteSlot {
+                    block: FULL_FALLBACK.get_or_init(Block::full),
+                    state: s,
+                    model: UNKNOWN_MODEL,
+                    reach: BEYOND,
+                }
+            } else {
+                let model = s.model().expect("a modeled state");
+                let block = if model.fixed() {
+                    model.block_at([0, 0, 0])
+                } else {
+                    flags |= FLAG_OFFSET;
+                    s.model_block()
+                };
+                if block.fluid.kind != FluidKind::Empty { flags |= FLAG_FLUID; }
+                if block.has_inside_effects() { flags |= FLAG_INSIDE; }
+                PaletteSlot { block, state: s, model, reach: reach[model.0 as usize] }
+            }
+        }).collect::<Box<[PaletteSlot]>>();
+        // The 4³ subcells holding a state that can collide: a sweep through the others meets nothing.
+        let (mut collide, mut collide_beyond) = (0u64, 0u64);
+        for (i, &k) in index.iter().enumerate() {
+            let r = slots[k as usize].reach;
+            if r != 0 {
+                let bit = 1u64 << (((i >> 10) << 4) | (((i >> 6) & 3) << 2) | ((i >> 2) & 3));
+                collide |= bit;
+                if r == BEYOND { collide_beyond |= bit; }
+            }
+        }
+        Self { slots, width, shift, data: data.into(), mixed, other, collide, collide_beyond, flags }
     }
-    #[inline]
+    #[inline(always)]
     fn index(&self, i: usize) -> usize {
         if self.width == 0 { return 0; }
-        let bit = i * self.width as usize;
-        ((self.data[bit / 64] >> (bit % 64)) & ((1 << self.width) - 1)) as usize
+        let bit = i << self.shift;
+        ((self.data[bit >> 6] >> (bit & 63)) & ((1u64 << self.width) - 1)) as usize
+    }
+    #[inline(always)]
+    fn slot_at(&self, i: usize) -> PaletteSlot {
+        self.slots[self.index(i)]
+    }
+    #[inline(always)]
+    fn block_of(&self, slot: PaletteSlot, p: BlockPos) -> &Block {
+        if (self.flags & FLAG_OFFSET) == 0 {
+            slot.block
+        } else {
+            slot.model.block_at(p)
+        }
     }
 }
 
@@ -171,10 +227,57 @@ impl WorldSnapshot {
         Ok((origin, span, sections.into_iter().map(|s| s.expect("every section loaded")).collect()))
     }
     pub fn bounds(&self) -> (BlockPos, BlockPos) { (self.min,self.max) }
+    #[inline(always)]
+    fn covers(&self, p: BlockPos) -> bool {
+        p[0] >= self.min[0] && p[0] <= self.max[0]
+            && p[1] >= self.min[1] && p[1] <= self.max[1]
+            && p[2] >= self.min[2] && p[2] <= self.max[2]
+    }
+    #[cold]
+    #[inline(never)]
+    fn outside_box(&self, p: BlockPos) -> ! {
+        panic!("snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint", self.min, self.max);
+    }
+    #[inline(always)]
+    fn assert_covered(&self, p: BlockPos) {
+        if !self.covers(p) { self.outside_box(p); }
+    }
+    #[inline(always)]
+    fn section_idx(&self, sx: i32, sy: i32, sz: i32) -> usize {
+        let oz = (sz - self.origin[2]) as usize;
+        let oy = (sy - self.origin[1]) as usize;
+        let ox = (sx - self.origin[0]) as usize;
+        (oz * self.span[1] + oy) * self.span[0] + ox
+    }
+    #[inline(always)]
+    fn section(&self, p: BlockPos) -> &Section {
+        self.assert_covered(p);
+        &self.sections[self.section_idx(p[0] >> 4, p[1] >> 4, p[2] >> 4)]
+    }
     fn section_flags_in(&self, lo: BlockPos, hi: BlockPos, mask: u8) -> bool {
-        for sz in lo[2] >> 4..=hi[2] >> 4 {
-            for sy in lo[1] >> 4..=hi[1] >> 4 {
-                for sx in lo[0] >> 4..=hi[0] >> 4 {
+        if lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2] { return false; }
+        let s_lo = [lo[0] >> 4, lo[1] >> 4, lo[2] >> 4];
+        let s_hi = [hi[0] >> 4, hi[1] >> 4, hi[2] >> 4];
+        if lo[0] >= self.min[0] && lo[1] >= self.min[1] && lo[2] >= self.min[2]
+            && s_hi[0] <= (self.max[0] >> 4) && s_hi[1] <= (self.max[1] >> 4) && s_hi[2] <= (self.max[2] >> 4)
+        {
+            if s_lo == s_hi {
+                return (self.sections[self.section_idx(s_lo[0], s_lo[1], s_lo[2])].flags & mask) != 0;
+            }
+            for sz in s_lo[2]..=s_hi[2] {
+                let z_off = (sz - self.origin[2]) as usize * self.span[1];
+                for sy in s_lo[1]..=s_hi[1] {
+                    let row = (z_off + (sy - self.origin[1]) as usize) * self.span[0];
+                    for sx in s_lo[0]..=s_hi[0] {
+                        if (self.sections[row + (sx - self.origin[0]) as usize].flags & mask) != 0 { return true; }
+                    }
+                }
+            }
+            return false;
+        }
+        for sz in s_lo[2]..=s_hi[2] {
+            for sy in s_lo[1]..=s_hi[1] {
+                for sx in s_lo[0]..=s_hi[0] {
                     let base = [sx * 16, sy * 16, sz * 16];
                     let p = [0, 1, 2].map(|i| lo[i].max(base[i]));
                     if !self.covers(p) || (self.section(p).flags & mask) != 0 {
@@ -185,28 +288,110 @@ impl WorldSnapshot {
         }
         false
     }
-    /// Whether a 4³ subcell met by `lo..=hi` holds a state that can collide.
-    fn may_collide(&self, lo: BlockPos, hi: BlockPos) -> bool {
-        for sz in lo[2] >> 4..=hi[2] >> 4 { for sy in lo[1] >> 4..=hi[1] >> 4 { for sx in lo[0] >> 4..=hi[0] >> 4 {
-            let base = [sx * 16, sy * 16, sz * 16];
-            let section = self.section([0, 1, 2].map(|i| lo[i].max(base[i])));
-            if section.collide == 0 { continue; }
-            let (a, b): (BlockPos, BlockPos) = ([0, 1, 2].map(|i| (lo[i].max(base[i]) - base[i]) >> 2), [0, 1, 2].map(|i| (hi[i].min(base[i] + 15) - base[i]) >> 2));
-            for qy in a[1]..=b[1] { for qz in a[2]..=b[2] { for qx in a[0]..=b[0] {
-                if section.collide >> ((qy << 4) | (qz << 2) | qx) & 1 != 0 { return true; }
-            } } }
-        } } }
-        false
-    }
-    fn covers(&self, p: BlockPos) -> bool { (0..3).all(|i| p[i] >= self.min[i] && p[i] <= self.max[i]) }
-    fn assert_covered(&self, p: BlockPos) {
-        assert!(self.covers(p), "snapshot query {p:?} outside validated box {:?}..{:?}; load the law's entire read footprint",self.min,self.max);
-    }
     #[inline]
-    fn section(&self, p: BlockPos) -> &Section {
-        self.assert_covered(p);
-        let s = [0, 1, 2].map(|a| ((p[a] >> 4) - self.origin[a]) as usize);
-        &self.sections[(s[2] * self.span[1] + s[1]) * self.span[0] + s[0]]
+    fn scan_collision(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> (ScanResult, BlockPos, BlockPos) {
+        if lo[0] > hi[0] || lo[1] > hi[1] || lo[2] > hi[2] {
+            return (ScanResult::Empty, lo, hi);
+        }
+        if !self.covers(lo) || !self.covers(hi) {
+            let near_lo = [law::math::floor(bounds.min.x), law::math::floor(bounds.min.y), law::math::floor(bounds.min.z)];
+            let near_hi = [law::math::floor(bounds.max.x), law::math::floor(bounds.max.y), law::math::floor(bounds.max.z)];
+            return (ScanResult::Uncovered, near_lo, near_hi);
+        }
+        let s_lo = [lo[0] >> 4, lo[1] >> 4, lo[2] >> 4];
+        let s_hi = [hi[0] >> 4, hi[1] >> 4, hi[2] >> 4];
+        if s_lo == s_hi {
+            let idx = self.section_idx(s_lo[0], s_lo[1], s_lo[2]);
+            let sec = &self.sections[idx];
+            if sec.collide == 0 {
+                return (ScanResult::Empty, lo, hi);
+            }
+        }
+        let near_lo = [
+            law::math::floor(bounds.min.x).max(lo[0]),
+            law::math::floor(bounds.min.y).max(lo[1]),
+            law::math::floor(bounds.min.z).max(lo[2]),
+        ];
+        let near_hi = [
+            law::math::floor(bounds.max.x).min(hi[0]),
+            law::math::floor(bounds.max.y).min(hi[1]),
+            law::math::floor(bounds.max.z).min(hi[2]),
+        ];
+        let mut beyond = false;
+        let mut box_lo = [i32::MAX; 3];
+        let mut box_hi = [i32::MIN; 3];
+        let mut active_count = 0usize;
+        let mut last_idx = 0usize;
+        for sz in s_lo[2]..=s_hi[2] {
+            let z_off = (sz - self.origin[2]) as usize * self.span[1];
+            for sy in s_lo[1]..=s_hi[1] {
+                let row = (z_off + (sy - self.origin[1]) as usize) * self.span[0];
+                for sx in s_lo[0]..=s_hi[0] {
+                    let idx = row + (sx - self.origin[0]) as usize;
+                    let sec = &self.sections[idx];
+                    if sec.collide == 0 { continue; }
+                    let base = [sx * 16, sy * 16, sz * 16];
+                    let mut touched = false;
+                    if sec.collide_beyond != 0 {
+                        let hb_lo = [lo[0].max(base[0]), lo[1].max(base[1]), lo[2].max(base[2])];
+                        let hb_hi = [hi[0].min(base[0] + 15), hi[1].min(base[1] + 15), hi[2].min(base[2] + 15)];
+                        let mask = subcell_mask(
+                            [(hb_lo[0] - base[0]) >> 2, (hb_lo[1] - base[1]) >> 2, (hb_lo[2] - base[2]) >> 2],
+                            [(hb_hi[0] - base[0]) >> 2, (hb_hi[1] - base[1]) >> 2, (hb_hi[2] - base[2]) >> 2],
+                        );
+                        let bm = sec.collide_beyond & mask;
+                        if bm != 0 {
+                            beyond = true;
+                            touched = true;
+                            let qy_min = (bm.trailing_zeros() as i32) >> 4;
+                            let qy_max = (63 - bm.leading_zeros() as i32) >> 4;
+                            let y0 = hb_lo[1].max(base[1] + (qy_min << 2));
+                            let y1 = hb_hi[1].min(base[1] + (qy_max << 2) + 3);
+                            box_lo[0] = box_lo[0].min(hb_lo[0]);
+                            box_lo[1] = box_lo[1].min(y0);
+                            box_lo[2] = box_lo[2].min(hb_lo[2]);
+                            box_hi[0] = box_hi[0].max(hb_hi[0]);
+                            box_hi[1] = box_hi[1].max(y1);
+                            box_hi[2] = box_hi[2].max(hb_hi[2]);
+                        }
+                    }
+                    let n_lo = [near_lo[0].max(base[0]), near_lo[1].max(base[1]), near_lo[2].max(base[2])];
+                    let n_hi = [near_hi[0].min(base[0] + 15), near_hi[1].min(base[1] + 15), near_hi[2].min(base[2] + 15)];
+                    if n_lo[0] <= n_hi[0] && n_lo[1] <= n_hi[1] && n_lo[2] <= n_hi[2] {
+                        let mask = subcell_mask(
+                            [(n_lo[0] - base[0]) >> 2, (n_lo[1] - base[1]) >> 2, (n_lo[2] - base[2]) >> 2],
+                            [(n_hi[0] - base[0]) >> 2, (n_hi[1] - base[1]) >> 2, (n_hi[2] - base[2]) >> 2],
+                        );
+                        let om = sec.collide & mask;
+                        if om != 0 {
+                            touched = true;
+                            let qy_min = (om.trailing_zeros() as i32) >> 4;
+                            let qy_max = (63 - om.leading_zeros() as i32) >> 4;
+                            let y0 = n_lo[1].max(base[1] + (qy_min << 2));
+                            let y1 = n_hi[1].min(base[1] + (qy_max << 2) + 3);
+                            box_lo[0] = box_lo[0].min(n_lo[0]);
+                            box_lo[1] = box_lo[1].min(y0);
+                            box_lo[2] = box_lo[2].min(n_lo[2]);
+                            box_hi[0] = box_hi[0].max(n_hi[0]);
+                            box_hi[1] = box_hi[1].max(y1);
+                            box_hi[2] = box_hi[2].max(n_hi[2]);
+                        }
+                    }
+                    if touched {
+                        active_count += 1;
+                        last_idx = idx;
+                    }
+                }
+            }
+        }
+        let res = if active_count == 0 {
+            ScanResult::Empty
+        } else if active_count == 1 {
+            ScanResult::Single { section_idx: last_idx, beyond, lo: box_lo, hi: box_hi }
+        } else {
+            ScanResult::Multi { beyond, lo: box_lo, hi: box_hi }
+        };
+        (res, near_lo, near_hi)
     }
     /// The one state every cell of `lo..=hi` holds, if one does. Each 4³ subcell the box meets
     /// answers from its section's summary; cells are read only in subcells holding two states.
@@ -218,23 +403,109 @@ impl WorldSnapshot {
             let base = [sx * 16, sy * 16, sz * 16];
             let section = self.section([0, 1, 2].map(|i| lo[i].max(base[i])));
             if section.width == 0 {
-                if !agree(section.states[0]) { return None; }
+                if !agree(section.slots[0].state) { return None; }
                 continue;
             }
             let (a, b): (BlockPos, BlockPos) = ([0, 1, 2].map(|i| lo[i].max(base[i]) - base[i]), [0, 1, 2].map(|i| hi[i].min(base[i] + 15) - base[i]));
             for qy in a[1] >> 2..=b[1] >> 2 { for qz in a[2] >> 2..=b[2] >> 2 { for qx in a[0] >> 2..=b[0] >> 2 {
                 let bit = 1u64 << ((qy << 4) | (qz << 2) | qx);
-                if section.other & bit == 0 { if !agree(section.states[0]) { return None; } continue; }
-                if section.mixed & bit == 0 { if !agree(section.states[section.index(((qy << 10) | (qz << 6) | (qx << 2)) as usize)]) { return None; } continue; }
+                if section.other & bit == 0 { if !agree(section.slots[0].state) { return None; } continue; }
+                if section.mixed & bit == 0 { if !agree(section.slots[section.index(((qy << 10) | (qz << 6) | (qx << 2)) as usize)].state) { return None; } continue; }
                 for y in a[1].max(qy * 4)..=b[1].min(qy * 4 + 3) { for z in a[2].max(qz * 4)..=b[2].min(qz * 4 + 3) { for x in a[0].max(qx * 4)..=b[0].min(qx * 4 + 3) {
-                    if !agree(section.states[section.index(((y << 8) | (z << 4) | x) as usize)]) { return None; }
+                    if !agree(section.slots[section.index(((y << 8) | (z << 4) | x) as usize)].state) { return None; }
                 } } }
             } } }
         } } }
         found
     }
 }
-#[inline]
+impl WorldSnapshot {
+    #[inline(always)]
+    fn for_each_collision_slot(
+        &self,
+        bounds: Aabb,
+        lo: BlockPos,
+        hi: BlockPos,
+        mut visit: impl FnMut(&Section, PaletteSlot, BlockPos) -> bool,
+    ) -> bool {
+        let (scan, near_lo, near_hi) = self.scan_collision(bounds, lo, hi);
+        let near = |x: i32, y: i32, z: i32| {
+            z >= near_lo[2] && z <= near_hi[2] && y >= near_lo[1] && y <= near_hi[1] && x >= near_lo[0] && x <= near_hi[0]
+        };
+        match scan {
+            ScanResult::Empty => true,
+            ScanResult::Uncovered => {
+                for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] {
+                    let p = [x, y, z];
+                    let sec = self.section(p);
+                    let slot = sec.slot_at(local(p));
+                    if (slot.reach == BEYOND || slot.reach == OWN_CELL && near(x, y, z)) && !visit(sec, slot, p) {
+                        return false;
+                    }
+                } } }
+                true
+            }
+            ScanResult::Single { section_idx, beyond, lo: s_lo, hi: s_hi } => {
+                let sec = &self.sections[section_idx];
+                if sec.width == 0 {
+                    let slot = sec.slots[0];
+                    if slot.reach == 0 { return true; }
+                    for z in s_lo[2]..=s_hi[2] { for y in s_lo[1]..=s_hi[1] { for x in s_lo[0]..=s_hi[0] {
+                        if (slot.reach == BEYOND || !beyond || near(x, y, z)) && !visit(sec, slot, [x, y, z]) {
+                            return false;
+                        }
+                    } } }
+                } else {
+                    for z in s_lo[2]..=s_hi[2] { for y in s_lo[1]..=s_hi[1] { for x in s_lo[0]..=s_hi[0] {
+                        let slot = sec.slot_at(local([x, y, z]));
+                        if (slot.reach == BEYOND || slot.reach == OWN_CELL && (!beyond || near(x, y, z)))
+                            && !visit(sec, slot, [x, y, z])
+                        {
+                            return false;
+                        }
+                    } } }
+                }
+                true
+            }
+            ScanResult::Multi { beyond, lo: m_lo, hi: m_hi } => {
+                for z in m_lo[2]..=m_hi[2] {
+                    let z_off = ((z >> 4) - self.origin[2]) as usize * self.span[1];
+                    for y in m_lo[1]..=m_hi[1] {
+                        let row = (z_off + ((y >> 4) - self.origin[1]) as usize) * self.span[0];
+                        for x in m_lo[0]..=m_hi[0] {
+                            let sec = &self.sections[row + ((x >> 4) - self.origin[0]) as usize];
+                            if sec.collide == 0 { continue; }
+                            let slot = sec.slot_at(local([x, y, z]));
+                            if (slot.reach == BEYOND || slot.reach == OWN_CELL && (!beyond || near(x, y, z)))
+                                && !visit(sec, slot, [x, y, z])
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+}
+enum ScanResult {
+    Uncovered,
+    Empty,
+    Single { section_idx: usize, beyond: bool, lo: BlockPos, hi: BlockPos },
+    Multi { beyond: bool, lo: BlockPos, hi: BlockPos },
+}
+#[inline(always)]
+fn subcell_mask(a: BlockPos, b: BlockPos) -> u64 {
+    let x_len = b[0] - a[0] + 1;
+    let z_len = b[2] - a[2] + 1;
+    let y_len = b[1] - a[1] + 1;
+    let xm = ((1u64 << x_len) - 1) << a[0];
+    let z_nibbles = (0x1111u64 >> ((4 - z_len) * 4)) << (a[2] * 4);
+    let y_planes = (0x0001_0001_0001_0001u64 >> ((4 - y_len) * 16)) << (a[1] * 16);
+    (xm * z_nibbles) * y_planes
+}
+#[inline(always)]
 fn local(p: BlockPos) -> usize { (((p[1] & 15) << 8) | ((p[2] & 15) << 4) | (p[0] & 15)) as usize }
 fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),LoadError> {
     let found = root.required("DataVersion")?.int()?;
@@ -244,18 +515,22 @@ fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),Loa
 impl World for WorldSnapshot {
     fn known_block(&self, p: BlockPos) -> Result<&Block, &str> {
         if !self.covers(p) { return Err("outside the saved snapshot"); }
-        if let Some(why) = self.unknown.get(&p) { return Err(why.as_str()); }
+        if !self.unknown.is_empty() {
+            if let Some(why) = self.unknown.get(&p) { return Err(why.as_str()); }
+        }
         Ok(self.block(p))
     }
     #[inline]
     fn block(&self, p: BlockPos) -> &Block {
-        if let Some(why) = self.unknown.get(&p) { panic!("unmodeled cell at {p:?}: {why}"); }
         let section = self.section(p);
-        section.models[section.index(local(p))].block_at(p)
+        if (section.flags & FLAG_UNKNOWN) != 0 {
+            if let Some(why) = self.unknown.get(&p) { panic!("unmodeled cell at {p:?}: {why}"); }
+        }
+        section.block_of(section.slot_at(local(p)), p)
     }
     fn state_id(&self, p: BlockPos) -> Option<StateId> {
         let section = self.section(p);
-        let s = section.states[section.index(local(p))];
+        let s = section.slot_at(local(p)).state;
         (s != UNKNOWN_STATE).then_some(s)
     }
     /// A box of one state answers as one cell unless its model is offset per position.
@@ -270,29 +545,67 @@ impl World for WorldSnapshot {
     fn has_fluid(&self) -> bool { self.fluids }
     fn has_inside_effects(&self) -> bool { self.inside || self.fluids }
     fn has_fluid_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
-        self.fluids && self.section_flags_in(lo, hi, 1)
+        self.fluids && self.section_flags_in(lo, hi, FLAG_FLUID)
     }
     fn has_inside_effects_in(&self, lo: BlockPos, hi: BlockPos) -> bool {
-        (self.inside || self.fluids) && self.section_flags_in(lo, hi, 2)
+        (self.inside || self.fluids) && self.section_flags_in(lo, hi, FLAG_INSIDE)
+    }
+    fn collision_cell_bounds(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos) -> Option<(BlockPos, BlockPos)> {
+        match self.scan_collision(bounds, lo, hi).0 {
+            ScanResult::Empty => None,
+            ScanResult::Uncovered => Some((lo, hi)),
+            ScanResult::Single { lo, hi, .. } | ScanResult::Multi { lo, hi, .. } => Some((lo, hi)),
+        }
     }
     /// The law's order (z, y, x), from the cells' own models: a cell that never collides
     /// is left out, and one whose collision stays in its cell is left out of the halo,
     /// where it cannot meet `bounds`. A cell outside the snapshot panics where the full scan
     /// would first ask it.
     fn visit_collision_cells(&self, bounds: Aabb, lo: BlockPos, hi: BlockPos, mut visit: impl FnMut(BlockPos) -> bool) -> bool {
-        if self.covers(lo) && self.covers(hi) && !self.may_collide(lo, hi) { return true; }
-        let near_lo = [bounds.min.x, bounds.min.y, bounds.min.z].map(law::math::floor);
-        let near_hi = [bounds.max.x, bounds.max.y, bounds.max.z].map(law::math::floor);
-        let near = |a: usize, v: i32| v >= near_lo[a] && v <= near_hi[a];
-        let reach = &models().reach;
-        for z in lo[2]..=hi[2] { for y in lo[1]..=hi[1] { for x in lo[0]..=hi[0] {
-            let p = [x, y, z];
-            let section = self.section(p);
-            let m = section.models[section.index(local(p))];
-            let r = if m == UNKNOWN_MODEL { BEYOND } else { reach[m.0 as usize] };
-            if (r == BEYOND || r == OWN_CELL && near(2, z) && near(1, y) && near(0, x)) && !visit(p) { return false; }
-        } } }
-        true
+        self.for_each_collision_slot(bounds, lo, hi, |_, _, p| visit(p))
+    }
+    fn visit_collisions(&self, bounds: Aabb, context: CollisionContext, mut visit: impl FnMut(ShapeView<'_>) -> bool) -> bool {
+        if !self.visit_extra_collisions(bounds, context, &mut visit) { return false; }
+        let tight_lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let tight_hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let (lo, hi) = (tight_lo.map(|v| v - 1), tight_hi.map(|v| v + 1));
+        self.for_each_collision_slot(bounds, lo, hi, |sec, slot, p| {
+            if slot.model == UNKNOWN_MODEL {
+                let _ = self.block(p);
+                unreachable!();
+            }
+            let local_shape = block_collision_shape(sec.block_of(slot, p), p[1], context);
+            if local_shape.is_empty() { return true; }
+            let offset = Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+            let shape = local_shape.at(offset);
+            let intersects = if local_shape.is_block() {
+                bounds.intersects(Aabb { min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0)) })
+            } else {
+                shape.intersects(bounds)
+            };
+            !intersects || visit(shape)
+        })
+    }
+    fn collides_with_suffocating_block(&self, bounds: Aabb, context: CollisionContext) -> bool {
+        let tight_lo = block_pos(bounds.min.minus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let tight_hi = block_pos(bounds.max.plus(Vec3::new(1.0e-7, 1.0e-7, 1.0e-7)));
+        let (lo, hi) = (tight_lo.map(|v| v - 1), tight_hi.map(|v| v + 1));
+        !self.for_each_collision_slot(bounds, lo, hi, |sec, slot, p| {
+            if slot.model == UNKNOWN_MODEL {
+                let _ = self.block(p);
+                unreachable!();
+            }
+            let block = sec.block_of(slot, p);
+            if !block.suffocating { return true; }
+            let local_shape = block_collision_shape(block, p[1], context);
+            let offset = Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+            let intersects = if local_shape.is_block() {
+                bounds.intersects(Aabb { min: offset, max: offset.plus(Vec3::new(1.0, 1.0, 1.0)) })
+            } else {
+                local_shape.at(offset).intersects(bounds)
+            };
+            !intersects
+        })
     }
 }
 

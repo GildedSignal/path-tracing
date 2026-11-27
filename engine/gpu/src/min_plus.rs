@@ -3,7 +3,7 @@ use std::{cmp::Reverse, collections::BinaryHeap, time::Instant};
 
 use law::{BlockPos, CollisionContext, FluidKind, World};
 
-use crate::opencl::{GpuDevice, GpuKernel, GpuProgram};
+use crate::opencl::{GpuBuffer, GpuDevice, GpuKernel, GpuProgram};
 
 /// Matches `engine/plan/src/defect.rs` `DIRS` order bit-for-bit.
 pub const DIRS: [BlockPos; 10] = [
@@ -131,38 +131,111 @@ impl PackedTopoGrid {
             !bb.never_collides() || bb.climbable
         };
 
-        for iz in 0..dz {
-            let z = min[2] + iz as i32;
-            for iy in 0..dy {
-                let y = min[1] + iy as i32;
-                for ix in 0..dx {
-                    let x = min[0] + ix as i32;
-                    let n = [x, y, z];
-                    let ci = (iz * dy + iy) * dx + ix;
-                    if !world.loaded(n) {
-                        continue;
-                    }
-                    let mut m = 0u16;
-                    if has_sup(n) {
-                        m |= FLAG_STEP_SUP;
-                    }
-                    if way_clear(n, n) {
-                        m |= FLAG_BODY_FITS;
-                    }
-                    for (k, d) in DIRS.iter().enumerate() {
-                        let cur = [n[0] - d[0], n[1] - d[1], n[2] - d[2]];
-                        if cur[0] >= min[0]
-                            && cur[0] <= max[0]
-                            && cur[1] >= min[1]
-                            && cur[1] <= max[1]
-                            && cur[2] >= min[2]
-                            && cur[2] <= max[2]
-                            && way_clear(n, cur)
+        let smin = min.map(|v| v.div_euclid(16));
+        let smax = max.map(|v| v.div_euclid(16));
+        for sz in smin[2]..=smax[2] {
+            for sy in smin[1]..=smax[1] {
+                for sx in smin[0]..=smax[0] {
+                    let sec_lo = [
+                        min[0].max(sx * 16),
+                        min[1].max(sy * 16),
+                        min[2].max(sz * 16),
+                    ];
+                    let sec_hi = [
+                        max[0].min(sx * 16 + 15),
+                        max[1].min(sy * 16 + 15),
+                        max[2].min(sz * 16 + 15),
+                    ];
+                    let halo_lo = [sec_lo[0] - 2, sec_lo[1] - 2, sec_lo[2] - 2];
+                    let halo_hi = [sec_hi[0] + 2, sec_hi[1] + 3, sec_hi[2] + 2];
+                    if let Some(b) = world.uniform(halo_lo, halo_hi) {
+                        if b.never_collides() && !b.climbable && b.fluid.kind == FluidKind::Empty {
+                            for z in sec_lo[2]..=sec_hi[2] {
+                                let iz = (z - min[2]) as usize;
+                                let y_base = iz * dy;
+                                for y in sec_lo[1]..=sec_hi[1] {
+                                    let iy = (y - min[1]) as usize;
+                                    let row_base = (y_base + iy) * dx;
+                                    for x in sec_lo[0]..=sec_hi[0] {
+                                        let ix = (x - min[0]) as usize;
+                                        let mut m = FLAG_BODY_FITS;
+                                        for (k, d) in DIRS.iter().enumerate() {
+                                            let cur = [x - d[0], y - d[1], z - d[2]];
+                                            if cur[0] >= min[0]
+                                                && cur[0] <= max[0]
+                                                && cur[1] >= min[1]
+                                                && cur[1] <= max[1]
+                                                && cur[2] >= min[2]
+                                                && cur[2] <= max[2]
+                                            {
+                                                m |= 1u16 << k;
+                                            }
+                                        }
+                                        flags[row_base + ix] = m;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if !b.never_collides()
+                            && b.inside != law::Inside::PowderSnow
+                            && b.collision_shapes().all(|s| s.is_block())
                         {
-                            m |= 1u16 << k;
+                            for z in sec_lo[2]..=sec_hi[2] {
+                                let iz = (z - min[2]) as usize;
+                                let y_base = iz * dy;
+                                for y in sec_lo[1]..=sec_hi[1] {
+                                    let iy = (y - min[1]) as usize;
+                                    let row_base = (y_base + iy) * dx;
+                                    for x in sec_lo[0]..=sec_hi[0] {
+                                        let ix = (x - min[0]) as usize;
+                                        flags[row_base + ix] = FLAG_STEP_SUP;
+                                    }
+                                }
+                            }
+                            continue;
                         }
                     }
-                    flags[ci] = m;
+
+                    for z in sec_lo[2]..=sec_hi[2] {
+                        let iz = (z - min[2]) as usize;
+                        for y in sec_lo[1]..=sec_hi[1] {
+                            let iy = (y - min[1]) as usize;
+                            for x in sec_lo[0]..=sec_hi[0] {
+                                let ix = (x - min[0]) as usize;
+                                let n = [x, y, z];
+                                let ci = (iz * dy + iy) * dx + ix;
+                                if !world.loaded(n) {
+                                    continue;
+                                }
+                                let mut m = 0u16;
+                                if has_sup(n) {
+                                    m |= FLAG_STEP_SUP;
+                                }
+                                let fits = way_clear(n, n);
+                                if fits {
+                                    m |= FLAG_BODY_FITS;
+                                }
+                                for (k, d) in DIRS.iter().enumerate() {
+                                    if !fits && d[1] == 0 {
+                                        continue;
+                                    }
+                                    let cur = [n[0] - d[0], n[1] - d[1], n[2] - d[2]];
+                                    if cur[0] >= min[0]
+                                        && cur[0] <= max[0]
+                                        && cur[1] >= min[1]
+                                        && cur[1] <= max[1]
+                                        && cur[2] >= min[2]
+                                        && cur[2] <= max[2]
+                                        && way_clear(n, cur)
+                                    {
+                                        m |= 1u16 << k;
+                                    }
+                                }
+                                flags[ci] = m;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -505,6 +578,20 @@ __kernel void topo_min_plus_sweep(
 }
 "#;
 
+pub struct UploadedTopoGrid {
+    pub dx: usize,
+    pub dy: usize,
+    pub dz: usize,
+    pub flags_buf: GpuBuffer,
+}
+
+impl UploadedTopoGrid {
+    #[inline]
+    pub fn vol(&self) -> usize {
+        self.dx * self.dy * self.dz
+    }
+}
+
 pub struct MinPlusGpuProgram {
     dev: GpuDevice,
     _prog: GpuProgram,
@@ -525,9 +612,36 @@ impl MinPlusGpuProgram {
         })
     }
 
+    pub fn upload_grid(&self, grid: &PackedTopoGrid) -> Result<UploadedTopoGrid, String> {
+        let flags_buf = self.dev.alloc_ro_slice(&grid.flags)?;
+        Ok(UploadedTopoGrid {
+            dx: grid.dx,
+            dy: grid.dy,
+            dz: grid.dz,
+            flags_buf,
+        })
+    }
+
     pub fn solve_batch(
         &self,
         grid: &PackedTopoGrid,
+        goal_cells: &[usize],
+        legs: LegsCost,
+        max_sweeps: usize,
+    ) -> Result<(Vec<f32>, usize, f64), String> {
+        let t0 = Instant::now();
+        let total = goal_cells.len() * grid.vol() * (usize::from(legs.reach) + 1);
+        if total == 0 {
+            return Ok((Vec::new(), 0, 0.0));
+        }
+        let uploaded = self.upload_grid(grid)?;
+        let (out, sweeps, _) = self.solve_batch_uploaded(&uploaded, goal_cells, legs, max_sweeps)?;
+        Ok((out, sweeps, t0.elapsed().as_secs_f64() * 1e3))
+    }
+
+    pub fn solve_batch_uploaded(
+        &self,
+        grid: &UploadedTopoGrid,
         goal_cells: &[usize],
         legs: LegsCost,
         max_sweeps: usize,
@@ -542,7 +656,7 @@ impl MinPlusGpuProgram {
         }
 
         let goal_u32: Vec<u32> = goal_cells.iter().map(|&c| c as u32).collect();
-        let buf_flags = self.dev.alloc_ro_slice(&grid.flags)?;
+        let buf_flags = &grid.flags_buf;
         let buf_goals = self.dev.alloc_ro_slice(&goal_u32)?;
         let bytes = total * std::mem::size_of::<f32>();
         let buf_a = self.dev.alloc_rw(bytes)?;
@@ -559,7 +673,7 @@ impl MinPlusGpuProgram {
 
         {
             let mut ik = self.init.lock().unwrap();
-            ik.set_buf(0, &buf_flags)?;
+            ik.set_buf(0, buf_flags)?;
             ik.set_buf(1, &buf_goals)?;
             ik.set_buf(2, &buf_a)?;
             ik.set_val(3, &num_goals_u32)?;
@@ -569,7 +683,7 @@ impl MinPlusGpuProgram {
         }
 
         let mut kern = self.sweep.lock().unwrap();
-        kern.set_buf(0, &buf_flags)?;
+        kern.set_buf(0, buf_flags)?;
         kern.set_buf(3, &buf_changed)?;
         kern.set_val(4, &num_goals_u32)?;
         kern.set_val(5, &dx_u32)?;
