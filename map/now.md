@@ -51,5 +51,5 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Branches and open notes
 
-- Branches & worktrees (`D:\path-tracing-wt\`): `main` (`f9e6b35c`+ unpushed), `wt/gpu-mind-speed` (`6bde5c7a`), `wt/law-26.3` (Sol edits), `wt/bench-dig` (`8dfb7022`).
+- Branches & worktrees (`D:\path-tracing-wt\`): `main` (`f9e6b35c`+ unpushed), `wt/gpu-mind-speed` (`6bde5c7a`), `wt/law-26.3` (Sol edits), `wt/bench-dig` (`8dfb7022` + unjudged edits: BlockStep 71/72).
 - Untrimmed region files `r.0.0.mca` / `r.0.-1.mca` stay uncommitted on `main` (`*.bak-20261114` backups beside them).
