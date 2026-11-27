@@ -163,7 +163,7 @@ impl WorldSnapshot {
         if count.checked_mul(2).is_none_or(|n| n > max_bytes) { return Err(LoadError::Unsupported(format!("snapshot needs {} cells, beyond {max_bytes}-byte limit", count))); }
         let mut reader = WorldReader::open(world_dir)?;
         if reader.datapacks != ["vanilla"] { return Err(LoadError::Unsupported(format!("law models require only the vanilla datapack; enabled {:?}",reader.datapacks))); }
-        let model_version: i32 = include_str!("../data/version.txt").trim().parse().expect("generated DataVersion");
+        let model_version = cell::DATA_VERSION;
         if reader.data_version() != model_version { return Err(LoadError::Unsupported(format!("law models have DataVersion {model_version}, world has {}",reader.data_version()))); }
         let generation = metadata(&reader.world_dir.join("data/minecraft/world_gen_settings.dat"))?;
         let generation = nbt::root(&generation)?;

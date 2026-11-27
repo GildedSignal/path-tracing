@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use law::{Aabb, BoxWorld, CollisionContext, FluidKind, Input, Inside, PlayerState, Vec3, VoxelShape, World, tick_with_collision};
 use world::{BlockState, WorldReader, WorldSnapshot, model};
-fn fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world") }
+fn fixture() -> PathBuf {
+    std::env::var_os("PATHTRACING_TRACK_WORLD").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world"))
+}
 fn state(raw: &str) -> BlockState {
     let (name, tail) = raw.split_once('[').unwrap_or((raw,""));
     let name = if name.contains(':') { name.to_owned() } else { format!("minecraft:{name}") };
@@ -68,9 +71,9 @@ fn descending_climbable_caps_motion_and_bottom_plate_stops_it() {
 
 #[test]
 fn census_puts_every_registry_state_in_one_bucket() {
-    let census = include_str!("../data/census.tsv");
+    let census = law::basis::cell::STATE_CENSUS;
     let total: usize = census.lines().next().unwrap().strip_prefix("# ").unwrap().split(' ').next().unwrap().parse().unwrap();
-    let mut modeled = include_str!("../data/blocks.tsv").lines().map(|l| l.split('\t').next().unwrap()).collect::<BTreeSet<_>>();
+    let mut modeled = law::basis::cell::BLOCK_MODELS.lines().map(|l| l.split('\t').next().unwrap()).collect::<BTreeSet<_>>();
     let (mut buckets, mut seen, mut sum) = (BTreeMap::<&str,usize>::new(), BTreeSet::new(), 0);
     for line in census.lines().skip(1) {
         let [block, bucket, count] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("census row {line}") };
@@ -106,7 +109,37 @@ fn rule_flags_and_reasons() {
     assert_eq!(model(&state("shulker_box[facing=up]")).err().as_deref(), Some("non-local shape"));
     // A button's powered and face never change its model; an unknown value still names the block.
     assert!(std::ptr::eq(model(&state("stone_button[face=wall,facing=east,powered=true]")).unwrap(), model(&state("stone_button[face=floor,facing=north,powered=false]")).unwrap()));
-    assert_eq!(model(&state("oak_fence[east=maybe,north=false,south=false,waterlogged=false,west=false]")).err().as_deref(), Some("state unknown to the 26.2 table of minecraft:oak_fence"));
+    assert_eq!(model(&state("oak_fence[east=maybe,north=false,south=false,waterlogged=false,west=false]")).unwrap_err(),
+        format!("state unknown to the {} table of minecraft:oak_fence", law::basis::cell::MINECRAFT_VERSION));
+}
+
+#[test]
+fn bed_and_current_match_selected_jar() {
+    let version = law::basis::cell::DATA_VERSION.to_string();
+    for line in include_str!("fixtures/jar-boundaries.tsv").lines() {
+        let fields: Vec<_> = line.split('\t').collect();
+        if fields[0] != version { continue; }
+        let bits = |field: &str| u64::from_str_radix(field, 16).unwrap();
+        match fields[1] {
+            "bed" => {
+                let block = model(&state(fields[2])).unwrap();
+                assert_eq!(u64::from(block.bounce.to_bits()), bits(fields[3]), "{} bounce", fields[2]);
+                let highest = block.shape.coords[1].last().unwrap();
+                assert_eq!(highest.to_bits(), bits(fields[4]), "{} height", fields[2]);
+                assert_eq!(block.bed, bits(fields[6]) == u64::from(0.5f32.to_bits()), "{} fall-distance reduction", fields[2]);
+            }
+            "current" => {
+                let mut world = BoxWorld::default();
+                let stone = model(&state("stone")).unwrap();
+                for p in [[-1, 0, 0], [0, 0, -1], [0, 0, 1]] { world.set(p, stone.clone()); }
+                world.set([1, 0, 0], model(&state(fields[2])).unwrap().clone());
+                world.set([1, -1, 0], model(&state("water")).unwrap().clone());
+                let v = model(&state("water[level=1]")).unwrap().fluid.current(&world, [0, 0, 0]);
+                assert_eq!([v.x.to_bits(), v.y.to_bits(), v.z.to_bits()], [bits(fields[3]), bits(fields[4]), bits(fields[5])]);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[test]

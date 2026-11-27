@@ -1,6 +1,8 @@
 [CmdletBinding()]
-param([string]$Jar = 'D:\path-tracing-deps\minecraft-26.2-client.jar')
+param([string]$Jar, [string]$McVersion = $env:PATHTRACING_MC_VERSION)
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot\common.ps1" -McVersion $McVersion
+if (-not $Jar) { $Jar = Get-VerifiedClientJar }
 $previewRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $previewRoot
 try {

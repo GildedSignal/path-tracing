@@ -85,7 +85,7 @@ public final class ClockTests {
                     }
                 }
             }
-            System.out.println("Clock tests passed: " + cases + " cases using compiled injection and vanilla 26.2 bytecode.");
+            System.out.println("Clock tests passed: " + cases + " cases using compiled injection and vanilla bytecode.");
         } finally {
             if (previous == null) System.clearProperty(property);
             else System.setProperty(property, previous);

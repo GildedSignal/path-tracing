@@ -184,7 +184,7 @@ final class WorldExporter {
             out.addProperty("rawAmount", fluid.getAmount());
             out.addProperty("rawFalling", fluid.getValue(FlowingFluid.FALLING));
         }
-        out.addProperty("blocksMotion", state.blocksMotion());
+        out.addProperty("blocksMotion", MinecraftApi.blocksFluidFlow(state));
         JsonArray faces = new JsonArray();
         for (Direction direction : new Direction[]{Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST}) {
             faces.add(!(state.getBlock() instanceof IceBlock) && state.isFaceSturdy(level, pos, direction));
@@ -211,12 +211,13 @@ final class WorldExporter {
         out.addProperty("air", state.isAir());
         out.addProperty("scaffolding", block instanceof ScaffoldingBlock);
         out.addProperty("slime", block instanceof SlimeBlock);
-        out.addProperty("bed", block instanceof BedBlock);
+        float reduction = MinecraftApi.fallDistanceReduction(block);
+        out.addProperty("bed", reduction == 0.5f);
         out.addProperty("endPortalOrGateway", block instanceof EndPortalBlock || block instanceof EndGatewayBlock);
         out.addProperty("waterBlock", block instanceof LiquidBlock && state.getFluidState().is(FluidTags.WATER) || block instanceof BubbleColumnBlock);
         out.addProperty("inside", inside(block));
-        out.addProperty("unsupportedFallOn", unsupportedFallOn(block));
-        // These fallOn hooks have no data getter. Values follow their 26.2 bytecode.
+        out.addProperty("unsupportedFallOn", unsupportedFallOn(block) || (reduction != 0.0f && reduction != 0.5f));
+        // Hay and honey still apply their multiplier in the fallOn hook.
         TraceJson.number(out, "fallOnMultiplier", block instanceof HayBlock || block instanceof HoneyBlock ? 0.2F : 1.0F);
         if (block instanceof LadderBlock) out.addProperty("ladderFacing", state.getValue(LadderBlock.FACING).get3DDataValue());
         if (block instanceof TrapDoorBlock && state.getValue(TrapDoorBlock.OPEN)) {

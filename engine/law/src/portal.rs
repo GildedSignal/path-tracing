@@ -502,6 +502,18 @@ fn can_host_frame(world: &impl PortalWorld, pos: BlockPos, dir: PortalAxis, offs
     true
 }
 
+/// `NetherPortalBlock.getExitPortal`: the caller reconstructs the existing POI's
+/// rectangle. Only an admitted entity without an existing exit can request a build.
+pub fn nether_exit(
+    world: &mut impl PortalWorld, existing: Option<FoundRectangle>, destination: BlockPos,
+    entry_axis: PortalAxis, spectator: bool,
+) -> Option<FoundRectangle> {
+    existing.or_else(|| {
+        if spectator && crate::basis::cell::DATA_VERSION == 5023 { None }
+        else { create_portal(world, destination, entry_axis) }
+    })
+}
+
 /// `PortalForcer.createPortal(BlockPos, Axis)`: every block write in the jar's order.
 pub fn create_portal(world: &mut impl PortalWorld, pos: BlockPos, axis: PortalAxis) -> Option<FoundRectangle> {
     let (dx, dz) = axis_step(axis);

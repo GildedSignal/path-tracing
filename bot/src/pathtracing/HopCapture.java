@@ -67,7 +67,7 @@ public final class HopCapture {
                 Integer.toUnsignedLong(Float.floatToRawIntBits(p.getHealth())),p.getFoodData().getFoodLevel(),
                 Integer.toUnsignedLong(Float.floatToRawIntBits(p.getFoodData().getSaturationLevel())),
                 Integer.toUnsignedLong(Float.floatToRawIntBits(food.pathtracing$exhaustion())),food.pathtracing$foodTickTimer(),
-                p.invulnerableTime,Integer.toUnsignedLong(Float.floatToRawIntBits(living.pathtracing$lastRawHit()))});
+                MinecraftApi.damageCooldown(p),Integer.toUnsignedLong(Float.floatToRawIntBits(living.pathtracing$lastRawHit()))});
         }
     }
     public static synchronized void flush() {

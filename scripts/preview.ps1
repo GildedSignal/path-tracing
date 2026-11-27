@@ -4,11 +4,13 @@ param(
     [int[]]$Box,
     [string]$Views,
     [Parameter(Mandatory=$true)][string]$Output,
-    [string]$Jar = 'D:\path-tracing-deps\minecraft-26.2-client.jar',
+    [string]$Jar,
+    [string]$McVersion = $env:PATHTRACING_MC_VERSION,
     [switch]$Fixture
 )
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\common.ps1"
+. "$PSScriptRoot\common.ps1" -McVersion $McVersion
+if (-not $Jar) { $Jar = Get-VerifiedClientJar }
 $previewJava = Join-Path $Jdk 'java.exe'
 if (-not (Test-Path -LiteralPath $previewJava)) {
     $previewJava = 'D:\path-tracing-deps\data\java\java-runtime-epsilon\bin\java.exe'

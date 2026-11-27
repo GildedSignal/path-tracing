@@ -35,10 +35,19 @@ SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` section
   Per biome at 20 and 50 blocks, ours is below BlockStep everywhere except the desert (5.80 against 5.1; 12.50 against 12.0), where `desert-20-ne` takes 187 ticks against a floor of 80 and `desert-100-sw` 792 against 398. Seven of 72 return `NeedsJoints` (3 at 50, 4 at 100). Thinking, cold: p50 0.40 s, p90 1.48 s, max 3.57 s, 1–2 orders above the new-joint floor.
 - **Why the seven fail:** every one is `defect uncrossed` after learning spends its cap (~98,000 or ~240,000 raw ticks, 0–6 proposals). Single strips on flat stone (`WorldSnapshot::from_fn`, bare legs) separate the causes. Leaf litter, a snow layer and a 2-block drop cross at once (T 84, 84, 83). Water 1 deep crosses but costs 869 ms of thinking against 0.4 ms on stone. **Water 3 deep × 10 wide and a powder-snow floor × 6 return `NeedsJoints`**, though both are crossable in the game. Swimming and sinking are not in the field, so every water or powder-snow defect falls to raw learning. That is three failures (desert-100-ne, swamp-50-se, swamp-100-se) and powder snow is a fourth (icemountain-100-se). The remaining three (hills-50-sw, forest-50-sw, forest-100-se) meet 1–3,845 exceptions among trees, cliffs and leaf litter and spend the 240,000-tick cap: not yet separated.
 - **The desert outliers:** `desert-20-ne` climbs a 14-block dune (y 78 → 92 → 78) on the straight diagonal; the flat floor ignores height, so 187 ticks is not shown to be poor. `desert-100-sw`'s goal lies in a warm ocean (18,190 water cells in its box): its 792 ticks are a swim, priced by the same gap.
-- Every Hielke map ships only for 26.3; Parkour Spiral 3.0.5 is DataVersion 5023, the law is 4903 (26.2), and a 26.2 game cannot open a newer world. Spiral is dropped (Julien, 2026-11-26); the other ten open only once the law is 26.3.
+- Every Hielke map ships only for 26.3; Parkour Spiral 3.0.5 is DataVersion 5023, the law reads it under `-McVersion 26.3`. Spiral is dropped (Julien, 2026-11-26); the other ten open in a 26.3 rig.
 - Few other parkour maps have a human board on speedrun.com: Run Swim Fly Parkour (Noxcrew, Full Course 4:58.95) and Unusual Parkour Map (8:08, 2021); their download versions are not yet checked.
+- Parkour Spiral 3.0.5 has a 26.3 level (DataVersion 5023) with mixed-version chunks. The region reader decodes its compact palettes. Its enabled datapacks change food, damage, position and terrain, so a vanilla law snapshot refuses the map. [Spiral evidence](../../jobs/law-26.3/report.md)
 - MineOdyssey's 30 worlds (SHA-256 checked) are DataVersion 4671 (1.21.11), older than the law's: a 26.2 server's `--forceUpgrade` on copies brings them to 4903; its tasks name ordered waypoints by id (`tasks.json`).
 - Opponents and maps stay outside git: `D:\path-tracing-bench\opponents\` (SpectraPhysics, Baritone v1.19.0 for 26.2, SHA-1 checked), `D:\path-tracing-maps\` (Hielke, MineOdyssey).
+
+The version comparison uses `bench-course`, seven repeats per course with zero refused ticks on both builds. Medians are in µs per player-tick. The 26.3 build has open witness gates. [Raw output](../../jobs/law-26.3/report.md)
+
+| Course | 26.2 | 26.3 |
+|---|---:|---:|
+| `exact` | 1.5255 | 1.0139 |
+| `floored` | 3.3267 | 2.3319 |
+| `straight` | 2.6348 | 1.7335 |
 
 Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence); Gazelka's hybrid A\* post and SwarmBot (no numbers); JumpCraft and parkour.gg maps (server-hosted, no world files); SoulFire, Botcraft, mineflayer-pathfinder (no published numbers, a later many-bots row).
 
@@ -46,7 +55,7 @@ Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence)
 
 - Hielke records hold for Java 26.2+, except Dimension, which is 11:30 (2026-11-24), not 11:39. Across all versions, faster and now-obsolete records exist (Town 1:12 on Bedrock, Paradise 2:52 by an exploit); only the 26.2+ Java board matches our law.
 - Baritone v1.19.0 ships for Minecraft 26.2 (Fabric, LGPL-3.0, `#goto x y z`), so the BlockStep protocol reruns with Baritone on our exact version.
-- Hielke maps now ship for Minecraft 26.3 (Town v1.4.7, Spiral v3.0.5); the law is 26.2. The 26.2+ bucket rejects a run whose map version is not the latest.
+- Hielke maps ship for Minecraft 26.3 (Town v1.4.7, Spiral v3.0.5). The 26.2+ bucket requires the current map release.
 - Hielke's terms allow personal, non-commercial use and forbid redistribution or modified maps: world files never enter git.
 - SpectraPhysics' tick course has no cobwebs or honey (those are in its trajectory hash, not its timing).
 - BlockStep's 28.3 b row is 28.2 b in the thesis, and the thesis does not say whether planning time is inside travel time.

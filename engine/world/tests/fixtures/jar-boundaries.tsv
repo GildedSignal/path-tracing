@@ -1,0 +1,26 @@
+4903	admission	minecraft:cobweb	true	true
+4903	admission	minecraft:oak_sign	true	true
+4903	admission	minecraft:oak_slab	true	true
+4903	admission	minecraft:structure_void	false	false
+4903	admission	minecraft:stone	false	true
+4903	admission	minecraft:air	true	false
+4903	current	minecraft:oak_sign	0000000000000000	0000000000000000	0000000000000000
+4903	current	minecraft:air	3ff0000000000000	0000000000000000	0000000000000000
+4903	bed	white_bed	3f400000	3fe2000000000000	BedBlock	3f000000
+4903	portal_missing	false	1	true
+4903	portal_missing	true	1	true
+5023	admission	minecraft:cobweb	true	true
+5023	admission	minecraft:oak_sign	true	true
+5023	admission	minecraft:oak_slab	true	true
+5023	admission	minecraft:structure_void	false	false
+5023	admission	minecraft:stone	false	true
+5023	admission	minecraft:air	true	false
+5023	current	minecraft:oak_sign	0000000000000000	0000000000000000	0000000000000000
+5023	current	minecraft:air	3ff0000000000000	0000000000000000	0000000000000000
+5023	bed	white_bed	3f400000	3fe2000000000000	Block	3f000000
+5023	bed	straw_bed	00000000	3fd0000000000000	Block	00000000
+5023	setBlockAndUpdate	3	512
+5023	portal_missing	false	1	true
+5023	portal_missing	true	0	true
+5023	damage_clock	20	0	false
+5023	damage_clock	0	4	true

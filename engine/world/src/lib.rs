@@ -1,4 +1,4 @@
-//! Read-only Minecraft 26.2 region files and prevalidated law snapshots.
+//! Read-only Minecraft region files and prevalidated law snapshots.
 pub mod inflate;
 mod nbt;
 mod region;

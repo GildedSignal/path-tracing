@@ -7,7 +7,7 @@ $classpath = (Get-GameClasspath) -join ';'
 & "$Jdk\javac.exe" --release 25 -proc:none -cp "$Root\bot\build\pathtracing.jar;$classpath" -d $testBuild "$PSScriptRoot\ClockTests.java"
 if ($LASTEXITCODE) { throw 'Clock test compilation failed' }
 & "$Jdk\java.exe" -cp "$testBuild;$Root\bot\build\pathtracing.jar;$classpath" pathtracing.ClockTests `
-  "$Root\bot\build\pathtracing.jar" "$Libraries\com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar"
+  "$Root\bot\build\pathtracing.jar" $ClientJar
 if ($LASTEXITCODE) { throw 'Clock tests failed' }
 
 # Load only pure gate functions. Executing the gate itself would start a client.

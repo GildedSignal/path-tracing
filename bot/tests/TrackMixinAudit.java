@@ -76,8 +76,8 @@ final class TrackMixinAudit {
                 }
             }
         }
-        require(injections == 50, "Expected original 36 plus 14 R0/capture injections, got " + injections);
-        System.out.println("Verified " + injections + " compiled track injections against Minecraft 26.2.");
+        require(injections == 52, "Expected 52 track and packet capture injections, got " + injections);
+        System.out.println("Verified " + injections + " compiled track injections against " + gamePath.getFileName() + ".");
     }
 
     private static boolean calls(ClassNode type, String owner, String name) {

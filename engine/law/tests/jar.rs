@@ -386,29 +386,7 @@ fn jar_world_hooks() {
         _ => panic!("bad dir: {s}"),
     };
 
-    const OAK_PLATE_ID: BlockId = BlockId(261);
-    const STONE_PLATE_ID: BlockId = BlockId(259);
-    const GOLD_PLATE_ID: BlockId = BlockId(471);
-    const IRON_PLATE_ID: BlockId = BlockId(472);
-    const STONE_BTN_ID: BlockId = BlockId(275);
-    const OAK_BTN_ID: BlockId = BlockId(443);
-    const WIRE_ID: BlockId = BlockId(402); // registry rows: the tripwire rules build cells of these blocks
-    const HOOK_ID: BlockId = BlockId(401);
-    assert_eq!((WIRE_ID, HOOK_ID), (BlockId::of("tripwire"), BlockId::of("tripwire_hook")));
-
-    let block_name = |id: BlockId| -> &'static str {
-        match id {
-            OAK_PLATE_ID => "oak_pressure_plate",
-            STONE_PLATE_ID => "stone_pressure_plate",
-            GOLD_PLATE_ID => "light_weighted_pressure_plate",
-            IRON_PLATE_ID => "heavy_weighted_pressure_plate",
-            STONE_BTN_ID => "stone_button",
-            OAK_BTN_ID => "oak_button",
-            WIRE_ID => "tripwire",
-            HOOK_ID => "tripwire_hook",
-            _ => panic!("unknown block id {:?}", id),
-        }
-    };
+    let block_name = BlockId::name;
     let dir_lower = |d: Direction| match d {
         Direction::Down => "down",
         Direction::Up => "up",
@@ -475,7 +453,7 @@ fn jar_world_hooks() {
                     || if state.get("powered") == Some("true") { 15 } else { 0 },
                     |power| power.parse::<u8>().unwrap(),
                 );
-                let tag = if id == GOLD_PLATE_ID || id == IRON_PLATE_ID {
+                let tag = if id == BlockId::of("light_weighted_pressure_plate") || id == BlockId::of("heavy_weighted_pressure_plate") {
                     format!("sig={signal}")
                 } else {
                     format!("pow={}", signal > 0)
@@ -486,11 +464,11 @@ fn jar_world_hooks() {
                 format!("NEIGHBOR({x},{y},{z},{})", block_name(source_id))
             }
             CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
-                let snd = match (id, activated) {
-                    (OAK_PLATE_ID, true) => "block.wooden_pressure_plate.click_on",
-                    (OAK_PLATE_ID, false) => "block.wooden_pressure_plate.click_off",
-                    (STONE_PLATE_ID, true) => "block.stone_pressure_plate.click_on",
-                    (STONE_PLATE_ID, false) => "block.stone_pressure_plate.click_off",
+                let snd = match (id.name(), activated) {
+                    ("oak_pressure_plate", true) => "block.wooden_pressure_plate.click_on",
+                    ("oak_pressure_plate", false) => "block.wooden_pressure_plate.click_off",
+                    ("stone_pressure_plate", true) => "block.stone_pressure_plate.click_on",
+                    ("stone_pressure_plate", false) => "block.stone_pressure_plate.click_off",
                     (_, true) => "block.metal_pressure_plate.click_on",
                     (_, false) => "block.metal_pressure_plate.click_off",
                 };
@@ -517,7 +495,7 @@ fn jar_world_hooks() {
                 format!("SCHED({x},{y},{z},{},{delay})", block_name(block_id))
             }
             CellEvent::SensorFeedback { pos: [x, y, z], activated } => {
-                let snd = match (id == OAK_BTN_ID, activated) {
+                let snd = match (id == BlockId::of("oak_button"), activated) {
                     (true, true) => "block.wooden_button.click_on",
                     (true, false) => "block.wooden_button.click_off",
                     (false, true) => "block.stone_button.click_on",
@@ -577,10 +555,10 @@ fn jar_world_hooks() {
     impl MapTripwireWorld {
         fn new() -> Self { Self { cells: HashMap::new(), scheduled: Vec::new() } }
         fn put_wire(&mut self, pos: BlockPos, powered: bool, attached: bool, disarmed: bool) {
-            self.cells.insert(pos, WIRE_ID.default_state().with_bool("powered", powered).with_bool("attached", attached).with_bool("disarmed", disarmed));
+            self.cells.insert(pos, BlockId::of("tripwire").default_state().with_bool("powered", powered).with_bool("attached", attached).with_bool("disarmed", disarmed));
         }
         fn put_hook(&mut self, pos: BlockPos, facing: Direction, powered: bool, attached: bool) {
-            self.cells.insert(pos, HOOK_ID.default_state().with("facing", DIRECTION[facing as usize]).with_bool("powered", powered).with_bool("attached", attached));
+            self.cells.insert(pos, BlockId::of("tripwire_hook").default_state().with("facing", DIRECTION[facing as usize]).with_bool("powered", powered).with_bool("attached", attached));
         }
         fn cell(&self, pos: BlockPos) -> CellState { WorldMut::cell(self, pos).kind() }
     }
@@ -797,7 +775,7 @@ fn jar_world_hooks() {
                 assert_box_bits(actual, exp, f[1]);
             }
             "PLATE_WEIGHTED" => {
-                let id = if f[1] == "15" { GOLD_PLATE_ID } else { IRON_PLATE_ID };
+                let id = if f[1] == "15" { BlockId::of("light_weighted_pressure_plate") } else { BlockId::of("heavy_weighted_pressure_plate") };
                 let state = id.default_state();
                 let CellState::PressurePlate(plate) = state.kind() else { unreachable!() };
                 assert_eq!(plate.pressed_time(), f[4].parse::<u32>().unwrap());
@@ -818,25 +796,25 @@ fn jar_world_hooks() {
                 let standard = Aabb::new(0.2, 64.0, 0.2, 0.8, 64.5, 0.8);
                 let player = || body(true, false, false, Aabb::player(Vec3::new(0.5, 64.0625, 0.5), 1.8));
                 let (id, reset, scheduled, bodies, signal, trace) = match f[1] {
-                    "wood_press" => (OAK_PLATE_ID, true, false, vec![player()], f[2].parse().unwrap(), f[4]),
-                    "wood_reentry" => (OAK_PLATE_ID, false, false, vec![player()], f[2].parse().unwrap(), ""),
-                    "wood_held_tick" => (OAK_PLATE_ID, false, true, vec![player()], f[2].parse().unwrap(), f[3]),
-                    "wood_release_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), f[3]),
-                    "wood_unpowered_tick" => (OAK_PLATE_ID, false, true, vec![], f[2].parse().unwrap(), ""),
-                    "wood_spectator" => (OAK_PLATE_ID, true, false, vec![body(false, true, false, standard)], 0, ""),
-                    "wood_ignoring" => (OAK_PLATE_ID, true, false, vec![body(false, false, true, standard)], 0, ""),
+                    "wood_press" => (BlockId::of("oak_pressure_plate"), true, false, vec![player()], f[2].parse().unwrap(), f[4]),
+                    "wood_reentry" => (BlockId::of("oak_pressure_plate"), false, false, vec![player()], f[2].parse().unwrap(), ""),
+                    "wood_held_tick" => (BlockId::of("oak_pressure_plate"), false, true, vec![player()], f[2].parse().unwrap(), f[3]),
+                    "wood_release_tick" => (BlockId::of("oak_pressure_plate"), false, true, vec![], f[2].parse().unwrap(), f[3]),
+                    "wood_unpowered_tick" => (BlockId::of("oak_pressure_plate"), false, true, vec![], f[2].parse().unwrap(), ""),
+                    "wood_spectator" => (BlockId::of("oak_pressure_plate"), true, false, vec![body(false, true, false, standard)], 0, ""),
+                    "wood_ignoring" => (BlockId::of("oak_pressure_plate"), true, false, vec![body(false, false, true, standard)], 0, ""),
                     "wood_hover_exact_025" | "wood_hover_0249" => {
                         let inside = f[1] == "wood_hover_0249";
                         let y = if inside { 64.249 } else { 64.25 };
-                        (OAK_PLATE_ID, true, false,
+                        (BlockId::of("oak_pressure_plate"), true, false,
                             vec![body(false, false, false, Aabb::new(0.2, y, 0.2, 0.8, 64.8, 0.8))],
                             if inside { 15 } else { 0 }, if inside { f[3] } else { "" })
                     }
-                    "stone_item" => (STONE_PLATE_ID, true, false, vec![body(false, false, false, standard)], 0, ""),
-                    "stone_mob" => (STONE_PLATE_ID, true, false,
+                    "stone_item" => (BlockId::of("stone_pressure_plate"), true, false, vec![body(false, false, false, standard)], 0, ""),
+                    "stone_mob" => (BlockId::of("stone_pressure_plate"), true, false,
                         vec![body(true, false, false, Aabb::new(0.2, 64.0, 0.2, 0.8, 65.5, 0.8))], 15, f[3]),
-                    "gold_3" => (GOLD_PLATE_ID, true, false, vec![body(false, false, false, standard); 3], 3, f[3]),
-                    "iron_11" => (IRON_PLATE_ID, true, false, vec![body(false, false, false, standard); 11], 2, f[3]),
+                    "gold_3" => (BlockId::of("light_weighted_pressure_plate"), true, false, vec![body(false, false, false, standard); 3], 3, f[3]),
+                    "iron_11" => (BlockId::of("heavy_weighted_pressure_plate"), true, false, vec![body(false, false, false, standard); 11], 2, f[3]),
                     other => panic!("unexpected plate trace {other}"),
                 };
                 if reset {
@@ -853,7 +831,7 @@ fn jar_world_hooks() {
             }
             "PLATE_SIGNALS" => {
                 let mut world = SimWorld::new(&base);
-                world.set_cell_raw(pos, OAK_PLATE_ID.default_state().with_bool("powered", true));
+                world.set_cell_raw(pos, BlockId::of("oak_pressure_plate").default_state().with_bool("powered", true));
                 assert_eq!(world.get_signal(pos, Direction::Up, true), 15);
                 let got: Vec<String> = Direction::ALL.iter().map(|d|
                     format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
@@ -869,12 +847,12 @@ fn jar_world_hooks() {
                 let face = parse_face(f[1]);
                 let facing = parse_dir(f[2]);
                 let powered = f[3] == "true";
-                let CellState::Button(button) = button_state(OAK_BTN_ID, face, facing, powered).kind() else { unreachable!() };
+                let CellState::Button(button) = button_state(BlockId::of("oak_button"), face, facing, powered).kind() else { unreachable!() };
                 assert_box_bits(button.shape(), parse_box(&f[4..10]), &format!("BUTTON_SHAPE {face:?} {facing:?} {powered}"));
             }
             "BUTTON_TRACE" => {
-                let stone = STONE_BTN_ID;
-                let oak = OAK_BTN_ID;
+                let stone = BlockId::of("stone_button");
+                let oak = BlockId::of("oak_button");
                 let normal = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.99);
                 let tip = Aabb::new(0.4, 64.4, 0.88, 0.6, 64.6, 0.93);
                 let back = Aabb::new(0.4, 64.4, 0.94, 0.6, 64.6, 0.99);
@@ -909,12 +887,12 @@ fn jar_world_hooks() {
             "BUTTON_GEOM" => {
                 let facing = parse_dir(f[2]);
                 let mut world = SimWorld::new(&base);
-                world.set_cell_raw(pos, button_state(STONE_BTN_ID, parse_face(f[1]), facing, false));
+                world.set_cell_raw(pos, button_state(BlockId::of("stone_button"), parse_face(f[1]), facing, false));
                 let (_, events) = world.sensor_input(pos, SensorInput::Use);
                 let got: Vec<String> = Direction::ALL.iter().map(|d|
                     format!("{d:?}={}", world.get_direct_signal(pos, *d, true)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[3]);
-                assert_eq!(fmt_button_events(STONE_BTN_ID, facing, &events), f[4]);
+                assert_eq!(fmt_button_events(BlockId::of("stone_button"), facing, &events), f[4]);
             }
             "TRIPWIRE_SHAPE" => {
                 let exp = parse_box(&f[2..8]);
@@ -959,14 +937,14 @@ fn jar_world_hooks() {
                         seq_tw_player.bbox = Aabb::player(Vec3::new(50.5, 64.0, 50.5), 1.8);
                         tripwire_tick(&mut seq_tw, w1, &[seq_tw_player], &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[2]));
-                        seq_tw.scheduled.push((w1, WIRE_ID)); // delay-0 echo is now pending!
+                        seq_tw.scheduled.push((w1, BlockId::of("tripwire"))); // delay-0 echo is now pending!
                     }
                     "ew_echo_gate_noop" => {
                         tripwire_entity_inside(&mut seq_tw, w1, false, seq_tw_player, &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[2]));
                     }
                     "ew_echo_tick" => {
-                        seq_tw.scheduled.retain(|k| *k != (w1, WIRE_ID));
+                        seq_tw.scheduled.retain(|k| *k != (w1, BlockId::of("tripwire")));
                         tripwire_tick(&mut seq_tw, w1, &[seq_tw_player], &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[2]));
                     }
@@ -984,7 +962,7 @@ fn jar_world_hooks() {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook(hw, Direction::East, false, true);
                         w.put_wire(w1, false, true, false);
-                        let old_w2 = TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false };
+                        let old_w2 = TripwireWireState { block_id: BlockId::of("tripwire"), powered: false, attached: true, disarmed: false };
                         w.put_hook(he, Direction::West, false, true);
                         tripwire_after_removal(&mut w, w2, old_w2, false, &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[2]));
@@ -993,14 +971,14 @@ fn jar_world_hooks() {
                         let mut w = MapTripwireWorld::new();
                         w.put_hook(hw, Direction::East, false, true);
                         w.put_wire(w1, false, true, false);
-                        let old_w2 = TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: true };
+                        let old_w2 = TripwireWireState { block_id: BlockId::of("tripwire"), powered: false, attached: true, disarmed: true };
                         w.put_hook(he, Direction::West, false, true);
                         tripwire_after_removal(&mut w, w2, old_w2, false, &mut ev);
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[2]));
                     }
                     "ew_break_piston_noop" => {
                         let mut w = MapTripwireWorld::new();
-                        let old_w2 = TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false };
+                        let old_w2 = TripwireWireState { block_id: BlockId::of("tripwire"), powered: false, attached: true, disarmed: false };
                         tripwire_after_removal(&mut w, w2, old_w2, true, &mut ev);
                         assert!(ev.is_empty());
                     }
@@ -1022,8 +1000,8 @@ fn jar_world_hooks() {
                         w.put_hook([1, 64, 0], Direction::West, true, true);
                         let CellState::TripwireHook(hs) = w.cell([0, 64, 0]) else { unreachable!() };
                         tripwire_hook_calculate_state(&mut w, [0, 64, 0], hs, false, true, -1, None, &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: false }));
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::West, powered: false, attached: false }));
                         assert_eq!(fmt_tripwire_events(&ev), filter_jar_tw_log(f[3]));
                     }
                     "adj_fardist_1_from_unatt" => {
@@ -1040,8 +1018,8 @@ fn jar_world_hooks() {
                         for i in 1..=40 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([41, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [40, 64, 0], false, ent(40.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true }));
-                        assert_eq!(w.cell([41, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: true, attached: true }));
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::East, powered: true, attached: true }));
+                        assert_eq!(w.cell([41, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::West, powered: true, attached: true }));
                         let set_sched: Vec<_> = ev.iter().copied().filter(|e| matches!(e, CellEvent::SetBlock { .. } | CellEvent::ScheduleTick { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&set_sched), f[3]);
                     }
@@ -1051,9 +1029,9 @@ fn jar_world_hooks() {
                         for i in 1..=41 { w.put_wire([i, 64, 0], false, true, false); }
                         w.put_hook([42, 64, 0], Direction::West, false, true);
                         tripwire_entity_inside(&mut w, [41, 64, 0], false, ent(41.5, 0.5), &mut ev);
-                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: false, attached: false }));
-                        assert_eq!(w.cell([42, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: HOOK_ID, facing: Direction::West, powered: false, attached: true }));
-                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireWire(TripwireWireState { block_id: WIRE_ID, powered: false, attached: true, disarmed: false }));
+                        assert_eq!(w.cell([0, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::East, powered: false, attached: false }));
+                        assert_eq!(w.cell([42, 64, 0]), CellState::TripwireHook(TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::West, powered: false, attached: true }));
+                        assert_eq!(w.cell([1, 64, 0]), CellState::TripwireWire(TripwireWireState { block_id: BlockId::of("tripwire"), powered: false, attached: true, disarmed: false }));
                         let non_nbr: Vec<_> = ev.iter().copied().filter(|e| !matches!(e, CellEvent::UpdateNeighborsAt { .. })).collect();
                         assert_eq!(fmt_tripwire_events(&non_nbr), f[3]);
                     }
@@ -1109,7 +1087,7 @@ fn jar_world_hooks() {
                 }
             }
             "TRIPWIRE_HOOK_SIGNAL" => {
-                let h = TripwireHookState { block_id: HOOK_ID, facing: Direction::East, powered: true, attached: true };
+                let h = TripwireHookState { block_id: BlockId::of("tripwire_hook"), facing: Direction::East, powered: true, attached: true };
                 assert_eq!(h.own_signal(), 15);
                 let got: Vec<String> = Direction::ALL.iter().map(|d| format!("{d:?}={}", h.direct_signal(*d)).to_ascii_uppercase()).collect();
                 assert_eq!(got.join(","), f[1]);
@@ -4530,7 +4508,7 @@ fn jar_mounts_breath_void() {
         RESPAWN_ANCHOR_MAX_CHARGES, RESPAWN_ANCHOR_MIN_CHARGES,
     };
     use law::portal::{
-        create_portal, find_closest_portal_position, spiral_around, DimensionHeightBounds,
+        create_portal, find_closest_portal_position, nether_exit, spiral_around, DimensionHeightBounds,
         PortalAxis, PortalBlock, PortalWorld, WorldBorderBounds,
     };
     use law::{apply_server_resource_event, BlockPos, BoxWorld, PlayerState, ServerResourceEvent};
@@ -4596,6 +4574,24 @@ fn jar_mounts_breath_void() {
                 self.hash = self.hash.wrapping_mul(0x100000001b3);
             }
         }
+    }
+
+    let version = law::basis::cell::DATA_VERSION.to_string();
+    for raw in include_str!("../../world/tests/fixtures/jar-boundaries.tsv").lines() {
+        let f: Vec<_> = raw.split('\t').collect();
+        if f[0] != version || f[1] != "portal_missing" { continue; }
+        let spectator = f[2].parse().unwrap();
+        let attempted_creation = f[3] == "1";
+        let origin = [0, 64, 0];
+        let mut terrain = TestPortalWorld {
+            kind: TerrainKind::Flat,
+            dims: DimensionHeightBounds { min_y: -64, max_y: 319, logical_height: 384 },
+            border: WorldBorderBounds::default_mc(),
+            writes: 0,
+            hash: 0xcbf29ce484222325,
+        };
+        assert_eq!(nether_exit(&mut terrain, None, origin, PortalAxis::X, spectator).is_some(), attempted_creation);
+        assert_eq!(terrain.writes != 0, attempted_creation);
     }
 
     let mut rows = 0usize;

@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, path::PathBuf};
 use law::{Aabb, Block, BoxWorld, CollisionContext, Input, PlayerState, Vec3, World, tick};
 use world::{BlockState, WorldReader, WorldSnapshot};
-fn fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world") }
+fn fixture() -> PathBuf {
+    std::env::var_os("PATHTRACING_TRACK_WORLD").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/world"))
+}
 fn state(raw: &str) -> BlockState {
     let (name, tail) = raw.split_once('[').unwrap_or((raw,""));
     let name = if name.contains(':') { name.to_owned() } else { format!("minecraft:{name}") };
@@ -21,7 +24,7 @@ fn defaults(raw: &str, defaults: &BTreeMap<String,BlockState>) -> BlockState {
 #[test]
 fn superflat_layers_from_copied_world() {
     let mut world = WorldReader::open(fixture()).unwrap();
-    assert_eq!(world.data_version(), 4903);
+    assert_eq!(world.data_version(), law::basis::cell::DATA_VERSION);
     for [x,z] in [[0,0],[15,15],[16,16],[31,31]] {
         for (y,expected) in [(-64,"bedrock"),(-63,"dirt"),(-62,"dirt"),(-61,"grass_block[snowy=false]"),(-60,"air"),(0,"air"),(319,"air"),(320,"void_air"),(-65,"void_air")] {
             assert_eq!(*world.block_state([x,y,z]).unwrap(),state(expected),"at {x} {y} {z}");
@@ -31,7 +34,7 @@ fn superflat_layers_from_copied_world() {
 
 #[test]
 fn every_cell_of_four_courses_against_main_fill_commands() {
-    let defaults_by_name = include_str!("../data/defaults.txt").lines().map(|s| {let s=state(s); (s.name.clone(),s)}).collect::<BTreeMap<_,_>>();
+    let defaults_by_name = law::basis::cell::DEFAULT_STATES.lines().map(|s| {let s=state(s); (s.name.clone(),s)}).collect::<BTreeMap<_,_>>();
     let mut world=WorldReader::open(fixture()).unwrap();
     let commands=include_str!("fixtures/commands.txt");
     let mut checked=0;

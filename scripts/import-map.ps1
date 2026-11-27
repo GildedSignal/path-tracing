@@ -4,10 +4,11 @@ param(
   [Parameter(Mandatory)][ValidatePattern('\A[a-z0-9_-]+\z', Options=0)][string]$Name,
   [string]$TestRig,
   [string]$TestRoot,
-  [string]$ServerJar
+  [string]$ServerJar,
+  [string]$McVersion = $env:PATHTRACING_MC_VERSION
 )
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\common.ps1"
+. "$PSScriptRoot\common.ps1" -McVersion $McVersion
 if (-not $ServerJar) { $ServerJar = $VanillaServerJar }
 if ($Name -ceq 'overworld') { throw 'The name overworld is reserved.' }
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
@@ -47,7 +48,7 @@ try {
   $reader = [IO.StreamReader]::new($entry.Open())
   try { $version = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
 } finally { $zip.Dispose() }
-if ($version.id -ne '26.2') { throw 'Server jar is not 26.2.' }
+if ($version.id -ne $McVersion -or $version.world_version -ne $McSpec.dataVersion) { throw "Server jar is not Minecraft $McVersion." }
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('pathtracing-map-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {

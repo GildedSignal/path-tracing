@@ -24,7 +24,6 @@ import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
@@ -504,7 +503,7 @@ public final class SwarmManager {
 
         bot.connection.teleport(x, y, z, yaw, pitch);
         if (sink.pendingTpId >= 0) {
-            bot.connection.handleAcceptTeleportPacket(new ServerboundAcceptTeleportationPacket(sink.pendingTpId));
+            MinecraftApi.acceptTeleport(bot, sink.pendingTpId);
             sink.pendingTpId = -1;
             sink.pendingTpPos = null;
         }
@@ -1492,14 +1491,14 @@ public final class SwarmManager {
                 int id = b.sink.pendingTpId;
                 b.sink.pendingTpId = -1;
                 b.sink.pendingTpPos = null;
-                b.connection.handleAcceptTeleportPacket(new ServerboundAcceptTeleportationPacket(id));
+                MinecraftApi.acceptTeleport(b, id);
                 if (b.executing || b.settling) {
                     totalTeleports++;
                 }
                 b.executing = false;
                 b.settling = false;
                 sendBotSync(ShmBridge.MSG_BOT_SELF_SYNC, b, 1);
-            } else if (b.pendingDamageSync || b.hurtMarked) {
+            } else if (b.pendingDamageSync || MinecraftApi.velocityChanged(b)) {
                 b.pendingDamageSync = false;
                 b.executing = false;
                 b.settling = false;
@@ -1994,7 +1993,7 @@ public final class SwarmManager {
         pw.f32(foodAcc.ptGetExhaustionLevel());
         pw.i32(food.getFoodLevel());
         pw.u32(foodAcc.ptGetTickTimer());
-        pw.i32(b.invulnerableTime);
+        pw.i32(MinecraftApi.damageCooldown(b));
         pw.f32(livingAcc.ptGetLastHurt());
         if (msgType == ShmBridge.MSG_BOT_SELF_SYNC) {
             pw.u32(reason);

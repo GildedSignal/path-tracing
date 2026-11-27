@@ -4,10 +4,13 @@ fn files(path:&Path,out:&mut Vec<PathBuf>) {
     if path.is_dir() {for item in fs::read_dir(path).unwrap() {files(&item.unwrap().path(),out);}}
     else {out.push(path.to_owned());}
 }
-fn law_hash() {
-    let root=PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+fn law_hash(root: &Path, data: &Path) {
     let engine=root.parent().unwrap();let mut inputs=Vec::new();
-    for path in [root.join("src"),root.join("build.rs"),engine.join("world/data"),engine.join("world/src")] {files(&path,&mut inputs);}
+    for path in [root.join("src"),root.join("build.rs"),engine.join("world/src")] {files(&path,&mut inputs);}
+    for entry in fs::read_dir(data).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() { files(&path, &mut inputs); }
+    }
     inputs.sort();
     // Domain-separated FNV-128 streams, including input names and lengths.
     let mut hashes=[0x6c62272e07bb014262b821756295c58du128,0x6c62272e07bb014262b821756295c58cu128];
@@ -33,8 +36,21 @@ fn recordings(path: &Path) -> bool {
     })
 }
 fn main() {
-    law_hash();
-    let root=Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../lab/fixtures");
+    println!("cargo::rerun-if-env-changed=PATHTRACING_MC_VERSION");
+    let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut data = root.parent().unwrap().join("world/data");
+    let mc = env::var("PATHTRACING_MC_VERSION").unwrap_or_default();
+    if !mc.is_empty() && mc != "26.2" {
+        assert!(mc.split_once('.').is_some_and(|(major, minor)| {
+            [major, minor].iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        }), "invalid Minecraft version {mc}");
+        data.push(&mc);
+    }
+    assert!(data.join("version.txt").is_file(), "missing generated Minecraft tables at {}", data.display());
+    println!("cargo::rustc-env=PATHTRACING_DATA_DIR={}", data.display());
+    println!("cargo::rustc-env=PATHTRACING_LAW_VERSION={}", if mc.is_empty() { "26.2" } else { &mc });
+    law_hash(&root, &data);
+    let root=root.join("../../lab/fixtures");
     println!("cargo::rustc-check-cfg=cfg(has_recordings)");
     println!("cargo::rerun-if-changed={}",root.display());
     if recordings(&root) { println!("cargo::rustc-cfg=has_recordings"); }

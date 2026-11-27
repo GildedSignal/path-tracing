@@ -1,4 +1,4 @@
-# Starts one Minecraft 26.2 + Fabric client in offline mode, joined straight to the local server.
+# Starts the selected Minecraft + Fabric client in offline mode on the local rig.
 #   .\launch-client.ps1 -Role player
 #   .\launch-client.ps1 -Role bot
 param(
@@ -7,16 +7,18 @@ param(
   # The clock gate launches a second bot process with this property disabled.
   [ValidateSet('true','false')][string]$FollowTickRate = 'true',
   [ValidateSet('true','false')][string]$FullTickDemand = 'false',
-  [ValidateSet('true','false')][string]$ClockAudit = 'false'
+  [ValidateSet('true','false')][string]$ClockAudit = 'false',
+  [string]$McVersion = $env:PATHTRACING_MC_VERSION
 )
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\common.ps1"
+. "$PSScriptRoot\common.ps1" -McVersion $McVersion
 
 $name    = if ($Role -eq 'bot') { $BotName } else { $PlayerName }
 $gameDir = Join-Path $Rig "clients\$Role"
 if (-not (Test-Path "$gameDir\mods")) { throw "Client '$Role' is not set up yet: run scripts\setup.ps1 first." }
 
-$mcMeta = Get-Content "$Meta\net.minecraft\$McVersion.json" -Raw | ConvertFrom-Json
+$versionMetadata = if (Test-Path -LiteralPath $MojangMetadata) { $MojangMetadata } else { "$Meta\net.minecraft\$McVersion.json" }
+$mcMeta = Get-Content -LiteralPath $versionMetadata -Raw | ConvertFrom-Json
 $classpath = Get-GameClasspath
 
 $jvm = @(
