@@ -1,13 +1,13 @@
 # Architecture
 
-The structure, in the order it is built (bottom up, S191). Each part links to its detail.
+Built bottom up (S191).
 
 ## 1. The law: nature reproduced (detail/engine.md)
 
 - **Nature and the judge** are the selected Mojang jar and the server. **The law** is the Rust structure we write to reproduce them (S46), bit-exact for player movement and collision, server-exact for health, food and breaking, behaviour-exact for fluids, mobs and redstone. The build selects the matched registry tables and changed rules for 26.2 or 26.3 with `PATHTRACING_MC_VERSION`. Both use one engine.
 - It comes at **three grains**: the tick recurrence (verification), the word (exact costs between events), the medium (bounds over regions).
-- It grows from three sources: the obvious mechanics read from the jar, deviations seen against the game, and what a new word needs (S46).
-- **Generator basis & compression:** the law is structured as ~5–6 composable, parameterized generators plus data tables and thin Mojang scars (dual-face: `k = 1` tick oracle at contacts and `k = Δt` event word; true non-affine kernels like elytra, pistons, `PortalForcer` stay separate). Keeping the core compact preserves L1/L3 cache and one agent's context window; deletions are proven sound against jar witnesses, replays, and live flights.
+- The law grows from the jar, deviations and the needs of new words (S46). A saved map supplies its function graph, clock and command block sources. [Engine detail](detail/engine.md)
+- **Generator basis & compression:** ~5–6 generators use data tables and Mojang scars. `k = 1` gives the tick oracle at contacts, `k = Δt` gives an event word. Elytra, pistons and `PortalForcer` keep their non-affine kernels. Jar witnesses, replays and flights judge deletions.
 - Arithmetic copies Java exactly: IEEE floats and doubles, the 65,536-entry sine table, the same operation order.
 
 ## 2. The space under a kit: a crystal with defects (detail/representation.md section 10)

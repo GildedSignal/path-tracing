@@ -1,5 +1,6 @@
 //! Read-only Minecraft region files and prevalidated law snapshots.
 pub mod inflate;
+pub mod datapack;
 mod nbt;
 mod region;
 mod snapshot;

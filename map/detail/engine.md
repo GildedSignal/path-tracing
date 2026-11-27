@@ -72,6 +72,10 @@ The rules come from ES's engine ("compute only surprises"), mapped onto Minecraf
 | ruin is excluded, not priced | an irreversible loss (an item lost for good, a world change, or death where a constraint forbids it, as in a fight; otherwise death is a respawn teleport with a toll, S189, plan.md) is a barrier from the first rung, never a cost in ticks. Tokens (Phase 7) price only what can be spent and replaced |
 | the player is the only wildcard | here: Julien (his commands and edits) and the bot's own execution noise. Their light cones bound where certificates can break. Mobs are precomputed as law (S20), in the behaviour-exact class; how their random choices enter is Phase 8's design |
 
+## Datapacks
+
+A map's datapack is a law input. `world::datapack::DatapackSnapshot` reads the saved terrain, enabled file functions, ordered load and tick tags, pending function callbacks and saved command blocks in the requested box. A function keeps its source and arguments as the generator. A resolved player command uses the existing status-effect book or game-mode law, or writes the mission's respawn point. A player selector with an unresolved fact returns a refusal at the player cell and tick. A saved terrain query can propose a sentence. The command sources and their worldtube effects still need certification on the sentence's server ticks. [Datapack report](../../jobs/map-datapacks/report.md).
+
 ## Local repair
 
 "I don't want to have to recompute a whole region because one block changed" (X2):

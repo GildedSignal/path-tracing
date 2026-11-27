@@ -241,6 +241,16 @@ pub enum BlockTickKind {
     TripwireWire,
     TripwireHook,
     Scaffolding,
+    CommandBlock { repeating: bool },
+}
+
+/// The redstone and clock of an unconditional command block. The command body
+/// lives with the datapack interpreter.
+#[derive(Clone, Copy, Debug)]
+struct CommandBlockPower {
+    repeating: bool,
+    automatic: bool,
+    powered: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -501,6 +511,7 @@ pub struct SimWorld<'a, W: World> {
     pub living_entities: Vec<SimLivingEntity>,
     pub pressure_plate_positions: BTreeSet<BlockPos>,
     pub tripwire_positions: BTreeSet<BlockPos>,
+    command_blocks: HashMap<BlockPos, CommandBlockPower>,
     crowd_index: SpatialCrowdIndex,
     piston_push_scratch: Vec<Push>,
     block_tick_scratch: Vec<ScheduledTick<BlockTickKind>>,
@@ -535,6 +546,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             living_entities: Vec::new(),
             pressure_plate_positions: BTreeSet::new(),
             tripwire_positions: BTreeSet::new(),
+            command_blocks: HashMap::new(),
             crowd_index: SpatialCrowdIndex::new(),
             piston_push_scratch: Vec::new(),
             block_tick_scratch: Vec::new(),
@@ -624,6 +636,38 @@ impl<'a, W: World> SimWorld<'a, W> {
 
     pub fn schedule_block_tick(&mut self, pos: BlockPos, kind: BlockTickKind, delay: u32) -> bool {
         self.schedule_block_tick_prio(pos, kind, delay, TickPriority::Normal)
+    }
+
+    /// Restore the saved block entity. Its already scheduled ticks are loaded
+    /// independently, just as they are for a pressure plate.
+    pub fn register_command_block(&mut self, pos: BlockPos, automatic: bool, powered: bool) -> Result<(), crate::Refusal> {
+        let cell = self.cell(pos);
+        let repeating = match cell.block().name() {
+            "command_block" => false,
+            "repeating_command_block" => true,
+            _ => return Err(crate::Refusal(format!("command block at {pos:?}: unsupported mode"))),
+        };
+        if cell.get("conditional") != Some("false") {
+            return Err(crate::Refusal(format!("command block at {pos:?}: conditional execution")));
+        }
+        let face = DIRECTION.iter().position(|&name| cell.get("facing") == Some(name))
+            .expect("command block has a facing");
+        let next = Direction::from_3d_data(face as u8).relative(pos);
+        if self.cell(next).block().name() == "chain_command_block" {
+            return Err(crate::Refusal(format!("command block at {pos:?}: chain begins at {next:?}")));
+        }
+        self.command_blocks.insert(pos, CommandBlockPower { repeating, automatic, powered });
+        Ok(())
+    }
+
+    fn command_block_neighbor_changed(&mut self, pos: BlockPos) {
+        let Some(previous) = self.command_blocks.get(&pos).copied() else { return; };
+        let powered = self.has_neighbor_signal(pos);
+        if powered == previous.powered { return; }
+        self.command_blocks.get_mut(&pos).unwrap().powered = powered;
+        if powered && !previous.automatic {
+            self.schedule_block_tick(pos, BlockTickKind::CommandBlock { repeating: previous.repeating }, 1);
+        }
     }
 
     pub fn schedule_block_tick_prio(
@@ -900,6 +944,9 @@ impl<'a, W: World> SimWorld<'a, W> {
                 moved_by_piston: _,
             } => {
                 let cell = self.cell(pos);
+                if !self.command_blocks.is_empty() {
+                    self.command_block_neighbor_changed(pos);
+                }
                 match cell.kind() {
                     CellState::RedstoneWire { .. } => {
                         if !self.can_survive(pos, cell) {
@@ -1131,6 +1178,7 @@ impl<'a, W: World> SimWorld<'a, W> {
             CellState::Button(b) => b.own_signal(),
             CellState::PressurePlate(p) => p.own_signal(),
             CellState::TripwireHook(h) => h.own_signal(),
+            _ if cell.block().name() == "redstone_block" => 15,
             _ => 0,
         };
         if cell.is_redstone_conductor() {
@@ -2011,6 +2059,7 @@ impl<'a, W: World> SimWorld<'a, W> {
     fn run_block_tick(&mut self, pos: BlockPos, kind: BlockTickKind) {
         let cell = self.cell(pos);
         match kind {
+            BlockTickKind::CommandBlock { .. } => unreachable!("command block ticks have an interpreter"),
             BlockTickKind::FallingBlock => {
                 if !matches!(cell.kind(), CellState::Falling(_)) {
                     return;
@@ -2582,17 +2631,38 @@ impl<'a, W: World> SimWorld<'a, W> {
     /// 5. `Entities` (falling blocks, boats, pearls, living/crowd push, plate/tripwire hooks)
     /// 6. `BlockEntities` (moving pistons)
     pub fn step_tick(&mut self) -> WorldTick {
+        self.step_tick_with_commands(|_| {}, |_, _| {})
+    }
+
+    /// Scheduled datapack callbacks run after the game clock increments, and
+    /// block commands run in the block tick queue's order.
+    pub fn step_tick_with_commands(
+        &mut self,
+        mut scheduled: impl FnMut(&mut Self),
+        mut command: impl FnMut(&mut Self, BlockPos),
+    ) -> WorldTick {
         self.game_time += 1;
         let gt = self.game_time;
-
         self.handling_tick = true;
+        scheduled(self);
         // Phase 1: BlockTicks
         let mut b_scratch = std::mem::take(&mut self.block_tick_scratch);
         self.block_ticks
             .collect_due(gt, MAX_TICKS_PER_TICK, |_| true, &mut b_scratch);
         let block_ticks_ran = b_scratch.len();
         for t in &b_scratch {
-            self.run_block_tick(t.pos, t.kind);
+            if let BlockTickKind::CommandBlock { repeating } = t.kind {
+                let name = if repeating { "repeating_command_block" } else { "command_block" };
+                if self.cell(t.pos).block().name() != name || !self.command_blocks.contains_key(&t.pos) {
+                    continue;
+                }
+                command(self, t.pos);
+                if repeating && self.command_blocks.get(&t.pos).is_some_and(|s| s.powered || s.automatic) {
+                    self.schedule_block_tick(t.pos, t.kind, 1);
+                }
+            } else {
+                self.run_block_tick(t.pos, t.kind);
+            }
         }
         b_scratch.clear();
         self.block_tick_scratch = b_scratch;

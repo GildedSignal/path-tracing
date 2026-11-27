@@ -4,7 +4,7 @@ use std::{fmt, fs::OpenOptions, io::Read, mem::size_of, path::{Path, PathBuf}};
 pub const DEFAULT_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const CACHE_SLOTS: usize = 16;
 // The location table has 1024 entries of at most 255 inline sectors each.
-const MAX_REGION_BYTES: u64 = (2 + 1024 * 255) * 4096;
+pub(crate) const MAX_REGION_BYTES: u64 = (2 + 1024 * 255) * 4096;
 const MAX_NBT_BYTES: usize = 16 * 1024 * 1024;
 const MIN_SECTION: i8 = -4;
 const MAX_SECTION: i8 = 19;
@@ -146,7 +146,7 @@ pub(crate) fn metadata(path: &Path) -> Result<Vec<u8>, LoadError> {
     let bytes = read_copy(path, MAX_NBT_BYTES as u64)?;
     inflate::gzip(&bytes).map_err(|e| LoadError::Invalid(format!("{}: {e}", path.display())))
 }
-fn chunk_payload(region: &[u8], coord: [i32;2]) -> Result<Vec<u8>, LoadError> {
+pub(crate) fn chunk_payload(region: &[u8], coord: [i32;2]) -> Result<Vec<u8>, LoadError> {
     let bad = |s: &str| LoadError::Invalid(format!("region chunk {coord:?}: {s}"));
     if region.len() < 8192 { return Err(bad("truncated Anvil header")); }
     let index = (coord[0].rem_euclid(32) + 32*coord[1].rem_euclid(32)) as usize * 4;

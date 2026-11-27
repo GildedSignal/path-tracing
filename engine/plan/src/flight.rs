@@ -58,26 +58,30 @@ impl Track {
     /// B with the face its definition selects.
     pub fn goal(&self) -> Goal { Goal { cell: self.b, face: self.b_face, settle: false } }
     pub fn settled_start(&self) -> Result<law::PlayerState,String> {
-        let context = CollisionContext { feet_y: self.a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
-        let world=source::ObservedWorld::new(&self.world);
-        let shape=world.collision_shape(self.a,context);
-        world.check()?;
-        let top = shape.coords[1].last().copied().ok_or("A has no support surface")?;
-        let mut state = law::PlayerState {
-            position: law::Vec3::new(self.a[0] as f64 + 0.5, self.a[1] as f64 + top, self.a[2] as f64 + 0.5),
-            on_ground: true, main_supporting_block: Some(self.a), saturation: 20.0, ..Default::default()
-        };
-        state.velocity.y = -state.profile.gravity * f64::from(0.98f32);
-        let position = state.position;
-        let velocity = state.velocity;
-        law::try_tick(&mut state, &world, &Default::default()).map_err(|e| e.0)?;
-        world.check()?;
-        if !state.on_ground || state.position != position || state.velocity != velocity || state.main_supporting_block != Some(self.a) {
-            return Err(format!("no settled support at {:?}", self.a));
-        }
-        state.t = 0;
-        Ok(state)
+        settled_start(&self.world, self.a)
     }
+}
+
+pub fn settled_start(snapshot: &impl World, a: BlockPos) -> Result<law::PlayerState, String> {
+    let context = CollisionContext { feet_y: a[1] as f64 + 2.0, descending: false, fall_distance: 0.0, leather_boots: false };
+    let world = source::ObservedWorld::new(snapshot);
+    let shape = world.collision_shape(a, context);
+    world.check()?;
+    let top = shape.coords[1].last().copied().ok_or("A has no support surface")?;
+    let mut state = law::PlayerState {
+        position: law::Vec3::new(a[0] as f64 + 0.5, a[1] as f64 + top, a[2] as f64 + 0.5),
+        on_ground: true, main_supporting_block: Some(a), saturation: 20.0, ..Default::default()
+    };
+    state.velocity.y = -state.profile.gravity * f64::from(0.98f32);
+    let position = state.position;
+    let velocity = state.velocity;
+    law::try_tick(&mut state, &world, &Default::default()).map_err(|e| e.0)?;
+    world.check()?;
+    if !state.on_ground || state.position != position || state.velocity != velocity || state.main_supporting_block != Some(a) {
+        return Err(format!("no settled support at {a:?}"));
+    }
+    state.t = 0;
+    Ok(state)
 }
 // The recorder's input JSONL, extended with the law's raw start and prediction bits.
 fn write_script(path: &std::path::Path, track:&Track, programs: &[Program], start: &law::PlayerState, steps: impl Iterator<Item=(u16, words::Arguments, u32)>, predicted: u32, goal: Goal) -> Result<u32, String> {

@@ -99,6 +99,10 @@ impl<'a> Tag<'a> {
         if self.kind != 3 { return Err(bad("expected int")); }
         Ok(i32::from_be_bytes(self.bytes.try_into().unwrap()))
     }
+    pub fn long(self) -> Result<i64, LoadError> {
+        if self.kind != 4 { return Err(bad("expected long")); }
+        Ok(i64::from_be_bytes(self.bytes.try_into().unwrap()))
+    }
     pub fn byte(self) -> Result<i8, LoadError> {
         if self.kind != 1 { return Err(bad("expected byte")); }
         Ok(self.bytes[0] as i8)

@@ -156,13 +156,19 @@ impl WorldSnapshot {
         Self::read(world_dir, min, max, SNAPSHOT_BYTES, true)
     }
     fn read(world_dir: &Path, min: BlockPos, max: BlockPos, max_bytes: usize, partial: bool) -> Result<Self, LoadError> {
+        let mut reader = WorldReader::open(world_dir)?;
+        if reader.datapacks != ["vanilla"] { return Err(LoadError::Unsupported(format!("law models require only the vanilla datapack; enabled {:?}",reader.datapacks))); }
+        Self::read_terrain(&mut reader, min, max, max_bytes, partial)
+    }
+    pub(crate) fn read_datapack_terrain(reader: &mut WorldReader, min: BlockPos, max: BlockPos) -> Result<Self, LoadError> {
+        Self::read_terrain(reader, min, max, SNAPSHOT_BYTES, true)
+    }
+    fn read_terrain(reader: &mut WorldReader, min: BlockPos, max: BlockPos, max_bytes: usize, partial: bool) -> Result<Self, LoadError> {
         if (0..3).any(|i| min[i] > max[i]) { return Err(LoadError::Invalid("snapshot min exceeds max".into())); }
         let widths: [usize;3] = std::array::from_fn(|i| (max[i] as i64 - min[i] as i64 + 1) as usize);
         let count = widths.into_iter().try_fold(1usize, |n,w| n.checked_mul(w))
             .ok_or_else(|| LoadError::Invalid("snapshot volume overflow".into()))?;
         if count.checked_mul(2).is_none_or(|n| n > max_bytes) { return Err(LoadError::Unsupported(format!("snapshot needs {} cells, beyond {max_bytes}-byte limit", count))); }
-        let mut reader = WorldReader::open(world_dir)?;
-        if reader.datapacks != ["vanilla"] { return Err(LoadError::Unsupported(format!("law models require only the vanilla datapack; enabled {:?}",reader.datapacks))); }
         let model_version = cell::DATA_VERSION;
         if reader.data_version() != model_version { return Err(LoadError::Unsupported(format!("law models have DataVersion {model_version}, world has {}",reader.data_version()))); }
         let generation = metadata(&reader.world_dir.join("data/minecraft/world_gen_settings.dat"))?;
