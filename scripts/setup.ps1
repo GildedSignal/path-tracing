@@ -105,7 +105,9 @@ foreach ($role in 'player', 'bot') {
 }
 
 # --- Bot mod --------------------------------------------------------------------------------------
-& "$Root\bot\build.ps1"
-foreach ($role in 'player', 'bot') { Copy-Item "$Root\bot\build\pathtracing.jar" "$Rig\clients\$role\mods\" -Force }
+# Built into the rig's own folder, so building one version never overwrites another's jar.
+$botBuild = if ($Rig -eq $Root) { "$Root\bot\build" } else { "$Rig\build\bot" }
+& "$Root\bot\build.ps1" -McVersion $McVersion -Output $botBuild
+foreach ($role in 'player', 'bot') { Copy-Item "$botBuild\pathtracing.jar" "$Rig\clients\$role\mods\" -Force }
 
 Write-Host "Setup done. Start everything with: .\play.ps1"

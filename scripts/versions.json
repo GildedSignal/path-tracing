@@ -13,6 +13,9 @@
     "serverJar": "minecraft-26.3-server.jar",
     "clientSha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
     "fabricLoader": "0.19.5",
-    "fabricApiJar": "fabric-api-0.167.0+26.3.jar"
+    "fabricApiJar": "fabric-api-0.167.0+26.3.jar",
+    "packMods": false,
+    "rig": "D:/path-tracing-rigs/26.3",
+    "port": 25566
   }
 }

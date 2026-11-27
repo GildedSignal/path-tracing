@@ -21,6 +21,11 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     let (dir, tasks, out) = (PathBuf::from(&args[1]), std::fs::read_to_string(&args[2]).map_err(|e| e.to_string())?, PathBuf::from(&args[3]));
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    // STORE=warm keeps one store across the tasks (what is learned once is reused); the thesis
+    // protocol, and the default, is a cold store per task.
+    let warm = std::env::var("STORE").is_ok_and(|v| v == "warm");
+    let shared = plan::store::GeneratorStore::default();
+    let mut shared_codec = law::codec::Interner::default();
     for line in tasks.lines().filter(|l| !l.trim().is_empty()) {
         let f: Vec<&str> = line.split_whitespace().collect();
         let n: Vec<i32> = f[1..5].iter().map(|v| v.parse().unwrap()).collect();
@@ -40,9 +45,11 @@ fn main() -> Result<(), String> {
         let clock = Instant::now();
         let start = match track.settled_start() { Ok(s) => s, Err(e) => { println!("{} NO-START {e}", f[0]); continue } };
         let source = plan::source::GeneratorSuperflatSource::snapshot(&track.world, a)?;
-        let store = plan::store::GeneratorStore::default();
-        let mut codec = law::codec::Interner::default();
-        let r = plan::solve(&start, track.goal(), plan::Kit::BareLegs, &source, &store, &mut codec, u64::MAX);
+        let cold = plan::store::GeneratorStore::default();
+        let store = if warm { &shared } else { &cold };
+        let mut fresh = law::codec::Interner::default();
+        let codec = if warm { &mut shared_codec } else { &mut fresh };
+        let r = plan::solve(&start, track.goal(), plan::Kit::BareLegs, &source, store, codec, u64::MAX);
         let think_ms = clock.elapsed().as_secs_f64() * 1000.0;
         match r.outcome {
             plan::PlanOutcome::Ready(p) => {

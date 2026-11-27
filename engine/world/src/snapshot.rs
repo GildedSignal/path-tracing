@@ -507,9 +507,15 @@ fn subcell_mask(a: BlockPos, b: BlockPos) -> u64 {
 }
 #[inline(always)]
 fn local(p: BlockPos) -> usize { (((p[1] & 15) << 8) | ((p[2] & 15) << 4) | (p[0] & 15)) as usize }
+/// A saved-data file may be older than level.dat: Mojang's upgrade rewrites only the files whose
+/// content changes, and the game data-fixes the rest on read (`game_rules.dat` stays 4903 in a
+/// world `--forceUpgrade` took to 5023). It is read when its version is one the law knows and
+/// no newer than the world's; the keys read are then required by name.
 fn check_version(root: nbt::Tag<'_>, expected: i32, file: &str) -> Result<(),LoadError> {
     let found = root.required("DataVersion")?.int()?;
-    if expected != found { return Err(LoadError::Invalid(format!("{file} DataVersion {found} differs from level.dat {expected}"))); }
+    if found > expected || !matches!(found, 4903 | 5023) {
+        return Err(LoadError::Invalid(format!("{file} DataVersion {found} against level.dat {expected}")));
+    }
     Ok(())
 }
 impl World for WorldSnapshot {

@@ -2,9 +2,6 @@
 param([string]$McVersion = $env:PATHTRACING_MC_VERSION, [string]$Dependencies = $env:PATHTRACING_DEPS)
 
 $Root        = Split-Path -Parent $PSScriptRoot
-# The rig (server\ and clients\, not in git). PATHTRACING_ROOT lets a builder's worktree use the one rig
-# while building its own code from $Root.
-$Rig         = if ($env:PATHTRACING_ROOT) { $env:PATHTRACING_ROOT } else { $Root }
 # PATHTRACING_DEPS points sandboxed GPT jobs at a staged copy of what builds need (scripts\stage-deps.ps1).
 $PrismData   = if ($Dependencies) { $Dependencies } else { Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data' }
 $Jdk         = Join-Path $PrismData 'java\java-runtime-epsilon\bin'
@@ -19,6 +16,10 @@ if (-not $McVersion) { $McVersion = '26.2' }
 $versions = Get-Content (Join-Path $Root 'scripts/versions.json') -Raw | ConvertFrom-Json
 $McSpec = $versions.$McVersion
 if (-not $McSpec) { throw "Unsupported Minecraft version '$McVersion'." }
+# The rig (server\, clients\, lab\tracks\, maps.json and the native DLL under engine\target\release\;
+# not in git): one per version, named in versions.json (none means this checkout). PATHTRACING_ROOT
+# overrides it, so a builder's worktree uses a rig while building its own code from $Root.
+$Rig         = if ($env:PATHTRACING_ROOT) { $env:PATHTRACING_ROOT } elseif ($McSpec.rig) { $McSpec.rig } else { $Root }
 $LoaderVersion = $McSpec.fabricLoader
 $StagedDeps = if ($Dependencies) { Split-Path $PrismData } else { 'D:\path-tracing-deps' }
 $McStage = Join-Path $StagedDeps "versions/$McVersion"
@@ -83,7 +84,7 @@ function Write-FabricMetadata([string]$Source, [string]$Classes) {
 }
 
 $ServerHost  = '127.0.0.1'
-$ServerPort  = if ($env:PATHTRACING_SERVER_PORT) { [int]$env:PATHTRACING_SERVER_PORT } else { 25565 }
+$ServerPort  = if ($env:PATHTRACING_SERVER_PORT) { [int]$env:PATHTRACING_SERVER_PORT } elseif ($McSpec.port) { [int]$McSpec.port } else { 25565 }
 if ($ServerPort -lt 1 -or $ServerPort -gt 65525) { throw 'PATHTRACING_SERVER_PORT must leave room for RCON at port + 10.' }
 $RconPort    = $ServerPort + 10
 $PlayerName  = 'Brain_Forge'
@@ -119,6 +120,12 @@ function Get-OfflineUuid([string]$Name) {
 
 function Copy-Mods([string[]]$Patterns, [string]$Destination) {
   New-Item -ItemType Directory -Force $Destination | Out-Null
+  # The pack's jars are built for the version the pack runs (versions.json `packMods`). Any other
+  # version gets the staged Fabric API alone: performance mods change no game logic, so none is needed.
+  if ($McSpec.packMods -eq $false) {
+    if ($Patterns -contains 'fabric-api-*') { Copy-Item (Join-Path $McStage $McSpec.fabricApiJar) $Destination -Force }
+    return
+  }
   foreach ($p in $Patterns) {
     $jar = Get-ChildItem $PackMods -Filter "$p.jar" | Select-Object -First 1
     if (-not $jar) { throw "Mod '$p' not found in $PackMods" }
