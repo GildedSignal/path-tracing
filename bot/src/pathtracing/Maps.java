@@ -46,6 +46,20 @@ final class Maps {
             Map<String, int[]> maps = new TreeMap<>(MapRegistry.read(rig.resolve("maps.json")));
             maps.put("overworld", MapSpawn.read(rig.resolve("server/world/level.dat")));
             Map<String, String> worlds = worlds();
+            // On a map served as its own world, the overworld and the old dimension maps are in the
+            // rig's own world: switch the server back to it first.
+            var properties = new java.util.Properties();
+            try (var reader = Files.newBufferedReader(rig.resolve("server/server.properties"))) { properties.load(reader); }
+            boolean onMapWorld = !properties.getProperty("level-name", "world").equals("world");
+            if (name != null && onMapWorld && maps.containsKey(name)) {
+                new ProcessBuilder("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                    Path.of(System.getProperty("pathtracing.scripts"), "map.ps1").toString(), "world", "-McVersion",
+                    System.getProperty("pathtracing.mcVersion", "26.2"))
+                    .redirectErrorStream(true).redirectOutput(rig.resolve("map-switch.log").toFile()).start();
+                mc.player.sendSystemMessage(Component.literal("Switching the server back to your world: it restarts; join again in about 30 s"
+                    + (name.equals("overworld") ? "." : ", then /map " + name + ".")));
+                return 1;
+            }
             if (name == null) {
                 maps.keySet().forEach(key -> line(mc, key, key));
                 worlds.forEach((key, version) -> line(mc, key, key + "  (own world, " + version + ")"));
