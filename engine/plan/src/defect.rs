@@ -597,9 +597,23 @@ impl TopoField {
         }))
     }
 
+    /// The state the body's motion is read from: the least T-to-go over its two cells and
+    /// `state_of`'s. `state_of` names the cell a hand acts from; the motion may not take it alone,
+    /// since a rising body's feet still sit in the cell below the one it is already reaching
+    /// (the field holds no vertical velocity), and a bound must not exceed the body's T-to-go.
+    fn motion_state(&self, s: &PlayerState) -> Option<usize> {
+        let fy = (s.position.y + 0.05).floor() as i32;
+        (0..=1)
+            .filter_map(|dy| self.idx([s.position.x.floor() as i32, fy + dy, s.position.z.floor() as i32]))
+            .map(|ci| self.best(ci))
+            .chain(self.state_of(s))
+            .filter(|&i| self.dist[i] < f32::INFINITY)
+            .min_by(|&a, &b| self.dist[a].total_cmp(&self.dist[b]))
+    }
+
     #[inline]
     fn query(&self, s: &PlayerState) -> f32 {
-        self.state_of(s).map_or(f32::INFINITY, |i| self.dist[i])
+        self.motion_state(s).map_or(f32::INFINITY, |i| self.dist[i])
     }
 
     fn query_with_edits(&self, s: &PlayerState, edits: &[(BlockPos, StateId)], ledger: &ObligationLedger) -> f32 {
@@ -681,7 +695,7 @@ impl TopoField {
 
     /// Landing bearing, horizontal distance, vertical delta, and gap flag along the field's descent.
     fn landing(&self, grid: &impl World, s: &PlayerState) -> Option<Landing> {
-        let mut si = self.state_of(s)?;
+        let mut si = self.motion_state(s)?;
         let start = self.pos(si / self.runs);
         let mut target = None;
         let mut saw_gap = false;
