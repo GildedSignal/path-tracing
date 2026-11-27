@@ -44,11 +44,24 @@ final class TrackStore {
     }
 
     final Path rig;
-    private final Path directory;
 
     TrackStore(Path rig) {
         this.rig = rig;
-        directory = rig.resolve("lab/tracks");
+    }
+
+    /** The tracks of the world the server runs: `level-name=world` (his) keeps lab/tracks; a map,
+     *  served as its own world (scripts/map.ps1), keeps lab/maps/<map>/. Read per call, so a map
+     *  switch needs no client restart. */
+    private Path directory() {
+        String level = "world";
+        try (var reader = Files.newBufferedReader(rig.resolve("server/server.properties"), StandardCharsets.UTF_8)) {
+            var properties = new java.util.Properties();
+            properties.load(reader);
+            level = properties.getProperty("level-name", "world");
+        } catch (IOException ignored) {
+        }
+        String map = Path.of(level).getFileName().toString();
+        return map.equals("world") ? rig.resolve("lab/tracks") : rig.resolve("lab/maps").resolve(map);
     }
 
     static void validateName(String name) {
@@ -57,7 +70,7 @@ final class TrackStore {
 
     private Path file(String name) {
         validateName(name);
-        return directory.resolve(name + ".json");
+        return directory().resolve(name + ".json");
     }
 
     void create(Track track) throws IOException {
@@ -69,7 +82,7 @@ final class TrackStore {
         out.addProperty("dimension", track.dimension);
         out.addProperty("created", track.created);
         out.addProperty("creator", track.creator);
-        Files.createDirectories(directory);
+        Files.createDirectories(directory());
         // Publish a complete definition atomically. The name is reserved under the shared lock.
         try (var channel = lockChannel(); var lock = channel.lock()) {
             if (Files.exists(file(track.name))) throw new IOException("Track already exists: " + track.name);
@@ -94,9 +107,9 @@ final class TrackStore {
     }
 
     List<Track> list() throws IOException {
-        if (!Files.isDirectory(directory)) return List.of();
+        if (!Files.isDirectory(directory())) return List.of();
         List<Track> out = new ArrayList<>();
-        try (var paths = Files.list(directory)) {
+        try (var paths = Files.list(directory())) {
             for (Path path : paths.filter(p -> p.getFileName().toString().matches("[a-z0-9_-]+\\.json")).sorted().toList()) {
                 String name = path.getFileName().toString();
                 out.add(read(name.substring(0, name.length() - 5)));
@@ -113,13 +126,13 @@ final class TrackStore {
     }
 
     private FileChannel lockChannel() throws IOException {
-        Files.createDirectories(directory);
-        return FileChannel.open(directory.resolve(".lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        Files.createDirectories(directory());
+        return FileChannel.open(directory().resolve(".lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
     }
 
     private Path kitFile(String name) {
         validateName(name);
-        return directory.resolve(name + ".kit.json");
+        return directory().resolve(name + ".kit.json");
     }
 
     TrackInventory readKit(String name) throws IOException {
@@ -154,7 +167,7 @@ final class TrackStore {
 
     private Path sessionFile(String player) {
         if (!player.matches("[A-Za-z0-9_]{1,16}")) throw new IllegalArgumentException("Invalid session player name.");
-        return directory.resolve(".session-" + player + ".json");
+        return directory().resolve(".session-" + player + ".json");
     }
 
     Session readSession(String player) throws IOException {
@@ -208,7 +221,7 @@ final class TrackStore {
 
     private Path runs(String name) {
         validateName(name);
-        return directory.resolve("runs").resolve(name + ".jsonl");
+        return directory().resolve("runs").resolve(name + ".jsonl");
     }
 
     private List<JsonObject> readRuns(String name) throws IOException {

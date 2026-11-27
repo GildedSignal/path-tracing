@@ -30,7 +30,7 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Next, in order
 
-0. **Session handoff & active branches** (`wt/gpu-mind-speed`, `wt/law-26.3`, `wt/bench-dig`): [handoff](../jobs/handoff-2026-11-27/report.md).
+0. **A defect not crossed is routed around** (Julien 2026-11-27): infinite cost in the field, the wave reruns; with no detour, go to the least T-to-go and learn while moving.
 
 1. **Remaining live gaps:** empty-hotbar (`blocks=0`) `ametwoodbox` live check and a face-track flight (B on a wall or ceiling face).
 2. **Further law compression & gaps:** close remaining law behavior toward the `7,920`-line Fermi floor plus client 5-tick break cooldown in the law.
@@ -52,5 +52,5 @@ What is in flight and what comes next. Rewritten freely; history lives in git.
 
 ## Branches and open notes
 
-- Branches & worktrees (`D:\path-tracing-wt\`): `main` (unpushed; holds `gpu-mind-speed`, `law-26.3`), `wt/bench-dig` (`8dfb7022` + unjudged edits: BlockStep 71/72).
-- Untrimmed region files `r.0.0.mca` / `r.0.-1.mca` stay uncommitted on `main` (`*.bak-20261114` backups beside them).
+- `main` is unpushed. `wt/bench-dig`: 71/72, judged; its box ladder costs T.
+- **Maps:** each is its own world in its version's rig: `scripts/map.ps1 <name> [-Source <zip>]`; tracks in `lab/maps/<name>/`. The 22 tracks set before S170 accept any face of B.
