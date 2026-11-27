@@ -176,7 +176,7 @@ public final class ModelTable {
         }
         // Entity.getOnPos tests the FENCES and WALLS tags and FenceGateBlock.
         boolean[] flags={s.isAir(),s.isSuffocating(LOCAL,BlockPos.ZERO),b instanceof LiquidBlock && isWater,
-            tag(s,BlockTags.CLIMBABLE),b instanceof ScaffoldingBlock,b instanceof SlimeBlock,b instanceof BedBlock,
+            tag(s,BlockTags.CLIMBABLE),b instanceof ScaffoldingBlock,b instanceof SlimeBlock,JarRules.halvesFallDistance(b),
             tag(s,BlockTags.FENCES),tag(s,BlockTags.WALLS)||b instanceof FenceGateBlock,tag(s,BlockTags.SUPPRESSES_BOUNCE),
             tag(s,BlockTags.FALL_DAMAGE_RESETTING),b instanceof EndPortalBlock || b instanceof EndGatewayBlock,world};
         int bits=0; for(int i=0;i<flags.length;i++) if(flags[i]) bits|=1<<i;
@@ -193,7 +193,7 @@ public final class ModelTable {
         return String.join("\t",fp(b.getFriction()),fp(b.getSpeedFactor()),fp(b.getJumpFactor()),fp(b.getBounceRestitution()),
             fp(fallMult),Integer.toString(bits),Integer.toString(ladder),Integer.toString(trap),
             fluidKind,fluid.isEmpty()?"0":Integer.toString(fluid.getAmount()),
-            fluid.isEmpty()?"false":fluid.getValue(FlowingFluid.FALLING).toString(),Boolean.toString(s.blocksMotion()),Integer.toString(faces),
+            fluid.isEmpty()?"false":fluid.getValue(FlowingFluid.FALLING).toString(),Boolean.toString(JarRules.blocksFluidFlow(s)),Integer.toString(faces),
             inside.equals("world")?"none":inside, step.equals("hotFloor")?"hotFloor":"none",
             shape(collision.get(0)),
             // PowderSnowBlock returns Shapes.block when the unbooted collision shape is empty (26.2 bytecode).
@@ -257,6 +257,8 @@ public final class ModelTable {
         } catch (Refused ignored) {}
         if (block instanceof LiquidBlockContainer container) {
             boolean accepts=container.canPlaceLiquid(null,LOCAL,BlockPos.ZERO,state,Fluids.WATER);
+            if (container.canPlaceLiquid(null,LOCAL,BlockPos.ZERO,state,Fluids.LAVA))
+                throw new AssertionError("unmodeled lava container: "+state);
             if (block instanceof SimpleWaterloggedBlock) {
                 waterContainer=accepts ? "accepts" : "rejects";
             } else {
@@ -267,19 +269,21 @@ public final class ModelTable {
         return List.of(
             Integer.toHexString(Float.floatToRawIntBits(state.getDestroySpeed(LOCAL,BlockPos.ZERO))),
             Boolean.toString(state.requiresCorrectToolForDrops()), conductor, sturdy,
-            state.getPistonPushReaction().name(), Boolean.toString(state.blocksMotion()),
+            state.getPistonPushReaction().name(), Boolean.toString(JarRules.blocksMotion(state)),
             Boolean.toString(state.canBeReplaced(Fluids.WATER)), Boolean.toString(state.canBeReplaced(Fluids.LAVA)),
             Boolean.toString(state.canBeReplaced()), Boolean.toString(state.isSignalSource()),
-            Boolean.toString(state.hasBlockEntity()), Boolean.toString(state.isAir()), waterContainer);
+            Boolean.toString(state.hasBlockEntity()), Boolean.toString(state.isAir()), waterContainer,
+            JarRules.hasFluidAdmissionTag() ? JarRules.washedAway(state)+":"+state.isSolid() : "");
     }
 
     // Keep the columns read by the kit projection in place. The same rows serve
     // its block defaults and the simulator's full state index.
     static String cellRuleLine(String name, List<String> row) {
         float hardness=Float.intBitsToFloat(Integer.parseUnsignedInt(row.get(0),16));
-        return String.join("\t", name, Float.toString(hardness), row.get(1).equals("true")?"y":"n",
+        String line=String.join("\t", name, Float.toString(hardness), row.get(1).equals("true")?"y":"n",
             row.get(2), row.get(3), row.get(4), row.get(5), row.get(6), row.get(7), row.get(8),
             row.get(9), row.get(10).equals("true")?"y":"n", row.get(11)+":"+row.get(12));
+        return row.get(13).isEmpty() ? line : line+"\t"+row.get(13);
     }
 
     static void writeCellRules(Path out, Path rules) throws IOException {
@@ -306,10 +310,12 @@ public final class ModelTable {
                 states++;
             }
         }
-        if (blocks!=1196 || states!=32366) throw new AssertionError(blocks+" blocks, "+states+" states");
+        if (blocks!=BuiltInRegistries.BLOCK.size() || states!=Block.BLOCK_STATE_REGISTRY.size())
+            throw new AssertionError(blocks+" blocks, "+states+" states");
         index.add(states+"\t"+previous);
         index.addFirst("# state id (exclusive end)\trule row");
-        rows.addFirst("# block default or variant\thardness\tcorrect tool\tconductor\tsturdy faces\tpush reaction\tblocks motion\treplaceable by water\treplaceable by lava\treplaceable\tsignal source\tblock entity\tair:water container");
+        rows.addFirst("# block default or variant\thardness\tcorrect tool\tconductor\tsturdy faces\tpush reaction\tblocks motion\treplaceable by water\treplaceable by lava\treplaceable\tsignal source\tblock entity\tair:water container"
+            + (JarRules.hasFluidAdmissionTag() ? "\twashed away by fluids:solid" : ""));
         Files.write(rules,rows);
         Files.write(out.resolve("cell_rule_index.tsv"),index);
     }
@@ -382,8 +388,7 @@ public final class ModelTable {
         for(var entry:census.entrySet()) censusLines.add(entry.getKey()+"\t"+entry.getValue());
         Files.write(Path.of(args[0],"census.tsv"),censusLines);
         Path out=Path.of(args[0]).normalize();
-        Path rules=out.resolve("../../law/src/basis/rules.tsv").normalize();
-        writeCellRules(out,Files.isDirectory(rules.getParent())?rules:out.resolve("rules.tsv"));
+        writeCellRules(out,out.resolve("rules.tsv"));
         System.out.println(rows.size()+" of "+total+" states modeled, "+models.size()+" physical models");
     }
 }

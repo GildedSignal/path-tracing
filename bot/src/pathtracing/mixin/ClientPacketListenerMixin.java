@@ -24,6 +24,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 import pathtracing.LandingClientTrace;
+import pathtracing.MinecraftApi;
 import pathtracing.Recorder;
 import pathtracing.Tracks;
 import pathtracing.SprintDiagnostic;
@@ -151,8 +152,9 @@ abstract class ClientPacketListenerMixin {
 
     @Inject(method = "handleLevelChunkWithLight", at = @At("RETURN"))
     private void ptChunkLoad(ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
-        ResidentSource.chunk(packet.getX(),packet.getZ());
-        if (LandingClientTrace.CORPUS) LandingClientTrace.chunkUpdate(packet.getX(), packet.getZ());
+        int x = MinecraftApi.chunkX(packet), z = MinecraftApi.chunkZ(packet);
+        ResidentSource.chunk(x, z);
+        if (LandingClientTrace.CORPUS) LandingClientTrace.chunkUpdate(x, z);
     }
 
     @Inject(method = "handleForgetLevelChunk", at = @At("RETURN"))

@@ -9,7 +9,7 @@ public class UseEffectsTable {
     public static void main(String[] args) throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
         net.minecraft.server.Bootstrap.bootStrap();
-        var provider = net.minecraft.data.registries.VanillaRegistries.createLookup();
+        var provider = JarRules.components();
         var rows = new TreeMap<String, String>();
         for (var pending : BuiltInRegistries.DATA_COMPONENT_INITIALIZERS.build(provider)) {
             pending.apply();

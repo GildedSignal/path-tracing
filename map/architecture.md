@@ -4,7 +4,7 @@ The structure, in the order it is built (bottom up, S191). Each part links to it
 
 ## 1. The law: nature reproduced (detail/engine.md)
 
-- **Nature and the judge** are Mojang's 26.2 code and the server. **The law** is the Rust structure we write to reproduce them (S46), bit-exact for player movement and collision, server-exact for health, food and breaking, behaviour-exact for fluids, mobs and redstone.
+- **Nature and the judge** are the selected Mojang jar and the server. **The law** is the Rust structure we write to reproduce them (S46), bit-exact for player movement and collision, server-exact for health, food and breaking, behaviour-exact for fluids, mobs and redstone. The build selects the matched registry tables and changed rules for 26.2 or 26.3 with `PATHTRACING_MC_VERSION`. Both use one engine.
 - It comes at **three grains**: the tick recurrence (verification), the word (exact costs between events), the medium (bounds over regions).
 - It grows from three sources: the obvious mechanics read from the jar, deviations seen against the game, and what a new word needs (S46).
 - **Generator basis & compression:** the law is structured as ~5–6 composable, parameterized generators plus data tables and thin Mojang scars (dual-face: `k = 1` tick oracle at contacts and `k = Δt` event word; true non-affine kernels like elytra, pistons, `PortalForcer` stay separate). Keeping the core compact preserves L1/L3 cache and one agent's context window; deletions are proven sound against jar witnesses, replays, and live flights.

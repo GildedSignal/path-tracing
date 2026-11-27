@@ -11,7 +11,9 @@ fn point_of(json: &str, key: &str) -> [i32; 3] {
 }
 pub fn track(line: &str) -> Result<Track, String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    track_at(line, &root.join("../../lab/tracks"), &root.join("../world/tests/fixtures/world"))
+    let world = std::env::var_os("PATHTRACING_TRACK_WORLD").map(PathBuf::from)
+        .unwrap_or_else(|| root.join("../world/tests/fixtures/world"));
+    track_at(line, &root.join("../../lab/tracks"), &world)
 }
 
 /// The same flight input, with saved track records and the dimension view chosen by the caller.

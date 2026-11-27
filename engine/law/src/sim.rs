@@ -25,7 +25,7 @@ use crate::neighbor::{
     UpdateOrDestroyAction, UPDATE_SHAPE_ORDER, update_flags,
 };
 use crate::pearl::{
-    self, PearlEntityTarget, PearlLanding, PearlState,
+    self, PearlEntityTarget, PearlState,
 };
 use crate::piston::{
     self, BlockKind as PistonBlockKind, MovingPiston, PistonBlock, PistonEntity, PistonWorld,
@@ -1357,17 +1357,22 @@ impl<'a, W: World> SimWorld<'a, W> {
     }
 
     fn can_hold_any_fluid(cell: &StateId) -> bool {
-        if cell.is_air() || cell.rules().replaceable_by_water || cell.rules().replaceable_by_lava || cell.is_waterlogged_container() {
-            return true;
+        let rules = cell.rules();
+        use crate::basis::cell::WaterContainer;
+        match rules.fluid_boundary {
+            Some(boundary) => rules.water_container != WaterContainer::None || boundary.washed_away,
+            None => rules.is_air || rules.replaceable_by_water || rules.replaceable_by_lava
+                || rules.water_container == WaterContainer::Accepts || !rules.blocks_motion,
         }
-        !cell.rules().blocks_motion
     }
 
     fn can_hold_specific_fluid(cell: &StateId, kind: FlowKind) -> bool {
-        if cell.is_waterlogged_container() {
-            matches!(kind, FlowKind::Water)
-        } else {
-            Self::can_hold_any_fluid(cell)
+        use crate::basis::cell::WaterContainer;
+        let rules = cell.rules();
+        match rules.water_container {
+            WaterContainer::Accepts => matches!(kind, FlowKind::Water),
+            WaterContainer::Rejects | WaterContainer::Other if rules.fluid_boundary.is_some() => false,
+            _ => Self::can_hold_any_fluid(cell),
         }
     }
 
@@ -1415,7 +1420,9 @@ impl<'a, W: World> SimWorld<'a, W> {
 
         let below_pos = Direction::Down.relative_by(pos, 1);
         let below_cell = self.cell(below_pos);
-        let below_solid_or_same_source = !below_cell.is_air() && below_cell.rules().blocks_motion
+        let below_rules = below_cell.rules();
+        let below_solid = below_rules.fluid_boundary.map_or(!below_rules.is_air && below_rules.blocks_motion, |b| b.solid);
+        let below_solid_or_same_source = below_solid
             || below_cell
                 .fluid_info(self.fast_lava)
                 .is_some_and(|(bk, bf)| Self::same_fluid_kind(kind, bk) && bf.source);
@@ -2293,20 +2300,16 @@ impl<'a, W: World> SimWorld<'a, W> {
             let owner_ok = p
                 .owner_idx
                 .is_some_and(|idx| self.living_entities.get(idx).is_some_and(|e| e.alive));
-            if let Some(PearlLanding {
-                teleport_pos,
-                reset_fall_distance,
-                damage,
-                ..
-            }) = pearl::pearl_tick(&self.world, &mut p.state, &targets, owner_ok)
+            if let Some(landing) = pearl::pearl_tick(&self.world, &mut p.state, &targets, owner_ok)
             {
                 if let Some(idx) = p.owner_idx {
                     if let Some(owner) = self.living_entities.get_mut(idx) {
-                        owner.position = teleport_pos;
-                        if reset_fall_distance {
+                        owner.position = landing.teleport_pos;
+                        owner.velocity = landing.owner_velocity(owner.velocity);
+                        if landing.reset_fall_distance {
                             owner.fall_distance = 0.0;
                         }
-                        owner.health = (owner.health - damage).max(0.0);
+                        owner.health = (owner.health - landing.damage).max(0.0);
                         if owner.health == 0.0 {
                             owner.alive = false;
                         }

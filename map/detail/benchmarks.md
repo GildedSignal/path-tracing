@@ -28,13 +28,13 @@ SpectraPhysics at `1ea12c8` (Node 22.23.5) against the law on our `16³` section
 - MineOdyssey's 30 worlds (SHA-256 checked) are DataVersion 4671 (1.21.11), older than the law's: a 26.2 server's `--forceUpgrade` on copies brings them to 4903; its tasks name ordered waypoints by id (`tasks.json`).
 - Opponents and maps stay outside git: `D:\path-tracing-bench\opponents\` (SpectraPhysics, Baritone v1.19.0 for 26.2, SHA-1 checked), `D:\path-tracing-maps\` (Hielke, MineOdyssey).
 
-The migration comparison uses `bench-course`, seven repeats per course, with zero refused ticks on 26.2. Medians are in µs per player-tick. [Raw output](../../jobs/law-26.3/report.md)
+The version comparison uses `bench-course`, seven repeats per course with zero refused ticks on both builds. Medians are in µs per player-tick. The 26.3 build has open witness gates. [Raw output](../../jobs/law-26.3/report.md)
 
 | Course | 26.2 | 26.3 |
 |---|---:|---:|
-| `exact` | 1.5255 | pending |
-| `floored` | 3.3267 | pending |
-| `straight` | 2.6348 | pending |
+| `exact` | 1.5255 | 1.0139 |
+| `floored` | 3.3267 | 2.3319 |
+| `straight` | 2.6348 | 1.7335 |
 
 Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence); Gazelka's hybrid A\* post and SwarmBot (no numbers); JumpCraft and parkour.gg maps (server-hosted, no world files); SoulFire, Botcraft, mineflayer-pathfinder (no published numbers, a later many-bots row).
 
@@ -42,7 +42,7 @@ Not used now: Curryocity/Stratfinder (single-axis jumps, no numbers, no licence)
 
 - Hielke records hold for Java 26.2+, except Dimension, which is 11:30 (2026-11-24), not 11:39. Across all versions, faster and now-obsolete records exist (Town 1:12 on Bedrock, Paradise 2:52 by an exploit); only the 26.2+ Java board matches our law.
 - Baritone v1.19.0 ships for Minecraft 26.2 (Fabric, LGPL-3.0, `#goto x y z`), so the BlockStep protocol reruns with Baritone on our exact version.
-- Hielke maps now ship for Minecraft 26.3 (Town v1.4.7, Spiral v3.0.5); the law is 26.2. The 26.2+ bucket rejects a run whose map version is not the latest.
+- Hielke maps ship for Minecraft 26.3 (Town v1.4.7, Spiral v3.0.5). The 26.2+ bucket requires the current map release.
 - Hielke's terms allow personal, non-commercial use and forbid redistribution or modified maps: world files never enter git.
 - SpectraPhysics' tick course has no cobwebs or honey (those are in its trajectory hash, not its timing).
 - BlockStep's 28.3 b row is 28.2 b in the thesis, and the thesis does not say whether planning time is inside travel time.

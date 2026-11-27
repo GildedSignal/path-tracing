@@ -1,4 +1,4 @@
-//! `cell`: a cell holds a canonical 26.2 block state, and its physics is the world crate's
+//! `cell`: a cell holds a canonical block state, and its physics is the world crate's
 //! generated tables' row for it. `states.tsv` names every block in registry order (its row is the
 //! block's id) with its properties' values, so a state's id is Mojang's own; `blocks.tsv` holds the
 //! model of each state its relevant properties select (`maps.tsv`); `models.tsv` holds one row per
@@ -10,11 +10,10 @@ use crate::piston::{BlockKind as PistonKind, PushReaction};
 use crate::{Aabb, Block, ContactDamage, Fluid, FluidFlowBlock, FluidKind, GroundedContact, Inside, Vec3, VoxelShape};
 use std::{collections::BTreeMap, sync::OnceLock};
 
-/// A block's row in `states.tsv`: its 26.2 registry id.
+/// A block's row in `states.tsv`: its registry id in the selected jar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(pub u16);
-/// A cell's identity: the 26.2 block-state registry id (`Block.BLOCK_STATE_REGISTRY`), exact for
-/// each of the 32,366 states.
+/// A cell's identity: `Block.BLOCK_STATE_REGISTRY` in the selected jar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StateId(pub u16);
 /// A state's physics: its row in `models.tsv` (states the law treats alike share one).
@@ -26,6 +25,20 @@ pub const NOWHERE: u8 = 0;
 pub const OWN_CELL: u8 = 1;
 pub const BEYOND: u8 = 2;
 const NO_MODEL: u16 = u16::MAX;
+pub const MINECRAFT_VERSION: &str = env!("PATHTRACING_LAW_VERSION");
+
+macro_rules! jar_table {
+    ($name:literal) => { include_str!(concat!(env!("PATHTRACING_DATA_DIR"), "/", $name)) };
+}
+
+pub const DATA_VERSION: i32 = match i32::from_str_radix(jar_table!("version.txt").trim_ascii(), 10) {
+    Ok(version) => version,
+    Err(_) => panic!("invalid generated DataVersion"),
+};
+pub const STATE_CENSUS: &str = jar_table!("census.tsv");
+pub const BLOCK_MODELS: &str = jar_table!("blocks.tsv");
+pub const DEFAULT_STATES: &str = jar_table!("defaults.txt");
+pub const ITEM_USE_EFFECTS: &str = jar_table!("use-effects.tsv");
 
 /// A block's states: the first one's id, its default's index, each property's values in order
 /// (the first property is the most significant digit of a state's index).
@@ -61,7 +74,11 @@ pub struct Rules {
     pub has_block_entity: bool,
     pub is_air: bool,
     pub water_container: WaterContainer,
+    pub fluid_boundary: Option<FluidBoundary>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FluidBoundary { pub washed_away: bool, pub solid: bool }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaterContainer { None, Accepts, Rejects, Other }
@@ -80,7 +97,7 @@ pub fn models() -> &'static Models {
     static MODELS: OnceLock<Models> = OnceLock::new();
     MODELS.get_or_init(|| {
         let (mut blocks, mut offset_variants, mut reach) = (Vec::new(), Vec::new(), Vec::new());
-        for line in include_str!("../../../world/data/models.tsv").lines() {
+        for line in jar_table!("models.tsv").lines() {
             let (block, offset) = parse_model(line);
             let (variants, r) = match offset {
                 None => (None, if block.never_collides() { NOWHERE } else if block.collision_within_cell() { OWN_CELL } else { BEYOND }),
@@ -106,7 +123,7 @@ pub fn models() -> &'static Models {
             reach.push(r);
         }
         // maps.tsv: relevant properties, then "values:slot" entries in that property order.
-        let maps = include_str!("../../../world/data/maps.tsv").lines().map(|line| {
+        let maps = jar_table!("maps.tsv").lines().map(|line| {
             let (properties, entries) = line.split_once('\t').expect("generated map row");
             let slots: BTreeMap<_, usize> = entries.split(' ').map(|e| {
                 let (key, slot) = e.rsplit_once(':').expect("generated map entry");
@@ -115,19 +132,19 @@ pub fn models() -> &'static Models {
             (properties.split(',').filter(|p| !p.is_empty()).collect::<Vec<_>>(), slots)
         }).collect::<Vec<_>>();
         // blocks.tsv: block, its map, then the model id of each slot.
-        let tables = include_str!("../../../world/data/blocks.tsv").lines().map(|line| {
+        let tables = BLOCK_MODELS.lines().map(|line| {
             let [name, map, ids] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated block row") };
             let ids = ids.split(',').map(|id| id.parse().expect("generated model id")).collect::<Vec<u16>>();
             (name, (&maps[map.parse::<usize>().expect("generated map index")], ids))
         }).collect::<BTreeMap<_, _>>();
         // census.tsv: block, bucket, state count; every bucket other than "modeled" names a refusal.
-        let census: BTreeMap<_, _> = include_str!("../../../world/data/census.tsv").lines().filter(|l| !l.starts_with('#')).map(|line| {
+        let census: BTreeMap<_, _> = STATE_CENSUS.lines().filter(|l| !l.starts_with('#')).map(|line| {
             let [block, bucket, _] = line.split('\t').collect::<Vec<_>>()[..] else { panic!("generated census row") };
             (block, bucket)
         }).collect();
         // states.tsv: every block in registry order, its default's index, its properties' values.
         let (mut names, mut states, mut refusals, mut state_block, mut state_model) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for line in include_str!("../../../world/data/states.tsv").lines() {
+        for line in jar_table!("states.tsv").lines() {
             let mut f = line.split('\t');
             let name = f.next().expect("generated state row");
             let default = f.next().and_then(|d| d.parse().ok()).expect("generated default");
@@ -144,10 +161,10 @@ pub fn models() -> &'static Models {
             refusals.push((bucket != "modeled").then_some(bucket));
             names.push(name);
         }
-        assert_eq!(state_block.len(), 32_366, "26.2 registry states");
+        assert!(state_block.len() < u16::MAX as usize, "registry ids must fit in a StateId");
         let rows: BTreeMap<_, _> = names.iter().enumerate().map(|(i, &n)| (n, BlockId(i as u16))).collect();
         let (mut rules, mut rule_rows, mut rule_ids) = (Vec::new(), Vec::new(), BTreeMap::new());
-        for line in include_str!("rules.tsv").lines().filter(|line| !line.starts_with('#')) {
+        for line in jar_table!("rules.tsv").lines().filter(|line| !line.starts_with('#')) {
             let (_, row) = line.split_once('\t').expect("generated rule name");
             rule_rows.push(*rule_ids.entry(row).or_insert_with(|| {
                 let id = u16::try_from(rules.len()).expect("rule id fits in u16");
@@ -156,7 +173,7 @@ pub fn models() -> &'static Models {
             }));
         }
         let mut state_rules = Vec::with_capacity(state_block.len());
-        for line in include_str!("../../../world/data/cell_rule_index.tsv").lines().filter(|line| !line.starts_with('#')) {
+        for line in jar_table!("cell_rule_index.tsv").lines().filter(|line| !line.starts_with('#')) {
             let (end, id) = line.split_once('\t').expect("generated rule index");
             let (end, row): (usize, usize) = (end.parse().unwrap(), id.parse().unwrap());
             assert!(end > state_rules.len() && end <= state_block.len());
@@ -180,7 +197,7 @@ impl BlockId {
     /// The block named `name` (`minecraft:` may be left out).
     pub fn of(name: &str) -> Self {
         let full = if name.contains(':') { name.to_owned() } else { format!("minecraft:{name}") };
-        *models().rows.get(full.as_str()).unwrap_or_else(|| panic!("{full} is not a 26.2 block"))
+        *models().rows.get(full.as_str()).unwrap_or_else(|| panic!("{full} is not a {MINECRAFT_VERSION} block"))
     }
     /// The name without `minecraft:`.
     pub fn name(self) -> &'static str {
@@ -208,12 +225,12 @@ impl StateId {
     /// default state's value.
     pub fn parse<'a>(name: &str, value: impl Fn(&str) -> Option<&'a str>) -> Result<Self, String> {
         let m = models();
-        let block = *m.rows.get(name).ok_or_else(|| format!("{name} is not a 26.2 registry block"))?;
+        let block = *m.rows.get(name).ok_or_else(|| format!("{name} is not a {MINECRAFT_VERSION} registry block"))?;
         let s = &m.states[block.0 as usize];
         let (mut local, mut place) = (0, 1);
         for (p, values) in s.properties.iter().rev() {
             let v = value(p).or_else(|| digit(&s.properties, s.default as usize, p));
-            local += values.iter().position(|x| Some(*x) == v).ok_or_else(|| format!("state unknown to the 26.2 table of {name}"))? * place;
+            local += values.iter().position(|x| Some(*x) == v).ok_or_else(|| format!("state unknown to the {MINECRAFT_VERSION} table of {name}"))? * place;
             place *= values.len();
         }
         Ok(Self(s.first + local as u16))
@@ -299,11 +316,15 @@ pub fn lookup<'a>(name: &str, properties: impl Fn(&str) -> Option<&'a str>) -> R
 
 fn parse_rules(row: &str) -> Rules {
     let f: Vec<_> = row.split('\t').collect();
-    assert_eq!(f.len(), 12, "generated rule schema: {row}");
+    assert!((12..=13).contains(&f.len()), "generated rule schema: {row}");
     let yes = |i: usize| f[i].parse::<bool>().expect("generated rule flag");
     let push_reaction = match f[4] {
-        "NORMAL" => PushReaction::Normal, "DESTROY" => PushReaction::Destroy, "BLOCK" => PushReaction::Block,
-        "IGNORE" => PushReaction::Ignore, "PUSH_ONLY" => PushReaction::PushOnly, s => panic!("generated push reaction {s}"),
+        "NORMAL" | "PUSH_PULL" => PushReaction::Normal,
+        "DESTROY" | "POPPED" => PushReaction::Destroy,
+        "BLOCK" | "IMMOVEABLE" => PushReaction::Block,
+        "IGNORE" | "IGNORE_ENTITY" => PushReaction::Ignore,
+        "PUSH_ONLY" | "PUSH" => PushReaction::PushOnly,
+        s => panic!("generated push reaction {s}"),
     };
     let (air, water_container) = f[11].split_once(':').expect("generated air and water flags");
     let water_container = match water_container {
@@ -317,6 +338,10 @@ fn parse_rules(row: &str) -> Rules {
         push_reaction, blocks_motion: yes(5), replaceable_by_water: yes(6), replaceable_by_lava: yes(7),
         can_be_replaced: yes(8), is_signal_source: yes(9), has_block_entity: f[10] == "y",
         is_air: air.parse().expect("generated air flag"), water_container,
+        fluid_boundary: f.get(12).map(|flags| {
+            let (washed_away, solid) = flags.split_once(':').expect("generated fluid boundary");
+            FluidBoundary { washed_away: washed_away.parse().unwrap(), solid: solid.parse().unwrap() }
+        }),
     }
 }
 

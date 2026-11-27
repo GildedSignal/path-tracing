@@ -18,7 +18,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
-import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
@@ -31,7 +30,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Pose;
-import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.waypoints.Waypoint;
@@ -163,11 +161,8 @@ public final class VisualProjector {
             return;
         }
         boolean onGround = (flags & 1) != 0;
-        Packet<ClientGamePacketListener> posPkt = new ClientboundEntityPositionSyncPacket(
-            vb.entityId,
-            new PositionMoveRotation(new Vec3(x, y, z), new Vec3(vx, vy, vz), yaw, pitch),
-            onGround
-        );
+        Packet<ClientGamePacketListener> posPkt = MinecraftApi.position(vb.entityId,
+            new Vec3(x, y, z), new Vec3(vx, vy, vz), yaw, pitch, onGround);
         Packet<ClientGamePacketListener> headPkt = buildRotateHead(vb.entityId, yaw);
         packetsBuilt += 2;
 

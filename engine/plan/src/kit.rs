@@ -474,26 +474,11 @@ struct BlockBreakStatic {
     base_restore: RestoreMode,
 }
 
-fn parsed_tsv_rules() -> &'static HashMap<&'static str, (f32, bool, bool)> {
-    static TSV: OnceLock<HashMap<&'static str, (f32, bool, bool)>> = OnceLock::new();
-    TSV.get_or_init(|| {
-        let mut map = HashMap::new();
-        for line in include_str!("../../law/src/basis/rules.tsv").lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
-            let f: Vec<_> = line.split('\t').collect();
-            if f.len() == 13 {
-                let h = f[1].parse::<f32>().unwrap_or(1.5);
-                let req = f[2] == "y";
-                let nbt = f[11] == "y";
-                map.insert(f[0], (h, req, nbt));
-            }
-        }
-        map
-    })
-}
-
 fn block_break_static(bname: &str) -> BlockBreakStatic {
-    let tsv = parsed_tsv_rules();
-    let (tsv_h, tsv_req, tsv_nbt) = tsv.get(bname).copied().unwrap_or((1.5, false, false));
+    let default_rules = StateId::parse(&format!("minecraft:{bname}"), |_| None).ok().map(StateId::rules);
+    let (tsv_h, tsv_req, tsv_nbt) = default_rules.map_or((1.5, false, false), |rules| {
+        (rules.destroy_speed, rules.requires_correct_tool, rules.has_block_entity)
+    });
     let nbt_irreversible = tsv_nbt
         || matches!(
             bname,
@@ -571,7 +556,7 @@ fn block_break_static(bname: &str) -> BlockBreakStatic {
         let h: f32 = if bname.ends_with("_door") || bname.ends_with("_trapdoor") { 3.0 } else { 2.0 };
         return BlockBreakStatic { hardness_bits: h.to_bits(), requires_correct: false, pref: PrefTool::Axe, silk_only, base_restore };
     }
-    if tsv.contains_key(bname) {
+    if default_rules.is_some() {
         return BlockBreakStatic {
             hardness_bits: tsv_h.to_bits(),
             requires_correct: tsv_req,

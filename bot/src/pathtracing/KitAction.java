@@ -53,7 +53,7 @@ record KitAction(int tick, int slot, int opcode, int x, int y, int z, int face, 
         if (opcode == BREAK_HOLD) {
             if (k == 0) mc.gameMode.startDestroyBlock(target, side);
             mc.gameMode.continueDestroyBlock(target, side);
-            player.swing(InteractionHand.MAIN_HAND);
+            MinecraftApi.swing(player, true);
             return k < hold - 1 || mc.level.getBlockState(target).canBeReplaced();
         }
         float moveYaw = player.getYRot(), movePitch = player.getXRot();
@@ -61,7 +61,7 @@ record KitAction(int tick, int slot, int opcode, int x, int y, int z, int face, 
         Vec3 hit = Vec3.atCenterOf(target).add(side.getStepX() * 0.5, side.getStepY() * 0.5, side.getStepZ() * 0.5);
         var result = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, new BlockHitResult(hit, side, target, false));
         if (!result.consumesAction()) result = mc.gameMode.useItem(player, InteractionHand.MAIN_HAND);
-        if (result.consumesAction()) player.swing(InteractionHand.MAIN_HAND);
+        if (result.consumesAction()) MinecraftApi.swing(player, false);
         player.setYRot(moveYaw); player.setXRot(movePitch);
         return true;
     }

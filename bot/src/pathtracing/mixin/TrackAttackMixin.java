@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import pathtracing.Tracks;
+import pathtracing.MinecraftApi;
 
 @Mixin(Minecraft.class)
 abstract class TrackAttackMixin {
@@ -25,12 +26,12 @@ abstract class TrackAttackMixin {
         pathtracing$capture();
     }
 
-    @Inject(method = "startAttack", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;swing(Lnet/minecraft/world/InteractionHand;)V"))
+    @Inject(method = "startAttack", at = @At(value = "INVOKE", target = MinecraftApi.SWING))
     private void pathtracing$attack(CallbackInfoReturnable<Boolean> ci) {
         pathtracing$count();
     }
 
-    @Inject(method = "continueAttack", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;swing(Lnet/minecraft/world/InteractionHand;)V"))
+    @Inject(method = "continueAttack", at = @At(value = "INVOKE", target = MinecraftApi.SWING))
     private void pathtracing$continue(boolean held, CallbackInfo ci) {
         pathtracing$count();
     }

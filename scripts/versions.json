@@ -1,0 +1,18 @@
+{
+  "26.2": {
+    "dataVersion": 4903,
+    "clientJar": "minecraft-26.2-client.jar",
+    "serverJar": "minecraft-26.2-server.jar",
+    "clientSha256": "40896ee9f1e2bec3c934daac7e93d41e9e3d9c2f8ae0ca366d52ffbfd1afa290",
+    "fabricLoader": "0.19.5",
+    "fabricApiJar": "fabric-api-0.160.0+26.2.jar"
+  },
+  "26.3": {
+    "dataVersion": 5023,
+    "clientJar": "minecraft-26.3-client.jar",
+    "serverJar": "minecraft-26.3-server.jar",
+    "clientSha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
+    "fabricLoader": "0.19.5",
+    "fabricApiJar": "fabric-api-0.167.0+26.3.jar"
+  }
+}

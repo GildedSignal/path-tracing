@@ -236,6 +236,7 @@ pub struct Block {
     pub stuck_multiplier: Option<Vec3>,
     pub unsupported_fall_on: Option<String>,
     pub fall_on_multiplier: f32,
+    /// Halves the distance before fall damage. The recording field calls this `bed`.
     pub bed: bool,
     pub suffocating: bool,
     pub bounce: f32,

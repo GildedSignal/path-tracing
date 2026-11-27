@@ -1,12 +1,12 @@
-# Shared paths and helpers. Everything reuses the files your Immersive Minecraft launcher already
-# downloaded (Java 25, Minecraft 26.2, Fabric Loader 0.19.5, assets); nothing in that launcher is changed.
+# Shared paths and helpers for the staged jars or the launcher's existing files.
+param([string]$McVersion = $env:PATHTRACING_MC_VERSION, [string]$Dependencies = $env:PATHTRACING_DEPS)
 
 $Root        = Split-Path -Parent $PSScriptRoot
 # The rig (server\ and clients\, not in git). PATHTRACING_ROOT lets a builder's worktree use the one rig
 # while building its own code from $Root.
 $Rig         = if ($env:PATHTRACING_ROOT) { $env:PATHTRACING_ROOT } else { $Root }
 # PATHTRACING_DEPS points sandboxed GPT jobs at a staged copy of what builds need (scripts\stage-deps.ps1).
-$PrismData   = if ($env:PATHTRACING_DEPS) { $env:PATHTRACING_DEPS } else { Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data' }
+$PrismData   = if ($Dependencies) { $Dependencies } else { Join-Path $env:LOCALAPPDATA 'ImmersiveMinecraft\data' }
 $Jdk         = Join-Path $PrismData 'java\java-runtime-epsilon\bin'
 $Libraries   = Join-Path $PrismData 'libraries'
 $Assets      = Join-Path $PrismData 'assets'
@@ -15,9 +15,72 @@ $PackMods    = Join-Path $PrismData 'instances\immersive-minecraft\.minecraft\mo
 $PackConfig  = Join-Path $PrismData 'instances\immersive-minecraft\.minecraft\config'
 $PackOptions = Join-Path $PrismData 'instances\immersive-minecraft\.minecraft\options.txt'
 
-$McVersion     = '26.2'
-$LoaderVersion = '0.19.5'
-$VanillaServerJar = Join-Path $Rig "server\.fabric\server\$McVersion-server.jar"
+if (-not $McVersion) { $McVersion = '26.2' }
+$versions = Get-Content (Join-Path $Root 'scripts/versions.json') -Raw | ConvertFrom-Json
+$McSpec = $versions.$McVersion
+if (-not $McSpec) { throw "Unsupported Minecraft version '$McVersion'." }
+$LoaderVersion = $McSpec.fabricLoader
+$StagedDeps = if ($Dependencies) { Split-Path $PrismData } else { 'D:\path-tracing-deps' }
+$McStage = Join-Path $StagedDeps "versions/$McVersion"
+$MojangMetadata = Join-Path $McStage "$McVersion.json"
+$ClientJar = Join-Path $Libraries "com/mojang/minecraft/$McVersion/$($McSpec.clientJar)"
+if (-not (Test-Path -LiteralPath $ClientJar)) { $ClientJar = Join-Path $StagedDeps $McSpec.clientJar }
+$VanillaServerJar = Join-Path $Rig "server/.fabric/server/$McVersion-server.jar"
+if (-not (Test-Path -LiteralPath $VanillaServerJar)) { $VanillaServerJar = Join-Path $StagedDeps $McSpec.serverJar }
+
+function Get-VerifiedClientJar {
+  if ((Get-FileHash -LiteralPath $ClientJar -Algorithm SHA256).Hash -ne $McSpec.clientSha256) {
+    throw "Unexpected SHA-256 for Minecraft $McVersion at $ClientJar"
+  }
+  $ClientJar
+}
+
+function Get-ServerBundleClasspath([string]$Output) {
+  $bundle = Join-Path $StagedDeps $McSpec.serverJar
+  if (-not (Test-Path -LiteralPath $bundle)) { $bundle = $VanillaServerJar }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [IO.Compression.ZipFile]::OpenRead($bundle)
+  try {
+    foreach ($entry in $zip.Entries) {
+      if ($entry.FullName -notmatch '^META-INF/(libraries/.+\.jar|versions/[^/]+/[^/]+\.jar)$') { continue }
+      $path = Join-Path $Output $entry.FullName.Substring('META-INF/'.Length)
+      $null = New-Item -ItemType Directory -Force (Split-Path $path)
+      [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path, $true)
+      $path
+    }
+  } finally { $zip.Dispose() }
+}
+
+function Get-FabricModules([string]$Output) {
+  $api = Join-Path $McStage $McSpec.fabricApiJar
+  if (-not (Test-Path -LiteralPath $api)) { $api = Join-Path $PackMods $McSpec.fabricApiJar }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $null = New-Item -ItemType Directory -Force $Output
+  $zip = [IO.Compression.ZipFile]::OpenRead($api)
+  try {
+    foreach ($entry in $zip.Entries | Where-Object FullName -like 'META-INF/jars/*.jar') {
+      $path = Join-Path $Output $entry.Name
+      [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path, $true)
+      $path
+    }
+  } finally { $zip.Dispose() }
+}
+
+function Get-FabricLoaderClasspath {
+  $loader = Get-Content (Join-Path $Meta "net.fabricmc.fabric-loader/$LoaderVersion.json") -Raw | ConvertFrom-Json
+  foreach ($lib in $loader.libraries) {
+    $path = Get-LibraryPath $lib
+    if (-not (Test-Path -LiteralPath $path)) { throw "Fabric Loader dependency not found at $path" }
+    $path
+  }
+}
+
+function Write-FabricMetadata([string]$Source, [string]$Classes) {
+  $metadata = Get-Content -LiteralPath $Source -Raw | ConvertFrom-Json
+  $metadata.depends.minecraft = $McVersion
+  $metadata.depends.fabricloader = ">=$LoaderVersion"
+  [IO.File]::WriteAllText((Join-Path $Classes 'fabric.mod.json'), ($metadata | ConvertTo-Json -Depth 10))
+}
 
 $ServerHost  = '127.0.0.1'
 $ServerPort  = if ($env:PATHTRACING_SERVER_PORT) { [int]$env:PATHTRACING_SERVER_PORT } else { 25565 }
@@ -79,8 +142,20 @@ function Get-LibraryPath($lib) {
   Join-Path $Libraries ("{0}\{1}\{2}\{3}" -f $g.Replace('.', '\'), $a, $v, $file)
 }
 
-# Fabric Loader + Minecraft 26.2 + LWJGL, resolved from the launcher's metadata, game jar last.
+# Fabric Loader and Minecraft, resolved from Mojang or the launcher's metadata.
 function Get-GameClasspath {
+  if (Test-Path -LiteralPath $MojangMetadata) {
+    Get-FabricLoaderClasspath
+    $official = Get-Content -LiteralPath $MojangMetadata -Raw | ConvertFrom-Json
+    foreach ($lib in $official.libraries) {
+      if (-not (Test-Rules $lib) -or !$lib.downloads.artifact -or $lib.name -match 'natives-windows-(x86|arm64)') { continue }
+      $path = Join-Path $Libraries $lib.downloads.artifact.path
+      if (-not (Test-Path -LiteralPath $path)) { $path = Join-Path "$McStage/libraries" $lib.downloads.artifact.path }
+      if (Test-Path -LiteralPath $path) { $path } else { Write-Warning "missing library $($lib.name)" }
+    }
+    $ClientJar
+    return
+  }
   $classpath = [Collections.Generic.List[string]]::new()
   $mcMeta = Get-Content "$Meta\net.minecraft\$McVersion.json" -Raw | ConvertFrom-Json
   $metas = @(
@@ -97,7 +172,7 @@ function Get-GameClasspath {
       if (-not $classpath.Contains($path)) { $classpath.Add($path) }
     }
   }
-  $classpath.Add((Join-Path $Libraries "com\mojang\minecraft\$McVersion\minecraft-$McVersion-client.jar"))
+  $classpath.Add($ClientJar)
   $classpath.ToArray()
 }
 

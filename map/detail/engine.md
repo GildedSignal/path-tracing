@@ -12,7 +12,7 @@ The planner has to know what the bot's inputs will do, far faster than the game'
 
 ## The law ([architecture.md](../architecture.md) section 1)
 
-- **Nature and the judge** are Mojang's 26.2 code and the server; **the law** is the Rust structure reproducing them (S46) at three grains: tick, word and medium ([representation.md](representation.md)).
+- **Nature and the judge** are the selected Mojang jar and the server. **The law** reproduces them (S46) at three grains: tick, word and medium ([representation.md](representation.md)).
 - **The judge is the game itself.** The bot's client runs Mojang's code with no game-logic mods: Lithium and C2ME are removed from it and from the server. The other performance mods stay, because they only render, cache or network.
 - **Seal only what can't be corrected (SR-71).** The law may be loose where the server corrects for free (walking across a field; a cow treated as the cone of where it might be). It must be bit-exact, behind frozen gates, where nothing can correct it afterwards (narrow words: a gap at the jump limit, a clutch).
 
@@ -135,7 +135,7 @@ Between events, motion is a closed-form recurrence: velocity is a geometric seri
 
 ## Facts verified so far
 
-All of these come from 26.2. To regenerate them, run `javap -cp <client jar> -c -p -constants <class>`, where the client jar is `%LOCALAPPDATA%\ImmersiveMinecraft\data\libraries\com\mojang\minecraft\26.2\minecraft-26.2-client.jar`.
+These facts use the 26.2 jar witnesses. Run `javap -cp <client jar> -c -p -constants <class>` against the jar in `scripts/versions.json`. The 26.3 differences and open comparisons are in the [jar diff](../../jobs/law-26.3/diff.md).
 
 **`LivingEntity.travelInAir`:**
 - The ground friction f is the block's friction when on the ground, and 1 in the air, adjusted by `FRICTION_MODIFIER` (`clamp(1 − (1 − friction) · m)`, with m = 1 by default).
@@ -177,6 +177,7 @@ Every other effect is a code hook. In `net.minecraft.world.level.block`, 25 clas
 - thrown at 1.5 blocks per tick;
 - gravity 0.03; drag 0.99 per tick (0.8 in water);
 - 5 damage on landing, a 20-tick cooldown, and a random spread drawn from the server's RNG.
+- At DataVersion 5023 the landing zeroes the owner's velocity.
 
 **Derived by [Speeds.java](../../lab/numbers/Speeds.java)** (run it with `java lab/numbers/Speeds.java`). All figures are steady speeds in m/s.
 

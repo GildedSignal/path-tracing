@@ -1,4 +1,4 @@
-//! Ender pearl launch, flight, raytrace, and landing laws (26.2).
+//! Ender pearl launch, flight, raytrace, and landing laws.
 //!
 //! `ThrowableItemProjectile.<init>` spawns at `(owner.x, eyeY - 0.1f, owner.z)`,
 //! `EnderpearlItem.use` launches via `Projectile.shootFromRotation(0, 1.5f, 1.0f)`
@@ -10,6 +10,7 @@
 //! sets `pos` onto the hit point, and `ThrownEnderpearl.onHit` teleports the
 //! owner to `oldPosition()` (start-of-impact-tick position) with no clamp or
 //! chunk check, then calls `resetFallDistance()` before `hurtServer(5.0f)`.
+//! At DataVersion 5023, both landing branches zero the owner's velocity.
 
 use crate::{interact, Aabb, CollisionContext, Vec3, World};
 
@@ -142,8 +143,15 @@ pub enum PearlHit {
 pub struct PearlLanding {
     pub teleport_pos: Vec3,
     pub reset_fall_distance: bool,
+    pub reset_momentum: bool,
     pub reset_impulse_context: bool,
     pub damage: f32,
+}
+
+impl PearlLanding {
+    pub fn owner_velocity(self, before: Vec3) -> Vec3 {
+        if self.reset_momentum { Vec3::default() } else { before }
+    }
 }
 
 /// `EntityDimensions.makeBoundingBox` for `EntityTypes.ENDER_PEARL` (0.25 x 0.25).
@@ -235,6 +243,7 @@ pub fn pearl_tick(
         Some(PearlLanding {
             teleport_pos: pearl.old_pos,
             reset_fall_distance: true,
+            reset_momentum: crate::basis::cell::DATA_VERSION == 5023,
             reset_impulse_context: true,
             damage: PEARL_DAMAGE,
         })
@@ -402,6 +411,13 @@ mod tests {
         assert!(landing.reset_fall_distance);
         assert_eq!(landing.damage, 5.0);
         assert_eq!(p2.fall_distance.to_bits(), 0);
+        let version = crate::basis::cell::DATA_VERSION.to_string();
+        let expected = include_str!("../tests/data/pearl_momentum.tsv").lines()
+            .find_map(|line| line.split_once('\t').filter(|(id, _)| *id == version).map(|(_, bits)| bits))
+            .expect("jar momentum witness for the selected DataVersion");
+        let velocity = landing.owner_velocity(Vec3::new(0.25, -0.125, 0.5));
+        assert_eq!([velocity.x.to_bits(), velocity.y.to_bits(), velocity.z.to_bits()].as_slice(),
+            expected.split('\t').map(|field| u64::from_str_radix(field, 16).unwrap()).collect::<Vec<_>>());
 
         // fastDrop v=-3 (check-adv-out.txt:8-9)
         let mut fast = PearlState::new(Vec3::new(0.5, 70.5, 0.5), Vec3::new(0.0, -3.0, 0.0));
