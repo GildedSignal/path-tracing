@@ -51,6 +51,8 @@ pub use state::{
     Pose
 };
 pub use world::{
+    block_collision_shape,
+    block_pos,
     Block,
     BlockPos,
     BoxWorld,

@@ -1342,4 +1342,195 @@ mod tests {
         assert_eq!(sum.reserve_stats.staggered_bots, 0, "parallel open grid should have 0 conflicts: {:?}", sum.reserve_stats);
         assert_eq!(sum.reserve_stats.max_extra_delay, 0);
     }
+
+    #[test]
+    fn gpu_min_plus_matches_cpu_below_and_above_crossover() {
+        use gpu::min_plus::{LegsCost, PackedTopoGrid, solve_min_plus_cpu};
+        let legs = LegsCost::default();
+
+        // Below crossover: 4 * (32 * 6 * 32) = 24,576 < 250,000 -> runs on CPU.
+        let small = PackedTopoGrid::synthetic_arena(32, 6, 32);
+        let small_goals = vec![
+            (6 * small.dy + 1) * small.dx + 6,
+            (24 * small.dy + 1) * small.dx + 24,
+            (8 * small.dy + 1) * small.dx + 26,
+            (26 * small.dy + 1) * small.dx + 8,
+        ];
+        assert!(small_goals.len() * small.vol() < 250_000);
+        let (below_out, below_gpu) = WorkerPool::min_plus_batch(&small, &small_goals, legs, 256).unwrap();
+        assert!(!below_gpu, "expected CPU below min_plus crossover");
+        assert_eq!(below_out, solve_min_plus_cpu(&small, &small_goals, legs, 1));
+
+        // Above crossover: 16 * (64 * 8 * 64) = 524,288 >= 250,000 -> runs on RX 7900 XTX GPU.
+        let big = PackedTopoGrid::synthetic_arena(64, 8, 64);
+        let big_goals: Vec<usize> = (0..16usize)
+            .map(|g| {
+                let x = 8 + (g * 7) % 48;
+                let z = 8 + (g * 11) % 48;
+                (z * big.dy + 1) * big.dx + x
+            })
+            .collect();
+        assert!(big_goals.len() * big.vol() >= 250_000);
+        let (above_out, above_gpu) = WorkerPool::min_plus_batch(&big, &big_goals, legs, 256).unwrap();
+        if WorkerPool::gpu_device_name().is_some() {
+            assert!(above_gpu, "expected GPU above min_plus crossover");
+        }
+        let cpu_ref = solve_min_plus_cpu(&big, &big_goals, legs, 1);
+        let max_err = cpu_ref
+            .iter()
+            .zip(above_out.iter())
+            .filter(|(a, b)| a.is_finite() || b.is_finite())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_err < 1e-3, "min_plus parity failed above crossover: max_err={max_err}");
+
+        // WorldMirror packed grid reuse + invalidation + CPU/GPU parity.
+        let mut mirror = build_flat_mirror(0..=3, 0..=3);
+        for z in 4..=24 {
+            if z != 14 {
+                assert!(mirror.set_block_delta([16, -60, z], "minecraft:stone"));
+                assert!(mirror.set_block_delta([16, -59, z], "minecraft:stone"));
+            }
+        }
+        let world = Arc::new(RwLock::new(mirror));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world.clone(), progs);
+        let (bmin, bmax) = ([0, -61, 0], [47, -54, 47]); // 48 * 8 * 48 = 18,432 cells
+        let g1 = pool.cached_topo_grid(bmin, bmax);
+        let g2 = pool.cached_topo_grid(bmin, bmax);
+        assert!(Arc::ptr_eq(&g1, &g2), "expected PackedTopoGrid reuse when provenance unchanged");
+
+        let mirror_goals: Vec<usize> = (0..16usize)
+            .map(|g| g1.idx([24 + (g as i32) % 16, -60, 4 + ((g * 3) as i32) % 36]).unwrap())
+            .collect(); // 16 * 18,432 = 294,912 >= 250,000
+        let (g_out, w_dist, w_gpu) = pool.solve_min_plus_world(bmin, bmax, &mirror_goals, legs, 256).unwrap();
+        assert!(Arc::ptr_eq(&g1, &g_out));
+        if WorkerPool::gpu_device_name().is_some() {
+            assert!(w_gpu, "expected GPU on WorldMirror min_plus above crossover");
+        }
+        let w_cpu = solve_min_plus_cpu(&g1, &mirror_goals, legs, 1);
+        let w_err = w_cpu
+            .iter()
+            .zip(w_dist.iter())
+            .filter(|(a, b)| a.is_finite() || b.is_finite())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(w_err < 1e-3, "WorldMirror min_plus parity failed: w_err={w_err}");
+
+        assert!(world.write().unwrap().set_block_delta([16, -60, 10], "minecraft:air"));
+        let g3 = pool.cached_topo_grid(bmin, bmax);
+        assert!(!Arc::ptr_eq(&g1, &g3), "expected PackedTopoGrid rebuild after block delta");
+    }
+
+    #[test]
+    fn gpu_rollout_matches_cpu_below_and_above_crossover() {
+        use gpu::rollout::{
+            ROLLOUT_FLAG_FORWARD, ROLLOUT_FLAG_JUMP, ROLLOUT_FLAG_SPRINT, RolloutReq,
+            SolidVoxelBox, run_rollouts_cpu,
+        };
+        let make_reqs = |count: usize, ticks: u32| -> Vec<RolloutReq> {
+            (0..count)
+                .map(|i| RolloutReq {
+                    x: 8.5 + ((i % 32) as f64),
+                    y: -60.0,
+                    z: 8.5 + (((i / 32) % 32) as f64),
+                    vx: 0.0,
+                    vy: 0.0,
+                    vz: 0.0,
+                    yaw: ((i * 17) % 360) as f32,
+                    flags: ROLLOUT_FLAG_FORWARD | ROLLOUT_FLAG_SPRINT | if i % 3 == 0 { ROLLOUT_FLAG_JUMP } else { 0 },
+                    ticks,
+                    on_ground: 1,
+                })
+                .collect()
+        };
+
+        let world = Arc::new(RwLock::new(build_flat_mirror(0..=3, 0..=3)));
+        let progs = Arc::new(words::tiny_programs());
+        let mut pool = WorkerPool::with_workers(1, world.clone(), progs);
+        let (bmin, bmax) = ([0, -61, 0], [63, -54, 63]);
+        let v1 = pool.cached_solid_voxels(bmin, bmax);
+        let v2 = pool.cached_solid_voxels(bmin, bmax);
+        assert!(Arc::ptr_eq(&v1, &v2), "expected SolidVoxelBox reuse when provenance unchanged");
+        let voxels_flat = SolidVoxelBox::flat_floor([0, -61, 0], 64, 8, 64, 0);
+        assert_eq!(v1.bits, voxels_flat.bits, "WorldMirror SolidVoxelBox must match flat_floor bits");
+
+        // Below crossover: 1,024 * 64 = 65,536 < 1,000,000 -> CPU.
+        let small_reqs = make_reqs(1_024, 64);
+        let (small_out, small_gpu) = WorkerPool::rollout_batch(&small_reqs, &v1).unwrap();
+        assert!(!small_gpu, "expected CPU below rollout crossover");
+        let small_cpu = run_rollouts_cpu(&small_reqs, &v1, 1);
+        let small_err = small_cpu
+            .iter()
+            .zip(small_out.iter())
+            .map(|(a, b)| (a.x - b.x).abs().max((a.y - b.y).abs()).max((a.z - b.z).abs()))
+            .fold(0.0f64, f64::max);
+        assert!(small_err < 1e-12, "rollout below-crossover mismatch: {small_err}");
+
+        // Above crossover: 32,768 * 64 = 2,097,152 >= 1,000,000 -> GPU.
+        let big_reqs = make_reqs(32_768, 64);
+        let (big_out, big_gpu) = WorkerPool::rollout_batch(&big_reqs, &v1).unwrap();
+        if WorkerPool::gpu_device_name().is_some() {
+            assert!(big_gpu, "expected GPU above rollout crossover");
+        }
+        let big_cpu = run_rollouts_cpu(&big_reqs, &v1, 4);
+        let big_err = big_cpu
+            .iter()
+            .zip(big_out.iter())
+            .map(|(a, b)| (a.x - b.x).abs().max((a.y - b.y).abs()).max((a.z - b.z).abs()))
+            .fold(0.0f64, f64::max);
+        assert!(big_err < 1e-10, "rollout above-crossover mismatch: {big_err}");
+
+        // WorldMirror rollout reuse + invalidation parity.
+        let (w_out, w_gpu) = pool.rollout_world(bmin, bmax, &big_reqs).unwrap();
+        if WorkerPool::gpu_device_name().is_some() {
+            assert!(w_gpu, "expected GPU on WorldMirror rollout above crossover");
+        }
+        let w_err = big_cpu
+            .iter()
+            .zip(w_out.iter())
+            .map(|(a, b)| (a.x - b.x).abs().max((a.y - b.y).abs()).max((a.z - b.z).abs()))
+            .fold(0.0f64, f64::max);
+        assert!(w_err < 1e-10, "WorldMirror rollout mismatch: {w_err}");
+
+        assert!(world.write().unwrap().set_block_delta([20, -60, 20], "minecraft:stone"));
+        let v3 = pool.cached_solid_voxels(bmin, bmax);
+        assert!(!Arc::ptr_eq(&v1, &v3), "expected SolidVoxelBox rebuild after block delta");
+    }
+
+    #[test]
+    fn gpu_crowd_push_matches_cpu_below_and_above_crossover() {
+        use gpu::crowd_push::{CrowdState, step_crowd_cpu};
+        let small = CrowdState::dense_arena(2_048, 16.0);
+        let mut s_auto = small.clone();
+        let mut s_ref = small;
+        let used_gpu = WorkerPool::dense_crowd_push_step(&mut s_auto, 0.0, 0.0, 16, 16, 1).unwrap();
+        assert!(!used_gpu, "expected CPU below crowd crossover");
+        step_crowd_cpu(&mut s_ref, 0.0, 0.0, 16, 16, 1, 1);
+        let err_small = s_ref
+            .vel_x
+            .iter()
+            .zip(s_auto.vel_x.iter())
+            .chain(s_ref.vel_z.iter().zip(s_auto.vel_z.iter()))
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        assert!(err_small < 1e-12);
+
+        let large = CrowdState::dense_arena(16_384, 32.0);
+        let mut l_auto = large.clone();
+        let mut l_ref = large;
+        let used_gpu = WorkerPool::dense_crowd_push_step(&mut l_auto, 0.0, 0.0, 32, 32, 4).unwrap();
+        if WorkerPool::gpu_device_name().is_some() {
+            assert!(used_gpu, "expected GPU above crowd crossover");
+        }
+        step_crowd_cpu(&mut l_ref, 0.0, 0.0, 32, 32, 4, 4);
+        let err_large = l_ref
+            .pos_x
+            .iter()
+            .zip(l_auto.pos_x.iter())
+            .chain(l_ref.pos_z.iter().zip(l_auto.pos_z.iter()))
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        assert!(err_large < 1e-6, "crowd push parity error: {err_large}");
+    }
 }

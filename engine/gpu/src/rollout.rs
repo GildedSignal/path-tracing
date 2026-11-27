@@ -66,16 +66,51 @@ impl SolidVoxelBox {
         let dz = (max[2] - min[2] + 1).max(1) as usize;
         let words = (dx * dy * dz).div_ceil(32).max(1);
         let mut bits = vec![0u32; words];
-        for iz in 0..dz {
-            let z = min[2] + iz as i32;
-            for iy in 0..dy {
-                let y = min[1] + iy as i32;
-                for ix in 0..dx {
-                    let x = min[0] + ix as i32;
-                    let p = [x, y, z];
-                    if world.loaded(p) && !world.block(p).never_collides() {
-                        let ci = (iz * dy + iy) * dx + ix;
-                        bits[ci >> 5] |= 1u32 << (ci & 31);
+        let smin = min.map(|v| v.div_euclid(16));
+        let smax = max.map(|v| v.div_euclid(16));
+        for sz in smin[2]..=smax[2] {
+            for sy in smin[1]..=smax[1] {
+                for sx in smin[0]..=smax[0] {
+                    let sec_lo = [
+                        min[0].max(sx * 16),
+                        min[1].max(sy * 16),
+                        min[2].max(sz * 16),
+                    ];
+                    let sec_hi = [
+                        max[0].min(sx * 16 + 15),
+                        max[1].min(sy * 16 + 15),
+                        max[2].min(sz * 16 + 15),
+                    ];
+                    if let Some(b) = world.uniform(sec_lo, sec_hi) {
+                        if b.never_collides() {
+                            continue;
+                        }
+                        for z in sec_lo[2]..=sec_hi[2] {
+                            let iz = (z - min[2]) as usize;
+                            for y in sec_lo[1]..=sec_hi[1] {
+                                let iy = (y - min[1]) as usize;
+                                let row = (iz * dy + iy) * dx;
+                                for x in sec_lo[0]..=sec_hi[0] {
+                                    let ci = row + (x - min[0]) as usize;
+                                    bits[ci >> 5] |= 1u32 << (ci & 31);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    for z in sec_lo[2]..=sec_hi[2] {
+                        let iz = (z - min[2]) as usize;
+                        for y in sec_lo[1]..=sec_hi[1] {
+                            let iy = (y - min[1]) as usize;
+                            for x in sec_lo[0]..=sec_hi[0] {
+                                let ix = (x - min[0]) as usize;
+                                let p = [x, y, z];
+                                if world.loaded(p) && !world.block(p).never_collides() {
+                                    let ci = (iz * dy + iy) * dx + ix;
+                                    bits[ci >> 5] |= 1u32 << (ci & 31);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -555,6 +590,14 @@ __kernel void batched_rollout_kernel(
 }
 "#;
 
+pub struct UploadedVoxelBox {
+    pub min: BlockPos,
+    pub dx: usize,
+    pub dy: usize,
+    pub dz: usize,
+    pub bits_buf: GpuBuffer,
+}
+
 pub struct RolloutGpuProgram {
     dev: GpuDevice,
     _prog: GpuProgram,
@@ -576,6 +619,17 @@ impl RolloutGpuProgram {
         })
     }
 
+    pub fn upload_voxels(&self, voxels: &SolidVoxelBox) -> Result<UploadedVoxelBox, String> {
+        let bits_buf = self.dev.alloc_ro_slice(&voxels.bits)?;
+        Ok(UploadedVoxelBox {
+            min: voxels.min,
+            dx: voxels.dx,
+            dy: voxels.dy,
+            dz: voxels.dz,
+            bits_buf,
+        })
+    }
+
     pub fn run_batch(
         &self,
         reqs: &[RolloutReq],
@@ -585,9 +639,23 @@ impl RolloutGpuProgram {
         if reqs.is_empty() {
             return Ok((Vec::new(), 0.0));
         }
+        let uploaded = self.upload_voxels(voxels)?;
+        let (outs, _) = self.run_batch_uploaded(reqs, &uploaded)?;
+        Ok((outs, t0.elapsed().as_secs_f64() * 1e3))
+    }
+
+    pub fn run_batch_uploaded(
+        &self,
+        reqs: &[RolloutReq],
+        voxels: &UploadedVoxelBox,
+    ) -> Result<(Vec<RolloutOut>, f64), String> {
+        let t0 = Instant::now();
+        if reqs.is_empty() {
+            return Ok((Vec::new(), 0.0));
+        }
         let buf_reqs = self.dev.alloc_ro_slice(reqs)?;
         let buf_outs = self.dev.alloc_rw(reqs.len() * std::mem::size_of::<RolloutOut>())?;
-        let buf_bits = self.dev.alloc_ro_slice(&voxels.bits)?;
+        let buf_bits = &voxels.bits_buf;
 
         let count_u32 = reqs.len() as u32;
         let dx_u32 = voxels.dx as u32;
@@ -599,7 +667,7 @@ impl RolloutGpuProgram {
             k.set_buf(0, &buf_reqs)?;
             k.set_buf(1, &buf_outs)?;
             k.set_buf(2, &self.sin_lut)?;
-            k.set_buf(3, &buf_bits)?;
+            k.set_buf(3, buf_bits)?;
             k.set_val(4, &count_u32)?;
             k.set_val(5, &voxels.min[0])?;
             k.set_val(6, &voxels.min[1])?;

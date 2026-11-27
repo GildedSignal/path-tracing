@@ -1114,6 +1114,22 @@ fn spawn_worker(
     }
 }
 
+struct CachedTopoGrid {
+    provenance: [u8; 32],
+    min: BlockPos,
+    max: BlockPos,
+    grid: Arc<gpu::min_plus::PackedTopoGrid>,
+    uploaded: Option<Arc<gpu::min_plus::UploadedTopoGrid>>,
+}
+
+struct CachedSolidVoxels {
+    provenance: [u8; 32],
+    min: BlockPos,
+    max: BlockPos,
+    voxels: Arc<gpu::rollout::SolidVoxelBox>,
+    uploaded: Option<Arc<gpu::rollout::UploadedVoxelBox>>,
+}
+
 pub struct WorkerPool {
     workers: Vec<WorkerHandle>,
     bot_owner: FxHashMap<u32, usize>,
@@ -1126,6 +1142,8 @@ pub struct WorkerPool {
     shared_codec: Interner,
     shared_world_prov: [u8; 32],
     reservations: ReservationTable,
+    cached_topo_grid: Option<CachedTopoGrid>,
+    cached_voxel_box: Option<CachedSolidVoxels>,
 }
 
 impl WorkerPool {
@@ -1158,6 +1176,8 @@ impl WorkerPool {
             shared_codec: Interner::default(),
             shared_world_prov: [0u8; 32],
             reservations: ReservationTable::default(),
+            cached_topo_grid: None,
+            cached_voxel_box: None,
         }
     }
 
@@ -1172,6 +1192,8 @@ impl WorkerPool {
         self.spawn_spacing_z = 1.5;
         self.shared_store.clear_far();
         self.reservations.clear();
+        self.cached_topo_grid = None;
+        self.cached_voxel_box = None;
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::Clear);
         }
@@ -1185,6 +1207,8 @@ impl WorkerPool {
         self.shared_codec = Interner::default();
         self.shared_world_prov = [0u8; 32];
         self.reservations.clear();
+        self.cached_topo_grid = None;
+        self.cached_voxel_box = None;
         for w in &self.workers {
             let _ = w.tx.send(WorkerTask::ResetStores);
         }
@@ -1790,6 +1814,145 @@ impl WorkerPool {
         ticks: usize,
     ) -> Result<bool, String> {
         gpu::crowd_push_auto(state, origin_x, origin_z, grid_w, grid_h, ticks)
+    }
+
+    /// Crossover-gated batched 3D `(min, +)` `TopoField` wavefront solver
+    /// (RX 7900 XTX GPU when `goals * vol >= 250_000`, CPU below).
+    #[allow(dead_code)]
+    pub fn min_plus_batch(
+        grid: &gpu::min_plus::PackedTopoGrid,
+        goal_cells: &[usize],
+        legs: gpu::min_plus::LegsCost,
+        max_sweeps: usize,
+    ) -> Result<(Vec<f32>, bool), String> {
+        gpu::min_plus_auto(grid, goal_cells, legs, max_sweeps)
+    }
+
+    /// Crossover-gated batched `sin.bin`-exact kinematic rollouts
+    /// (RX 7900 XTX GPU when `candidates * ticks >= 1_000_000`, CPU below).
+    #[allow(dead_code)]
+    pub fn rollout_batch(
+        reqs: &[gpu::rollout::RolloutReq],
+        voxels: &gpu::rollout::SolidVoxelBox,
+    ) -> Result<(Vec<gpu::rollout::RolloutOut>, bool), String> {
+        gpu::rollout_auto(reqs, voxels)
+    }
+
+    /// Packs or reuses a `PackedTopoGrid` for `min..=max` keyed by `WorldMirror::provenance_version`.
+    #[allow(dead_code)]
+    pub fn cached_topo_grid(
+        &mut self,
+        min: BlockPos,
+        max: BlockPos,
+    ) -> Arc<gpu::min_plus::PackedTopoGrid> {
+        let (prov, needs_rebuild) = {
+            let world = self.world.read().unwrap();
+            let prov = world.provenance_version();
+            let hit = self.cached_topo_grid.as_ref().is_some_and(|c| {
+                c.provenance == prov && c.min == min && c.max == max
+            });
+            (prov, !hit)
+        };
+        if needs_rebuild {
+            let grid = {
+                let world = self.world.read().unwrap();
+                Arc::new(gpu::min_plus::PackedTopoGrid::from_world(&*world, min, max))
+            };
+            self.cached_topo_grid = Some(CachedTopoGrid {
+                provenance: prov,
+                min,
+                max,
+                grid,
+                uploaded: None,
+            });
+        }
+        Arc::clone(&self.cached_topo_grid.as_ref().unwrap().grid)
+    }
+
+    /// Packs or reuses a `SolidVoxelBox` for `min..=max` keyed by `WorldMirror::provenance_version`.
+    #[allow(dead_code)]
+    pub fn cached_solid_voxels(
+        &mut self,
+        min: BlockPos,
+        max: BlockPos,
+    ) -> Arc<gpu::rollout::SolidVoxelBox> {
+        let (prov, needs_rebuild) = {
+            let world = self.world.read().unwrap();
+            let prov = world.provenance_version();
+            let hit = self.cached_voxel_box.as_ref().is_some_and(|c| {
+                c.provenance == prov && c.min == min && c.max == max
+            });
+            (prov, !hit)
+        };
+        if needs_rebuild {
+            let voxels = {
+                let world = self.world.read().unwrap();
+                Arc::new(gpu::rollout::SolidVoxelBox::from_world(&*world, min, max))
+            };
+            self.cached_voxel_box = Some(CachedSolidVoxels {
+                provenance: prov,
+                min,
+                max,
+                voxels,
+                uploaded: None,
+            });
+        }
+        Arc::clone(&self.cached_voxel_box.as_ref().unwrap().voxels)
+    }
+
+    /// Crossover-gated `min_plus` over `WorldMirror`, reusing both the packed grid and VRAM buffer.
+    #[allow(dead_code)]
+    pub fn solve_min_plus_world(
+        &mut self,
+        min: BlockPos,
+        max: BlockPos,
+        goal_cells: &[usize],
+        legs: gpu::min_plus::LegsCost,
+        max_sweeps: usize,
+    ) -> Result<(Arc<gpu::min_plus::PackedTopoGrid>, Vec<f32>, bool), String> {
+        let grid = self.cached_topo_grid(min, max);
+        let cache = self.cached_topo_grid.as_mut().unwrap();
+        if let Some(ctx) = gpu::GpuContext::global()
+            && ctx.policy.should_use_min_plus(goal_cells.len(), grid.vol())
+        {
+            if cache.uploaded.is_none() {
+                cache.uploaded = Some(Arc::new(ctx.min_plus.upload_grid(&grid)?));
+            }
+            let (dist, used_gpu) = gpu::min_plus_auto_uploaded(
+                &grid,
+                cache.uploaded.as_deref(),
+                goal_cells,
+                legs,
+                max_sweeps,
+            )?;
+            return Ok((grid, dist, used_gpu));
+        }
+        let (dist, used_gpu) = gpu::min_plus_auto(&grid, goal_cells, legs, max_sweeps)?;
+        Ok((grid, dist, used_gpu))
+    }
+
+    /// Crossover-gated `rollout` over `WorldMirror`, reusing both the packed voxel box and VRAM buffer.
+    #[allow(dead_code)]
+    pub fn rollout_world(
+        &mut self,
+        min: BlockPos,
+        max: BlockPos,
+        reqs: &[gpu::rollout::RolloutReq],
+    ) -> Result<(Vec<gpu::rollout::RolloutOut>, bool), String> {
+        let voxels = self.cached_solid_voxels(min, max);
+        let cache = self.cached_voxel_box.as_mut().unwrap();
+        let total_bot_ticks = reqs
+            .iter()
+            .fold(0usize, |acc, r| acc.saturating_add(r.ticks as usize));
+        if let Some(ctx) = gpu::GpuContext::global()
+            && ctx.policy.should_use_rollout_total(total_bot_ticks)
+        {
+            if cache.uploaded.is_none() {
+                cache.uploaded = Some(Arc::new(ctx.rollout.upload_voxels(&voxels)?));
+            }
+            return gpu::rollout_auto_uploaded(reqs, &voxels, cache.uploaded.as_deref());
+        }
+        gpu::rollout_auto(reqs, &voxels)
     }
 }
 

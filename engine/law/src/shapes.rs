@@ -252,6 +252,7 @@ impl Aabb {
     }
 
     // AABB.intersects
+    #[inline(always)]
     pub fn intersects(self, b: Self) -> bool {
         self.min.x < b.max.x && self.max.x > b.min.x && self.min.y < b.max.y && self.max.y > b.min.y && self.min.z < b.max.z && self.max.z > b.min.z
     }
